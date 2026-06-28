@@ -2,6 +2,7 @@ package example
 
 import (
 	"decode_and_validate_generator/pkg/peekjson"
+	"encoding/json"
 	"errors"
 )
 
@@ -26,13 +27,13 @@ type ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString struct{ Inner 
 type ObjectKeysAdditionalPropertiesFalseOptionalNullableString struct{ Inner *string }
 type ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString struct{ Inner string }
 
-func (o *ObjectKeysAdditionalPropertiesFalse) Decode(decoder peekjson.Decoder) error {
+func (o *ObjectKeysAdditionalPropertiesFalse) Decode(decoder *peekjson.Decoder) error {
 	nextToken, err := decoder.Token()
 	if err != nil {
 		return err
 	}
 
-	if nextToken != '{' {
+	if nextToken != json.Delim('{') {
 		return NotAnObjectError
 	}
 
@@ -55,22 +56,22 @@ func (o *ObjectKeysAdditionalPropertiesFalse) Decode(decoder peekjson.Decoder) e
 	return nil
 }
 
-func (o *ObjectKeysAdditionalPropertiesFalseRequiredNullableString) Decode(decoder peekjson.Decoder) error {
+func (o *ObjectKeysAdditionalPropertiesFalseRequiredNullableString) Decode(decoder *peekjson.Decoder) error {
 	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
-func (o *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString) Decode(decoder peekjson.Decoder) error {
+func (o *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString) Decode(decoder *peekjson.Decoder) error {
 	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
-func (o *ObjectKeysAdditionalPropertiesFalseOptionalNullableString) Decode(decoder peekjson.Decoder) error {
+func (o *ObjectKeysAdditionalPropertiesFalseOptionalNullableString) Decode(decoder *peekjson.Decoder) error {
 	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
-func (o *ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString) Decode(decoder peekjson.Decoder) error {
+func (o *ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString) Decode(decoder *peekjson.Decoder) error {
 	//TODO implement me
-	panic("implement me")
+	return nil
 }
