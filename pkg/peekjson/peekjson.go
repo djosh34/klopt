@@ -33,7 +33,7 @@ func NewDecoder(r io.Reader) *Decoder {
 }
 
 // Peek returns the next JSON token without discarding its source bytes.
-func (d *Decoder) Peek() (*json.Token, error) {
+func (d *Decoder) Peek() (json.Token, error) {
 	if d.peeked {
 		return d.peekedToken, d.peekedErr
 	}

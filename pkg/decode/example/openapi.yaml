@@ -1,0 +1,276 @@
+openapi: 3.0.3
+info:
+  title: Request Body Shape Test
+  version: 1.0.0
+
+paths:
+  /array-nullable-items-nullable:
+    post:
+      operationId: arrayNullableItemsNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              nullable: true
+              items:
+                type: string
+                nullable: true
+      responses:
+        '204':
+          description: No Content
+
+  /array-nullable-items-not-nullable:
+    post:
+      operationId: arrayNullableItemsNotNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              nullable: true
+              items:
+                type: string
+                nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /array-not-nullable-items-nullable:
+    post:
+      operationId: arrayNotNullableItemsNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              nullable: false
+              items:
+                type: string
+                nullable: true
+      responses:
+        '204':
+          description: No Content
+
+  /array-not-nullable-items-not-nullable:
+    post:
+      operationId: arrayNotNullableItemsNotNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              nullable: false
+              items:
+                type: string
+                nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /object-keys-additional-properties-false:
+    post:
+      operationId: objectKeysAdditionalPropertiesFalse
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              nullable: false
+              required:
+                - requiredNullableString
+                - requiredNotNullableString
+              additionalProperties: false
+              properties:
+                requiredNullableString:
+                  type: string
+                  nullable: true
+                requiredNotNullableString:
+                  type: string
+                  nullable: false
+                optionalNullableString:
+                  type: string
+                  nullable: true
+                optionalNotNullableString:
+                  type: string
+                  nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /object-additional-properties-true:
+    post:
+      operationId: objectAdditionalPropertiesTrue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              nullable: false
+              additionalProperties: true
+              properties:
+                known:
+                  type: string
+                  nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /object-additional-properties-schema:
+    post:
+      operationId: objectAdditionalPropertiesSchema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              nullable: false
+              additionalProperties:
+                type: string
+                nullable: false
+              properties:
+                known:
+                  type: string
+                  nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /object-additional-properties-implicit:
+    post:
+      operationId: objectAdditionalPropertiesImplicit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              nullable: false
+              properties:
+                known:
+                  type: string
+                  nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /string-format-nullable:
+    post:
+      operationId: stringFormatNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+              format: date-time
+              nullable: true
+      responses:
+        '204':
+          description: No Content
+
+  /string-format-not-nullable:
+    post:
+      operationId: stringFormatNotNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+              format: date-time
+              nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /string-no-format-nullable:
+    post:
+      operationId: stringNoFormatNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+              nullable: true
+      responses:
+        '204':
+          description: No Content
+
+  /string-no-format-not-nullable:
+    post:
+      operationId: stringNoFormatNotNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+              nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /number-nullable:
+    post:
+      operationId: numberNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: number
+              nullable: true
+      responses:
+        '204':
+          description: No Content
+
+  /number-not-nullable:
+    post:
+      operationId: numberNotNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: number
+              nullable: false
+      responses:
+        '204':
+          description: No Content
+
+  /bool-nullable:
+    post:
+      operationId: boolNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: boolean
+              nullable: true
+      responses:
+        '204':
+          description: No Content
+
+  /bool-not-nullable:
+    post:
+      operationId: boolNotNullable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: boolean
+              nullable: false
+      responses:
+        '204':
+          description: No Content
