@@ -1,6 +1,7 @@
 package peekjson
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"strings"
@@ -9,72 +10,70 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPublicReaderReadFullyFromInternalBuffer(t *testing.T) {
-	upstream := strings.NewReader("upstream")
-	d := decoderWithBuffer(upstream, "buffer")
-	p := make([]byte, len("buffer"))
+func TestPublicReaderRead(t *testing.T) {
+	for name, tt := range map[string]struct {
+		bytesToRead          int
+		internalBuffer       string
+		upstreamBuffer       string
+		expectedOutputBuffer bytes.Buffer
+		expectedBytesRead    int
+		expectedErr          error
+	}{
+		"fully from internal buffer": {
+			bytesToRead:    len("buffer"),
+			internalBuffer: "buffer",
+			upstreamBuffer: "upstream",
+			expectedErr:    nil,
+		},
+		"fully from upstream": {
+			bytesToRead:    len("up"),
+			internalBuffer: "",
+			upstreamBuffer: "upstream",
+			expectedErr:    nil,
+		},
+		"fills from internal buffer then partial upstream": {
+			bytesToRead:    len("bufst"),
+			internalBuffer: "buf",
+			upstreamBuffer: "stream",
+			expectedErr:    nil,
+		},
+		"drains internal buffer and upstream before eof": {
+			bytesToRead:    len("bufstream") + 10,
+			internalBuffer: "buf",
+			upstreamBuffer: "stream",
+			expectedErr:    io.EOF,
+		},
+		"drains upstream before eof": {
+			bytesToRead:    len("upstream") + 10,
+			internalBuffer: "",
+			upstreamBuffer: "upstream",
+			expectedErr:    io.EOF,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Arrange
+			upstream := strings.NewReader(tt.upstreamBuffer)
 
-	n, err := publicReader{d: d}.Read(p)
+			d := &Decoder{sourceReader: upstream}
+			d.lookAheadBuffer = *bytes.NewBufferString(tt.internalBuffer)
 
-	require.NoError(t, err)
-	require.Equal(t, len("buffer"), n)
-	require.Equal(t, "buffer", string(p[:n]))
-	require.Empty(t, d.lookAheadBuffer.String())
-	require.Equal(t, "upstream", remainingString(t, upstream))
-}
+			p := make([]byte, tt.bytesToRead)
 
-func TestPublicReaderReadFullyFromUpstream(t *testing.T) {
-	upstream := strings.NewReader("upstream")
-	d := decoderWithBuffer(upstream, "")
-	p := make([]byte, len("up"))
+			// Act
+			n, err := publicReader{d: d}.Read(p)
 
-	n, err := publicReader{d: d}.Read(p)
+			// Assert
+			if tt.expectedErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tt.expectedErr)
+			}
 
-	require.NoError(t, err)
-	require.Equal(t, len("up"), n)
-	require.Equal(t, "up", string(p[:n]))
-	require.Equal(t, "stream", remainingString(t, upstream))
-}
+			require.Equal(t, n, tt.expectedBytesRead)
+			require.Equal(t, p, tt.expectedOutputBuffer)
 
-func TestPublicReaderReadFillsFromInternalBufferThenPartialUpstream(t *testing.T) {
-	upstream := strings.NewReader("stream")
-	d := decoderWithBuffer(upstream, "buf")
-	p := make([]byte, len("bufst"))
-
-	n, err := publicReader{d: d}.Read(p)
-
-	require.NoError(t, err)
-	require.Equal(t, len("bufst"), n)
-	require.Equal(t, "bufst", string(p[:n]))
-	require.Empty(t, d.lookAheadBuffer.String())
-	require.Equal(t, "ream", remainingString(t, upstream))
-}
-
-func TestPublicReaderReadDrainsInternalBufferAndUpstreamBeforeEOF(t *testing.T) {
-	upstream := strings.NewReader("stream")
-	d := decoderWithBuffer(upstream, "buf")
-	p := make([]byte, len("bufstream")+10)
-
-	n, err := publicReader{d: d}.Read(p)
-
-	require.ErrorIs(t, err, io.EOF)
-	require.Equal(t, len("bufstream"), n)
-	require.Equal(t, "bufstream", string(p[:n]))
-	require.Empty(t, d.lookAheadBuffer.String())
-	require.Empty(t, remainingString(t, upstream))
-}
-
-func TestPublicReaderReadDrainsUpstreamBeforeEOF(t *testing.T) {
-	upstream := strings.NewReader("upstream")
-	d := decoderWithBuffer(upstream, "")
-	p := make([]byte, len("upstream")+10)
-
-	n, err := publicReader{d: d}.Read(p)
-
-	require.ErrorIs(t, err, io.EOF)
-	require.Equal(t, len("upstream"), n)
-	require.Equal(t, "upstream", string(p[:n]))
-	require.Empty(t, remainingString(t, upstream))
+		})
+	}
 }
 
 func TestPeekReaderBuffersReadBytes(t *testing.T) {
@@ -102,12 +101,6 @@ func TestPeekReaderBuffersBytesReturnedWithError(t *testing.T) {
 	require.Equal(t, len("peek"), n)
 	require.Equal(t, "peek", string(p[:n]))
 	require.Equal(t, "peek", d.lookAheadBuffer.String())
-}
-
-func decoderWithBuffer(upstream io.Reader, buffered string) *Decoder {
-	d := &Decoder{sourceReader: upstream}
-	_, _ = d.lookAheadBuffer.WriteString(buffered)
-	return d
 }
 
 func remainingString(t *testing.T, r io.Reader) string {
