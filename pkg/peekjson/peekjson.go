@@ -52,6 +52,7 @@ func (d *Decoder) Peek() (*json.Token, error) {
 	return &tok, err
 }
 
+// clearPeek discards any cached lookahead state after the public decoder reads.
 func (d *Decoder) clearPeek() {
 	d.peeked = false
 	d.peekedToken = nil
