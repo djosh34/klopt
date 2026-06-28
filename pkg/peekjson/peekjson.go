@@ -39,6 +39,7 @@ func (d *Decoder) Peek() (*json.Token, error) {
 	}
 
 	tok, err := d.peekDec.Token()
+
 	d.peeked = true
 	if err != nil {
 		d.peekedErr = err

@@ -4,7 +4,7 @@ linters:
   default: fast
   disable:
     - funlen
-    - gomodguard
+    - gomodguard # DO NOT CHANGE THIS EVER!
     - testpackage
     - wsl
   enable:
@@ -12,7 +12,7 @@ linters:
     - errorlint
     - errname
     - godoclint
-    - gomodguard_v2
+    - gomodguard_v2 # DO NOT CHANGE THIS EVER!
     - govet
     - nilerr
     - nilnil
@@ -30,6 +30,7 @@ linters:
           allow:
             - $gostd
             - github.com/stretchr/testify/require
+            - pgregory.net/rapid
     errcheck:
       check-blank: true
       check-type-assertions: true
