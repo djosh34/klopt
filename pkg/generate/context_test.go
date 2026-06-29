@@ -48,10 +48,8 @@ func TestJSONRequestBodySchemaObjectsConvertsRequestBodySchemas(t *testing.T) {
 	schemaObjects, err := generateContext.JSONRequestBodySchemaObjects()
 	require.NoError(t, err)
 
-	require.Len(t, schemaObjects, 1)
-	for operation, schemaObject := range schemaObjects {
-		require.Equal(t, "objectKeysAdditionalPropertiesFalse", operation.OperationID)
-		require.Equal(t, ObjectContext{
+	require.Equal(t, map[string]SchemaObject{
+		"objectKeysAdditionalPropertiesFalse": ObjectContext{
 			AdditionalProperties: false,
 			Required: []string{
 				"requiredNullableString",
@@ -63,8 +61,8 @@ func TestJSONRequestBodySchemaObjectsConvertsRequestBodySchemas(t *testing.T) {
 				"optionalNullableString":    StringContext{Nullable: true},
 				"optionalNotNullableString": StringContext{},
 			},
-		}, schemaObject)
-	}
+		},
+	}, schemaObjects)
 }
 
 func TestSchemaObjectFromOpenAPISchemaRecursesObjectProperties(t *testing.T) {

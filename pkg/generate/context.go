@@ -8,7 +8,8 @@ import (
 )
 
 type GenerateContext struct {
-	Document *openapi3.T
+	Document   *openapi3.T
+	Operations map[string]SchemaObject
 }
 
 type SchemaObject interface{}
@@ -59,20 +60,28 @@ func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*ope
 	return schemas, nil
 }
 
-func (c *GenerateContext) JSONRequestBodySchemaObjects() (map[*openapi3.Operation]SchemaObject, error) {
+func (c *GenerateContext) JSONRequestBodySchemaObjects() (map[string]SchemaObject, error) {
 	openapiSchemas, err := c.JSONRequestBodySchemas()
 	if err != nil {
 		return nil, err
 	}
 
-	schemaObjects := make(map[*openapi3.Operation]SchemaObject, len(openapiSchemas))
+	schemaObjects := make(map[string]SchemaObject, len(openapiSchemas))
 	for operation, openapiSchema := range openapiSchemas {
+		if operation.OperationID == "" {
+			return nil, fmt.Errorf("operation with JSON request body schema has no operationId")
+		}
+
+		if _, ok := schemaObjects[operation.OperationID]; ok {
+			return nil, fmt.Errorf("duplicate operationId %q", operation.OperationID)
+		}
+
 		schemaObject, err := SchemaObjectFromOpenAPISchema(openapiSchema)
 		if err != nil {
 			return nil, fmt.Errorf("operation %q request body schema: %w", operation.OperationID, err)
 		}
 
-		schemaObjects[operation] = schemaObject
+		schemaObjects[operation.OperationID] = schemaObject
 	}
 
 	return schemaObjects, nil

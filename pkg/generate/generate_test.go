@@ -42,6 +42,35 @@ func TestGenerateExample(t *testing.T) {
 
 }
 
+func TestGeneratePopulatesOperationsMap(t *testing.T) {
+	openapiExamplePath := filepath.Join(GetRepoRoot(t), "pkg", "decode", "example", "openapi.yaml")
+	generateContext, err := LoadOpenapi(t.Context(), openapiExamplePath)
+	require.NoError(t, err)
+
+	err = generateContext.FilterOperations("objectKeysAdditionalPropertiesFalse", "stringNoFormatNullable")
+	require.NoError(t, err)
+
+	err = generateContext.Generate(t.TempDir())
+	require.NoError(t, err)
+
+	require.Equal(t, map[string]SchemaObject{
+		"objectKeysAdditionalPropertiesFalse": ObjectContext{
+			AdditionalProperties: false,
+			Required: []string{
+				"requiredNullableString",
+				"requiredNotNullableString",
+			},
+			Properties: map[string]SchemaObject{
+				"requiredNullableString":    StringContext{Nullable: true},
+				"requiredNotNullableString": StringContext{},
+				"optionalNullableString":    StringContext{Nullable: true},
+				"optionalNotNullableString": StringContext{},
+			},
+		},
+		"stringNoFormatNullable": StringContext{Nullable: true},
+	}, generateContext.Operations)
+}
+
 func TestFilterOperationsKeepsOnlyRequestedOperation(t *testing.T) {
 	openapiExamplePath := filepath.Join(GetRepoRoot(t), "pkg", "decode", "example", "openapi.yaml")
 	generateContext, err := LoadOpenapi(t.Context(), openapiExamplePath)

@@ -16,7 +16,7 @@ type Decoder struct {
 	lookAheadBuffer bytes.Buffer
 
 	peekDec     *json.Decoder
-	peekedToken *json.Token
+	peekedToken json.Token
 	peekedErr   error
 	peeked      bool
 }
@@ -47,9 +47,9 @@ func (d *Decoder) Peek() (json.Token, error) {
 		return nil, err
 	}
 
-	d.peekedToken = &tok
+	d.peekedToken = tok
 
-	return &tok, err
+	return tok, err
 }
 
 // clearPeek discards any cached lookahead state after the public decoder reads.
