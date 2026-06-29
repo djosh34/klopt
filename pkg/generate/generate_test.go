@@ -1,80 +1,40 @@
 package generate
 
 import (
-	"context"
 	"os"
+	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-const generatedHelloSource = `package main
+func GetRepoRoot(t *testing.T) string {
+	t.Helper()
 
-import (
-	"fmt"
-	"os"
-)
+	wd, err := os.Getwd()
+	require.NoError(t, err)
 
-func main() {
-	fmt.Printf("generated go says %s\n", os.Args[1])
-}
-`
+	for {
+		if _, err := os.Stat(filepath.Join(wd, "go.mod")); err == nil {
+			return wd
+		}
 
-func TestCompileAndRunGoSource(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+		parent := filepath.Dir(wd)
+		require.NotEqual(t, wd, parent)
 
-	result, err := CompileAndRunGoSource(ctx, generatedHelloSource, "hello")
-	require.NoError(t, err, result.Stderr)
-	require.Equal(t, "generated go says hello\n", result.Stdout)
-	require.Empty(t, result.Stderr)
+		wd = parent
+	}
 }
 
-func TestCompileAndRunGoSourceInMemory(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+func TestGenerateExample(t *testing.T) {
 
-	result, err := CompileAndRunGoSourceInMemory(ctx, generatedHelloSource, "hello")
-	require.NoError(t, err, result.Stderr)
-	require.Equal(t, "generated go says hello\n", result.Stdout)
-	require.Empty(t, result.Stderr)
-}
+	openapiExamplePath := filepath.Join(GetRepoRoot(t), "pkg", "decode", "example", "openapi.yaml")
+	generateContext, err := LoadOpenapi(t.Context(), openapiExamplePath)
+	require.NoError(t, err)
 
-func TestCompileAndRunGoSourceBaseline1000(t *testing.T) {
-	if os.Getenv("RUN_DYNAMIC_GO_BASELINE_1000") != "1" {
-		t.Skip("set RUN_DYNAMIC_GO_BASELINE_1000=1 to run the exact 1000-iteration baseline")
-	}
+	generateOutputDir := filepath.Join(GetRepoRoot(t), "pkg", "decode", "example_gen")
 
-	start := time.Now()
-	for i := 0; i < 1000; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		result, err := CompileAndRunGoSource(ctx, generatedHelloSource, "hello")
-		cancel()
+	err = generateContext.Generate(generateOutputDir)
+	require.NoError(t, err)
 
-		require.NoError(t, err, result.Stderr)
-		require.Equal(t, "generated go says hello\n", result.Stdout)
-		require.Empty(t, result.Stderr)
-	}
-	elapsed := time.Since(start)
-	t.Logf("iterations=1000 total=%s per_iteration=%s", elapsed, elapsed/1000)
-}
-
-func TestCompileAndRunGoSourceInMemory1000(t *testing.T) {
-	if os.Getenv("RUN_DYNAMIC_GO_IN_MEMORY_1000") != "1" {
-		t.Skip("set RUN_DYNAMIC_GO_IN_MEMORY_1000=1 to run the exact 1000-iteration in-memory benchmark")
-	}
-
-	start := time.Now()
-	for i := 0; i < 1000; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		result, err := CompileAndRunGoSourceInMemory(ctx, generatedHelloSource, "hello")
-		cancel()
-
-		require.NoError(t, err, result.Stderr)
-		require.Equal(t, "generated go says hello\n", result.Stdout)
-		require.Empty(t, result.Stderr)
-	}
-	elapsed := time.Since(start)
-	t.Logf("iterations=1000 total=%s per_iteration=%s", elapsed, elapsed/1000)
 }
