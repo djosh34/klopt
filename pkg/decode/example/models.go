@@ -1,10 +1,11 @@
 package example
 
 import (
-	"decode_and_validate_generator/pkg/peekjson"
-	"encoding/json"
 	"errors"
 	"fmt"
+
+	json "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 )
 
 var (
@@ -16,213 +17,78 @@ var (
 )
 
 type ObjectKeysAdditionalPropertiesFalse struct {
-	RequiredNullableString    *ObjectKeysAdditionalPropertiesFalseRequiredNullableString    `json:"requiredNullableString"`
-	RequiredNotNullableString *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString `json:"requiredNotNullableString"`
-	OptionalNullableString    *ObjectKeysAdditionalPropertiesFalseOptionalNullableString    `json:"optionalNullableString,omitempty"`
-	OptionalNotNullableString *ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString `json:"optionalNotNullableString,omitempty"`
+	RequiredNullableString    *string `json:"requiredNullableString"`
+	RequiredNotNullableString string  `json:"requiredNotNullableString"`
+	OptionalNullableString    *string `json:"optionalNullableString,omitzero"`
+	OptionalNotNullableString *string `json:"optionalNotNullableString,omitzero"`
 }
 
-var _ json.Marshaler = new(ObjectKeysAdditionalPropertiesFalseRequiredNullableString)
-var _ json.Marshaler = new(ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString)
-var _ json.Marshaler = new(ObjectKeysAdditionalPropertiesFalseOptionalNullableString)
-var _ json.Marshaler = new(ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString)
+var _ json.UnmarshalerFrom = (*ObjectKeysAdditionalPropertiesFalse)(nil)
 
-type ObjectKeysAdditionalPropertiesFalseRequiredNullableString struct{ Inner *string }
-
-func (o *ObjectKeysAdditionalPropertiesFalseRequiredNullableString) MarshalJSON() ([]byte, error) {
-	if o.Inner == nil {
-		return []byte("null"), nil
-	}
-
-	return []byte(fmt.Sprintf("\"%v\"", *o.Inner)), nil
-}
-
-type ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString struct{ Inner string }
-
-func (o *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%v\"", o.Inner)), nil
-}
-
-type ObjectKeysAdditionalPropertiesFalseOptionalNullableString struct{ Inner *string }
-
-func (o *ObjectKeysAdditionalPropertiesFalseOptionalNullableString) MarshalJSON() ([]byte, error) {
-	if o == nil {
-		return nil, nil
-	}
-
-	if o.Inner == nil {
-		return []byte("null"), nil
-	}
-
-	return []byte(fmt.Sprintf("\"%v\"", *o.Inner)), nil
-}
-
-type ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString struct{ Inner string }
-
-func (o *ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString) MarshalJSON() ([]byte, error) {
-	if o == nil {
-		return nil, nil
-	}
-
-	return []byte(fmt.Sprintf("\"%v\"", o.Inner)), nil
-}
-
-func (o *ObjectKeysAdditionalPropertiesFalse) Decode(decoder *peekjson.Decoder) error {
-	nextToken, err := decoder.Token()
+func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	tok, err := d.ReadToken()
 	if err != nil {
 		return err
 	}
-
-	if nextToken != json.Delim('{') {
+	if tok.Kind() != jsontext.KindBeginObject {
 		return NotAnObjectError
 	}
 
-	requiredProperties := map[string]struct{}{
-		"requiredNullableString":    {},
-		"requiredNotNullableString": {},
-	}
+	var hasRequiredNullableString bool
+	var hasRequiredNotNullableString bool
 
-	for decoder.More() {
-		nextKeyToken, nextKeyErr := decoder.Token()
-		if nextKeyErr != nil {
-			return nextKeyErr
+	for d.PeekKind() != jsontext.KindEndObject {
+		nameTok, err := d.ReadToken()
+		if err != nil {
+			return err
 		}
-
-		nextKey, ok := nextKeyToken.(string)
-		if !ok {
+		if nameTok.Kind() != jsontext.KindString {
 			return NotAnObjectError
 		}
 
-		if _, required := requiredProperties[nextKey]; required {
-			delete(requiredProperties, nextKey)
-		}
-
-		switch nextKey {
+		switch name := nameTok.String(); name {
 		case "requiredNullableString":
-			requiredNullableString := new(ObjectKeysAdditionalPropertiesFalseRequiredNullableString)
-			requiredNullableStringErr := requiredNullableString.Decode(decoder)
-			if requiredNullableStringErr != nil {
-				return requiredNullableStringErr
+			hasRequiredNullableString = true
+			if err := json.UnmarshalDecode(d, &o.RequiredNullableString); err != nil {
+				return err
 			}
-
-			o.RequiredNullableString = requiredNullableString
 		case "requiredNotNullableString":
-			requiredNotNullableString := new(ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString)
-			requiredNotNullableStringErr := requiredNotNullableString.Decode(decoder)
-			if requiredNotNullableStringErr != nil {
-				return requiredNotNullableStringErr
+			hasRequiredNotNullableString = true
+			if d.PeekKind() == jsontext.KindNull {
+				return NullForNotNullableStringError
 			}
-
-			o.RequiredNotNullableString = requiredNotNullableString
+			if err := json.UnmarshalDecode(d, &o.RequiredNotNullableString); err != nil {
+				return err
+			}
 		case "optionalNullableString":
-			optionalNullableString := new(ObjectKeysAdditionalPropertiesFalseOptionalNullableString)
-			optionalNullableStringErr := optionalNullableString.Decode(decoder)
-			if optionalNullableStringErr != nil {
-				return optionalNullableStringErr
+			if err := json.UnmarshalDecode(d, &o.OptionalNullableString); err != nil {
+				return err
 			}
-
-			o.OptionalNullableString = optionalNullableString
 		case "optionalNotNullableString":
-			optionalNotNullableString := new(ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString)
-			optionalNotNullableStringErr := optionalNotNullableString.Decode(decoder)
-			if optionalNotNullableStringErr != nil {
-				return optionalNotNullableStringErr
+			if d.PeekKind() == jsontext.KindNull {
+				return NullForNotNullableStringError
 			}
-
-			o.OptionalNotNullableString = optionalNotNullableString
+			if err := json.UnmarshalDecode(d, &o.OptionalNotNullableString); err != nil {
+				return err
+			}
 		default:
-			return fmt.Errorf("%w: %v", AdditionalPropertyError, nextKey)
+			if err := d.SkipValue(); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
 
-	nextToken, err = decoder.Token()
-	if err != nil {
+	if _, err := d.ReadToken(); err != nil {
 		return err
 	}
 
-	if nextToken != json.Delim('}') {
-		return NotAnObjectError
+	if !hasRequiredNullableString {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNullableString")
 	}
-
-	for missingRequiredProperty := range requiredProperties {
-		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, missingRequiredProperty)
-	}
-
-	return nil
-}
-
-func (o *ObjectKeysAdditionalPropertiesFalseRequiredNullableString) Decode(decoder *peekjson.Decoder) error {
-	inner, null, err := decodeString(decoder)
-	if err != nil {
-		return err
-	}
-
-	if !null {
-		o.Inner = new(inner)
+	if !hasRequiredNotNullableString {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNotNullableString")
 	}
 
 	return nil
-}
-
-func (o *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString) Decode(decoder *peekjson.Decoder) error {
-	inner, null, err := decodeString(decoder)
-	if err != nil {
-		return err
-	}
-
-	if null {
-		return NullForNotNullableStringError
-	}
-
-	o.Inner = inner
-
-	return nil
-}
-
-func (o *ObjectKeysAdditionalPropertiesFalseOptionalNullableString) Decode(decoder *peekjson.Decoder) error {
-	inner, null, err := decodeString(decoder)
-	if err != nil {
-		return err
-	}
-
-	if null {
-		o.Inner = nil
-	} else {
-		o.Inner = new(inner)
-	}
-
-	return nil
-}
-
-func (o *ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString) Decode(decoder *peekjson.Decoder) error {
-	inner, null, err := decodeString(decoder)
-	if err != nil {
-		return err
-	}
-
-	if null {
-		return NullForNotNullableStringError
-	}
-
-	o.Inner = inner
-
-	return nil
-}
-
-func decodeString(decoder *peekjson.Decoder) (string, bool, error) {
-	nextToken, err := decoder.Token()
-	if err != nil {
-		return "", false, err
-	}
-
-	if nextToken == nil {
-		return "", true, nil
-	}
-
-	inner, ok := nextToken.(string)
-	if !ok {
-		return "", false, fmt.Errorf("%w: %v", NonStringForStringSchemaError, nextToken)
-	}
-
-	return inner, false, nil
 }
