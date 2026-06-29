@@ -21,10 +21,51 @@ type ObjectKeysAdditionalPropertiesFalse struct {
 	OptionalNullableString    *ObjectKeysAdditionalPropertiesFalseOptionalNullableString    `json:"optionalNullableString,omitempty"`
 	OptionalNotNullableString *ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString `json:"optionalNotNullableString,omitempty"`
 }
+
+var _ json.Marshaler = new(ObjectKeysAdditionalPropertiesFalseRequiredNullableString)
+var _ json.Marshaler = new(ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString)
+var _ json.Marshaler = new(ObjectKeysAdditionalPropertiesFalseOptionalNullableString)
+var _ json.Marshaler = new(ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString)
+
 type ObjectKeysAdditionalPropertiesFalseRequiredNullableString struct{ Inner *string }
+
+func (o *ObjectKeysAdditionalPropertiesFalseRequiredNullableString) MarshalJSON() ([]byte, error) {
+	if o.Inner == nil {
+		return []byte("null"), nil
+	}
+
+	return []byte(fmt.Sprintf("\"%v\"", *o.Inner)), nil
+}
+
 type ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString struct{ Inner string }
+
+func (o *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf("\"%v\"", o.Inner)), nil
+}
+
 type ObjectKeysAdditionalPropertiesFalseOptionalNullableString struct{ Inner *string }
+
+func (o *ObjectKeysAdditionalPropertiesFalseOptionalNullableString) MarshalJSON() ([]byte, error) {
+	if o == nil {
+		return nil, nil
+	}
+
+	if o.Inner == nil {
+		return []byte("null"), nil
+	}
+
+	return []byte(fmt.Sprintf("\"%v\"", *o.Inner)), nil
+}
+
 type ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString struct{ Inner string }
+
+func (o *ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString) MarshalJSON() ([]byte, error) {
+	if o == nil {
+		return nil, nil
+	}
+
+	return []byte(fmt.Sprintf("\"%v\"", o.Inner)), nil
+}
 
 func (o *ObjectKeysAdditionalPropertiesFalse) Decode(decoder *peekjson.Decoder) error {
 	nextToken, err := decoder.Token()

@@ -1,6 +1,7 @@
 package decode_tests
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -196,6 +197,11 @@ func TestObjectKeysAdditionalPropertiesFalseDecodeAllowedWays(t *testing.T) {
 			err := actualStruct.Decode(decoder)
 
 			// Assert
+			backToJson, err := json.MarshalIndent(actualStruct, "", "  ")
+			require.NoError(t, err)
+
+			t.Logf("Json input:\n\n%v\n\nJson Back:\n\n%v\n\n", tt.inputJson, string(backToJson))
+
 			if tt.expectedErr == nil {
 				require.NoError(t, err)
 			} else {
