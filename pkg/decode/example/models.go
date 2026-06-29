@@ -15,12 +15,6 @@ var (
 	NonStringForStringSchemaError = errors.New("non-string for string schema")
 )
 
-//var _ Decoder = new(ObjectKeysAdditionalPropertiesFalse)
-//var _ Decoder = new(ObjectKeysAdditionalPropertiesFalseRequiredNullableString)
-//var _ Decoder = new(ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString)
-//var _ Decoder = new(ObjectKeysAdditionalPropertiesFalseOptionalNullableString)
-//var _ Decoder = new(ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString)
-
 type ObjectKeysAdditionalPropertiesFalse struct {
 	RequiredNullableString    *ObjectKeysAdditionalPropertiesFalseRequiredNullableString    `json:"requiredNullableString"`
 	RequiredNotNullableString *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString `json:"requiredNotNullableString"`
@@ -65,7 +59,7 @@ func (o *ObjectKeysAdditionalPropertiesFalse) Decode(decoder *peekjson.Decoder) 
 		switch nextKey {
 		case "requiredNullableString":
 			requiredNullableString := new(ObjectKeysAdditionalPropertiesFalseRequiredNullableString)
-			requiredNullableStringErr := ObjectKeysAdditionalPropertiesFalseRequiredNullableStringDecode(requiredNullableString, decoder)
+			requiredNullableStringErr := requiredNullableString.Decode(decoder)
 			if requiredNullableStringErr != nil {
 				return requiredNullableStringErr
 			}
@@ -116,7 +110,7 @@ func (o *ObjectKeysAdditionalPropertiesFalse) Decode(decoder *peekjson.Decoder) 
 	return nil
 }
 
-var ObjectKeysAdditionalPropertiesFalseRequiredNullableStringDecode = func(o *ObjectKeysAdditionalPropertiesFalseRequiredNullableString, decoder *peekjson.Decoder) error {
+func (o *ObjectKeysAdditionalPropertiesFalseRequiredNullableString) Decode(decoder *peekjson.Decoder) error {
 	inner, null, err := decodeString(decoder)
 	if err != nil {
 		return err
@@ -127,11 +121,7 @@ var ObjectKeysAdditionalPropertiesFalseRequiredNullableStringDecode = func(o *Ob
 	}
 
 	return nil
-
 }
-
-//func (o *ObjectKeysAdditionalPropertiesFalseRequiredNullableString) Decode(decoder *peekjson.Decoder) error {
-//}
 
 func (o *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString) Decode(decoder *peekjson.Decoder) error {
 	inner, null, err := decodeString(decoder)
