@@ -63,7 +63,7 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 		case "requiredNullableString":
 			hasRequiredNullableString = true
 
-			err = json.Unmarshal(value, o.RequiredNullableString)
+			err = json.Unmarshal(value, &o.RequiredNullableString)
 			if err != nil {
 				return err
 			}
@@ -79,7 +79,7 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 				return err
 			}
 		case "optionalNullableString":
-			err = json.Unmarshal(value, o.OptionalNullableString)
+			err = json.Unmarshal(value, &o.OptionalNullableString)
 			if err != nil {
 				return err
 			}
@@ -90,7 +90,7 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 				return NullForNotNullableStringError
 			}
 
-			err = json.Unmarshal(value, o.OptionalNotNullableString)
+			err = json.Unmarshal(value, &o.OptionalNotNullableString)
 			if err != nil {
 				return err
 			}
