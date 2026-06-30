@@ -1,11 +1,9 @@
 package decode_tests
 
 import (
-	"strings"
 	"testing"
 
 	"decode_and_validate_generator/pkg/decode/example"
-	"decode_and_validate_generator/pkg/peekjson"
 
 	"github.com/stretchr/testify/require"
 )
@@ -21,166 +19,100 @@ func TestObjectKeysAdditionalPropertiesFalseDecodeAllowedWays(t *testing.T) {
 		"required nullable non-null optional nullable omitted optional not nullable omitted": {
 			inputJson: `{"requiredNullableString":"required-nullable","requiredNotNullableString":"required-not-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{
-					Inner: new("required-nullable"),
-				},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
+				RequiredNullableString:    new("required-nullable"),
+				RequiredNotNullableString: "required-not-nullable",
 			},
 			expectedErr: nil,
 		},
 		"required nullable non-null optional nullable omitted optional not nullable non-null": {
 			inputJson: `{"requiredNullableString":"required-nullable","requiredNotNullableString":"required-not-nullable","optionalNotNullableString":"optional-not-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{
-					Inner: new("required-nullable"),
-				},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString{
-					Inner: "optional-not-nullable",
-				},
+				RequiredNullableString:    new("required-nullable"),
+				RequiredNotNullableString: "required-not-nullable",
+				OptionalNotNullableString: new("optional-not-nullable"),
 			},
 			expectedErr: nil,
 		},
 		"required nullable non-null optional nullable null optional not nullable omitted": {
 			inputJson: `{"requiredNullableString":"required-nullable","requiredNotNullableString":"required-not-nullable","optionalNullableString":null}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{
-					Inner: new("required-nullable"),
-				},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNullableString{},
+				RequiredNullableString:    new("required-nullable"),
+				RequiredNotNullableString: "required-not-nullable",
 			},
 			expectedErr: nil,
 		},
 		"required nullable non-null optional nullable null optional not nullable non-null": {
 			inputJson: `{"requiredNullableString":"required-nullable","requiredNotNullableString":"required-not-nullable","optionalNullableString":null,"optionalNotNullableString":"optional-not-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{
-					Inner: new("required-nullable"),
-				},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNullableString{},
-				OptionalNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString{
-					Inner: "optional-not-nullable",
-				},
+				RequiredNullableString:    new("required-nullable"),
+				RequiredNotNullableString: "required-not-nullable",
+				OptionalNotNullableString: new("optional-not-nullable"),
 			},
 			expectedErr: nil,
 		},
 		"required nullable non-null optional nullable non-null optional not nullable omitted": {
 			inputJson: `{"requiredNullableString":"required-nullable","requiredNotNullableString":"required-not-nullable","optionalNullableString":"optional-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{
-					Inner: new("required-nullable"),
-				},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNullableString{
-					Inner: new("optional-nullable"),
-				},
+				RequiredNullableString:    new("required-nullable"),
+				RequiredNotNullableString: "required-not-nullable",
+				OptionalNullableString:    new("optional-nullable"),
 			},
 			expectedErr: nil,
 		},
 		"required nullable non-null optional nullable non-null optional not nullable non-null": {
 			inputJson: `{"requiredNullableString":"required-nullable","requiredNotNullableString":"required-not-nullable","optionalNullableString":"optional-nullable","optionalNotNullableString":"optional-not-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{
-					Inner: new("required-nullable"),
-				},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNullableString{
-					Inner: new("optional-nullable"),
-				},
-				OptionalNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString{
-					Inner: "optional-not-nullable",
-				},
+				RequiredNullableString:    new("required-nullable"),
+				RequiredNotNullableString: "required-not-nullable",
+				OptionalNullableString:    new("optional-nullable"),
+				OptionalNotNullableString: new("optional-not-nullable"),
 			},
 			expectedErr: nil,
 		},
 		"required nullable null optional nullable omitted optional not nullable omitted": {
 			inputJson: `{"requiredNullableString":null,"requiredNotNullableString":"required-not-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
+				RequiredNotNullableString: "required-not-nullable",
 			},
 			expectedErr: nil,
 		},
 		"required nullable null optional nullable omitted optional not nullable non-null": {
 			inputJson: `{"requiredNullableString":null,"requiredNotNullableString":"required-not-nullable","optionalNotNullableString":"optional-not-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString{
-					Inner: "optional-not-nullable",
-				},
+				RequiredNotNullableString: "required-not-nullable",
+				OptionalNotNullableString: new("optional-not-nullable"),
 			},
 			expectedErr: nil,
 		},
 		"required nullable null optional nullable null optional not nullable omitted": {
 			inputJson: `{"requiredNullableString":null,"requiredNotNullableString":"required-not-nullable","optionalNullableString":null}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNullableString{},
+				RequiredNotNullableString: "required-not-nullable",
 			},
 			expectedErr: nil,
 		},
 		"required nullable null optional nullable null optional not nullable non-null": {
 			inputJson: `{"requiredNullableString":null,"requiredNotNullableString":"required-not-nullable","optionalNullableString":null,"optionalNotNullableString":"optional-not-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNullableString{},
-				OptionalNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString{
-					Inner: "optional-not-nullable",
-				},
+				RequiredNotNullableString: "required-not-nullable",
+				OptionalNotNullableString: new("optional-not-nullable"),
 			},
 			expectedErr: nil,
 		},
 		"required nullable null optional nullable non-null optional not nullable omitted": {
 			inputJson: `{"requiredNullableString":null,"requiredNotNullableString":"required-not-nullable","optionalNullableString":"optional-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNullableString{
-					Inner: new("optional-nullable"),
-				},
+				RequiredNotNullableString: "required-not-nullable",
+				OptionalNullableString:    new("optional-nullable"),
 			},
 			expectedErr: nil,
 		},
 		"required nullable null optional nullable non-null optional not nullable non-null": {
 			inputJson: `{"requiredNullableString":null,"requiredNotNullableString":"required-not-nullable","optionalNullableString":"optional-nullable","optionalNotNullableString":"optional-not-nullable"}`,
 			expectedStruct: example.ObjectKeysAdditionalPropertiesFalse{
-				RequiredNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNullableString{},
-				RequiredNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString{
-					Inner: "required-not-nullable",
-				},
-				OptionalNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNullableString{
-					Inner: new("optional-nullable"),
-				},
-				OptionalNotNullableString: &example.ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString{
-					Inner: "optional-not-nullable",
-				},
+				RequiredNotNullableString: "required-not-nullable",
+				OptionalNullableString:    new("optional-nullable"),
+				OptionalNotNullableString: new("optional-not-nullable"),
 			},
 			expectedErr: nil,
 		},
@@ -189,11 +121,10 @@ func TestObjectKeysAdditionalPropertiesFalseDecodeAllowedWays(t *testing.T) {
 			t.Parallel()
 
 			// Arrange
-			decoder := peekjson.NewDecoder(strings.NewReader(tt.inputJson))
 			var actualStruct example.ObjectKeysAdditionalPropertiesFalse
 
 			// Act
-			err := actualStruct.Decode(decoder)
+			err := actualStruct.UnmarshalJSON([]byte(tt.inputJson))
 
 			// Assert
 			if tt.expectedErr == nil {
@@ -334,11 +265,13 @@ func TestObjectKeysAdditionalPropertiesFalseDecodeRejectsInvalidShapes(t *testin
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			decoder := peekjson.NewDecoder(strings.NewReader(tt.inputJson))
+			// Arrange
 			var actualStruct example.ObjectKeysAdditionalPropertiesFalse
 
-			err := actualStruct.Decode(decoder)
+			// Act
+			err := actualStruct.UnmarshalJSON([]byte(tt.inputJson))
 
+			// Assert
 			require.ErrorIs(t, err, tt.expectedErr)
 		})
 	}

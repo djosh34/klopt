@@ -1,11 +1,11 @@
 package example
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 
-	json "github.com/go-json-experiment/json"
-	"github.com/go-json-experiment/json/jsontext"
+	"encoding/json"
 )
 
 var (
@@ -23,64 +23,80 @@ type ObjectKeysAdditionalPropertiesFalse struct {
 	OptionalNotNullableString *string `json:"optionalNotNullableString,omitzero"`
 }
 
-var _ json.UnmarshalerFrom = (*ObjectKeysAdditionalPropertiesFalse)(nil)
+var _ json.Unmarshaler = (*ObjectKeysAdditionalPropertiesFalse)(nil)
 
-func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSONFrom(d *jsontext.Decoder) error {
-	tok, err := d.ReadToken()
+var jsonNull = []byte("null")
+
+func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
 	if err != nil {
 		return err
 	}
-	if tok.Kind() != jsontext.KindBeginObject {
+	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
 
 	var hasRequiredNullableString bool
 	var hasRequiredNotNullableString bool
 
-	for d.PeekKind() != jsontext.KindEndObject {
-		nameTok, err := d.ReadToken()
-		if err != nil {
-			return err
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
 		}
-		if nameTok.Kind() != jsontext.KindString {
+
+		name, ok := nameTok.(string)
+		if !ok {
 			return NotAnObjectError
 		}
 
-		switch name := nameTok.String(); name {
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
 		case "requiredNullableString":
 			hasRequiredNullableString = true
-			if err := json.UnmarshalDecode(d, &o.RequiredNullableString); err != nil {
+
+			err = json.Unmarshal(value, o.RequiredNullableString)
+			if err != nil {
 				return err
 			}
 		case "requiredNotNullableString":
 			hasRequiredNotNullableString = true
-			if d.PeekKind() == jsontext.KindNull {
+
+			if bytes.Equal(value, jsonNull) {
 				return NullForNotNullableStringError
 			}
-			if err := json.UnmarshalDecode(d, &o.RequiredNotNullableString); err != nil {
+
+			err = json.Unmarshal(value, &o.RequiredNotNullableString)
+			if err != nil {
 				return err
 			}
 		case "optionalNullableString":
-			if err := json.UnmarshalDecode(d, &o.OptionalNullableString); err != nil {
+			err = json.Unmarshal(value, o.OptionalNullableString)
+			if err != nil {
 				return err
 			}
+
 		case "optionalNotNullableString":
-			if d.PeekKind() == jsontext.KindNull {
+
+			if bytes.Equal(value, jsonNull) {
 				return NullForNotNullableStringError
 			}
-			if err := json.UnmarshalDecode(d, &o.OptionalNotNullableString); err != nil {
+
+			err = json.Unmarshal(value, o.OptionalNotNullableString)
+			if err != nil {
 				return err
 			}
 		default:
-			if err := d.SkipValue(); err != nil {
-				return err
-			}
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
-	}
-
-	if _, err := d.ReadToken(); err != nil {
-		return err
 	}
 
 	if !hasRequiredNullableString {
