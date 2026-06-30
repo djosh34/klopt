@@ -102,6 +102,147 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 	}, generateContext.Operations)
 }
 
+func TestStringContextGenerateRequiredNotNullableString(t *testing.T) {
+	schemaContext := StringContext{
+		ContextName: "RequiredNotNullableString",
+	}
+
+	require.Equal(t, `type RequiredNotNullableString string
+
+var _ json.Unmarshaler = new(RequiredNotNullableString)
+
+func (s *RequiredNotNullableString) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+
+	*s = RequiredNotNullableString(value)
+	return nil
+}
+`, schemaContext.Generate())
+}
+
+func TestObjectContextGenerateObjectKeysAdditionalPropertiesFalse(t *testing.T) {
+	schemaContext := ObjectContext{
+		ContextName:          "ObjectKeysAdditionalPropertiesFalse",
+		AdditionalProperties: false,
+		Required: []string{
+			"requiredNullableString",
+			"requiredNotNullableString",
+		},
+		Properties: map[string]SchemaObject{
+			"requiredNullableString": StringContext{
+				ContextName: "RequiredNullableString",
+				Nullable:    true,
+			},
+			"requiredNotNullableString": StringContext{
+				ContextName: "RequiredNotNullableString",
+			},
+			"optionalNullableString": StringContext{
+				ContextName: "OptionalNullableString",
+				Nullable:    true,
+			},
+			"optionalNotNullableString": StringContext{
+				ContextName: "OptionalNotNullableString",
+			},
+		},
+	}
+
+	require.Equal(t, `type ObjectKeysAdditionalPropertiesFalse struct {
+	RequiredNullableString    RequiredNullableString     `+"`"+`json:"requiredNullableString"`+"`"+`
+	RequiredNotNullableString RequiredNotNullableString  `+"`"+`json:"requiredNotNullableString"`+"`"+`
+	OptionalNullableString    *OptionalNullableString    `+"`"+`json:"optionalNullableString,omitzero"`+"`"+`
+	OptionalNotNullableString *OptionalNotNullableString `+"`"+`json:"optionalNotNullableString,omitzero"`+"`"+`
+}
+
+var _ json.Unmarshaler = (*ObjectKeysAdditionalPropertiesFalse)(nil)
+
+func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+
+	var hasRequiredNullableString bool
+	var hasRequiredNotNullableString bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name, ok := nameTok.(string)
+		if !ok {
+			return NotAnObjectError
+		}
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "requiredNullableString":
+			hasRequiredNullableString = true
+
+			err = json.Unmarshal(value, &o.RequiredNullableString)
+			if err != nil {
+				return err
+			}
+		case "requiredNotNullableString":
+			hasRequiredNotNullableString = true
+
+			err = json.Unmarshal(value, &o.RequiredNotNullableString)
+			if err != nil {
+				return err
+			}
+		case "optionalNullableString":
+			var optionalNullableString OptionalNullableString
+			err = json.Unmarshal(value, &optionalNullableString)
+			if err != nil {
+				return err
+			}
+			o.OptionalNullableString = &optionalNullableString
+
+		case "optionalNotNullableString":
+
+			var optionalNotNullableString OptionalNotNullableString
+			err = json.Unmarshal(value, &optionalNotNullableString)
+			if err != nil {
+				return err
+			}
+			o.OptionalNotNullableString = &optionalNotNullableString
+		default:
+			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
+		}
+	}
+
+	if !hasRequiredNullableString {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNullableString")
+	}
+	if !hasRequiredNotNullableString {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNotNullableString")
+	}
+
+	return nil
+}
+`, schemaContext.Generate())
+}
+
 func TestFilterOperationsKeepsOnlyRequestedOperation(t *testing.T) {
 	openapiExamplePath := filepath.Join(GetRepoRoot(t), "pkg", "decode", "example", "openapi.yaml")
 	generateContext, err := LoadOpenapi(t.Context(), openapiExamplePath)

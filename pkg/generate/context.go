@@ -13,8 +13,8 @@ type GenerateContext struct {
 }
 
 type SchemaObject interface {
-	// Only reason this exists, is to differentiate for SchemaObject and non-SchemaObject
-	DummyFunc()
+	Name() string
+	Generate() string
 }
 
 var _ SchemaObject = new(ObjectContext)
@@ -22,6 +22,7 @@ var _ SchemaObject = new(StringContext)
 var _ SchemaObject = new(ArrayContext)
 
 type ObjectContext struct {
+	ContextName                string
 	Nullable                   bool
 	AdditionalProperties       bool
 	AdditionalPropertiesSchema SchemaObject
@@ -30,16 +31,22 @@ type ObjectContext struct {
 }
 
 type StringContext struct {
-	Nullable bool
+	ContextName string
+	Nullable    bool
 }
 type ArrayContext struct {
-	Nullable bool
-	Items    SchemaObject
+	ContextName string
+	Nullable    bool
+	Items       SchemaObject
 }
 
-func (o ObjectContext) DummyFunc() {}
-func (o StringContext) DummyFunc() {}
-func (o ArrayContext) DummyFunc()  {}
+func (o ObjectContext) Name() string { return o.ContextName }
+func (o StringContext) Name() string { return o.ContextName }
+func (o ArrayContext) Name() string  { return o.ContextName }
+
+func (o ObjectContext) Generate() string { panic("TODO: implement ObjectContext.Generate") }
+func (o StringContext) Generate() string { panic("TODO: implement StringContext.Generate") }
+func (o ArrayContext) Generate() string  { panic("TODO: implement ArrayContext.Generate") }
 
 func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*openapi3.Schema, error) {
 	if c.Document == nil || c.Document.Paths == nil {
