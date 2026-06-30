@@ -16,17 +16,11 @@ var (
 	NonStringForStringSchemaError = errors.New("non-string for string schema")
 )
 
-type RequiredNullableString string
-type RequiredNotNullableString string
-type OptionalNullableString string
-type OptionalNotNullableString string
+var jsonNull = []byte("null")
 
-var (
-	_ json.Unmarshaler = (*RequiredNullableString)(nil)
-	_ json.Unmarshaler = (*RequiredNotNullableString)(nil)
-	_ json.Unmarshaler = (*OptionalNullableString)(nil)
-	_ json.Unmarshaler = (*OptionalNotNullableString)(nil)
-)
+type RequiredNullableString string
+
+var _ json.Unmarshaler = new(RequiredNullableString)
 
 func (s *RequiredNullableString) UnmarshalJSON(data []byte) error {
 	var value string
@@ -39,6 +33,10 @@ func (s *RequiredNullableString) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type RequiredNotNullableString string
+
+var _ json.Unmarshaler = new(RequiredNotNullableString)
+
 func (s *RequiredNotNullableString) UnmarshalJSON(data []byte) error {
 	var value string
 	err := json.Unmarshal(data, &value)
@@ -50,6 +48,10 @@ func (s *RequiredNotNullableString) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type OptionalNullableString string
+
+var _ json.Unmarshaler = new(OptionalNullableString)
+
 func (s *OptionalNullableString) UnmarshalJSON(data []byte) error {
 	var value string
 	err := json.Unmarshal(data, &value)
@@ -60,6 +62,10 @@ func (s *OptionalNullableString) UnmarshalJSON(data []byte) error {
 	*s = OptionalNullableString(value)
 	return nil
 }
+
+type OptionalNotNullableString string
+
+var _ json.Unmarshaler = new(OptionalNotNullableString)
 
 func (s *OptionalNotNullableString) UnmarshalJSON(data []byte) error {
 	var value string
@@ -80,8 +86,6 @@ type ObjectKeysAdditionalPropertiesFalse struct {
 }
 
 var _ json.Unmarshaler = (*ObjectKeysAdditionalPropertiesFalse)(nil)
-
-var jsonNull = []byte("null")
 
 func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))

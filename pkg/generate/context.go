@@ -37,9 +37,9 @@ type ArrayContext struct {
 	Items    SchemaObject
 }
 
-func (o *ObjectContext) DummyFunc() {}
-func (o *StringContext) DummyFunc() {}
-func (o *ArrayContext) DummyFunc()  {}
+func (o ObjectContext) DummyFunc() {}
+func (o StringContext) DummyFunc() {}
+func (o ArrayContext) DummyFunc()  {}
 
 func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*openapi3.Schema, error) {
 	if c.Document == nil || c.Document.Paths == nil {
