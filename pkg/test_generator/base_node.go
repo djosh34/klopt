@@ -22,8 +22,7 @@ func (b BaseNode) InvalidCases() []Case {
 
 func nullCase() Case {
 	return Case{
-		GenerateValid: func(valid, invalid map[string]SchemaNode) json.RawMessage {
-			return json.RawMessage(`null`)
-		},
+		Name:  "null",
+		Value: json.RawMessage(`null`),
 	}
 }

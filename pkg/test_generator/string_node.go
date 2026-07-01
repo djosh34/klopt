@@ -20,8 +20,7 @@ func (s *StringNode) InvalidCases() []Case {
 
 func stringCase() Case {
 	return Case{
-		GenerateValid: func(valid, invalid map[string]SchemaNode) json.RawMessage {
-			return json.RawMessage(`"valid-string"`)
-		},
+		Name:  "string",
+		Value: json.RawMessage(`"valid-string"`),
 	}
 }

@@ -1,10 +1,12 @@
 package testgenerator
 
 import (
-	"bytes"
 	"encoding/json"
 	"sort"
+	"strconv"
 )
+
+const additionalPropertyCaseKey = "__decode_and_validate_generator_additional_property_61f80f12f8b14e2f__"
 
 var _ Caseable = new(ObjectNode)
 
@@ -16,85 +18,82 @@ type ObjectNode struct {
 }
 
 func (o *ObjectNode) ValidCases() []Case {
-	cases := append([]Case{}, o.BaseNode.ValidCases()...)
-	cases = append(cases, o.objectCase(o.requiredFields()...))
+	requiredNames, optionalNames, requiredObject := o.objectCaseData()
 
-	for _, name := range o.requiredPropertyNames() {
+	cases := append([]Case{}, o.BaseNode.ValidCases()...)
+	cases = append(cases, objectCase("required properties", requiredObject))
+
+	for _, name := range requiredNames {
 		schema, ok := o.Properties[name]
 		if !ok {
 			continue
 		}
 
-		for index := 1; index < len(schema.ValidCases()); index++ {
-			cases = append(cases, o.objectCase(
-				replaceField(o.requiredFields(), objectFieldCase{
-					name:      name,
-					schema:    schema,
-					valid:     true,
-					caseIndex: index,
-				})...,
+		validCases := schema.ValidCases()
+		for index := 1; index < len(validCases); index++ {
+			object := cloneObject(requiredObject)
+			object[name] = validCases[index].Value
+
+			cases = append(cases, objectCase(
+				"required property "+name+" "+validCases[index].Name,
+				object,
 			))
 		}
 	}
 
-	for _, name := range o.optionalPropertyNames() {
+	for _, name := range optionalNames {
 		schema := o.Properties[name]
-		for index := range schema.ValidCases() {
-			cases = append(cases, o.objectCase(
-				append(o.requiredFields(), objectFieldCase{
-					name:      name,
-					schema:    schema,
-					valid:     true,
-					caseIndex: index,
-				})...,
+		for _, validCase := range schema.ValidCases() {
+			object := cloneObject(requiredObject)
+			object[name] = validCase.Value
+
+			cases = append(cases, objectCase(
+				"optional property "+name+" "+validCase.Name,
+				object,
 			))
 		}
 	}
 
-	return append(cases, o.additionalPropertyValidCases()...)
+	return append(cases, o.additionalPropertyValidCases(requiredObject)...)
 }
 
 func (o *ObjectNode) InvalidCases() []Case {
+	requiredNames, optionalNames, requiredObject := o.objectCaseData()
+
 	cases := append([]Case{}, o.BaseNode.InvalidCases()...)
 	cases = append(cases,
-		rawCase(`"not-object"`),
-		rawCase(`123`),
-		rawCase(`true`),
-		rawCase(`[]`),
+		Case{Name: "string", Value: json.RawMessage(`"not-object"`)},
+		Case{Name: "number", Value: json.RawMessage(`123`)},
+		Case{Name: "boolean", Value: json.RawMessage(`true`)},
+		Case{Name: "array", Value: json.RawMessage(`[]`)},
 	)
 
-	if len(o.requiredPropertyNames()) > 0 {
-		cases = append(cases, o.objectCase())
+	if len(requiredNames) > 0 {
+		cases = append(cases, objectCase("missing required properties", nil))
 	}
 
-	if len(o.requiredPropertyNames()) > 1 {
-		for _, missingName := range o.requiredPropertyNames() {
-			var fields []objectFieldCase
-			for _, field := range o.requiredFields() {
-				if field.name != missingName {
-					fields = append(fields, field)
-				}
-			}
-			cases = append(cases, o.objectCase(fields...))
+	if len(requiredNames) > 1 {
+		for _, missingName := range requiredNames {
+			object := cloneObject(requiredObject)
+			delete(object, missingName)
+			cases = append(cases, objectCase("missing required property "+missingName, object))
 		}
 	}
 
-	for _, name := range o.propertyNames() {
+	for _, name := range append(requiredNames, optionalNames...) {
 		schema := o.Properties[name]
-		for index := range schema.InvalidCases() {
-			fields := append([]objectFieldCase{}, o.requiredFields()...)
-			fields = replaceField(fields, objectFieldCase{
-				name:      name,
-				schema:    schema,
-				valid:     false,
-				caseIndex: index,
-			})
+		for _, invalidCase := range schema.InvalidCases() {
+			object := cloneObject(requiredObject)
+			object[name] = invalidCase.Value
 
-			cases = append(cases, o.objectCase(fields...))
+			cases = append(cases, objectCase(
+				"invalid property "+name+" "+invalidCase.Name,
+				object,
+			))
 		}
 	}
 
-	return append(cases, o.additionalPropertyInvalidCases()...)
+	return append(cases, o.additionalPropertyInvalidCases(requiredObject)...)
 }
 
 type AdditionalPropertiesNode struct {
@@ -102,221 +101,130 @@ type AdditionalPropertiesNode struct {
 	Schema  *SchemaNode
 }
 
-type objectFieldCase struct {
-	name      string
-	schema    SchemaNode
-	valid     bool
-	caseIndex int
-	raw       json.RawMessage
-}
+func objectCase(name string, object map[string]json.RawMessage) Case {
+	if object == nil {
+		object = map[string]json.RawMessage{}
+	}
 
-func (o *ObjectNode) objectCase(fields ...objectFieldCase) Case {
+	value, err := json.Marshal(object)
+	if err != nil {
+		panic(err)
+	}
+
 	return Case{
-		GenerateValid: func(valid, invalid map[string]SchemaNode) json.RawMessage {
-			return objectRawMessage(fields)
-		},
-		RequiredValid:   requiredSchemas(fields, true),
-		RequiredInvalid: requiredSchemas(fields, false),
+		Name:  name,
+		Value: value,
 	}
 }
 
-func (o *ObjectNode) additionalPropertyValidCases() []Case {
+func (o *ObjectNode) additionalPropertyValidCases(requiredObject map[string]json.RawMessage) []Case {
+	additionalPropertyKey := o.additionalPropertyKey()
+
 	switch {
 	case o.AdditionalProperties.Schema != nil:
 		var cases []Case
 		schema := *o.AdditionalProperties.Schema
-		for index := range schema.ValidCases() {
-			cases = append(cases, o.objectCase(
-				append(o.requiredFields(), objectFieldCase{
-					name:      "extra",
-					schema:    schema,
-					valid:     true,
-					caseIndex: index,
-				})...,
+		for _, validCase := range schema.ValidCases() {
+			object := cloneObject(requiredObject)
+			object[additionalPropertyKey] = validCase.Value
+
+			cases = append(cases, objectCase(
+				"additional property "+validCase.Name,
+				object,
 			))
 		}
 		return cases
 	case o.AdditionalProperties.Allowed != nil && !*o.AdditionalProperties.Allowed:
 		return nil
 	default:
-		return []Case{o.objectCase(
-			append(o.requiredFields(), objectFieldCase{
-				name:  "extra",
-				valid: true,
-				raw:   json.RawMessage(`"additional-property"`),
-			})...,
-		)}
+		object := cloneObject(requiredObject)
+		object[additionalPropertyKey] = json.RawMessage(`"additional-property"`)
+
+		return []Case{objectCase("additional property", object)}
 	}
 }
 
-func (o *ObjectNode) additionalPropertyInvalidCases() []Case {
+func (o *ObjectNode) additionalPropertyInvalidCases(requiredObject map[string]json.RawMessage) []Case {
+	additionalPropertyKey := o.additionalPropertyKey()
+
 	switch {
 	case o.AdditionalProperties.Schema != nil:
 		var cases []Case
 		schema := *o.AdditionalProperties.Schema
-		for index := range schema.InvalidCases() {
-			cases = append(cases, o.objectCase(
-				append(o.requiredFields(), objectFieldCase{
-					name:      "extra",
-					schema:    schema,
-					valid:     false,
-					caseIndex: index,
-				})...,
+		for _, invalidCase := range schema.InvalidCases() {
+			object := cloneObject(requiredObject)
+			object[additionalPropertyKey] = invalidCase.Value
+
+			cases = append(cases, objectCase(
+				"invalid additional property "+invalidCase.Name,
+				object,
 			))
 		}
 		return cases
 	case o.AdditionalProperties.Allowed != nil && !*o.AdditionalProperties.Allowed:
-		return []Case{o.objectCase(
-			append(o.requiredFields(), objectFieldCase{
-				name:  "extra",
-				valid: false,
-				raw:   json.RawMessage(`"not-allowed"`),
-			})...,
-		)}
+		object := cloneObject(requiredObject)
+		object[additionalPropertyKey] = json.RawMessage(`"not-allowed"`)
+
+		return []Case{objectCase("additional property not allowed", object)}
 	default:
 		return nil
 	}
 }
 
-func (o *ObjectNode) requiredFields() []objectFieldCase {
-	var fields []objectFieldCase
-	for _, name := range o.requiredPropertyNames() {
+func (o *ObjectNode) objectCaseData() ([]string, []string, map[string]json.RawMessage) {
+	requiredNames := make([]string, 0, len(o.Required))
+	requiredSet := map[string]struct{}{}
+	for _, name := range o.Required {
+		if _, ok := requiredSet[name]; ok {
+			continue
+		}
+
+		requiredSet[name] = struct{}{}
+		requiredNames = append(requiredNames, name)
+	}
+
+	requiredObject := map[string]json.RawMessage{}
+	for _, name := range requiredNames {
 		schema, ok := o.Properties[name]
 		if !ok {
 			continue
 		}
 
-		fields = append(fields, objectFieldCase{
-			name:   name,
-			schema: schema,
-			valid:  true,
-		})
-	}
-
-	return fields
-}
-
-func (o *ObjectNode) requiredPropertyNames() []string {
-	seen := map[string]struct{}{}
-	var names []string
-	for _, name := range o.Required {
-		if _, ok := seen[name]; ok {
-			continue
+		validCases := schema.ValidCases()
+		if len(validCases) > 0 {
+			requiredObject[name] = validCases[0].Value
 		}
-		seen[name] = struct{}{}
-		names = append(names, name)
 	}
 
-	return names
-}
-
-func (o *ObjectNode) optionalPropertyNames() []string {
-	required := map[string]struct{}{}
-	for _, name := range o.requiredPropertyNames() {
-		required[name] = struct{}{}
-	}
-
-	var names []string
+	optionalNames := make([]string, 0, len(o.Properties))
 	for name := range o.Properties {
-		if _, ok := required[name]; !ok {
-			names = append(names, name)
+		if _, ok := requiredSet[name]; !ok {
+			optionalNames = append(optionalNames, name)
 		}
 	}
-	sort.Strings(names)
+	sort.Strings(optionalNames)
 
-	return names
+	return requiredNames, optionalNames, requiredObject
 }
 
-func (o *ObjectNode) propertyNames() []string {
-	var names []string
-	seen := map[string]struct{}{}
-	for _, name := range o.requiredPropertyNames() {
-		if _, ok := o.Properties[name]; ok {
-			names = append(names, name)
-			seen[name] = struct{}{}
+func (o *ObjectNode) additionalPropertyKey() string {
+	if _, ok := o.Properties[additionalPropertyCaseKey]; !ok {
+		return additionalPropertyCaseKey
+	}
+
+	for suffix := 2; ; suffix++ {
+		key := additionalPropertyCaseKey + "_" + strconv.Itoa(suffix)
+		if _, ok := o.Properties[key]; !ok {
+			return key
 		}
 	}
-
-	for _, name := range o.optionalPropertyNames() {
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		names = append(names, name)
-	}
-
-	return names
 }
 
-func objectRawMessage(fields []objectFieldCase) json.RawMessage {
-	var buffer bytes.Buffer
-	buffer.WriteByte('{')
-
-	for index, field := range fields {
-		if index > 0 {
-			buffer.WriteByte(',')
-		}
-
-		name, _ := json.Marshal(field.name)
-		buffer.Write(name)
-		buffer.WriteByte(':')
-		buffer.Write(field.rawMessage())
+func cloneObject(object map[string]json.RawMessage) map[string]json.RawMessage {
+	clone := make(map[string]json.RawMessage, len(object))
+	for name, value := range object {
+		clone[name] = value
 	}
 
-	buffer.WriteByte('}')
-	return buffer.Bytes()
-}
-
-func (f objectFieldCase) rawMessage() json.RawMessage {
-	if f.raw != nil {
-		return f.raw
-	}
-
-	var cases []Case
-	if f.valid {
-		cases = f.schema.ValidCases()
-	} else {
-		cases = f.schema.InvalidCases()
-	}
-
-	if f.caseIndex >= len(cases) {
-		return nil
-	}
-
-	return cases[f.caseIndex].GenerateValid(nil, nil)
-}
-
-func replaceField(fields []objectFieldCase, replacement objectFieldCase) []objectFieldCase {
-	for index, field := range fields {
-		if field.name == replacement.name {
-			fields[index] = replacement
-			return fields
-		}
-	}
-
-	return append(fields, replacement)
-}
-
-func requiredSchemas(fields []objectFieldCase, valid bool) map[string]SchemaNode {
-	schemas := map[string]SchemaNode{}
-	for _, field := range fields {
-		if field.raw != nil || field.valid != valid {
-			continue
-		}
-
-		schemas[field.name] = field.schema
-	}
-
-	if len(schemas) == 0 {
-		return nil
-	}
-
-	return schemas
-}
-
-func rawCase(raw string) Case {
-	return Case{
-		GenerateValid: func(valid, invalid map[string]SchemaNode) json.RawMessage {
-			return json.RawMessage(raw)
-		},
-	}
+	return clone
 }

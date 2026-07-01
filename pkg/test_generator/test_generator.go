@@ -10,9 +10,8 @@ type Caseable interface {
 	InvalidCases() []Case
 }
 type Case struct {
-	GenerateValid   func(valid, invalid map[string]SchemaNode) json.RawMessage
-	RequiredValid   map[string]SchemaNode
-	RequiredInvalid map[string]SchemaNode
+	Name  string
+	Value json.RawMessage
 }
 
 func GenerateCasesFromOpenAPIFile(openapiPath string) ([]Case, error) {

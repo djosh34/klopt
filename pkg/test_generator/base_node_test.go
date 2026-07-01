@@ -11,9 +11,7 @@ func TestBaseNodeValidCasesIncludeNullOnlyWhenNullable(t *testing.T) {
 	nullableNode := BaseNode{Nullable: true}
 	validCases := nullableNode.ValidCases()
 	require.Len(t, validCases, 1)
-	require.Equal(t, json.RawMessage(`null`), validCases[0].GenerateValid(nil, nil))
-	require.Nil(t, validCases[0].RequiredValid)
-	require.Nil(t, validCases[0].RequiredInvalid)
+	require.Equal(t, Case{Name: "null", Value: json.RawMessage(`null`)}, validCases[0])
 
 	notNullableNode := BaseNode{Nullable: false}
 	require.Empty(t, notNullableNode.ValidCases())
@@ -26,7 +24,5 @@ func TestBaseNodeInvalidCasesIncludeNullOnlyWhenNotNullable(t *testing.T) {
 	notNullableNode := BaseNode{Nullable: false}
 	invalidCases := notNullableNode.InvalidCases()
 	require.Len(t, invalidCases, 1)
-	require.Equal(t, json.RawMessage(`null`), invalidCases[0].GenerateValid(nil, nil))
-	require.Nil(t, invalidCases[0].RequiredValid)
-	require.Nil(t, invalidCases[0].RequiredInvalid)
+	require.Equal(t, Case{Name: "null", Value: json.RawMessage(`null`)}, invalidCases[0])
 }

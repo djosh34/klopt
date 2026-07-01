@@ -15,9 +15,7 @@ func TestStringNodeValidCasesAlwaysIncludeString(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cases := node.ValidCases()
 			require.NotEmpty(t, cases)
-			require.Equal(t, json.RawMessage(`"valid-string"`), cases[0].GenerateValid(nil, nil))
-			require.Nil(t, cases[0].RequiredValid)
-			require.Nil(t, cases[0].RequiredInvalid)
+			require.Equal(t, Case{Name: "string", Value: json.RawMessage(`"valid-string"`)}, cases[0])
 		})
 	}
 }
@@ -26,7 +24,7 @@ func TestStringNodeValidCasesIncludeNullOnlyWhenNullable(t *testing.T) {
 	nullableNode := StringNode{BaseNode: BaseNode{Nullable: true}}
 	nullableCases := nullableNode.ValidCases()
 	require.Len(t, nullableCases, 2)
-	require.Equal(t, json.RawMessage(`null`), nullableCases[1].GenerateValid(nil, nil))
+	require.Equal(t, Case{Name: "null", Value: json.RawMessage(`null`)}, nullableCases[1])
 
 	notNullableNode := StringNode{BaseNode: BaseNode{Nullable: false}}
 	notNullableCases := notNullableNode.ValidCases()
@@ -40,7 +38,5 @@ func TestStringNodeInvalidCasesIncludeNullOnlyWhenNotNullable(t *testing.T) {
 	notNullableNode := StringNode{BaseNode: BaseNode{Nullable: false}}
 	invalidCases := notNullableNode.InvalidCases()
 	require.Len(t, invalidCases, 1)
-	require.Equal(t, json.RawMessage(`null`), invalidCases[0].GenerateValid(nil, nil))
-	require.Nil(t, invalidCases[0].RequiredValid)
-	require.Nil(t, invalidCases[0].RequiredInvalid)
+	require.Equal(t, Case{Name: "null", Value: json.RawMessage(`null`)}, invalidCases[0])
 }
