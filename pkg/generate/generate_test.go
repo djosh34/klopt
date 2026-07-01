@@ -1,12 +1,11 @@
 package generate
 
 import (
-	"io/fs"
+	"bytes"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -307,60 +306,10 @@ func requireSameFiles(t *testing.T, expectedDir string, actualDir string, except
 		actual, err := os.ReadFile(filepath.Join(actualDir, filepath.FromSlash(rel)))
 		require.NoError(t, err)
 
-		require.Equal(t, expected, actual, "file content differs: %s", rel)
-	}
-}
+		if !bytes.Equal(expected, actual) {
+			PrettyDiff(t, string(expected), string(actual))
 
-func comparableFiles(t *testing.T, root string, exceptions map[string]struct{}) map[string]struct{} {
-	t.Helper()
-
-	files := map[string]struct{}{}
-
-	err := filepath.WalkDir(root, func(path string, dirEntry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-
-		if rel == "." {
-			return nil
-		}
-
-		rel = filepath.ToSlash(rel)
-		if exceptedPath(rel, exceptions) {
-			if dirEntry.IsDir() {
-				return filepath.SkipDir
-			}
-
-			return nil
-		}
-
-		if dirEntry.IsDir() {
-			return nil
-		}
-
-		files[rel] = struct{}{}
-		return nil
-	})
-	require.NoError(t, err)
-
-	return files
-}
-
-func exceptedPath(rel string, exceptions map[string]struct{}) bool {
-	if _, ok := exceptions[rel]; ok {
-		return true
-	}
-
-	for exception := range exceptions {
-		if strings.HasPrefix(rel, exception+"/") {
-			return true
+			t.Fail()
 		}
 	}
-
-	return false
 }

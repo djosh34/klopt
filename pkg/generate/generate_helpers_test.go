@@ -19,6 +19,13 @@ var (
 	relativeFileURIPrefixRegex = regexp.MustCompile(`file://([^/])`)
 )
 
+const (
+	ansiRed   = "\x1b[31m"
+	ansiGreen = "\x1b[32m"
+	ansiCyan  = "\x1b[36m"
+	ansiReset = "\x1b[0m"
+)
+
 func GenerateWithPathError(t *testing.T, generateContext *GenerateContext, dir string) error {
 	t.Helper()
 
