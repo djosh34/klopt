@@ -18,7 +18,6 @@ import (
 
 func TestGeneratedCasesValidateAgainstOpenAPISchema(t *testing.T) {
 	openapiPath := testdataOpenAPIPath("nullable_object_with_nullable_string.yaml")
-	requestPath := "/nullable-object-keys-additional-properties-false"
 	content, err := os.ReadFile(openapiPath)
 	require.NoError(t, err)
 
@@ -28,32 +27,38 @@ func TestGeneratedCasesValidateAgainstOpenAPISchema(t *testing.T) {
 	model, buildErr := document.BuildV3Model()
 	require.NoError(t, buildErr)
 
-	pathItem := model.Model.Paths.PathItems.GetOrZero(requestPath)
-	require.NotNil(t, pathItem)
-
 	openAPIRoot := unmarshalYAMLDocument(t, content)
 	validator := schema_validation.NewSchemaValidator(config.WithOpenAPIMode())
+	testedSchemas := 0
 
-	for operationPair := pathItem.GetOperations().First(); operationPair != nil; operationPair = operationPair.Next() {
-		method := operationPair.Key()
-		operation := operationPair.Value()
-		if operation.RequestBody == nil || operation.RequestBody.Content == nil {
-			continue
-		}
+	for pathPair := model.Model.Paths.PathItems.First(); pathPair != nil; pathPair = pathPair.Next() {
+		requestPath := pathPair.Key()
+		pathItem := pathPair.Value()
 
-		for mediaTypePair := operation.RequestBody.Content.First(); mediaTypePair != nil; mediaTypePair = mediaTypePair.Next() {
-			mediaType := mediaTypePair.Key()
-			openAPISchema := mediaTypePair.Value().Schema
-			require.NotNil(t, openAPISchema)
+		for operationPair := pathItem.GetOperations().First(); operationPair != nil; operationPair = operationPair.Next() {
+			method := operationPair.Key()
+			operation := operationPair.Value()
+			if operation.RequestBody == nil || operation.RequestBody.Content == nil {
+				continue
+			}
 
-			var generatorSchema SchemaNode
-			schemaNode := findSchemaNode(t, openAPIRoot, requestPath, method, mediaType)
-			require.NoError(t, schemaNode.Decode(&generatorSchema))
+			for mediaTypePair := operation.RequestBody.Content.First(); mediaTypePair != nil; mediaTypePair = mediaTypePair.Next() {
+				mediaType := mediaTypePair.Key()
+				openAPISchema := mediaTypePair.Value().Schema
+				require.NotNil(t, openAPISchema)
 
-			testGeneratedCases(t, validator, openAPISchema.Schema(), true, generatorSchema.ValidCases())
-			testGeneratedCases(t, validator, openAPISchema.Schema(), false, generatorSchema.InvalidCases())
+				var generatorSchema SchemaNode
+				schemaNode := findSchemaNode(t, openAPIRoot, requestPath, method, mediaType)
+				require.NoError(t, schemaNode.Decode(&generatorSchema))
+
+				testGeneratedCases(t, validator, openAPISchema.Schema(), true, generatorSchema.ValidCases())
+				testGeneratedCases(t, validator, openAPISchema.Schema(), false, generatorSchema.InvalidCases())
+				testedSchemas++
+			}
 		}
 	}
+
+	require.NotZero(t, testedSchemas)
 }
 
 func testdataOpenAPIPath(name string) string {
