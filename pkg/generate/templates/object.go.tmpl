@@ -1,25 +1,25 @@
 {{- define "object_property" }}
 		case "{{ .PropertyName }}":
 			{{- if .Required }}
-			has{{ .Schema.TypeName }} = true
+			has{{ .SchemaTypeName }} = true
 			{{- end }}
 
-			var {{ .LocalName }} {{ .Schema.TypeName }}
+			var {{ .LocalName }} {{ .SchemaTypeName }}
 			err = json.Unmarshal(value, &{{ .LocalName }})
 			if err != nil {
 				return err
 			}
 			{{- if .Required }}
-			o.{{ .Schema.TypeName }} = {{ .LocalName }}
+			o.{{ .SchemaTypeName }} = {{ .LocalName }}
 			{{- else }}
-			o.{{ .Schema.TypeName }} = &{{ .LocalName }}
+			o.{{ .SchemaTypeName }} = &{{ .LocalName }}
 			{{- end }}
 {{- end }}
 
 {{- $name := .TypeName -}}
 type {{ $name }} struct {
 {{- range .Properties }}
-	{{ .Schema.TypeName }} {{ .FieldType }} {{ .JSONTag }}
+	{{ .SchemaTypeName }} {{ .FieldType }} {{ .JSONTag }}
 {{- end }}
 }
 
@@ -45,7 +45,7 @@ func (o *{{ $name }}) UnmarshalJSON(data []byte) error {
 
 {{- range .Properties }}
 {{- if .Required }}
-	var has{{ .Schema.TypeName }} bool
+	var has{{ .SchemaTypeName }} bool
 {{- end }}
 {{- end }}
 
@@ -73,7 +73,7 @@ func (o *{{ $name }}) UnmarshalJSON(data []byte) error {
 		default:
 {{- if .AdditionalProperties }}
 {{- if .AdditionalPropertiesSchema }}
-			var additionalProperty {{ .AdditionalPropertiesSchema.Name }}
+			var additionalProperty {{ .AdditionalPropertiesTypeName }}
 			err = json.Unmarshal(value, &additionalProperty)
 			if err != nil {
 				return err
@@ -89,7 +89,7 @@ func (o *{{ $name }}) UnmarshalJSON(data []byte) error {
 
 {{- range .Properties }}
 {{- if .Required }}
-	if !has{{ .Schema.TypeName }} {
+	if !has{{ .SchemaTypeName }} {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "{{ .PropertyName }}")
 	}
 {{- end }}

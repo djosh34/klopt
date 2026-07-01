@@ -37,7 +37,7 @@ func TestJSONRequestBodySchemasKeepsOnlyOperationsWithJSONBodySchema(t *testing.
 	}, schemas)
 }
 
-func TestJSONRequestBodySchemaObjectsConvertsRequestBodySchemas(t *testing.T) {
+func TestJSONRequestBodyModelSchemasConvertsRequestBodySchemas(t *testing.T) {
 	openapiExamplePath := filepath.Join(GetRepoRoot(t), "pkg", "decode", "example", "openapi.yaml")
 	generateContext, err := LoadOpenapi(t.Context(), openapiExamplePath)
 	require.NoError(t, err)
@@ -45,50 +45,46 @@ func TestJSONRequestBodySchemaObjectsConvertsRequestBodySchemas(t *testing.T) {
 	err = generateContext.FilterOperations("objectKeysAdditionalPropertiesFalse")
 	require.NoError(t, err)
 
-	schemaObjects, err := generateContext.JSONRequestBodySchemaObjects()
+	schemas, err := generateContext.JSONRequestBodyModelSchemas()
 	require.NoError(t, err)
 
-	require.Equal(t, []SchemaObject{
-		{
-			TypeName: "ObjectKeysAdditionalPropertiesFalse",
-			Generatable: &ObjectContext{
-				AdditionalProperties: false,
-				Properties: []ObjectFieldContext{
-					{
-						PropertyName: "optionalNotNullableString",
-						Schema: SchemaObject{
-							Generatable: &StringContext{},
-						},
+	require.Equal(t, []Schema{
+		&ObjectSchema{
+			BaseSchema:           BaseSchema{TypeName: "ObjectKeysAdditionalPropertiesFalse"},
+			AdditionalProperties: false,
+			Properties: []ObjectFieldContext{
+				{
+					PropertyName: "optionalNotNullableString",
+					Schema: &StringSchema{
+						BaseSchema: BaseSchema{TypeName: "OptionalNotNullableString"},
 					},
-					{
-						PropertyName: "optionalNullableString",
-						Schema: SchemaObject{
-							Generatable: &StringContext{},
-							Nullable:    true,
-						},
+				},
+				{
+					PropertyName: "optionalNullableString",
+					Schema: &StringSchema{
+						BaseSchema: BaseSchema{TypeName: "OptionalNullableString", Nullable: true},
 					},
-					{
-						PropertyName: "requiredNotNullableString",
-						Schema: SchemaObject{
-							Generatable: &StringContext{},
-						},
-						Required: true,
+				},
+				{
+					PropertyName: "requiredNotNullableString",
+					Schema: &StringSchema{
+						BaseSchema: BaseSchema{TypeName: "RequiredNotNullableString"},
 					},
-					{
-						PropertyName: "requiredNullableString",
-						Schema: SchemaObject{
-							Generatable: &StringContext{},
-							Nullable:    true,
-						},
-						Required: true,
+					Required: true,
+				},
+				{
+					PropertyName: "requiredNullableString",
+					Schema: &StringSchema{
+						BaseSchema: BaseSchema{TypeName: "RequiredNullableString", Nullable: true},
 					},
+					Required: true,
 				},
 			},
 		},
-	}, schemaObjects)
+	}, schemas)
 }
 
-func TestSchemaObjectFromOpenAPISchemaRecursesObjectProperties(t *testing.T) {
+func TestSchemaFromOpenAPISchemaRecursesObjectProperties(t *testing.T) {
 	nestedSchema := openapi3.NewObjectSchema()
 	nestedSchema.WithProperty("child", openapi3.NewStringSchema().WithNullable())
 
@@ -98,77 +94,63 @@ func TestSchemaObjectFromOpenAPISchemaRecursesObjectProperties(t *testing.T) {
 	schema.WithProperty("name", openapi3.NewStringSchema())
 	schema.WithProperty("nested", nestedSchema)
 
-	schemaObject, err := SchemaObjectFromOpenAPISchema(schema)
+	generatedSchema, err := SchemaFromOpenAPISchema(schema)
 	require.NoError(t, err)
 
-	require.Equal(t, SchemaObject{
-		Generatable: &ObjectContext{
-			AdditionalProperties: false,
-			Properties: []ObjectFieldContext{
-				{
-					PropertyName: "name",
-					Schema: SchemaObject{
-						Generatable: &StringContext{},
-					},
-					Required: true,
-				},
-				{
-					PropertyName: "nested",
-					Required:     true,
-					Schema: SchemaObject{
-						Generatable: &ObjectContext{
-							AdditionalProperties: true,
-							Properties: []ObjectFieldContext{
-								{
-									PropertyName: "child",
-									Schema: SchemaObject{
-										Generatable: &StringContext{},
-										Nullable:    true,
-									},
-								},
+	require.Equal(t, &ObjectSchema{
+		AdditionalProperties: false,
+		Properties: []ObjectFieldContext{
+			{
+				PropertyName: "name",
+				Schema:       &StringSchema{},
+				Required:     true,
+			},
+			{
+				PropertyName: "nested",
+				Required:     true,
+				Schema: &ObjectSchema{
+					AdditionalProperties: true,
+					Properties: []ObjectFieldContext{
+						{
+							PropertyName: "child",
+							Schema: &StringSchema{
+								BaseSchema: BaseSchema{Nullable: true},
 							},
 						},
 					},
 				},
 			},
 		},
-	}, schemaObject)
+	}, generatedSchema)
 }
 
-func TestSchemaObjectFromOpenAPISchemaConvertsArrayItems(t *testing.T) {
+func TestSchemaFromOpenAPISchemaConvertsArrayItems(t *testing.T) {
 	schema := openapi3.NewArraySchema().WithNullable()
 	schema.WithItems(openapi3.NewStringSchema())
 
-	schemaObject, err := SchemaObjectFromOpenAPISchema(schema)
+	generatedSchema, err := SchemaFromOpenAPISchema(schema)
 	require.NoError(t, err)
 
-	require.Equal(t, SchemaObject{
-		Generatable: &ArrayContext{
-			Items: SchemaObject{
-				Generatable: &StringContext{},
-			},
-		},
-		Nullable: true,
-	}, schemaObject)
+	require.Equal(t, &ArraySchema{
+		BaseSchema: BaseSchema{Nullable: true},
+		Items:      &StringSchema{},
+	}, generatedSchema)
 }
 
-func TestSchemaObjectFromOpenAPISchemaConvertsAdditionalPropertiesSchema(t *testing.T) {
+func TestSchemaFromOpenAPISchemaConvertsAdditionalPropertiesSchema(t *testing.T) {
 	schema := openapi3.NewObjectSchema()
 	schema.WithAdditionalProperties(openapi3.NewStringSchema().WithNullable())
 
-	schemaObject, err := SchemaObjectFromOpenAPISchema(schema)
+	generatedSchema, err := SchemaFromOpenAPISchema(schema)
 	require.NoError(t, err)
 
-	require.Equal(t, SchemaObject{
-		Generatable: &ObjectContext{
-			AdditionalProperties: true,
-			AdditionalPropertiesSchema: SchemaObject{
-				Generatable: &StringContext{},
-				Nullable:    true,
-			},
-			Properties: []ObjectFieldContext{},
+	require.Equal(t, &ObjectSchema{
+		AdditionalProperties: true,
+		AdditionalPropertiesSchema: &StringSchema{
+			BaseSchema: BaseSchema{Nullable: true},
 		},
-	}, schemaObject)
+		Properties: []ObjectFieldContext{},
+	}, generatedSchema)
 }
 
 func operationWithContent(operationID string, content openapi3.Content) *openapi3.Operation {

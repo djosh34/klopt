@@ -25,22 +25,17 @@ func (fs FileSet) WriteToDir(dir string) error {
 }
 
 func (c *GenerateContext) GenerateInMemory() (FileSet, error) {
-	operations, err := c.JSONRequestBodySchemaObjects()
+	operations, err := c.JSONRequestBodyModelSchemas()
 	if err != nil {
 		return nil, err
 	}
 
-	//operationSchemas, err := namedOperationSchemas(operations)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//
-	//schemas, err := schemaDefinitions(operations)
-	//if err != nil {
-	//	return nil, err
-	//}
+	schemas, err := schemaDefinitions(operations)
+	if err != nil {
+		return nil, err
+	}
 
-	models, err := renderModelsFile(operations)
+	models, err := renderModelsFile(schemas)
 	if err != nil {
 		return nil, err
 	}

@@ -12,45 +12,49 @@ type GenerateContext struct {
 	Document *openapi3.T
 }
 
-type SchemaObject struct {
-	Generatable
+type Schema interface {
+	Base() *BaseSchema
+	Generate() (string, error)
+}
+
+type BaseSchema struct {
 	TypeName string
 	Nullable bool
 }
 
-type Generatable interface {
-	Generate() (string, error)
-}
-
-var _ Generatable = new(ObjectContext)
-var _ Generatable = new(StringContext)
-var _ Generatable = new(ArrayContext)
-
-type ObjectContext struct {
+type ObjectSchema struct {
+	BaseSchema
 	AdditionalProperties       bool
-	AdditionalPropertiesSchema SchemaObject
+	AdditionalPropertiesSchema Schema
 	Properties                 []ObjectFieldContext
 }
 
+var _ Schema = new(ObjectSchema)
+var _ Schema = new(StringSchema)
+var _ Schema = new(ArraySchema)
+
 type ObjectFieldContext struct {
 	PropertyName string
-	Schema       SchemaObject
+	Schema       Schema
 	Required     bool
 }
 
-type StringContext struct {
+type StringSchema struct {
+	BaseSchema
 }
-type ArrayContext struct {
-	Items SchemaObject
+
+type ArraySchema struct {
+	BaseSchema
+	Items Schema
 }
 
 // TODO, put in tmpl
 func (p ObjectFieldContext) FieldType() string {
 	if p.Required {
-		return p.Schema.TypeName
+		return p.SchemaTypeName()
 	}
 
-	return "*" + p.Schema.TypeName
+	return "*" + p.SchemaTypeName()
 }
 
 // TODO, put in tmpl
@@ -64,19 +68,80 @@ func (p ObjectFieldContext) JSONTag() string {
 
 // TODO, we could decide to not care, and auto gen some valid var name
 func (p ObjectFieldContext) LocalName() string {
-	return unexportedName(p.Schema.TypeName)
+	return unexportedName(p.SchemaTypeName())
 }
 
-func (o ObjectContext) Generate() (string, error) {
+func (p ObjectFieldContext) SchemaTypeName() string {
+	return schemaTypeName(p.Schema)
+}
+
+func (o *ObjectSchema) Base() *BaseSchema {
+	if o == nil {
+		return nil
+	}
+
+	return &o.BaseSchema
+}
+
+func (o *ObjectSchema) Generate() (string, error) {
+	if o == nil {
+		return "", fmt.Errorf("nil object schema")
+	}
+
 	return executeGoTemplate("object.go.tmpl", o)
 }
 
-func (o StringContext) Generate() (string, error) {
-	return executeGoTemplate("string.go.tmpl", o)
+func (o *ObjectSchema) AdditionalPropertiesTypeName() string {
+	return schemaTypeName(o.AdditionalPropertiesSchema)
 }
 
-func (o ArrayContext) Generate() (string, error) {
-	return executeGoTemplate("array.go.tmpl", o)
+func (s *StringSchema) Base() *BaseSchema {
+	if s == nil {
+		return nil
+	}
+
+	return &s.BaseSchema
+}
+
+func (s *StringSchema) Generate() (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("nil string schema")
+	}
+
+	return executeGoTemplate("string.go.tmpl", s)
+}
+
+func (a *ArraySchema) Base() *BaseSchema {
+	if a == nil {
+		return nil
+	}
+
+	return &a.BaseSchema
+}
+
+func (a *ArraySchema) Generate() (string, error) {
+	if a == nil {
+		return "", fmt.Errorf("nil array schema")
+	}
+
+	return executeGoTemplate("array.go.tmpl", a)
+}
+
+func (a *ArraySchema) ItemsTypeName() string {
+	return schemaTypeName(a.Items)
+}
+
+func schemaTypeName(schema Schema) string {
+	if schema == nil {
+		return ""
+	}
+
+	base := schema.Base()
+	if base == nil {
+		return ""
+	}
+
+	return base.TypeName
 }
 
 func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*openapi3.Schema, error) {
@@ -108,9 +173,8 @@ func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*ope
 	return schemas, nil
 }
 
-// TODO, this seems very duplicative. Why can't this be integrated in the above function?? For each operation, do convert to SchemaObject
-func (c *GenerateContext) JSONRequestBodySchemaObjects() ([]SchemaObject, error) {
-	var schemaObjects []SchemaObject
+func (c *GenerateContext) JSONRequestBodyModelSchemas() ([]Schema, error) {
+	var schemas []Schema
 
 	if c.Document == nil || c.Document.Paths == nil {
 		return nil, fmt.Errorf("openapi document has no paths")
@@ -132,80 +196,90 @@ func (c *GenerateContext) JSONRequestBodySchemaObjects() ([]SchemaObject, error)
 				continue
 			}
 
-			schema := jsonBody.Schema.Value
-			if schema.Title == "" && operation.OperationID != "" {
-				schema.Title = operation.OperationID
-			}
-
-			schemaObject, err := SchemaObjectFromOpenAPISchema(schema)
+			schema, err := SchemaFromOpenAPISchema(jsonBody.Schema.Value)
 			if err != nil {
 				return nil, fmt.Errorf("operation %q request body schema: %w", operation.OperationID, err)
 			}
 
-			schemaObjects = append(schemaObjects, schemaObject)
+			name := jsonBody.Schema.Value.Title
+			if name == "" {
+				name = operation.OperationID
+			}
+
+			err = nameSchema(schema, name)
+			if err != nil {
+				return nil, fmt.Errorf("operation %q request body schema names: %w", operation.OperationID, err)
+			}
+
+			schemas = append(schemas, schema)
 		}
 	}
 
-	return schemaObjects, nil
+	return schemas, nil
 }
 
-func SchemaObjectFromOpenAPISchema(schema *openapi3.Schema) (SchemaObject, error) {
-	var schemaObject SchemaObject
-
+func SchemaFromOpenAPISchema(schema *openapi3.Schema) (Schema, error) {
 	if schema == nil {
-		return schemaObject, fmt.Errorf("openapi schema is nil")
+		return nil, fmt.Errorf("openapi schema is nil")
 	}
 
-	schemaType, err := schemaObjectType(schema)
+	schemaType, err := schemaType(schema)
 	if err != nil {
-		return schemaObject, err
+		return nil, err
 	}
 
-	schemaObject.Nullable = schema.PermitsNull()
+	base := BaseSchema{
+		Nullable: schema.PermitsNull(),
+	}
+	if schema.Title != "" {
+		base.TypeName = exportedName(schema.Title)
+	}
 
 	switch schemaType {
 	case openapi3.TypeObject:
-		schemaObject.Generatable, err = objectContextFromOpenAPISchema(schema)
+		objectSchema, err := objectSchemaFromOpenAPISchema(schema)
 		if err != nil {
-			return schemaObject, err
+			return nil, err
 		}
+
+		objectSchema.BaseSchema = base
+		return objectSchema, nil
 	case openapi3.TypeArray:
-		schemaObject.Generatable, err = arrayContextFromOpenAPISchema(schema)
+		arraySchema, err := arraySchemaFromOpenAPISchema(schema)
 		if err != nil {
-			return schemaObject, err
+			return nil, err
 		}
+
+		arraySchema.BaseSchema = base
+		return arraySchema, nil
 	case openapi3.TypeString:
-		schemaObject.Generatable = &StringContext{}
+		return &StringSchema{
+			BaseSchema: base,
+		}, nil
 	default:
-		return schemaObject, fmt.Errorf("unsupported schema type %q", schemaType)
+		return nil, fmt.Errorf("unsupported schema type %q", schemaType)
 	}
-
-	if schema.Title != "" {
-		schemaObject.TypeName = exportedName(schema.Title)
-	}
-
-	return schemaObject, nil
 }
 
-func objectContextFromOpenAPISchema(schema *openapi3.Schema) (*ObjectContext, error) {
-	objectContext := &ObjectContext{
+func objectSchemaFromOpenAPISchema(schema *openapi3.Schema) (*ObjectSchema, error) {
+	objectSchema := &ObjectSchema{
 		AdditionalProperties: true,
 		Properties:           make([]ObjectFieldContext, 0, len(schema.Properties)),
 	}
 
 	// TODO, I keep seeing this overly double and bad verbose ways. Why not just one if check, like i can't phathom why double if check is needed??
 	if hasAdditionalProperties := schema.AdditionalProperties.Has; hasAdditionalProperties != nil {
-		objectContext.AdditionalProperties = *hasAdditionalProperties
+		objectSchema.AdditionalProperties = *hasAdditionalProperties
 	}
 
 	if additionalPropertiesSchema := schema.AdditionalProperties.Schema; additionalPropertiesSchema != nil {
-		additionalPropertiesObject, err := schemaObjectFromOpenAPISchemaRef(additionalPropertiesSchema)
+		additionalPropertiesObject, err := schemaFromOpenAPISchemaRef(additionalPropertiesSchema)
 		if err != nil {
 			return nil, fmt.Errorf("additionalProperties schema: %w", err)
 		}
 
-		objectContext.AdditionalProperties = true
-		objectContext.AdditionalPropertiesSchema = additionalPropertiesObject
+		objectSchema.AdditionalProperties = true
+		objectSchema.AdditionalPropertiesSchema = additionalPropertiesObject
 	}
 
 	required := make(map[string]struct{}, len(schema.Required))
@@ -215,60 +289,60 @@ func objectContextFromOpenAPISchema(schema *openapi3.Schema) (*ObjectContext, er
 
 	for _, propertyName := range slices.Sorted(maps.Keys(schema.Properties)) {
 		propertySchema := schema.Properties[propertyName]
-		propertyObject, err := schemaObjectFromOpenAPISchemaRef(propertySchema)
+		propertyObject, err := schemaFromOpenAPISchemaRef(propertySchema)
 		if err != nil {
 			return nil, fmt.Errorf("property %q schema: %w", propertyName, err)
 		}
 
 		_, isRequired := required[propertyName]
-		objectContext.Properties = append(objectContext.Properties, ObjectFieldContext{
+		objectSchema.Properties = append(objectSchema.Properties, ObjectFieldContext{
 			PropertyName: propertyName,
 			Schema:       propertyObject,
 			Required:     isRequired,
 		})
 	}
 
-	return objectContext, nil
+	return objectSchema, nil
 }
 
-func arrayContextFromOpenAPISchema(schema *openapi3.Schema) (*ArrayContext, error) {
+func arraySchemaFromOpenAPISchema(schema *openapi3.Schema) (*ArraySchema, error) {
 	if schema.Items == nil {
 		return nil, fmt.Errorf("array schema has no items")
 	}
 
-	items, err := schemaObjectFromOpenAPISchemaRef(schema.Items)
+	items, err := schemaFromOpenAPISchemaRef(schema.Items)
 	if err != nil {
 		return nil, fmt.Errorf("array items schema: %w", err)
 	}
 
-	return &ArrayContext{
+	return &ArraySchema{
 		Items: items,
 	}, nil
 }
 
 // TODO, I have high concern for this function. But we would need first to get better testing than this. It looks to me that it doesn't try to find the reffed value at all
-func schemaObjectFromOpenAPISchemaRef(schemaRef *openapi3.SchemaRef) (SchemaObject, error) {
+func schemaFromOpenAPISchemaRef(schemaRef *openapi3.SchemaRef) (Schema, error) {
 	if schemaRef == nil {
-		return SchemaObject{}, fmt.Errorf("openapi schema ref is nil")
+		return nil, fmt.Errorf("openapi schema ref is nil")
 	}
 
 	if schemaRef.Value == nil {
 		if schemaRef.Ref != "" {
-			return SchemaObject{}, fmt.Errorf("openapi schema ref %q has no value", schemaRef.Ref)
+			return nil, fmt.Errorf("openapi schema ref %q has no value", schemaRef.Ref)
 		}
 
-		return SchemaObject{}, fmt.Errorf("openapi schema ref has no value")
+		return nil, fmt.Errorf("openapi schema ref has no value")
 	}
 
-	return SchemaObjectFromOpenAPISchema(schemaRef.Value)
+	return SchemaFromOpenAPISchema(schemaRef.Value)
 }
 
 // TODO, Concerned about this as well. Wouldn't we want a better inferring of type method
 // Perhaps just one traversal over the whole schema, and setting Type once. From then on you just read out the 'Type'
 // I thought that openapi3.Schema would already do that for us, but perhaps not
-func schemaObjectType(schema *openapi3.Schema) (string, error) {
+func schemaType(schema *openapi3.Schema) (string, error) {
 	if schema.Type == nil || schema.Type.IsEmpty() {
-		return inferredSchemaObjectType(schema)
+		return inferredSchemaType(schema)
 	}
 
 	schemaTypes := schema.Type.Slice()
@@ -287,7 +361,7 @@ func schemaObjectType(schema *openapi3.Schema) (string, error) {
 }
 
 // TODO, validate if this is true. I thought that strings for instance could also be inferred
-func inferredSchemaObjectType(schema *openapi3.Schema) (string, error) {
+func inferredSchemaType(schema *openapi3.Schema) (string, error) {
 	if len(schema.Properties) != 0 || len(schema.Required) != 0 || schema.AdditionalProperties.Has != nil || schema.AdditionalProperties.Schema != nil {
 		return openapi3.TypeObject, nil
 	}

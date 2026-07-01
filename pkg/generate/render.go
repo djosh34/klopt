@@ -5,6 +5,8 @@ import (
 	"embed"
 	"fmt"
 	"go/format"
+	"maps"
+	"slices"
 	"sync"
 	"text/template"
 )
@@ -21,10 +23,10 @@ var (
 )
 
 type fileTemplateContext struct {
-	Schemas []SchemaObject
+	Schemas []Schema
 }
 
-func renderModelsFile(schemas []SchemaObject) ([]byte, error) {
+func renderModelsFile(schemas []Schema) ([]byte, error) {
 	templates, err := parsedGenerateTemplates()
 	if err != nil {
 		return nil, err
@@ -70,74 +72,65 @@ func parsedGenerateTemplates() (*template.Template, error) {
 	return generateTemplates, nil
 }
 
-//// TODO, this is slop. Must be an interface that just returns a list of SchemaObjects and doing recursive call
-//func schemaDefinitions(schemas []SchemaObject) ([]SchemaObject, error) {
-//	definitionsByName := map[string]SchemaObject{}
-//	for _, schema := range schemas {
-//		err := collectSchemaDefinitions(schema, definitionsByName)
-//		if err != nil {
-//			return nil, err
-//		}
-//	}
-//
-//	definitions := make([]SchemaObject, 0, len(definitionsByName))
-//	for _, name := range slices.Sorted(maps.Keys(definitionsByName)) {
-//		definitions = append(definitions, definitionsByName[name])
-//	}
-//
-//	return definitions, nil
-//}
+func schemaDefinitions(schemas []Schema) ([]Schema, error) {
+	definitionsByName := map[string]Schema{}
+	for _, schema := range schemas {
+		err := collectSchemaDefinitions(schema, definitionsByName)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-//// TODO, this is slop. Must be an interface that just returns a list of SchemaObjects and doing recursive call
-//func collectSchemaDefinitions(schema SchemaObject, definitions map[string]SchemaObject) error {
-//	if schema == nil {
-//		return fmt.Errorf("nil schema context")
-//	}
-//
-//	switch schema := schema.(type) {
-//	case ObjectContext:
-//		for _, property := range schema.Properties {
-//			err := collectSchemaDefinitions(property.Schema, definitions)
-//			if err != nil {
-//				return err
-//			}
-//		}
-//		if schema.AdditionalPropertiesSchema != nil {
-//			err := collectSchemaDefinitions(schema.AdditionalPropertiesSchema, definitions)
-//			if err != nil {
-//				return err
-//			}
-//		}
-//	case *ObjectContext:
-//		if schema == nil {
-//			return fmt.Errorf("nil object schema context")
-//		}
-//
-//		return collectSchemaDefinitions(*schema, definitions)
-//	case ArrayContext:
-//		if schema.Items == nil {
-//			return fmt.Errorf("array schema %q has nil items", schema.ContextName())
-//		}
-//
-//		err := collectSchemaDefinitions(schema.Items, definitions)
-//		if err != nil {
-//			return err
-//		}
-//	case *ArrayContext:
-//		if schema == nil {
-//			return fmt.Errorf("nil array schema context")
-//		}
-//
-//		return collectSchemaDefinitions(*schema, definitions)
-//	case StringContext:
-//	case *StringContext:
-//		if schema == nil {
-//			return fmt.Errorf("nil string schema context")
-//		}
-//	default:
-//		return fmt.Errorf("unsupported schema context %T", schema)
-//	}
-//
-//	definitions[schema.ContextName()] = schema
-//	return nil
-//}
+	definitions := make([]Schema, 0, len(definitionsByName))
+	for _, name := range slices.Sorted(maps.Keys(definitionsByName)) {
+		definitions = append(definitions, definitionsByName[name])
+	}
+
+	return definitions, nil
+}
+
+func collectSchemaDefinitions(schema Schema, definitions map[string]Schema) error {
+	if schema == nil {
+		return fmt.Errorf("nil schema")
+	}
+
+	base := schema.Base()
+	if base == nil {
+		return fmt.Errorf("schema %T has nil base", schema)
+	}
+	if base.TypeName == "" {
+		return fmt.Errorf("schema %T has no type name", schema)
+	}
+
+	if _, exists := definitions[base.TypeName]; exists {
+		return nil
+	}
+	definitions[base.TypeName] = schema
+
+	switch schema := schema.(type) {
+	case *ObjectSchema:
+		for _, property := range schema.Properties {
+			err := collectSchemaDefinitions(property.Schema, definitions)
+			if err != nil {
+				return fmt.Errorf("property %q schema: %w", property.PropertyName, err)
+			}
+		}
+
+		if schema.AdditionalPropertiesSchema != nil {
+			err := collectSchemaDefinitions(schema.AdditionalPropertiesSchema, definitions)
+			if err != nil {
+				return fmt.Errorf("additionalProperties schema: %w", err)
+			}
+		}
+	case *ArraySchema:
+		err := collectSchemaDefinitions(schema.Items, definitions)
+		if err != nil {
+			return fmt.Errorf("array items schema: %w", err)
+		}
+	case *StringSchema:
+	default:
+		return fmt.Errorf("unsupported schema %T", schema)
+	}
+
+	return nil
+}
