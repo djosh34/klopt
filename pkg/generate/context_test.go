@@ -50,6 +50,7 @@ func TestJSONRequestBodySchemaObjectsConvertsRequestBodySchemas(t *testing.T) {
 
 	require.Equal(t, []SchemaObject{
 		{
+			TypeName: "ObjectKeysAdditionalPropertiesFalse",
 			Generatable: &ObjectContext{
 				AdditionalProperties: false,
 				Properties: []ObjectFieldContext{

@@ -14,8 +14,8 @@ type GenerateContext struct {
 
 type SchemaObject struct {
 	Generatable
-	ContextName string
-	Nullable    bool
+	TypeName string
+	Nullable bool
 }
 
 type Generatable interface {
@@ -47,10 +47,10 @@ type ArrayContext struct {
 // TODO, put in tmpl
 func (p ObjectFieldContext) FieldType() string {
 	if p.Required {
-		return p.Schema.ContextName
+		return p.Schema.TypeName
 	}
 
-	return "*" + p.Schema.ContextName
+	return "*" + p.Schema.TypeName
 }
 
 // TODO, put in tmpl
@@ -64,7 +64,7 @@ func (p ObjectFieldContext) JSONTag() string {
 
 // TODO, we could decide to not care, and auto gen some valid var name
 func (p ObjectFieldContext) LocalName() string {
-	return unexportedName(p.Schema.ContextName)
+	return unexportedName(p.Schema.TypeName)
 }
 
 func (o ObjectContext) Generate() (string, error) {
@@ -110,23 +110,40 @@ func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*ope
 
 // TODO, this seems very duplicative. Why can't this be integrated in the above function?? For each operation, do convert to SchemaObject
 func (c *GenerateContext) JSONRequestBodySchemaObjects() ([]SchemaObject, error) {
-	openapiSchemas, err := c.JSONRequestBodySchemas()
-	if err != nil {
-		return nil, err
+	var schemaObjects []SchemaObject
+
+	if c.Document == nil || c.Document.Paths == nil {
+		return nil, fmt.Errorf("openapi document has no paths")
 	}
 
-	schemaObjects := make([]SchemaObject, len(openapiSchemas))
-	for operation, openapiSchema := range openapiSchemas {
-		if operation.OperationID == "" {
-			return nil, fmt.Errorf("operation with JSON request body schema has no operationId")
+	for _, path := range c.Document.Paths.InMatchingOrder() {
+		pathItem := c.Document.Paths.Value(path)
+		if pathItem == nil {
+			continue
 		}
 
-		schemaObject, err := SchemaObjectFromOpenAPISchema(openapiSchema)
-		if err != nil {
-			return nil, fmt.Errorf("operation %q request body schema: %w", operation.OperationID, err)
-		}
+		for _, operation := range pathItem.Operations() {
+			if operation == nil || operation.RequestBody == nil || operation.RequestBody.Value == nil {
+				continue
+			}
 
-		schemaObjects = append(schemaObjects, schemaObject)
+			jsonBody := operation.RequestBody.Value.Content.Get("application/json")
+			if jsonBody == nil || jsonBody.Schema == nil || jsonBody.Schema.Value == nil {
+				continue
+			}
+
+			schema := jsonBody.Schema.Value
+			if schema.Title == "" && operation.OperationID != "" {
+				schema.Title = operation.OperationID
+			}
+
+			schemaObject, err := SchemaObjectFromOpenAPISchema(schema)
+			if err != nil {
+				return nil, fmt.Errorf("operation %q request body schema: %w", operation.OperationID, err)
+			}
+
+			schemaObjects = append(schemaObjects, schemaObject)
+		}
 	}
 
 	return schemaObjects, nil
@@ -161,6 +178,10 @@ func SchemaObjectFromOpenAPISchema(schema *openapi3.Schema) (SchemaObject, error
 		schemaObject.Generatable = &StringContext{}
 	default:
 		return schemaObject, fmt.Errorf("unsupported schema type %q", schemaType)
+	}
+
+	if schema.Title != "" {
+		schemaObject.TypeName = exportedName(schema.Title)
 	}
 
 	return schemaObject, nil

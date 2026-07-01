@@ -116,7 +116,7 @@ func parsedGenerateTemplates() (*template.Template, error) {
 //		return collectSchemaDefinitions(*schema, definitions)
 //	case ArrayContext:
 //		if schema.Items == nil {
-//			return fmt.Errorf("array schema %q has nil items", schema.TypeName())
+//			return fmt.Errorf("array schema %q has nil items", schema.ContextName())
 //		}
 //
 //		err := collectSchemaDefinitions(schema.Items, definitions)
@@ -138,6 +138,6 @@ func parsedGenerateTemplates() (*template.Template, error) {
 //		return fmt.Errorf("unsupported schema context %T", schema)
 //	}
 //
-//	definitions[schema.TypeName()] = schema
+//	definitions[schema.ContextName()] = schema
 //	return nil
 //}

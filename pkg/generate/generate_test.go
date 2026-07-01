@@ -117,8 +117,9 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 	operations, err := generateContext.JSONRequestBodySchemaObjects()
 	require.NoError(t, err)
 
-	require.Equal(t, []SchemaObject{
+	require.ElementsMatch(t, []SchemaObject{
 		{
+			TypeName: "ObjectKeysAdditionalPropertiesFalse",
 			Generatable: &ObjectContext{
 				AdditionalProperties: false,
 				Properties: []ObjectFieldContext{
@@ -154,6 +155,7 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 			},
 		},
 		{
+			TypeName:    "StringNoFormatNullable",
 			Generatable: &StringContext{},
 			Nullable:    true,
 		},
@@ -163,7 +165,7 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 func TestStringContextGenerateRequiredNotNullableString(t *testing.T) {
 	schemaContext := SchemaObject{
 		Generatable: &StringContext{},
-		ContextName: "RequiredNotNullableString",
+		TypeName:    "RequiredNotNullableString",
 	}
 
 	generated, err := schemaContext.Generate()
@@ -191,7 +193,7 @@ func (s *RequiredNotNullableString) UnmarshalJSON(data []byte) error {
 
 func TestObjectContextGenerateObjectKeysAdditionalPropertiesFalse(t *testing.T) {
 	schemaContext := SchemaObject{
-		ContextName: "ObjectKeysAdditionalPropertiesFalse",
+		TypeName: "ObjectKeysAdditionalPropertiesFalse",
 		Generatable: &ObjectContext{
 			AdditionalProperties: false,
 			Properties: []ObjectFieldContext{
@@ -199,14 +201,14 @@ func TestObjectContextGenerateObjectKeysAdditionalPropertiesFalse(t *testing.T) 
 					PropertyName: "optionalNotNullableString",
 					Schema: SchemaObject{
 						Generatable: &StringContext{},
-						ContextName: "OptionalNotNullableString",
+						TypeName:    "OptionalNotNullableString",
 					},
 				},
 				{
 					PropertyName: "optionalNullableString",
 					Schema: SchemaObject{
 						Generatable: &StringContext{},
-						ContextName: "OptionalNullableString",
+						TypeName:    "OptionalNullableString",
 						Nullable:    true,
 					},
 				},
@@ -215,7 +217,7 @@ func TestObjectContextGenerateObjectKeysAdditionalPropertiesFalse(t *testing.T) 
 					Required:     true,
 					Schema: SchemaObject{
 						Generatable: &StringContext{},
-						ContextName: "RequiredNotNullableString",
+						TypeName:    "RequiredNotNullableString",
 					},
 				},
 				{
@@ -223,7 +225,7 @@ func TestObjectContextGenerateObjectKeysAdditionalPropertiesFalse(t *testing.T) 
 					Required:     true,
 					Schema: SchemaObject{
 						Generatable: &StringContext{},
-						ContextName: "RequiredNullableString",
+						TypeName:    "RequiredNullableString",
 						Nullable:    true,
 					},
 				},
