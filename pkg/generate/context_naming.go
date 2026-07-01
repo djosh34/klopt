@@ -82,15 +82,15 @@ func namedSchemaObject(schemaObject SchemaObject, name string) (SchemaObject, er
 	}
 }
 
-func namedObjectProperties(properties map[string]ObjectPropertyContext) (map[string]ObjectPropertyContext, error) {
-	namedProperties := make(map[string]ObjectPropertyContext, len(properties))
+func namedObjectProperties(properties map[string]ObjectFieldContext) (map[string]ObjectFieldContext, error) {
+	namedProperties := make(map[string]ObjectFieldContext, len(properties))
 	for propertyName, property := range properties {
 		schema, err := namedSchemaObject(property.Schema, propertyName)
 		if err != nil {
 			return nil, fmt.Errorf("property %q schema: %w", propertyName, err)
 		}
 
-		property.JSONName = propertyName
+		property.PropertyName = propertyName
 		property.Schema = schema
 		namedProperties[propertyName] = property
 	}

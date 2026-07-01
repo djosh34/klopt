@@ -87,24 +87,24 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 	require.Equal(t, map[string]SchemaObject{
 		"objectKeysAdditionalPropertiesFalse": ObjectContext{
 			AdditionalProperties: false,
-			Properties: map[string]ObjectPropertyContext{
+			Properties: map[string]ObjectFieldContext{
 				"requiredNullableString": {
-					JSONName: "requiredNullableString",
-					Schema:   StringContext{Nullable: true},
-					Required: true,
+					PropertyName: "requiredNullableString",
+					Schema:       StringContext{Nullable: true},
+					Required:     true,
 				},
 				"requiredNotNullableString": {
-					JSONName: "requiredNotNullableString",
-					Schema:   StringContext{},
-					Required: true,
+					PropertyName: "requiredNotNullableString",
+					Schema:       StringContext{},
+					Required:     true,
 				},
 				"optionalNullableString": {
-					JSONName: "optionalNullableString",
-					Schema:   StringContext{Nullable: true},
+					PropertyName: "optionalNullableString",
+					Schema:       StringContext{Nullable: true},
 				},
 				"optionalNotNullableString": {
-					JSONName: "optionalNotNullableString",
-					Schema:   StringContext{},
+					PropertyName: "optionalNotNullableString",
+					Schema:       StringContext{},
 				},
 			},
 		},
@@ -144,31 +144,31 @@ func TestObjectContextGenerateObjectKeysAdditionalPropertiesFalse(t *testing.T) 
 	schemaContext := ObjectContext{
 		ContextName:          "ObjectKeysAdditionalPropertiesFalse",
 		AdditionalProperties: false,
-		Properties: map[string]ObjectPropertyContext{
+		Properties: map[string]ObjectFieldContext{
 			"requiredNullableString": {
-				JSONName: "requiredNullableString",
-				Required: true,
+				PropertyName: "requiredNullableString",
+				Required:     true,
 				Schema: StringContext{
 					ContextName: "RequiredNullableString",
 					Nullable:    true,
 				},
 			},
 			"requiredNotNullableString": {
-				JSONName: "requiredNotNullableString",
-				Required: true,
+				PropertyName: "requiredNotNullableString",
+				Required:     true,
 				Schema: StringContext{
 					ContextName: "RequiredNotNullableString",
 				},
 			},
 			"optionalNullableString": {
-				JSONName: "optionalNullableString",
+				PropertyName: "optionalNullableString",
 				Schema: StringContext{
 					ContextName: "OptionalNullableString",
 					Nullable:    true,
 				},
 			},
 			"optionalNotNullableString": {
-				JSONName: "optionalNotNullableString",
+				PropertyName: "optionalNotNullableString",
 				Schema: StringContext{
 					ContextName: "OptionalNotNullableString",
 				},

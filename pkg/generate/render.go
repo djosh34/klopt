@@ -70,6 +70,7 @@ func parsedGenerateTemplates() (*template.Template, error) {
 	return generateTemplates, nil
 }
 
+// TODO, this is slop. Must be an interface that just returns a list of SchemaObjects and doing recursive call
 func schemaDefinitions(schemas []SchemaObject) ([]SchemaObject, error) {
 	definitionsByName := map[string]SchemaObject{}
 	for _, schema := range schemas {
@@ -87,6 +88,7 @@ func schemaDefinitions(schemas []SchemaObject) ([]SchemaObject, error) {
 	return definitions, nil
 }
 
+// TODO, this is slop. Must be an interface that just returns a list of SchemaObjects and doing recursive call
 func collectSchemaDefinitions(schema SchemaObject, definitions map[string]SchemaObject) error {
 	if schema == nil {
 		return fmt.Errorf("nil schema context")
@@ -114,7 +116,7 @@ func collectSchemaDefinitions(schema SchemaObject, definitions map[string]Schema
 		return collectSchemaDefinitions(*schema, definitions)
 	case ArrayContext:
 		if schema.Items == nil {
-			return fmt.Errorf("array schema %q has nil items", schema.Name())
+			return fmt.Errorf("array schema %q has nil items", schema.TypeName())
 		}
 
 		err := collectSchemaDefinitions(schema.Items, definitions)
@@ -136,31 +138,6 @@ func collectSchemaDefinitions(schema SchemaObject, definitions map[string]Schema
 		return fmt.Errorf("unsupported schema context %T", schema)
 	}
 
-	definitions[schema.Name()] = schema
+	definitions[schema.TypeName()] = schema
 	return nil
-}
-
-func (c fileTemplateContext) UsesFmt() bool {
-	for _, schema := range c.Schemas {
-		if schemaUsesFmt(schema) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func schemaUsesFmt(schema SchemaObject) bool {
-	switch schema := schema.(type) {
-	case ObjectContext:
-		return !schema.AdditionalProperties || schema.HasRequiredProperty()
-	case *ObjectContext:
-		return schema != nil && schemaUsesFmt(*schema)
-	case ArrayContext:
-		return !schema.IsNullable()
-	case *ArrayContext:
-		return schema != nil && schemaUsesFmt(*schema)
-	default:
-		return false
-	}
 }

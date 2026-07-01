@@ -51,24 +51,24 @@ func TestJSONRequestBodySchemaObjectsConvertsRequestBodySchemas(t *testing.T) {
 	require.Equal(t, map[string]SchemaObject{
 		"objectKeysAdditionalPropertiesFalse": ObjectContext{
 			AdditionalProperties: false,
-			Properties: map[string]ObjectPropertyContext{
+			Properties: map[string]ObjectFieldContext{
 				"requiredNullableString": {
-					JSONName: "requiredNullableString",
-					Schema:   StringContext{Nullable: true},
-					Required: true,
+					PropertyName: "requiredNullableString",
+					Schema:       StringContext{Nullable: true},
+					Required:     true,
 				},
 				"requiredNotNullableString": {
-					JSONName: "requiredNotNullableString",
-					Schema:   StringContext{},
-					Required: true,
+					PropertyName: "requiredNotNullableString",
+					Schema:       StringContext{},
+					Required:     true,
 				},
 				"optionalNullableString": {
-					JSONName: "optionalNullableString",
-					Schema:   StringContext{Nullable: true},
+					PropertyName: "optionalNullableString",
+					Schema:       StringContext{Nullable: true},
 				},
 				"optionalNotNullableString": {
-					JSONName: "optionalNotNullableString",
-					Schema:   StringContext{},
+					PropertyName: "optionalNotNullableString",
+					Schema:       StringContext{},
 				},
 			},
 		},
@@ -90,21 +90,21 @@ func TestSchemaObjectFromOpenAPISchemaRecursesObjectProperties(t *testing.T) {
 
 	require.Equal(t, ObjectContext{
 		AdditionalProperties: false,
-		Properties: map[string]ObjectPropertyContext{
+		Properties: map[string]ObjectFieldContext{
 			"name": {
-				JSONName: "name",
-				Schema:   StringContext{},
-				Required: true,
+				PropertyName: "name",
+				Schema:       StringContext{},
+				Required:     true,
 			},
 			"nested": {
-				JSONName: "nested",
-				Required: true,
+				PropertyName: "nested",
+				Required:     true,
 				Schema: ObjectContext{
 					AdditionalProperties: true,
-					Properties: map[string]ObjectPropertyContext{
+					Properties: map[string]ObjectFieldContext{
 						"child": {
-							JSONName: "child",
-							Schema:   StringContext{Nullable: true},
+							PropertyName: "child",
+							Schema:       StringContext{Nullable: true},
 						},
 					},
 				},
@@ -136,7 +136,7 @@ func TestSchemaObjectFromOpenAPISchemaConvertsAdditionalPropertiesSchema(t *test
 	require.Equal(t, ObjectContext{
 		AdditionalProperties:       true,
 		AdditionalPropertiesSchema: StringContext{Nullable: true},
-		Properties:                 map[string]ObjectPropertyContext{},
+		Properties:                 map[string]ObjectFieldContext{},
 	}, schemaObject)
 }
 

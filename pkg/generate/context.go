@@ -12,7 +12,7 @@ type GenerateContext struct {
 }
 
 type SchemaObject interface {
-	Name() string
+	TypeName() string
 	IsNullable() bool
 	Generate() (string, error)
 }
@@ -26,13 +26,14 @@ type ObjectContext struct {
 	Nullable                   bool
 	AdditionalProperties       bool
 	AdditionalPropertiesSchema SchemaObject
-	Properties                 map[string]ObjectPropertyContext
+	// TODO, change to array instead. the map doesn't add value imho
+	Properties map[string]ObjectFieldContext
 }
 
-type ObjectPropertyContext struct {
-	JSONName string
-	Schema   SchemaObject
-	Required bool
+type ObjectFieldContext struct {
+	PropertyName string
+	Schema       SchemaObject
+	Required     bool
 }
 
 type StringContext struct {
@@ -45,42 +46,35 @@ type ArrayContext struct {
 	Items       SchemaObject
 }
 
-func (o ObjectContext) Name() string { return o.ContextName }
-func (o StringContext) Name() string { return o.ContextName }
-func (o ArrayContext) Name() string  { return o.ContextName }
+func (o ObjectContext) TypeName() string { return o.ContextName }
+func (o StringContext) TypeName() string { return o.ContextName }
+func (o ArrayContext) TypeName() string  { return o.ContextName }
 
 func (o ObjectContext) IsNullable() bool { return o.Nullable }
 func (o StringContext) IsNullable() bool { return o.Nullable }
 func (o ArrayContext) IsNullable() bool  { return o.Nullable }
 
-func (o ObjectContext) HasRequiredProperty() bool {
-	for _, property := range o.Properties {
-		if property.Required {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (p ObjectPropertyContext) FieldType() string {
+// TODO, put in tmpl
+func (p ObjectFieldContext) FieldType() string {
 	if p.Required {
-		return p.Schema.Name()
+		return p.Schema.TypeName()
 	}
 
-	return "*" + p.Schema.Name()
+	return "*" + p.Schema.TypeName()
 }
 
-func (p ObjectPropertyContext) JSONTag() string {
+// TODO, put in tmpl
+func (p ObjectFieldContext) JSONTag() string {
 	if p.Required {
-		return fmt.Sprintf("`json:%q`", p.JSONName)
+		return fmt.Sprintf("`json:%q`", p.PropertyName)
 	}
 
-	return fmt.Sprintf("`json:%q`", p.JSONName+",omitzero")
+	return fmt.Sprintf("`json:%q`", p.PropertyName+",omitzero")
 }
 
-func (p ObjectPropertyContext) LocalName() string {
-	return unexportedName(p.Schema.Name())
+// TODO, we could decide to not care, and auto gen some valid var name
+func (p ObjectFieldContext) LocalName() string {
+	return unexportedName(p.Schema.TypeName())
 }
 
 func (o ObjectContext) Generate() (string, error) {
@@ -124,6 +118,7 @@ func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*ope
 	return schemas, nil
 }
 
+// TODO, this seems very duplicative. Why can't this be integrated in the above function?? For each operation, do convert to SchemaObject
 func (c *GenerateContext) JSONRequestBodySchemaObjects() (map[string]SchemaObject, error) {
 	openapiSchemas, err := c.JSONRequestBodySchemas()
 	if err != nil {
@@ -179,9 +174,10 @@ func objectContextFromOpenAPISchema(schema *openapi3.Schema) (ObjectContext, err
 	objectContext := ObjectContext{
 		Nullable:             schema.PermitsNull(),
 		AdditionalProperties: true,
-		Properties:           make(map[string]ObjectPropertyContext, len(schema.Properties)),
+		Properties:           make(map[string]ObjectFieldContext, len(schema.Properties)),
 	}
 
+	// TODO, I keep seeing this overly double and bad verbose ways. Why not just one if check, like i can't phathom why double if check is needed??
 	if hasAdditionalProperties := schema.AdditionalProperties.Has; hasAdditionalProperties != nil {
 		objectContext.AdditionalProperties = *hasAdditionalProperties
 	}
@@ -208,10 +204,10 @@ func objectContextFromOpenAPISchema(schema *openapi3.Schema) (ObjectContext, err
 		}
 
 		_, isRequired := required[propertyName]
-		objectContext.Properties[propertyName] = ObjectPropertyContext{
-			JSONName: propertyName,
-			Schema:   propertyObject,
-			Required: isRequired,
+		objectContext.Properties[propertyName] = ObjectFieldContext{
+			PropertyName: propertyName,
+			Schema:       propertyObject,
+			Required:     isRequired,
 		}
 	}
 
@@ -234,6 +230,7 @@ func arrayContextFromOpenAPISchema(schema *openapi3.Schema) (ArrayContext, error
 	}, nil
 }
 
+// TODO, I have high concern for this function. But we would need first to get better testing than this. It looks to me that it doesn't try to find the reffed value at all
 func schemaObjectFromOpenAPISchemaRef(schemaRef *openapi3.SchemaRef) (SchemaObject, error) {
 	if schemaRef == nil {
 		return nil, fmt.Errorf("openapi schema ref is nil")
@@ -250,6 +247,9 @@ func schemaObjectFromOpenAPISchemaRef(schemaRef *openapi3.SchemaRef) (SchemaObje
 	return SchemaObjectFromOpenAPISchema(schemaRef.Value)
 }
 
+// TODO, Concerned about this as well. Wouldn't we want a better inferring of type method
+// Perhaps just one traversal over the whole schema, and setting Type once. From then on you just read out the 'Type'
+// I thought that openapi3.Schema would already do that for us, but perhaps not
 func schemaObjectType(schema *openapi3.Schema) (string, error) {
 	if schema.Type == nil || schema.Type.IsEmpty() {
 		return inferredSchemaObjectType(schema)
@@ -270,6 +270,7 @@ func schemaObjectType(schema *openapi3.Schema) (string, error) {
 	return nonNullTypes[0], nil
 }
 
+// TODO, validate if this is true. I thought that strings for instance could also be inferred
 func inferredSchemaObjectType(schema *openapi3.Schema) (string, error) {
 	if len(schema.Properties) != 0 || len(schema.Required) != 0 || schema.AdditionalProperties.Has != nil || schema.AdditionalProperties.Schema != nil {
 		return openapi3.TypeObject, nil
