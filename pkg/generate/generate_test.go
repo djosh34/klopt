@@ -59,6 +59,7 @@ var exampleFixtureOperations = []string{
 	"arrayNotNullable",
 	"objectKeysAdditionalPropertiesFalse",
 	"optionalArrayNullable",
+	"refObject",
 }
 
 func SharedGenerateExampleMatchesFixture(t *testing.T, regen bool) {
@@ -125,7 +126,7 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 	generateContext, err := LoadOpenapi(t.Context(), openapiExamplePath)
 	require.NoError(t, err)
 
-	err = generateContext.FilterOperations("objectKeysAdditionalPropertiesFalse", "stringNoFormatNullable")
+	err = generateContext.FilterOperations("objectKeysAdditionalPropertiesFalse", "refObject", "stringNoFormatNullable")
 	require.NoError(t, err)
 
 	operations, err := generateContext.JSONRequestBodyModelSchemas()
@@ -142,6 +143,12 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 	}
 	requiredNullableString := &StringSchema{
 		BaseSchema: BaseSchema{Name: "ObjectKeysAdditionalPropertiesFalseRequiredNullableString", Nullable: true},
+	}
+	refOptionalBool := &BoolSchema{
+		BaseSchema: BaseSchema{Name: "RefObjectRefOptionalBool", Nullable: true},
+	}
+	refRequiredString := &StringSchema{
+		BaseSchema: BaseSchema{Name: "RefObjectRefRequiredString"},
 	}
 
 	require.ElementsMatch(t, []Schema{
@@ -173,6 +180,23 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 		optionalNullableString,
 		requiredNotNullableString,
 		requiredNullableString,
+		&ObjectSchema{
+			BaseSchema:           BaseSchema{Name: "RefObject"},
+			AdditionalProperties: false,
+			Properties: []ObjectFieldContext{
+				{
+					PropertyName: "refOptionalBool",
+					Schema:       refOptionalBool,
+				},
+				{
+					PropertyName: "refRequiredString",
+					Schema:       refRequiredString,
+					Required:     true,
+				},
+			},
+		},
+		refOptionalBool,
+		refRequiredString,
 		&StringSchema{
 			BaseSchema: BaseSchema{Name: "StringNoFormatNullable", Nullable: true},
 		},

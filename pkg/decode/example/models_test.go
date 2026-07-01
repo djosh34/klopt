@@ -285,7 +285,43 @@ paths:
       responses:
         '204':
           description: No Content
+
+  /ref-object:
+    post:
+      operationId: refObject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefObjectRequest'
+      responses:
+        '204':
+          description: No Content
+
+components:
+  schemas:
+    RefObjectRequest:
+      type: object
+      nullable: false
+      required:
+        - refRequiredString
+      additionalProperties: false
+      properties:
+        refRequiredString:
+          type: string
+          nullable: false
+        refOptionalBool:
+          type: boolean
+          nullable: true
 `)
+
+func TestRefObject(t *testing.T) {
+	testgenerator.RunJSONRequestBodyOperationCases(t, exampleOpenAPI, "refObject", func(data []byte) error {
+		var value RefObject
+		return value.UnmarshalJSON(data)
+	})
+}
 
 func TestOptionalArrayNullable(t *testing.T) {
 	testgenerator.RunJSONRequestBodyOperationCases(t, exampleOpenAPI, "optionalArrayNullable", func(data []byte) error {

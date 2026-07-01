@@ -21,6 +21,114 @@ var (
 
 var jsonNull = []byte("null")
 
+type RefObject struct {
+	RefOptionalBool   *RefObjectRefOptionalBool  `json:"refOptionalBool,omitzero"`
+	RefRequiredString RefObjectRefRequiredString `json:"refRequiredString"`
+}
+
+var _ json.Unmarshaler = (*RefObject)(nil)
+
+func (o *RefObject) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasRefRequiredString bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "refOptionalBool":
+
+			var refOptionalBool RefObjectRefOptionalBool
+			err = json.Unmarshal(value, &refOptionalBool)
+			if err != nil {
+				return err
+			}
+			o.RefOptionalBool = &refOptionalBool
+		case "refRequiredString":
+			hasRefRequiredString = true
+
+			var refRequiredString RefObjectRefRequiredString
+			err = json.Unmarshal(value, &refRequiredString)
+			if err != nil {
+				return err
+			}
+			o.RefRequiredString = refRequiredString
+		default:
+			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasRefRequiredString {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "refRequiredString")
+	}
+
+	return nil
+}
+
+type RefObjectRefOptionalBool struct {
+	Value *bool
+}
+
+var _ json.Unmarshaler = new(RefObjectRefOptionalBool)
+
+func (b *RefObjectRefOptionalBool) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		b.Value = nil
+		return nil
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	b.Value = new(value)
+	return nil
+}
+
+type RefObjectRefRequiredString string
+
+var _ json.Unmarshaler = new(RefObjectRefRequiredString)
+
+func (s *RefObjectRefRequiredString) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefObjectRefRequiredString(value)
+	return nil
+}
+
 type OptionalArrayNullable struct {
 	Value []OptionalArrayNullableItem
 }

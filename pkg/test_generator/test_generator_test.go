@@ -57,9 +57,9 @@ func TestGeneratedCasesValidateAgainstOpenAPISchema(t *testing.T) {
 				require.NotNil(t, compiledSchema)
 				require.NotNil(t, compiledSchema.CompiledSchema)
 
-				var generatorSchema SchemaNode
 				schemaNode := findSchemaNode(t, openAPIRoot, requestPath, method, mediaType)
-				require.NoError(t, schemaNode.Decode(&generatorSchema))
+				generatorSchema, err := decodeSchemaNode(openAPIRoot, schemaNode)
+				require.NoError(t, err)
 
 				schemaName := fmt.Sprintf("%s %s %s", strings.ToUpper(method), requestPath, mediaType)
 

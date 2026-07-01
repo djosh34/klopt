@@ -276,3 +276,32 @@ paths:
       responses:
         '204':
           description: No Content
+
+  /ref-object:
+    post:
+      operationId: refObject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefObjectRequest'
+      responses:
+        '204':
+          description: No Content
+
+components:
+  schemas:
+    RefObjectRequest:
+      type: object
+      nullable: false
+      required:
+        - refRequiredString
+      additionalProperties: false
+      properties:
+        refRequiredString:
+          type: string
+          nullable: false
+        refOptionalBool:
+          type: boolean
+          nullable: true

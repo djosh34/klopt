@@ -16,11 +16,10 @@ func RunJSONRequestBodyOperationCases(t *testing.T, openAPI []byte, operationID 
 		t.Fatal("nil unmarshal function")
 	}
 
-	schemaNode, requestBodyRequired, err := jsonRequestBodySchemaNode(openAPI, operationID)
+	root, schemaNode, requestBodyRequired, err := jsonRequestBodySchemaNode(openAPI, operationID)
 	require.NoError(t, err)
 
-	var schema SchemaNode
-	err = schemaNode.Decode(&schema)
+	schema, err := decodeSchemaNode(root, schemaNode)
 	require.NoError(t, err)
 
 	validCases := schema.ValidCases()
@@ -80,30 +79,31 @@ func RunJSONRequestBodyOperationCases(t *testing.T, openAPI []byte, operationID 
 	})
 }
 
-func jsonRequestBodySchemaNode(openAPI []byte, operationID string) (*yaml.Node, bool, error) {
+func jsonRequestBodySchemaNode(openAPI []byte, operationID string) (*yaml.Node, *yaml.Node, bool, error) {
 	var document yaml.Node
 	err := yaml.Unmarshal(openAPI, &document)
 	if err != nil {
-		return nil, false, fmt.Errorf("unmarshal openapi yaml: %w", err)
+		return nil, nil, false, fmt.Errorf("unmarshal openapi yaml: %w", err)
 	}
 
 	if len(document.Content) != 1 {
-		return nil, false, fmt.Errorf("openapi yaml must contain one document")
+		return nil, nil, false, fmt.Errorf("openapi yaml must contain one document")
 	}
 
-	pathsNode := operationMappingValue(document.Content[0], "paths")
+	root := document.Content[0]
+	pathsNode := operationMappingValue(root, "paths")
 	if pathsNode == nil {
-		return nil, false, fmt.Errorf("openapi document has no paths")
+		return nil, nil, false, fmt.Errorf("openapi document has no paths")
 	}
 
 	operationNode, err := operationNodeByID(pathsNode, operationID)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	requestBodyNode := operationMappingValue(operationNode, "requestBody")
 	if requestBodyNode == nil {
-		return nil, false, fmt.Errorf("operation %q has no requestBody", operationID)
+		return nil, nil, false, fmt.Errorf("operation %q has no requestBody", operationID)
 	}
 
 	var requestBodyRequired bool
@@ -111,26 +111,26 @@ func jsonRequestBodySchemaNode(openAPI []byte, operationID string) (*yaml.Node, 
 	if requiredNode != nil {
 		err = requiredNode.Decode(&requestBodyRequired)
 		if err != nil {
-			return nil, false, fmt.Errorf("decode operation %q requestBody.required: %w", operationID, err)
+			return nil, nil, false, fmt.Errorf("decode operation %q requestBody.required: %w", operationID, err)
 		}
 	}
 
 	contentNode := operationMappingValue(requestBodyNode, "content")
 	if contentNode == nil {
-		return nil, false, fmt.Errorf("operation %q requestBody has no content", operationID)
+		return nil, nil, false, fmt.Errorf("operation %q requestBody has no content", operationID)
 	}
 
 	jsonNode := operationMappingValue(contentNode, "application/json")
 	if jsonNode == nil {
-		return nil, false, fmt.Errorf("operation %q requestBody has no application/json content", operationID)
+		return nil, nil, false, fmt.Errorf("operation %q requestBody has no application/json content", operationID)
 	}
 
 	schemaNode := operationMappingValue(jsonNode, "schema")
 	if schemaNode == nil {
-		return nil, false, fmt.Errorf("operation %q application/json content has no schema", operationID)
+		return nil, nil, false, fmt.Errorf("operation %q application/json content has no schema", operationID)
 	}
 
-	return schemaNode, requestBodyRequired, nil
+	return root, schemaNode, requestBodyRequired, nil
 }
 
 func operationNodeByID(pathsNode *yaml.Node, operationID string) (*yaml.Node, error) {

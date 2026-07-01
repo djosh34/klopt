@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/arran4/golang-diff v0.0.5
 	github.com/getkin/kin-openapi v0.140.0
+	github.com/go-openapi/jsonpointer v0.23.1
 	github.com/pb33f/libopenapi v0.38.3
 	github.com/pb33f/libopenapi-validator v0.13.13
 	github.com/stretchr/testify v1.11.1
@@ -17,7 +18,6 @@ require (
 	github.com/basgys/goxml2json v1.1.1-0.20231018121955-e66ee54ceaad // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/go-openapi/jsonpointer v0.23.1 // indirect
 	github.com/go-openapi/swag/jsonname v0.26.0 // indirect
 	github.com/oasdiff/yaml v0.1.0 // indirect
 	github.com/oasdiff/yaml3 v0.0.13 // indirect
