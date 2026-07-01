@@ -22,7 +22,7 @@ func (a *{{ $name }}) UnmarshalJSON(data []byte) error {
 {{- end }}
 	var errs []error
 {{- range .Schemas }}
-	if err := json.Unmarshal(data, &a.{{ .SchemaTypeName }}); err != nil {
+	if err := a.{{ .SchemaTypeName }}.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
 {{- end }}

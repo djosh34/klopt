@@ -92,10 +92,7 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 			return nameErr
 		}
 
-		name, ok := nameTok.(string)
-		if !ok {
-			return NotAnObjectError
-		}
+		name := nameTok.(string)
 
 		var value json.RawMessage
 		err = d.Decode(&value)
@@ -141,6 +138,12 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
 	}
 	if !hasRequiredNotNullableString {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNotNullableString")
@@ -315,13 +318,13 @@ var _ json.Unmarshaler = (*AllOfObject)(nil)
 
 func (a *AllOfObject) UnmarshalJSON(data []byte) error {
 	var errs []error
-	if err := json.Unmarshal(data, &a.AllOfObjectAllOf1); err != nil {
+	if err := a.AllOfObjectAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
-	if err := json.Unmarshal(data, &a.AllOfObjectAllOf2); err != nil {
+	if err := a.AllOfObjectAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
-	if err := json.Unmarshal(data, &a.AllOfObjectAllOf3); err != nil {
+	if err := a.AllOfObjectAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -353,10 +356,7 @@ func (o *AllOfObjectAllOf1) UnmarshalJSON(data []byte) error {
 			return nameErr
 		}
 
-		name, ok := nameTok.(string)
-		if !ok {
-			return NotAnObjectError
-		}
+		name := nameTok.(string)
 
 		var value json.RawMessage
 		err = d.Decode(&value)
@@ -377,6 +377,12 @@ func (o *AllOfObjectAllOf1) UnmarshalJSON(data []byte) error {
 		default:
 			continue
 		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
 	}
 	if !hasFirst {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "first")
@@ -428,10 +434,7 @@ func (o *AllOfObjectAllOf2) UnmarshalJSON(data []byte) error {
 			return nameErr
 		}
 
-		name, ok := nameTok.(string)
-		if !ok {
-			return NotAnObjectError
-		}
+		name := nameTok.(string)
 
 		var value json.RawMessage
 		err = d.Decode(&value)
@@ -452,6 +455,12 @@ func (o *AllOfObjectAllOf2) UnmarshalJSON(data []byte) error {
 		default:
 			continue
 		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
 	}
 	if !hasSecond {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "second")
@@ -503,10 +512,7 @@ func (o *AllOfObjectAllOf3) UnmarshalJSON(data []byte) error {
 			return nameErr
 		}
 
-		name, ok := nameTok.(string)
-		if !ok {
-			return NotAnObjectError
-		}
+		name := nameTok.(string)
 
 		var value json.RawMessage
 		err = d.Decode(&value)
@@ -528,6 +534,12 @@ func (o *AllOfObjectAllOf3) UnmarshalJSON(data []byte) error {
 			continue
 		}
 	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
 	if !hasLast {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "last")
 	}
@@ -540,23 +552,18 @@ type AllOfObjectAllOf3Last json.Number
 var _ json.Unmarshaler = new(AllOfObjectAllOf3Last)
 
 func (n *AllOfObjectAllOf3Last) UnmarshalJSON(data []byte) error {
-	if bytes.Equal(data, jsonNull) {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, jsonNull) {
 		return NullForNotNullableNumberError
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
+	if len(trimmed) == 0 || trimmed[0] == '"' {
+		return NonNumberForNumberSchemaError
+	}
 
-	tok, err := decoder.Token()
+	var value json.Number
+	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
-		return NonNumberForNumberSchemaError
-	}
-
-	value, ok := tok.(json.Number)
-	if !ok {
-		return NonNumberForNumberSchemaError
-	}
-	if len(bytes.TrimSpace(data[decoder.InputOffset():])) != 0 {
 		return NonNumberForNumberSchemaError
 	}
 	*n = AllOfObjectAllOf3Last(value)

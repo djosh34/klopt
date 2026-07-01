@@ -43,10 +43,7 @@ func (o *{{ $name }}) UnmarshalJSON(data []byte) error {
 			return nameErr
 		}
 
-		name, ok := nameTok.(string)
-		if !ok {
-			return NotAnObjectError
-		}
+		name := nameTok.(string)
 
 		var value json.RawMessage
 		err = d.Decode(&value)
@@ -73,6 +70,12 @@ func (o *{{ $name }}) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 {{- end }}
 		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
 	}
 
 {{- range .Properties }}

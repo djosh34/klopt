@@ -110,6 +110,32 @@ func TestSchemaNodeMergeObjectAdditionalPropertiesFalseWinsOverSchema(t *testing
 	require.Nil(t, merged.Object.AdditionalProperties.Schema)
 }
 
+func TestSchemaNodeMergeObjectAdditionalPropertiesFalseWinsEvenWhenNodeAlsoHasSchema(t *testing.T) {
+	additionalProperties := stringSchema(false)
+	left := SchemaNode{
+		Type: "object",
+		Object: &ObjectNode{
+			AdditionalProperties: AdditionalPropertiesNode{
+				Allowed: new(false),
+				Schema:  &additionalProperties,
+			},
+		},
+	}
+	right := SchemaNode{
+		Type: "object",
+		Object: &ObjectNode{
+			AdditionalProperties: AdditionalPropertiesNode{Allowed: new(true)},
+		},
+	}
+
+	merged, err := left.Merge(right)
+	require.NoError(t, err)
+
+	require.NotNil(t, merged.Object.AdditionalProperties.Allowed)
+	require.False(t, *merged.Object.AdditionalProperties.Allowed)
+	require.Nil(t, merged.Object.AdditionalProperties.Schema)
+}
+
 func TestSchemaNodeMergeObjectsDeduplicatesRequiredProperties(t *testing.T) {
 	left := SchemaNode{
 		Type: "object",
@@ -226,6 +252,67 @@ func TestSchemaNodeMergeObjectsRecursivelyMergesArrayPropertyItems(t *testing.T)
 	require.NotNil(t, tags.Array)
 	require.Equal(t, BaseNode{Nullable: false}, tags.Array.BaseNode)
 	require.Equal(t, BaseNode{Nullable: false}, tags.Array.Items.String.BaseNode)
+}
+
+func TestSchemaNodeMergeObjectCasesUseMergedRequiredAndPropertyRules(t *testing.T) {
+	left := SchemaNode{
+		Type: "object",
+		Object: &ObjectNode{
+			Required: []string{"name"},
+			Properties: map[string]SchemaNode{
+				"name": stringSchema(true),
+			},
+		},
+	}
+	right := SchemaNode{
+		Type: "object",
+		Object: &ObjectNode{
+			Required:             []string{"enabled"},
+			AdditionalProperties: AdditionalPropertiesNode{Allowed: new(false)},
+			Properties: map[string]SchemaNode{
+				"enabled": boolSchema(false),
+				"name":    stringSchema(false),
+			},
+		},
+	}
+
+	merged, err := left.Merge(right)
+	require.NoError(t, err)
+
+	require.Contains(t, rawMessages(merged.ValidCases()), `{"enabled":true,"name":"valid-string"}`)
+	require.NotContains(t, rawMessages(merged.ValidCases()), `{"enabled":true,"name":null}`)
+	require.Contains(t, rawMessages(merged.InvalidCases()), `{"enabled":true,"name":null}`)
+	require.Contains(t, rawMessages(merged.InvalidCases()), `{"name":"valid-string"}`)
+	require.Contains(t, rawMessages(merged.InvalidCases()), `{"enabled":true}`)
+	require.Contains(t, rawMessages(merged.InvalidCases()), `{"`+additionalPropertyCaseKey+`":"not-allowed","enabled":true,"name":"valid-string"}`)
+}
+
+func TestSchemaNodeMergeObjectAdditionalPropertiesSchemaCasesUseMergedSchema(t *testing.T) {
+	leftAdditionalProperties := stringSchema(true)
+	rightAdditionalProperties := stringSchema(false)
+	left := SchemaNode{
+		Type: "object",
+		Object: &ObjectNode{
+			AdditionalProperties: AdditionalPropertiesNode{
+				Schema: &leftAdditionalProperties,
+			},
+		},
+	}
+	right := SchemaNode{
+		Type: "object",
+		Object: &ObjectNode{
+			AdditionalProperties: AdditionalPropertiesNode{
+				Schema: &rightAdditionalProperties,
+			},
+		},
+	}
+
+	merged, err := left.Merge(right)
+	require.NoError(t, err)
+
+	require.Contains(t, rawMessages(merged.ValidCases()), `{"`+additionalPropertyCaseKey+`":"valid-string"}`)
+	require.NotContains(t, rawMessages(merged.ValidCases()), `{"`+additionalPropertyCaseKey+`":null}`)
+	require.Contains(t, rawMessages(merged.InvalidCases()), `{"`+additionalPropertyCaseKey+`":null}`)
 }
 
 func TestSchemaNodeMergeObjectAdditionalPropertiesCombinations(t *testing.T) {
@@ -398,6 +485,87 @@ func TestSchemaNodeMergePrimitiveSchemasKeepsIntersectedNullableAndStringFormat(
 func TestSchemaNodeMergeRejectsDifferentTypes(t *testing.T) {
 	_, err := stringSchema(false).Merge(numberSchema(false))
 	require.ErrorContains(t, err, `cannot merge schema type "string" with "number"`)
+}
+
+func TestSchemaNodeMergeRejectsMalformedSameTypeSchemas(t *testing.T) {
+	for name, tt := range map[string]struct {
+		left  SchemaNode
+		right SchemaNode
+		want  string
+	}{
+		"array": {
+			left:  SchemaNode{Type: "array"},
+			right: SchemaNode{Type: "array", Array: &ArrayNode{}},
+			want:  "array schema is missing array node",
+		},
+		"boolean": {
+			left:  SchemaNode{Type: "boolean"},
+			right: SchemaNode{Type: "boolean", Bool: &BoolNode{}},
+			want:  "boolean schema is missing boolean node",
+		},
+		"number": {
+			left:  SchemaNode{Type: "number"},
+			right: SchemaNode{Type: "number", Number: &NumberNode{}},
+			want:  "number schema is missing number node",
+		},
+		"object": {
+			left:  SchemaNode{Type: "object"},
+			right: SchemaNode{Type: "object", Object: &ObjectNode{}},
+			want:  "object schema is missing object node",
+		},
+		"string": {
+			left:  SchemaNode{Type: "string"},
+			right: SchemaNode{Type: "string", String: &StringNode{}},
+			want:  "string schema is missing string node",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := tt.left.Merge(tt.right)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestSchemaNodeMergeRejectsUnsupportedSameTypeSchema(t *testing.T) {
+	_, err := SchemaNode{Type: "integer"}.Merge(SchemaNode{Type: "integer"})
+	require.ErrorContains(t, err, `unsupported schema type "integer"`)
+}
+
+func TestSchemaNodeMergeRejectsStringFormatConflict(t *testing.T) {
+	left := SchemaNode{
+		Type: "string",
+		String: &StringNode{
+			Format: "date-time",
+		},
+	}
+	right := SchemaNode{
+		Type: "string",
+		String: &StringNode{
+			Format: "uuid",
+		},
+	}
+
+	_, err := left.Merge(right)
+	require.ErrorContains(t, err, `cannot merge string format "date-time" with "uuid"`)
+}
+
+func TestSchemaNodeMergeRejectsArrayItemConflict(t *testing.T) {
+	left := SchemaNode{
+		Type: "array",
+		Array: &ArrayNode{
+			Items: stringSchema(false),
+		},
+	}
+	right := SchemaNode{
+		Type: "array",
+		Array: &ArrayNode{
+			Items: boolSchema(false),
+		},
+	}
+
+	_, err := left.Merge(right)
+	require.ErrorContains(t, err, "array items")
+	require.ErrorContains(t, err, `cannot merge schema type "string" with "boolean"`)
 }
 
 func TestSchemaNodeMergeRejectsPropertyTypeConflict(t *testing.T) {

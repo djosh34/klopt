@@ -46,6 +46,31 @@ allOf:
 	require.ErrorContains(t, err, `cannot merge schema type "string" with "number"`)
 }
 
+func TestAllOfUnmarshalReportsLaterImpossibleMergeIndex(t *testing.T) {
+	content := []byte(`
+allOf:
+  - type: object
+    properties:
+      first:
+        type: string
+  - type: object
+    properties:
+      second:
+        type: boolean
+  - type: object
+    properties:
+      first:
+        type: number
+`)
+
+	var node SchemaNode
+	err := yaml.Unmarshal(content, &node)
+
+	require.ErrorContains(t, err, "merge allOf schema 3")
+	require.ErrorContains(t, err, `property "first"`)
+	require.ErrorContains(t, err, `cannot merge schema type "string" with "number"`)
+}
+
 func TestAllOfMergedObjectInvalidCasesUseMergedPropertyRules(t *testing.T) {
 	content := []byte(`
 allOf:
@@ -119,6 +144,87 @@ allOf:
 	require.Contains(t, caseNames(node.InvalidCases()), "invalid property child missing required property second")
 }
 
+func TestAllOfMergedArrayCasesUseMergedItemRules(t *testing.T) {
+	content := []byte(`
+allOf:
+  - type: array
+    nullable: true
+    items:
+      type: string
+      nullable: true
+  - type: array
+    nullable: false
+    items:
+      type: string
+      nullable: false
+`)
+
+	var node SchemaNode
+	err := yaml.Unmarshal(content, &node)
+	require.NoError(t, err)
+
+	require.NotContains(t, rawMessages(node.ValidCases()), `null`)
+	require.NotContains(t, rawMessages(node.ValidCases()), `[null]`)
+	require.Contains(t, rawMessages(node.ValidCases()), `["valid-string"]`)
+	require.Contains(t, rawMessages(node.InvalidCases()), `null`)
+	require.Contains(t, rawMessages(node.InvalidCases()), `[null]`)
+}
+
+func TestAllOfMergedStringFormatCasesUseMergedFormat(t *testing.T) {
+	content := []byte(`
+allOf:
+  - type: string
+    nullable: true
+  - type: string
+    nullable: false
+    format: date-time
+`)
+
+	var node SchemaNode
+	err := yaml.Unmarshal(content, &node)
+	require.NoError(t, err)
+
+	require.Contains(t, rawMessages(node.ValidCases()), `"2026-07-01T12:34:56Z"`)
+	require.NotContains(t, rawMessages(node.ValidCases()), `null`)
+	require.Contains(t, rawMessages(node.InvalidCases()), `null`)
+	require.Contains(t, rawMessages(node.InvalidCases()), `"not-date-time"`)
+}
+
+func TestAllOfUnmarshalRejectsArrayItemConflict(t *testing.T) {
+	content := []byte(`
+allOf:
+  - type: array
+    items:
+      type: string
+  - type: array
+    items:
+      type: boolean
+`)
+
+	var node SchemaNode
+	err := yaml.Unmarshal(content, &node)
+
+	require.ErrorContains(t, err, "merge allOf schema 2")
+	require.ErrorContains(t, err, "array items")
+	require.ErrorContains(t, err, `cannot merge schema type "string" with "boolean"`)
+}
+
+func TestAllOfUnmarshalRejectsStringFormatConflict(t *testing.T) {
+	content := []byte(`
+allOf:
+  - type: string
+    format: date-time
+  - type: string
+    format: uuid
+`)
+
+	var node SchemaNode
+	err := yaml.Unmarshal(content, &node)
+
+	require.ErrorContains(t, err, "merge allOf schema 2")
+	require.ErrorContains(t, err, `cannot merge string format "date-time" with "uuid"`)
+}
+
 func TestAllOfUnmarshalRejectsObjectPropertyConflict(t *testing.T) {
 	content := []byte(`
 allOf:
@@ -155,6 +261,32 @@ allOf:
 	err := yaml.Unmarshal(content, &node)
 
 	require.ErrorContains(t, err, "merge allOf schema 2")
+	require.ErrorContains(t, err, "additionalProperties")
+	require.ErrorContains(t, err, `cannot merge schema type "string" with "number"`)
+}
+
+func TestAllOfUnmarshalRejectsNestedAdditionalPropertiesConflict(t *testing.T) {
+	content := []byte(`
+allOf:
+  - type: object
+    properties:
+      child:
+        type: object
+        additionalProperties:
+          type: string
+  - type: object
+    properties:
+      child:
+        type: object
+        additionalProperties:
+          type: number
+`)
+
+	var node SchemaNode
+	err := yaml.Unmarshal(content, &node)
+
+	require.ErrorContains(t, err, "merge allOf schema 2")
+	require.ErrorContains(t, err, `property "child"`)
 	require.ErrorContains(t, err, "additionalProperties")
 	require.ErrorContains(t, err, `cannot merge schema type "string" with "number"`)
 }

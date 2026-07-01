@@ -228,10 +228,10 @@ var _ json.Unmarshaler = (*AllOfObject)(nil)
 
 func (a *AllOfObject) UnmarshalJSON(data []byte) error {
 	var errs []error
-	if err := json.Unmarshal(data, &a.AllOfObjectFirst); err != nil {
+	if err := a.AllOfObjectFirst.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
-	if err := json.Unmarshal(data, &a.AllOfObjectSecond); err != nil {
+	if err := a.AllOfObjectSecond.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -380,10 +380,7 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 			return nameErr
 		}
 
-		name, ok := nameTok.(string)
-		if !ok {
-			return NotAnObjectError
-		}
+		name := nameTok.(string)
 
 		var value json.RawMessage
 		err = d.Decode(&value)
@@ -429,6 +426,12 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
 	}
 	if !hasRequiredNotNullableString {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNotNullableString")

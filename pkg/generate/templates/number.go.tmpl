@@ -16,7 +16,8 @@ func (n *{{ $name }}) UnmarshalJSON(data []byte) error {
 	}
 
 {{- end }}
-	if bytes.Equal(data, jsonNull) {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, jsonNull) {
 {{- if .Nullable }}
 		n.Value = nil
 		return nil
@@ -25,19 +26,13 @@ func (n *{{ $name }}) UnmarshalJSON(data []byte) error {
 {{- end }}
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
+	if len(trimmed) == 0 || trimmed[0] == '"' {
+		return NonNumberForNumberSchemaError
+	}
 
-	tok, err := decoder.Token()
+	var value json.Number
+	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
-		return NonNumberForNumberSchemaError
-	}
-
-	value, ok := tok.(json.Number)
-	if !ok {
-		return NonNumberForNumberSchemaError
-	}
-	if len(bytes.TrimSpace(data[decoder.InputOffset():])) != 0 {
 		return NonNumberForNumberSchemaError
 	}
 
