@@ -28,21 +28,25 @@ func TestNullableObjectNodeHasOneNullableStringProperty(t *testing.T) {
 	mediaTypeNode := path.Post.RequestBody.Content["application/json"]
 
 	objectNode := mediaTypeNode.Schema.Object
+	require.Equal(t, "object", mediaTypeNode.Schema.Type)
 	require.NotNil(t, objectNode)
 	require.Nil(t, mediaTypeNode.Schema.String)
 
-	require.Equal(t, BaseNode{Type: "object", Nullable: true}, objectNode.BaseNode)
+	require.Equal(t, BaseNode{Nullable: true}, objectNode.BaseNode)
 	require.Equal(t, []string{"requiredNullableString"}, objectNode.Required)
 	require.NotNil(t, objectNode.AdditionalProperties.Allowed)
 	require.False(t, *objectNode.AdditionalProperties.Allowed)
 	require.Nil(t, objectNode.AdditionalProperties.Schema)
 	require.Len(t, objectNode.Properties, 1)
 
-	propertyNode := objectNode.Properties["requiredNullableString"].String
-	require.NotNil(t, propertyNode)
-	require.Nil(t, objectNode.Properties["requiredNullableString"].Object)
+	propertySchema := objectNode.Properties["requiredNullableString"]
+	require.Equal(t, "string", propertySchema.Type)
 
-	require.Equal(t, BaseNode{Type: "string", Nullable: true}, propertyNode.BaseNode)
+	propertyNode := propertySchema.String
+	require.NotNil(t, propertyNode)
+	require.Nil(t, propertySchema.Object)
+
+	require.Equal(t, BaseNode{Nullable: true}, propertyNode.BaseNode)
 }
 
 func TestAdditionalPropertiesNodeCanBeSchema(t *testing.T) {
@@ -60,9 +64,12 @@ additionalProperties:
 	require.Nil(t, objectNode.AdditionalProperties.Allowed)
 	require.NotNil(t, objectNode.AdditionalProperties.Schema)
 
-	additionalPropertiesNode := objectNode.AdditionalProperties.Schema.String
+	additionalPropertiesSchema := objectNode.AdditionalProperties.Schema
+	require.Equal(t, "string", additionalPropertiesSchema.Type)
+
+	additionalPropertiesNode := additionalPropertiesSchema.String
 	require.NotNil(t, additionalPropertiesNode)
-	require.Equal(t, BaseNode{Type: "string", Nullable: true}, additionalPropertiesNode.BaseNode)
+	require.Equal(t, BaseNode{Nullable: true}, additionalPropertiesNode.BaseNode)
 }
 
 func TestSchemaNodeUnmarshalYAMLDispatchesString(t *testing.T) {
@@ -75,9 +82,10 @@ nullable: true
 	err := yaml.Unmarshal(content, &schemaNode)
 	require.NoError(t, err)
 
+	require.Equal(t, "string", schemaNode.Type)
 	require.Nil(t, schemaNode.Object)
 	require.NotNil(t, schemaNode.String)
-	require.Equal(t, BaseNode{Type: "string", Nullable: true}, schemaNode.String.BaseNode)
+	require.Equal(t, BaseNode{Nullable: true}, schemaNode.String.BaseNode)
 }
 
 func TestSchemaNodeUnmarshalYAMLDispatchesObjectWithNestedProperties(t *testing.T) {
@@ -103,22 +111,29 @@ properties:
 	require.NoError(t, err)
 
 	objectNode := schemaNode.Object
+	require.Equal(t, "object", schemaNode.Type)
 	require.NotNil(t, objectNode)
 	require.Nil(t, schemaNode.String)
-	require.Equal(t, BaseNode{Type: "object", Nullable: false}, objectNode.BaseNode)
+	require.Equal(t, BaseNode{Nullable: false}, objectNode.BaseNode)
 	require.Equal(t, []string{"child"}, objectNode.Required)
 	require.NotNil(t, objectNode.AdditionalProperties.Allowed)
 	require.False(t, *objectNode.AdditionalProperties.Allowed)
 
-	childNode := objectNode.Properties["child"].Object
+	childSchema := objectNode.Properties["child"]
+	require.Equal(t, "object", childSchema.Type)
+
+	childNode := childSchema.Object
 	require.NotNil(t, childNode)
-	require.Equal(t, BaseNode{Type: "object", Nullable: true}, childNode.BaseNode)
+	require.Equal(t, BaseNode{Nullable: true}, childNode.BaseNode)
 	require.NotNil(t, childNode.AdditionalProperties.Allowed)
 	require.True(t, *childNode.AdditionalProperties.Allowed)
 
-	nameNode := childNode.Properties["name"].String
+	nameSchema := childNode.Properties["name"]
+	require.Equal(t, "string", nameSchema.Type)
+
+	nameNode := nameSchema.String
 	require.NotNil(t, nameNode)
-	require.Equal(t, BaseNode{Type: "string", Nullable: false}, nameNode.BaseNode)
+	require.Equal(t, BaseNode{Nullable: false}, nameNode.BaseNode)
 }
 
 func TestObjectNodeUnmarshalYAMLAllowsMissingOptionalSections(t *testing.T) {
@@ -131,7 +146,7 @@ nullable: true
 	err := yaml.Unmarshal(content, &objectNode)
 	require.NoError(t, err)
 
-	require.Equal(t, BaseNode{Type: "object", Nullable: true}, objectNode.BaseNode)
+	require.Equal(t, BaseNode{Nullable: true}, objectNode.BaseNode)
 	require.Nil(t, objectNode.Required)
 	require.Nil(t, objectNode.AdditionalProperties.Allowed)
 	require.Nil(t, objectNode.AdditionalProperties.Schema)

@@ -11,28 +11,37 @@ func (s *SchemaNode) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("missing schema")
 	}
 
-	var base BaseNode
-	err := value.Decode(&base)
+	var schema struct {
+		Type string `yaml:"type"`
+	}
+	err := value.Decode(&schema)
 	if err != nil {
 		return err
 	}
 
-	switch base.Type {
+	switch schema.Type {
 	case "object":
 		var objectNode ObjectNode
 		err = value.Decode(&objectNode)
 		if err != nil {
 			return err
 		}
+		s.Type = schema.Type
 		s.Object = &objectNode
 		s.String = nil
 		return nil
 	case "string":
+		var stringNode StringNode
+		err = value.Decode(&stringNode)
+		if err != nil {
+			return err
+		}
+		s.Type = schema.Type
 		s.Object = nil
-		s.String = &StringNode{BaseNode: base}
+		s.String = &stringNode
 		return nil
 	default:
-		return fmt.Errorf("unsupported schema type %q", base.Type)
+		return fmt.Errorf("unsupported schema type %q", schema.Type)
 	}
 }
 

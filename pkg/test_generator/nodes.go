@@ -1,5 +1,10 @@
 package testgenerator
 
+import "encoding/json"
+
+type Generatable interface {
+	GenerateValid() json.RawMessage
+}
 type OpenAPINode struct {
 	Paths map[string]struct {
 		Post *struct {
@@ -15,11 +20,11 @@ type OpenAPINode struct {
 }
 
 type SchemaNode struct {
+	Type   string `yaml:"type"`
 	Object *ObjectNode
 	String *StringNode
 }
 
 type BaseNode struct {
-	Type     string `yaml:"type"`
-	Nullable bool   `yaml:"nullable"`
+	Nullable bool `yaml:"nullable"`
 }
