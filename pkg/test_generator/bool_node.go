@@ -29,3 +29,7 @@ func (b *BoolNode) InvalidCases() []Case {
 		Case{Name: "array", Value: json.RawMessage(`[]`)},
 	)
 }
+
+func (b *BoolNode) Merge(SchemaNode) (SchemaNode, error) {
+	panic("TODO implement BoolNode.Merge")
+}

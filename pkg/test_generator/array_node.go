@@ -53,6 +53,10 @@ func (a *ArrayNode) InvalidCases() []Case {
 	return cases
 }
 
+func (a *ArrayNode) Merge(SchemaNode) (SchemaNode, error) {
+	panic("TODO implement ArrayNode.Merge")
+}
+
 func arrayCase(name string, items ...json.RawMessage) Case {
 	value, err := json.Marshal(items)
 	if err != nil {

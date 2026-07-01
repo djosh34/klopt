@@ -20,6 +20,10 @@ func (b BaseNode) InvalidCases() []Case {
 	return []Case{nullCase()}
 }
 
+func (b BaseNode) Merge(SchemaNode) (SchemaNode, error) {
+	panic("TODO implement BaseNode.Merge")
+}
+
 func nullCase() Case {
 	return Case{
 		Name:  "null",

@@ -80,6 +80,10 @@ func (o *ObjectNode) InvalidCases() []Case {
 	return append(cases, o.additionalPropertyInvalidCases(baselineRequiredObject)...)
 }
 
+func (o *ObjectNode) Merge(SchemaNode) (SchemaNode, error) {
+	panic("TODO implement ObjectNode.Merge")
+}
+
 type AdditionalPropertiesNode struct {
 	Allowed *bool
 	Schema  *SchemaNode

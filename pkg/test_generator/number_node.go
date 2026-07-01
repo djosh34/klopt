@@ -35,3 +35,7 @@ func (n *NumberNode) InvalidCases() []Case {
 		Case{Name: "array", Value: json.RawMessage(`[]`)},
 	)
 }
+
+func (n *NumberNode) Merge(SchemaNode) (SchemaNode, error) {
+	panic("TODO implement NumberNode.Merge")
+}

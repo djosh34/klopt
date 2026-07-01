@@ -1,6 +1,7 @@
 package testgenerator
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -200,6 +201,34 @@ properties:
 	require.Equal(t, BaseNode{Nullable: false}, nameNode.BaseNode)
 }
 
+func TestSchemaNodeUnmarshalYAMLDispatchesAllOf(t *testing.T) {
+	content := []byte(`
+allOf:
+  - type: object
+    required:
+      - first
+    properties:
+      first:
+        type: string
+  - type: object
+    required:
+      - second
+    properties:
+      second:
+        type: boolean
+`)
+
+	var schemaNode SchemaNode
+	err := yaml.Unmarshal(content, &schemaNode)
+	require.NoError(t, err)
+
+	require.Equal(t, "object", schemaNode.Type)
+	require.NotNil(t, schemaNode.Object)
+	require.Equal(t, []string{"first", "second"}, schemaNode.Object.Required)
+	require.Contains(t, schemaNode.Object.Properties, "first")
+	require.Contains(t, schemaNode.Object.Properties, "second")
+}
+
 func TestObjectNodeUnmarshalYAMLAllowsMissingOptionalSections(t *testing.T) {
 	content := []byte(`
 type: object
@@ -262,6 +291,81 @@ nullable: true
 	var schemaNode SchemaNode
 	err := yaml.Unmarshal(content, &schemaNode)
 	require.ErrorContains(t, err, `unsupported schema type ""`)
+}
+
+func TestSchemaNodeUnmarshalYAMLRejectsAnyOfAndOneOf(t *testing.T) {
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		t.Run(keyword, func(t *testing.T) {
+			content := []byte(fmt.Sprintf(`
+%s:
+  - type: string
+`, keyword))
+
+			var schemaNode SchemaNode
+			err := yaml.Unmarshal(content, &schemaNode)
+			require.ErrorContains(t, err, fmt.Sprintf(`unsupported schema composition %q`, keyword))
+		})
+	}
+}
+
+func TestSchemaNodeUnmarshalYAMLRejectsNestedAnyOfAndOneOf(t *testing.T) {
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		t.Run(keyword, func(t *testing.T) {
+			content := []byte(fmt.Sprintf(`
+type: object
+properties:
+  unsupported:
+    %s:
+      - type: string
+`, keyword))
+
+			var schemaNode SchemaNode
+			err := yaml.Unmarshal(content, &schemaNode)
+			require.ErrorContains(t, err, fmt.Sprintf(`unsupported schema composition %q`, keyword))
+		})
+	}
+}
+
+func TestOpenAPISchemaUnmarshalRejectsAnyOfAndOneOf(t *testing.T) {
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		t.Run(keyword, func(t *testing.T) {
+			content := []byte(fmt.Sprintf(`
+openapi: 3.0.3
+info:
+  title: Unsupported Composition
+  version: 1.0.0
+paths:
+  /unsupported:
+    post:
+      operationId: unsupported
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              %s:
+                - type: string
+      responses:
+        '204':
+          description: No Content
+`, keyword))
+
+			var doc struct {
+				Paths map[string]struct {
+					Post *struct {
+						RequestBody struct {
+							Content map[string]struct {
+								Schema SchemaNode `yaml:"schema"`
+							} `yaml:"content"`
+						} `yaml:"requestBody"`
+					} `yaml:"post"`
+				} `yaml:"paths"`
+			}
+
+			err := yaml.Unmarshal(content, &doc)
+			require.ErrorContains(t, err, fmt.Sprintf(`unsupported schema composition %q`, keyword))
+		})
+	}
 }
 
 func TestSchemaNodeUnmarshalYAMLRejectsMissingSchemaNode(t *testing.T) {

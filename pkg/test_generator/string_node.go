@@ -29,6 +29,10 @@ func (s *StringNode) InvalidCases() []Case {
 	)
 }
 
+func (s *StringNode) Merge(SchemaNode) (SchemaNode, error) {
+	panic("TODO implement StringNode.Merge")
+}
+
 func (s *StringNode) stringCase() Case {
 	if s.Format == "date-time" {
 		return Case{

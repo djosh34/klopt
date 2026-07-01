@@ -45,6 +45,10 @@ func (s *SchemaNode) InvalidCases() []Case {
 	}
 }
 
+func (s SchemaNode) Merge(SchemaNode) (SchemaNode, error) {
+	panic("TODO implement SchemaNode.Merge")
+}
+
 type BaseNode struct {
 	Nullable bool `yaml:"nullable"`
 }
