@@ -168,7 +168,8 @@ func (o *ObjectNode) objectCaseData() ([]string, []string, map[string]json.RawMe
 	}
 
 	baselineRequiredObject := map[string]json.RawMessage{}
-	requiredObjects := []map[string]json.RawMessage{{}}
+	requiredValidNames := make([]string, 0, len(requiredNames))
+	var requiredValidCases [][]Case
 	for _, name := range requiredNames {
 		schema, ok := o.Properties[name]
 		if !ok {
@@ -180,20 +181,19 @@ func (o *ObjectNode) objectCaseData() ([]string, []string, map[string]json.RawMe
 			continue
 		}
 
-		for _, validCase := range validCases {
-			baselineRequiredObject[name] = validCase.Value
-			break
-		}
+		baselineRequiredObject[name] = validCases[0].Value
+		requiredValidNames = append(requiredValidNames, name)
+		requiredValidCases = append(requiredValidCases, validCases)
+	}
 
-		nextObjects := make([]map[string]json.RawMessage, 0, len(requiredObjects)*len(validCases))
-		for _, object := range requiredObjects {
-			for _, validCase := range validCases {
-				nextObject := cloneObject(object)
-				nextObject[name] = validCase.Value
-				nextObjects = append(nextObjects, nextObject)
-			}
+	requiredObjects := []map[string]json.RawMessage{cloneObject(baselineRequiredObject)}
+	for propertyIndex, validCases := range requiredValidCases {
+		name := requiredValidNames[propertyIndex]
+		for _, validCase := range validCases[1:] {
+			object := cloneObject(baselineRequiredObject)
+			object[name] = validCase.Value
+			requiredObjects = append(requiredObjects, object)
 		}
-		requiredObjects = nextObjects
 	}
 
 	optionalNames := make([]string, 0, len(o.Properties))

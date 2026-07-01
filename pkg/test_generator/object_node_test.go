@@ -3,6 +3,7 @@ package testgenerator
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +81,7 @@ func TestObjectNodeInvalidCasesReachShapeMissingAdditionalAndPropertyCases(t *te
 
 }
 
-func TestObjectNodeValidCasesIncludeEveryRequiredPropertyValidCombination(t *testing.T) {
+func TestObjectNodeValidCasesIncludeEachRequiredPropertyValidCaseAdditively(t *testing.T) {
 	node := ObjectNode{
 		Required: []string{"left", "right"},
 		AdditionalProperties: AdditionalPropertiesNode{
@@ -94,12 +95,11 @@ func TestObjectNodeValidCasesIncludeEveryRequiredPropertyValidCombination(t *tes
 
 	require.Equal(t, []string{
 		`{"left":"valid-string","right":"valid-string"}`,
-		`{"left":"valid-string","right":null}`,
 		`{"left":null,"right":"valid-string"}`,
-		`{"left":null,"right":null}`,
+		`{"left":"valid-string","right":null}`,
 	}, rawMessages(node.ValidCases()))
+	require.NotContains(t, rawMessages(node.ValidCases()), `{"left":null,"right":null}`)
 	require.Equal(t, []string{
-		"required properties",
 		"required properties",
 		"required properties",
 		"required properties",
@@ -246,6 +246,71 @@ func TestObjectNodeOptionalCasesUseSingleRequiredBaseline(t *testing.T) {
 	require.NotContains(t, rawMessages(node.ValidCases()), `{"id":null,"optional":null}`)
 }
 
+func TestObjectNodeRequiredObjectCasesAreAdditive(t *testing.T) {
+	node := ObjectNode{
+		Required: []string{"text", "flag", "count"},
+		AdditionalProperties: AdditionalPropertiesNode{
+			Allowed: new(false),
+		},
+		Properties: map[string]SchemaNode{
+			"text":  stringSchema(true),
+			"flag":  boolSchema(true),
+			"count": numberSchema(true),
+		},
+	}
+
+	start := time.Now()
+	requiredNames, _, _, requiredObjects := node.objectCaseData()
+	elapsed := time.Since(start)
+
+	validCaseCounts := make(map[string]int, len(requiredNames))
+	cartesianRequiredObjects := 1
+	additiveRequiredObjects := 1
+	for _, name := range requiredNames {
+		schema := node.Properties[name]
+		validCaseCount := len(schema.ValidCases())
+		validCaseCounts[name] = validCaseCount
+		cartesianRequiredObjects *= validCaseCount
+		additiveRequiredObjects += validCaseCount - 1
+	}
+
+	t.Logf(
+		"required valid case counts=%v cartesian required objects=%d additive required objects=%d generated required objects=%d elapsed=%s",
+		validCaseCounts,
+		cartesianRequiredObjects,
+		additiveRequiredObjects,
+		len(requiredObjects),
+		elapsed,
+	)
+
+	require.Equal(t, []string{"text", "flag", "count"}, requiredNames)
+	require.Equal(t, 66, cartesianRequiredObjects)
+	require.Equal(t, 14, additiveRequiredObjects)
+	require.Len(t, requiredObjects, additiveRequiredObjects)
+}
+
+func TestObjectNodeRequiredObjectsDoNotAlias(t *testing.T) {
+	node := ObjectNode{
+		Required: []string{"left", "right"},
+		AdditionalProperties: AdditionalPropertiesNode{
+			Allowed: new(false),
+		},
+		Properties: map[string]SchemaNode{
+			"left":  stringSchema(true),
+			"right": stringSchema(true),
+		},
+	}
+
+	_, _, _, requiredObjects := node.objectCaseData()
+	require.Len(t, requiredObjects, 3)
+
+	before := string(requiredObjects[1]["right"])
+	requiredObjects[0]["right"] = json.RawMessage(`"changed"`)
+
+	require.Equal(t, `"valid-string"`, before)
+	require.Equal(t, before, string(requiredObjects[1]["right"]))
+}
+
 func rawMessages(cases []Case) []string {
 	rawMessages := make([]string, 0, len(cases))
 	for _, testCase := range cases {
@@ -290,6 +355,24 @@ func stringSchema(nullable bool) SchemaNode {
 	return SchemaNode{
 		Type: "string",
 		String: &StringNode{
+			BaseNode: BaseNode{Nullable: nullable},
+		},
+	}
+}
+
+func boolSchema(nullable bool) SchemaNode {
+	return SchemaNode{
+		Type: "boolean",
+		Bool: &BoolNode{
+			BaseNode: BaseNode{Nullable: nullable},
+		},
+	}
+}
+
+func numberSchema(nullable bool) SchemaNode {
+	return SchemaNode{
+		Type: "number",
+		Number: &NumberNode{
 			BaseNode: BaseNode{Nullable: nullable},
 		},
 	}
