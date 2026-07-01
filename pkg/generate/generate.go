@@ -30,17 +30,17 @@ func (c *GenerateContext) GenerateInMemory() (FileSet, error) {
 		return nil, err
 	}
 
-	operationSchemas, err := namedOperationSchemas(operations)
-	if err != nil {
-		return nil, err
-	}
+	//operationSchemas, err := namedOperationSchemas(operations)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//
+	//schemas, err := schemaDefinitions(operations)
+	//if err != nil {
+	//	return nil, err
+	//}
 
-	schemas, err := schemaDefinitions(operationSchemas)
-	if err != nil {
-		return nil, err
-	}
-
-	models, err := renderModelsFile(schemas)
+	models, err := renderModelsFile(operations)
 	if err != nil {
 		return nil, err
 	}
