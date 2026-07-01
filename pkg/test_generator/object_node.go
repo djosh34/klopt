@@ -18,7 +18,7 @@ type ObjectNode struct {
 }
 
 func (o *ObjectNode) ValidCases() []Case {
-	requiredNames, optionalNames, requiredObjects := o.objectCaseData()
+	_, optionalNames, requiredObjects := o.objectCaseData()
 	requiredObject := requiredObjects[0]
 
 	cases := append([]Case{}, o.BaseNode.ValidCases()...)
