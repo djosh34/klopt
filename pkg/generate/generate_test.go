@@ -41,7 +41,7 @@ func TestGenerateExample(t *testing.T) {
 	err = generateContext.FilterOperations("objectKeysAdditionalPropertiesFalse")
 	require.NoError(t, err)
 
-	err = generateContext.Generate(generateOutputDir)
+	err = GenerateWithPathError(t, generateContext, generateOutputDir)
 	require.NoError(t, err)
 
 }
@@ -63,7 +63,7 @@ func TestGenerateExampleMatchesFixture(t *testing.T) {
 	err = os.WriteFile(filepath.Join(generateOutputDir, "stale.go"), []byte("package stale\n"), 0o644)
 	require.NoError(t, err)
 
-	err = generateContext.Generate(generateOutputDir)
+	err = GenerateWithPathError(t, generateContext, generateOutputDir)
 	require.NoError(t, err)
 
 	requireSameFiles(t, exampleDir, generateOutputDir, []string{
@@ -81,7 +81,7 @@ func TestGeneratePopulatesOperationsMap(t *testing.T) {
 	err = generateContext.FilterOperations("objectKeysAdditionalPropertiesFalse", "stringNoFormatNullable")
 	require.NoError(t, err)
 
-	err = generateContext.Generate(t.TempDir())
+	err = GenerateWithPathError(t, generateContext, t.TempDir())
 	require.NoError(t, err)
 
 	require.Equal(t, map[string]SchemaObject{

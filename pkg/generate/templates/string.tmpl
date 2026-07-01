@@ -1,4 +1,4 @@
-{{- $name := .Name -}}
+{{- $name := .TypeName -}}
 {{- if .Nullable -}}
 type {{ $name }} struct {
 	Value *string
