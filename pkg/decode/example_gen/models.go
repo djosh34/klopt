@@ -58,7 +58,40 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 		}
 
 		switch name {
+		case "optionalNotNullableString":
 
+			var optionalNotNullableString OptionalNotNullableString
+			err = json.Unmarshal(value, &optionalNotNullableString)
+			if err != nil {
+				return err
+			}
+			o.OptionalNotNullableString = &optionalNotNullableString
+		case "optionalNullableString":
+
+			var optionalNullableString OptionalNullableString
+			err = json.Unmarshal(value, &optionalNullableString)
+			if err != nil {
+				return err
+			}
+			o.OptionalNullableString = &optionalNullableString
+		case "requiredNotNullableString":
+			hasRequiredNotNullableString = true
+
+			var requiredNotNullableString RequiredNotNullableString
+			err = json.Unmarshal(value, &requiredNotNullableString)
+			if err != nil {
+				return err
+			}
+			o.RequiredNotNullableString = requiredNotNullableString
+		case "requiredNullableString":
+			hasRequiredNullableString = true
+
+			var requiredNullableString RequiredNullableString
+			err = json.Unmarshal(value, &requiredNullableString)
+			if err != nil {
+				return err
+			}
+			o.RequiredNullableString = requiredNullableString
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}

@@ -1,4 +1,3 @@
-{{- define "object_property" }}
 		case "{{ .PropertyName }}":
 			{{- if .Required }}
 			has{{ .SchemaTypeName }} = true
@@ -14,5 +13,3 @@
 			{{- else }}
 			o.{{ .SchemaTypeName }} = &{{ .LocalName }}
 			{{- end }}
-{{- end }}
-
