@@ -1,8 +1,14 @@
 package testgenerator
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type Case struct {
+	GenerateValid   func(valid, invalid map[string]SchemaNode) json.RawMessage
+	RequiredValid   map[string]SchemaNode
+	RequiredInvalid map[string]SchemaNode
 }
 
 func GenerateCasesFromOpenAPIFile(openapiPath string) ([]Case, error) {

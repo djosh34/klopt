@@ -1,11 +1,5 @@
 package testgenerator
 
-import (
-	"encoding/json"
-)
-
-var _ Generatable = new(ObjectNode)
-
 type ObjectNode struct {
 	BaseNode             `yaml:",inline"`
 	Required             []string                 `yaml:"required"`
@@ -13,7 +7,7 @@ type ObjectNode struct {
 	Properties           map[string]SchemaNode    `yaml:"properties"`
 }
 
-func (o *ObjectNode) GenerateValid() json.RawMessage {
+func (o *ObjectNode) ValidCases() []Case {
 	//TODO implement me
 	panic("implement me")
 }

@@ -1,10 +1,5 @@
 package testgenerator
 
-import "encoding/json"
-
-type Generatable interface {
-	GenerateValid() json.RawMessage
-}
 type OpenAPINode struct {
 	Paths map[string]struct {
 		Post *struct {
