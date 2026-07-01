@@ -2,6 +2,7 @@ package generate
 
 import (
 	"bytes"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -45,7 +46,9 @@ func TestGenerateExample(t *testing.T) {
 
 }
 
-func TestGenerateExampleMatchesFixture(t *testing.T) {
+func SharedGenerateExampleMatchesFixture(t *testing.T, regen bool) {
+	t.Helper()
+
 	repoRoot := GetRepoRoot(t)
 	exampleDir := filepath.Join(repoRoot, "pkg", "decode", "example")
 	openapiExamplePath := filepath.Join(exampleDir, "openapi.yaml")
@@ -69,7 +72,29 @@ func TestGenerateExampleMatchesFixture(t *testing.T) {
 		"decode.go",
 		"decode_tests",
 		"openapi.yaml",
-	})
+	}, regen)
+
+}
+
+func TestGenerateExampleMatchesFixture_NoRegen(t *testing.T) {
+	SharedGenerateExampleMatchesFixture(t, false)
+}
+
+func TestGenerateExampleMatchesFixture_Regen(t *testing.T) {
+	name := t.Name()
+	fmt.Println(name)
+
+	if len(os.Args) == 0 {
+		return
+	}
+
+	lastArg := os.Args[len(os.Args)-1]
+	expectedLastArg := fmt.Sprintf("^\\Q%s\\E$", name)
+	if lastArg != expectedLastArg {
+		t.Skip("Intentionally no regen, when not ran directly")
+	}
+
+	SharedGenerateExampleMatchesFixture(t, true)
 }
 
 func TestGeneratePopulatesOperationsMap(t *testing.T) {
@@ -286,7 +311,7 @@ func TestFilterOperationsReturnsErrorWhenOperationMissing(t *testing.T) {
 	require.ErrorContains(t, err, "operation not found: [notAnOperation]")
 }
 
-func requireSameFiles(t *testing.T, expectedDir string, actualDir string, exceptions []string) {
+func requireSameFiles(t *testing.T, expectedDir string, actualDir string, exceptions []string, regen bool) {
 	t.Helper()
 
 	exceptionSet := make(map[string]struct{}, len(exceptions))
@@ -300,16 +325,31 @@ func requireSameFiles(t *testing.T, expectedDir string, actualDir string, except
 	require.Equal(t, expectedFiles, actualFiles)
 
 	for _, rel := range slices.Sorted(maps.Keys(expectedFiles)) {
-		expected, err := os.ReadFile(filepath.Join(expectedDir, filepath.FromSlash(rel)))
+		expectedFilePath := filepath.Join(expectedDir, filepath.FromSlash(rel))
+		actualFilePath := filepath.Join(actualDir, filepath.FromSlash(rel))
+
+		expected, err := os.ReadFile(expectedFilePath)
 		require.NoError(t, err)
 
-		actual, err := os.ReadFile(filepath.Join(actualDir, filepath.FromSlash(rel)))
+		actual, err := os.ReadFile(actualFilePath)
 		require.NoError(t, err)
 
 		if !bytes.Equal(expected, actual) {
-			PrettyDiff(t, string(expected), string(actual))
+			if !regen {
+				PrettyDiff(t, string(expected), string(actual))
 
-			t.Fail()
+				t.Fail()
+			} else {
+				// Write expected the bytes from actual
+				originalFile, originalFileErr := os.Open(expectedFilePath)
+				require.NoError(t, originalFileErr)
+
+				stat, statErr := originalFile.Stat()
+				require.NoError(t, statErr)
+
+				writeErr := os.WriteFile(expectedFilePath, actual, stat.Mode())
+				require.NoError(t, writeErr)
+			}
 		}
 	}
 }
