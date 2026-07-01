@@ -8,32 +8,20 @@ type StringNode struct {
 
 func (s *StringNode) ValidCases() []Case {
 	cases := []Case{
-		{
-			GenerateValid: func(valid, invalid map[string]SchemaNode) json.RawMessage {
-				return json.RawMessage(`"valid-string"`)
-			},
-		},
+		stringCase(),
 	}
 
-	if s.Nullable {
-		cases = append(cases, nullCase())
-	}
-
-	return cases
+	return append(cases, s.BaseNode.ValidCases()...)
 }
 
 func (s *StringNode) InvalidCases() []Case {
-	if s.Nullable {
-		return nil
-	}
-
-	return []Case{nullCase()}
+	return s.BaseNode.InvalidCases()
 }
 
-func nullCase() Case {
+func stringCase() Case {
 	return Case{
 		GenerateValid: func(valid, invalid map[string]SchemaNode) json.RawMessage {
-			return json.RawMessage(`null`)
+			return json.RawMessage(`"valid-string"`)
 		},
 	}
 }
