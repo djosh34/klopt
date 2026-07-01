@@ -68,13 +68,8 @@ func (s *SchemaNode) UnmarshalYAML(value *yaml.Node) error {
 		s.String = nil
 		return nil
 	case "string":
-		var stringNode StringNode
-		err = value.Decode(&stringNode)
-		if err != nil {
-			return err
-		}
 		s.Object = nil
-		s.String = &stringNode
+		s.String = &StringNode{BaseNode: base}
 		return nil
 	default:
 		return fmt.Errorf("unsupported schema type %q", base.Type)
