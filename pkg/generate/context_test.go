@@ -48,27 +48,39 @@ func TestJSONRequestBodySchemaObjectsConvertsRequestBodySchemas(t *testing.T) {
 	schemaObjects, err := generateContext.JSONRequestBodySchemaObjects()
 	require.NoError(t, err)
 
-	require.Equal(t, map[string]SchemaObject{
-		"objectKeysAdditionalPropertiesFalse": ObjectContext{
-			AdditionalProperties: false,
-			Properties: []ObjectFieldContext{
-				{
-					PropertyName: "optionalNotNullableString",
-					Schema:       StringContext{},
-				},
-				{
-					PropertyName: "optionalNullableString",
-					Schema:       StringContext{Nullable: true},
-				},
-				{
-					PropertyName: "requiredNotNullableString",
-					Schema:       StringContext{},
-					Required:     true,
-				},
-				{
-					PropertyName: "requiredNullableString",
-					Schema:       StringContext{Nullable: true},
-					Required:     true,
+	require.Equal(t, []SchemaObject{
+		{
+			Generatable: &ObjectContext{
+				AdditionalProperties: false,
+				Properties: []ObjectFieldContext{
+					{
+						PropertyName: "optionalNotNullableString",
+						Schema: SchemaObject{
+							Generatable: &StringContext{},
+						},
+					},
+					{
+						PropertyName: "optionalNullableString",
+						Schema: SchemaObject{
+							Generatable: &StringContext{},
+							Nullable:    true,
+						},
+					},
+					{
+						PropertyName: "requiredNotNullableString",
+						Schema: SchemaObject{
+							Generatable: &StringContext{},
+						},
+						Required: true,
+					},
+					{
+						PropertyName: "requiredNullableString",
+						Schema: SchemaObject{
+							Generatable: &StringContext{},
+							Nullable:    true,
+						},
+						Required: true,
+					},
 				},
 			},
 		},
@@ -88,23 +100,32 @@ func TestSchemaObjectFromOpenAPISchemaRecursesObjectProperties(t *testing.T) {
 	schemaObject, err := SchemaObjectFromOpenAPISchema(schema)
 	require.NoError(t, err)
 
-	require.Equal(t, ObjectContext{
-		AdditionalProperties: false,
-		Properties: []ObjectFieldContext{
-			{
-				PropertyName: "name",
-				Schema:       StringContext{},
-				Required:     true,
-			},
-			{
-				PropertyName: "nested",
-				Required:     true,
-				Schema: ObjectContext{
-					AdditionalProperties: true,
-					Properties: []ObjectFieldContext{
-						{
-							PropertyName: "child",
-							Schema:       StringContext{Nullable: true},
+	require.Equal(t, SchemaObject{
+		Generatable: &ObjectContext{
+			AdditionalProperties: false,
+			Properties: []ObjectFieldContext{
+				{
+					PropertyName: "name",
+					Schema: SchemaObject{
+						Generatable: &StringContext{},
+					},
+					Required: true,
+				},
+				{
+					PropertyName: "nested",
+					Required:     true,
+					Schema: SchemaObject{
+						Generatable: &ObjectContext{
+							AdditionalProperties: true,
+							Properties: []ObjectFieldContext{
+								{
+									PropertyName: "child",
+									Schema: SchemaObject{
+										Generatable: &StringContext{},
+										Nullable:    true,
+									},
+								},
+							},
 						},
 					},
 				},
@@ -120,9 +141,13 @@ func TestSchemaObjectFromOpenAPISchemaConvertsArrayItems(t *testing.T) {
 	schemaObject, err := SchemaObjectFromOpenAPISchema(schema)
 	require.NoError(t, err)
 
-	require.Equal(t, ArrayContext{
+	require.Equal(t, SchemaObject{
+		Generatable: &ArrayContext{
+			Items: SchemaObject{
+				Generatable: &StringContext{},
+			},
+		},
 		Nullable: true,
-		Items:    StringContext{},
 	}, schemaObject)
 }
 
@@ -133,10 +158,15 @@ func TestSchemaObjectFromOpenAPISchemaConvertsAdditionalPropertiesSchema(t *test
 	schemaObject, err := SchemaObjectFromOpenAPISchema(schema)
 	require.NoError(t, err)
 
-	require.Equal(t, ObjectContext{
-		AdditionalProperties:       true,
-		AdditionalPropertiesSchema: StringContext{Nullable: true},
-		Properties:                 []ObjectFieldContext{},
+	require.Equal(t, SchemaObject{
+		Generatable: &ObjectContext{
+			AdditionalProperties: true,
+			AdditionalPropertiesSchema: SchemaObject{
+				Generatable: &StringContext{},
+				Nullable:    true,
+			},
+			Properties: []ObjectFieldContext{},
+		},
 	}, schemaObject)
 }
 
