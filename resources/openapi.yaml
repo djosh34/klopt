@@ -358,6 +358,73 @@ paths:
         '204':
           description: No Content
 
+  /ref-stress-object-put:
+    put:
+      operationId: refStressObjectPut
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/RefStressFirstAllOf'
+                - $ref: '#/components/schemas/RefStressSecondAllOf'
+                - type: object
+                  nullable: false
+                  required:
+                    - finalCode
+                    - sharedName
+                    - middleFlag
+                    - rootFlag
+                    - count
+                    - nested
+                    - final
+                    - finals
+                    - metadata
+                    - nullableRequired
+                  additionalProperties: false
+                  properties:
+                    finalCode:
+                      type: string
+                      nullable: false
+                    sharedName:
+                      type: string
+                      nullable: false
+                    middleFlag:
+                      type: boolean
+                      nullable: false
+                    rootFlag:
+                      type: boolean
+                      nullable: false
+                    count:
+                      type: number
+                      nullable: false
+                    nested:
+                      $ref: '#/components/schemas/RefStressNestedCombined'
+                    final:
+                      $ref: '#/components/schemas/RefStressFinalAlias'
+                    finals:
+                      type: array
+                      nullable: false
+                      items:
+                        $ref: '#/components/schemas/RefStressFinalAlias'
+                    metadata:
+                      type: object
+                      nullable: false
+                      additionalProperties:
+                        $ref: '#/components/schemas/RefStressMetadataValueAlias'
+                    nullableRequired:
+                      type: string
+                      nullable: true
+                    optionalShared:
+                      type: string
+                      nullable: true
+                    optionalCode:
+                      type: string
+                      nullable: false
+      responses:
+        '204':
+          description: No Content
 components:
   schemas:
     RefObjectRequest:

@@ -367,6 +367,73 @@ paths:
         '204':
           description: No Content
 
+  /ref-stress-object-put:
+    put:
+      operationId: refStressObjectPut
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/RefStressFirstAllOf'
+                - $ref: '#/components/schemas/RefStressSecondAllOf'
+                - type: object
+                  nullable: false
+                  required:
+                    - finalCode
+                    - sharedName
+                    - middleFlag
+                    - rootFlag
+                    - count
+                    - nested
+                    - final
+                    - finals
+                    - metadata
+                    - nullableRequired
+                  additionalProperties: false
+                  properties:
+                    finalCode:
+                      type: string
+                      nullable: false
+                    sharedName:
+                      type: string
+                      nullable: false
+                    middleFlag:
+                      type: boolean
+                      nullable: false
+                    rootFlag:
+                      type: boolean
+                      nullable: false
+                    count:
+                      type: number
+                      nullable: false
+                    nested:
+                      $ref: '#/components/schemas/RefStressNestedCombined'
+                    final:
+                      $ref: '#/components/schemas/RefStressFinalAlias'
+                    finals:
+                      type: array
+                      nullable: false
+                      items:
+                        $ref: '#/components/schemas/RefStressFinalAlias'
+                    metadata:
+                      type: object
+                      nullable: false
+                      additionalProperties:
+                        $ref: '#/components/schemas/RefStressMetadataValueAlias'
+                    nullableRequired:
+                      type: string
+                      nullable: true
+                    optionalShared:
+                      type: string
+                      nullable: true
+                    optionalCode:
+                      type: string
+                      nullable: false
+      responses:
+        '204':
+          description: No Content
 components:
   schemas:
     RefObjectRequest:
@@ -590,6 +657,13 @@ func TestStringNoFormatNotNullable(t *testing.T) {
 	})
 }
 
+func TestRefStressObjectPut(t *testing.T) {
+	testgenerator.RunJSONRequestBodyOperationCases(t, exampleOpenAPI, "refStressObjectPut", func(data []byte) error {
+		var value RefStressObjectPut
+		return value.UnmarshalJSON(data)
+	})
+}
+
 func TestRefStressObject(t *testing.T) {
 	testgenerator.RunJSONRequestBodyOperationCases(t, exampleOpenAPI, "refStressObject", func(data []byte) error {
 		var value RefStressObject
@@ -649,6 +723,265 @@ func TestArrayNotNullable(t *testing.T) {
 func TestAllOfObject(t *testing.T) {
 	testgenerator.RunJSONRequestBodyOperationCases(t, exampleOpenAPI, "allOfObject", func(data []byte) error {
 		var value AllOfObject
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf1MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf1
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf1NestedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf1Nested
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf2AllOf1AllOf1MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf2AllOf1AllOf1
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf2AllOf1AllOf2MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf2AllOf1AllOf2
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf2AllOf2MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf2AllOf2
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf3MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf3
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf3FinalMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf3Final
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf3FinalNestedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf3FinalNested
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf3NestedAllOf1MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf3NestedAllOf1
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf3NestedAllOf2MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf3NestedAllOf2
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf3NestedAllOf3MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf3NestedAllOf3
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf1AllOf3NestedAllOf3SealedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf1AllOf1MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf1AllOf1
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf1AllOf1NestedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf1AllOf1Nested
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf1AllOf2MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf1AllOf2
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf1AllOf2FinalMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf1AllOf2Final
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf1AllOf2FinalNestedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf1AllOf2FinalNested
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf1AllOf2MetadataMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf1AllOf2Metadata
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf2MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf2
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf2FinalsItemMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf2FinalsItem
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf2FinalsItemNestedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf2FinalsItemNested
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf2AllOf2MetadataMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf2AllOf2Metadata
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3FinalMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3Final
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3FinalNestedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3FinalNested
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3FinalsItemMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3FinalsItem
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3FinalsItemNestedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3FinalsItemNested
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3MetadataMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3Metadata
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3NestedAllOf1MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3NestedAllOf1
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3NestedAllOf2MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3NestedAllOf2
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3NestedAllOf3MalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3NestedAllOf3
+		return value.UnmarshalJSON(data)
+	})
+}
+
+func TestRefStressObjectPutAllOf3NestedAllOf3SealedMalformedObjectJSON(t *testing.T) {
+	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+		var value RefStressObjectPutAllOf3NestedAllOf3Sealed
 		return value.UnmarshalJSON(data)
 	})
 }

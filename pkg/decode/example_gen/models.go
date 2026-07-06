@@ -61,6 +61,4704 @@ func (s *StringNoFormatNotNullable) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type RefStressObjectPut struct {
+	RefStressObjectPutAllOf1
+	RefStressObjectPutAllOf2
+	RefStressObjectPutAllOf3
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPut)(nil)
+
+func (a *RefStressObjectPut) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf3.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf1 struct {
+	RefStressObjectPutAllOf1AllOf1
+	RefStressObjectPutAllOf1AllOf2
+	RefStressObjectPutAllOf1AllOf3
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1)(nil)
+
+func (a *RefStressObjectPutAllOf1) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf1AllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf1AllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf1AllOf3.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf1AllOf1 struct {
+	FinalCode      RefStressObjectPutAllOf1AllOf1FinalCode       `json:"finalCode"`
+	Nested         *RefStressObjectPutAllOf1AllOf1Nested         `json:"nested,omitzero"`
+	OptionalShared *RefStressObjectPutAllOf1AllOf1OptionalShared `json:"optionalShared,omitzero"`
+	SharedName     RefStressObjectPutAllOf1AllOf1SharedName      `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf1)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf1) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinalCode bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf1AllOf1FinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "nested":
+
+			var nested RefStressObjectPutAllOf1AllOf1Nested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf1AllOf1OptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf1AllOf1SharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf1FinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf1FinalCode)
+
+func (s *RefStressObjectPutAllOf1AllOf1FinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf1FinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf1Nested struct {
+	Leaf     *RefStressObjectPutAllOf1AllOf1NestedLeaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf1AllOf1NestedSameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf1Nested)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf1AllOf1NestedLeaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf1NestedSameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf1NestedLeaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf1NestedLeaf)
+
+func (s *RefStressObjectPutAllOf1AllOf1NestedLeaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf1NestedLeaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf1NestedSameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf1NestedSameName)
+
+func (s *RefStressObjectPutAllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf1OptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf1OptionalShared)
+
+func (s *RefStressObjectPutAllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf1SharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf1SharedName)
+
+func (s *RefStressObjectPutAllOf1AllOf1SharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf1SharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2 struct {
+	RefStressObjectPutAllOf1AllOf2AllOf1
+	RefStressObjectPutAllOf1AllOf2AllOf2
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2)(nil)
+
+func (a *RefStressObjectPutAllOf1AllOf2) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf1AllOf2AllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf1AllOf2AllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1 struct {
+	RefStressObjectPutAllOf1AllOf2AllOf1AllOf1
+	RefStressObjectPutAllOf1AllOf2AllOf1AllOf2
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf1)(nil)
+
+func (a *RefStressObjectPutAllOf1AllOf2AllOf1) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf1AllOf2AllOf1AllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf1AllOf2AllOf1AllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf1 struct {
+	FinalCode      RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode       `json:"finalCode"`
+	Nested         *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested         `json:"nested,omitzero"`
+	OptionalShared *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1OptionalShared `json:"optionalShared,omitzero"`
+	SharedName     RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName      `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf1AllOf1)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinalCode bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "nested":
+
+			var nested RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf1AllOf2AllOf1AllOf1OptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested struct {
+	Leaf     *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedSameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedSameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedSameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedSameName)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf1OptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf1OptionalShared)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf2 struct {
+	OptionalCode *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode `json:"optionalCode,omitzero"`
+	SharedName   RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName    `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf1AllOf2)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "optionalCode":
+
+			var optionalCode RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode
+			err = json.Unmarshal(value, &optionalCode)
+			if err != nil {
+				return err
+			}
+			o.OptionalCode = &optionalCode
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2 struct {
+	MiddleFlag RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag `json:"middleFlag"`
+	Nested     *RefStressObjectPutAllOf1AllOf2AllOf2Nested    `json:"nested,omitzero"`
+	SharedName RefStressObjectPutAllOf1AllOf2AllOf2SharedName `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf2)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf2AllOf2) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasMiddleFlag bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "middleFlag":
+			hasMiddleFlag = true
+
+			var middleFlag RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag
+			err = json.Unmarshal(value, &middleFlag)
+			if err != nil {
+				return err
+			}
+			o.MiddleFlag = middleFlag
+		case "nested":
+
+			var nested RefStressObjectPutAllOf1AllOf2AllOf2Nested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf1AllOf2AllOf2SharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasMiddleFlag {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "middleFlag")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag bool
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag)
+
+func (b *RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableBoolError
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	*b = RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2Nested struct {
+	RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1
+	RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2
+	RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf2Nested)(nil)
+
+func (a *RefStressObjectPutAllOf1AllOf2AllOf2Nested) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1 struct {
+	Leaf     *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1SameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1SameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1SameName)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2 struct {
+	Leaf     *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3 struct {
+	SameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName `json:"sameName"`
+	Sealed   RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed   `json:"sealed"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+	var hasSealed bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		case "sealed":
+			hasSealed = true
+
+			var sealed RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed
+			err = json.Unmarshal(value, &sealed)
+			if err != nil {
+				return err
+			}
+			o.Sealed = sealed
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+	if !hasSealed {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed struct {
+	Locked RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked `json:"locked"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasLocked bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "locked":
+			hasLocked = true
+
+			var locked RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked
+			err = json.Unmarshal(value, &locked)
+			if err != nil {
+				return err
+			}
+			o.Locked = locked
+		default:
+			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasLocked {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked bool
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked)
+
+func (b *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableBoolError
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	*b = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf2AllOf2SharedName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2SharedName)
+
+func (s *RefStressObjectPutAllOf1AllOf2AllOf2SharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3 struct {
+	Final            RefStressObjectPutAllOf1AllOf3Final            `json:"final"`
+	Nested           RefStressObjectPutAllOf1AllOf3Nested           `json:"nested"`
+	NullableRequired RefStressObjectPutAllOf1AllOf3NullableRequired `json:"nullableRequired"`
+	OptionalShared   *RefStressObjectPutAllOf1AllOf3OptionalShared  `json:"optionalShared,omitzero"`
+	SharedName       *RefStressObjectPutAllOf1AllOf3SharedName      `json:"sharedName,omitzero"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf3)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf3) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinal bool
+	var hasNested bool
+	var hasNullableRequired bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "final":
+			hasFinal = true
+
+			var final RefStressObjectPutAllOf1AllOf3Final
+			err = json.Unmarshal(value, &final)
+			if err != nil {
+				return err
+			}
+			o.Final = final
+		case "nested":
+			hasNested = true
+
+			var nested RefStressObjectPutAllOf1AllOf3Nested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = nested
+		case "nullableRequired":
+			hasNullableRequired = true
+
+			var nullableRequired RefStressObjectPutAllOf1AllOf3NullableRequired
+			err = json.Unmarshal(value, &nullableRequired)
+			if err != nil {
+				return err
+			}
+			o.NullableRequired = nullableRequired
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf1AllOf3OptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+
+			var sharedName RefStressObjectPutAllOf1AllOf3SharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = &sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinal {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "final")
+	}
+	if !hasNested {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nested")
+	}
+	if !hasNullableRequired {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nullableRequired")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3Final struct {
+	FinalCode      RefStressObjectPutAllOf1AllOf3FinalFinalCode       `json:"finalCode"`
+	Nested         *RefStressObjectPutAllOf1AllOf3FinalNested         `json:"nested,omitzero"`
+	OptionalShared *RefStressObjectPutAllOf1AllOf3FinalOptionalShared `json:"optionalShared,omitzero"`
+	SharedName     RefStressObjectPutAllOf1AllOf3FinalSharedName      `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf3Final)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf3Final) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinalCode bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf1AllOf3FinalFinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "nested":
+
+			var nested RefStressObjectPutAllOf1AllOf3FinalNested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf1AllOf3FinalOptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf1AllOf3FinalSharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3FinalFinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3FinalFinalCode)
+
+func (s *RefStressObjectPutAllOf1AllOf3FinalFinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf3FinalFinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3FinalNested struct {
+	Leaf     *RefStressObjectPutAllOf1AllOf3FinalNestedLeaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf1AllOf3FinalNestedSameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf3FinalNested)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf1AllOf3FinalNestedLeaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf3FinalNestedSameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3FinalNestedLeaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3FinalNestedLeaf)
+
+func (s *RefStressObjectPutAllOf1AllOf3FinalNestedLeaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf3FinalNestedLeaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3FinalNestedSameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3FinalNestedSameName)
+
+func (s *RefStressObjectPutAllOf1AllOf3FinalNestedSameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3FinalOptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3FinalOptionalShared)
+
+func (s *RefStressObjectPutAllOf1AllOf3FinalOptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3FinalSharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3FinalSharedName)
+
+func (s *RefStressObjectPutAllOf1AllOf3FinalSharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf3FinalSharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3Nested struct {
+	RefStressObjectPutAllOf1AllOf3NestedAllOf1
+	RefStressObjectPutAllOf1AllOf3NestedAllOf2
+	RefStressObjectPutAllOf1AllOf3NestedAllOf3
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf3Nested)(nil)
+
+func (a *RefStressObjectPutAllOf1AllOf3Nested) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf1AllOf3NestedAllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf1AllOf3NestedAllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf1AllOf3NestedAllOf3.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf1 struct {
+	Leaf     *RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf1AllOf3NestedAllOf1SameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf3NestedAllOf1)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf3NestedAllOf1SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf)
+
+func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf1SameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NestedAllOf1SameName)
+
+func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf2 struct {
+	Leaf     *RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf3NestedAllOf2)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf2) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf)
+
+func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName)
+
+func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf3 struct {
+	SameName RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName `json:"sameName"`
+	Sealed   RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed   `json:"sealed"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf3NestedAllOf3)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf3) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+	var hasSealed bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		case "sealed":
+			hasSealed = true
+
+			var sealed RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed
+			err = json.Unmarshal(value, &sealed)
+			if err != nil {
+				return err
+			}
+			o.Sealed = sealed
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+	if !hasSealed {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName)
+
+func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed struct {
+	Locked RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked `json:"locked"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed)(nil)
+
+func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasLocked bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "locked":
+			hasLocked = true
+
+			var locked RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked
+			err = json.Unmarshal(value, &locked)
+			if err != nil {
+				return err
+			}
+			o.Locked = locked
+		default:
+			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasLocked {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked bool
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked)
+
+func (b *RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableBoolError
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	*b = RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3NullableRequired struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NullableRequired)
+
+func (s *RefStressObjectPutAllOf1AllOf3NullableRequired) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3OptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3OptionalShared)
+
+func (s *RefStressObjectPutAllOf1AllOf3OptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf1AllOf3SharedName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3SharedName)
+
+func (s *RefStressObjectPutAllOf1AllOf3SharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2 struct {
+	RefStressObjectPutAllOf2AllOf1
+	RefStressObjectPutAllOf2AllOf2
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2)(nil)
+
+func (a *RefStressObjectPutAllOf2) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf2AllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf2AllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf2AllOf1 struct {
+	RefStressObjectPutAllOf2AllOf1AllOf1
+	RefStressObjectPutAllOf2AllOf1AllOf2
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf1)(nil)
+
+func (a *RefStressObjectPutAllOf2AllOf1) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf2AllOf1AllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf2AllOf1AllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf1 struct {
+	FinalCode      RefStressObjectPutAllOf2AllOf1AllOf1FinalCode       `json:"finalCode"`
+	Nested         *RefStressObjectPutAllOf2AllOf1AllOf1Nested         `json:"nested,omitzero"`
+	OptionalShared *RefStressObjectPutAllOf2AllOf1AllOf1OptionalShared `json:"optionalShared,omitzero"`
+	SharedName     RefStressObjectPutAllOf2AllOf1AllOf1SharedName      `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf1AllOf1)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinalCode bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf2AllOf1AllOf1FinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "nested":
+
+			var nested RefStressObjectPutAllOf2AllOf1AllOf1Nested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf2AllOf1AllOf1OptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf2AllOf1AllOf1SharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf1FinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf1FinalCode)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf1FinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf1AllOf1FinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf1Nested struct {
+	Leaf     *RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf2AllOf1AllOf1NestedSameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf1AllOf1Nested)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf2AllOf1AllOf1NestedSameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf1NestedSameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf1NestedSameName)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf1OptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf1OptionalShared)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf1SharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf1SharedName)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf1SharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf1AllOf1SharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2 struct {
+	Final    *RefStressObjectPutAllOf2AllOf1AllOf2Final   `json:"final,omitzero"`
+	Metadata RefStressObjectPutAllOf2AllOf1AllOf2Metadata `json:"metadata"`
+	RootFlag RefStressObjectPutAllOf2AllOf1AllOf2RootFlag `json:"rootFlag"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf1AllOf2)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasMetadata bool
+	var hasRootFlag bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "final":
+
+			var final RefStressObjectPutAllOf2AllOf1AllOf2Final
+			err = json.Unmarshal(value, &final)
+			if err != nil {
+				return err
+			}
+			o.Final = &final
+		case "metadata":
+			hasMetadata = true
+
+			var metadata RefStressObjectPutAllOf2AllOf1AllOf2Metadata
+			err = json.Unmarshal(value, &metadata)
+			if err != nil {
+				return err
+			}
+			o.Metadata = metadata
+		case "rootFlag":
+			hasRootFlag = true
+
+			var rootFlag RefStressObjectPutAllOf2AllOf1AllOf2RootFlag
+			err = json.Unmarshal(value, &rootFlag)
+			if err != nil {
+				return err
+			}
+			o.RootFlag = rootFlag
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasMetadata {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
+	}
+	if !hasRootFlag {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2Final struct {
+	FinalCode      RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode       `json:"finalCode"`
+	Nested         *RefStressObjectPutAllOf2AllOf1AllOf2FinalNested         `json:"nested,omitzero"`
+	OptionalShared *RefStressObjectPutAllOf2AllOf1AllOf2FinalOptionalShared `json:"optionalShared,omitzero"`
+	SharedName     RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName      `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf1AllOf2Final)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf1AllOf2Final) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinalCode bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "nested":
+
+			var nested RefStressObjectPutAllOf2AllOf1AllOf2FinalNested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf2AllOf1AllOf2FinalOptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2FinalNested struct {
+	Leaf     *RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedSameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf1AllOf2FinalNested)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedSameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedSameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedSameName)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedSameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2FinalOptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2FinalOptionalShared)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalOptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2Metadata struct {
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf1AllOf2Metadata)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf1AllOf2Metadata) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		default:
+			var additionalProperty RefStressObjectPutAllOf2AllOf1AllOf2MetadataAdditionalProperty
+			err = json.Unmarshal(value, &additionalProperty)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2MetadataAdditionalProperty string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2MetadataAdditionalProperty)
+
+func (s *RefStressObjectPutAllOf2AllOf1AllOf2MetadataAdditionalProperty) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf1AllOf2MetadataAdditionalProperty(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf1AllOf2RootFlag bool
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2RootFlag)
+
+func (b *RefStressObjectPutAllOf2AllOf1AllOf2RootFlag) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableBoolError
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	*b = RefStressObjectPutAllOf2AllOf1AllOf2RootFlag(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2 struct {
+	Count      RefStressObjectPutAllOf2AllOf2Count       `json:"count"`
+	Finals     RefStressObjectPutAllOf2AllOf2Finals      `json:"finals"`
+	Metadata   RefStressObjectPutAllOf2AllOf2Metadata    `json:"metadata"`
+	RootFlag   RefStressObjectPutAllOf2AllOf2RootFlag    `json:"rootFlag"`
+	SharedName *RefStressObjectPutAllOf2AllOf2SharedName `json:"sharedName,omitzero"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf2)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf2) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasCount bool
+	var hasFinals bool
+	var hasMetadata bool
+	var hasRootFlag bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "count":
+			hasCount = true
+
+			var count RefStressObjectPutAllOf2AllOf2Count
+			err = json.Unmarshal(value, &count)
+			if err != nil {
+				return err
+			}
+			o.Count = count
+		case "finals":
+			hasFinals = true
+
+			var finals RefStressObjectPutAllOf2AllOf2Finals
+			err = json.Unmarshal(value, &finals)
+			if err != nil {
+				return err
+			}
+			o.Finals = finals
+		case "metadata":
+			hasMetadata = true
+
+			var metadata RefStressObjectPutAllOf2AllOf2Metadata
+			err = json.Unmarshal(value, &metadata)
+			if err != nil {
+				return err
+			}
+			o.Metadata = metadata
+		case "rootFlag":
+			hasRootFlag = true
+
+			var rootFlag RefStressObjectPutAllOf2AllOf2RootFlag
+			err = json.Unmarshal(value, &rootFlag)
+			if err != nil {
+				return err
+			}
+			o.RootFlag = rootFlag
+		case "sharedName":
+
+			var sharedName RefStressObjectPutAllOf2AllOf2SharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = &sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasCount {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "count")
+	}
+	if !hasFinals {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finals")
+	}
+	if !hasMetadata {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
+	}
+	if !hasRootFlag {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2Count json.Number
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2Count)
+
+func (n *RefStressObjectPutAllOf2AllOf2Count) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, jsonNull) {
+		return NullForNotNullableNumberError
+	}
+
+	if len(trimmed) == 0 || trimmed[0] == '"' {
+		return NonNumberForNumberSchemaError
+	}
+
+	var value json.Number
+	err := json.Unmarshal(trimmed, &value)
+	if err != nil {
+		return NonNumberForNumberSchemaError
+	}
+	*n = RefStressObjectPutAllOf2AllOf2Count(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2Finals []RefStressObjectPutAllOf2AllOf2FinalsItem
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2Finals)
+
+func (a *RefStressObjectPutAllOf2AllOf2Finals) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return fmt.Errorf("null for not nullable array")
+	}
+
+	var value []RefStressObjectPutAllOf2AllOf2FinalsItem
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return err
+	}
+	*a = RefStressObjectPutAllOf2AllOf2Finals(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2FinalsItem struct {
+	FinalCode      RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode       `json:"finalCode"`
+	Nested         *RefStressObjectPutAllOf2AllOf2FinalsItemNested         `json:"nested,omitzero"`
+	OptionalShared *RefStressObjectPutAllOf2AllOf2FinalsItemOptionalShared `json:"optionalShared,omitzero"`
+	SharedName     RefStressObjectPutAllOf2AllOf2FinalsItemSharedName      `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf2FinalsItem)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf2FinalsItem) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinalCode bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "nested":
+
+			var nested RefStressObjectPutAllOf2AllOf2FinalsItemNested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf2AllOf2FinalsItemOptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf2AllOf2FinalsItemSharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode)
+
+func (s *RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2FinalsItemNested struct {
+	Leaf     *RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf2AllOf2FinalsItemNestedSameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf2FinalsItemNested)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf2AllOf2FinalsItemNestedSameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf)
+
+func (s *RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2FinalsItemNestedSameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2FinalsItemNestedSameName)
+
+func (s *RefStressObjectPutAllOf2AllOf2FinalsItemNestedSameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2FinalsItemOptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2FinalsItemOptionalShared)
+
+func (s *RefStressObjectPutAllOf2AllOf2FinalsItemOptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2FinalsItemSharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2FinalsItemSharedName)
+
+func (s *RefStressObjectPutAllOf2AllOf2FinalsItemSharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf2FinalsItemSharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2Metadata struct {
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf2Metadata)(nil)
+
+func (o *RefStressObjectPutAllOf2AllOf2Metadata) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		default:
+			var additionalProperty RefStressObjectPutAllOf2AllOf2MetadataAdditionalProperty
+			err = json.Unmarshal(value, &additionalProperty)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2MetadataAdditionalProperty string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2MetadataAdditionalProperty)
+
+func (s *RefStressObjectPutAllOf2AllOf2MetadataAdditionalProperty) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf2MetadataAdditionalProperty(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2RootFlag bool
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2RootFlag)
+
+func (b *RefStressObjectPutAllOf2AllOf2RootFlag) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableBoolError
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	*b = RefStressObjectPutAllOf2AllOf2RootFlag(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf2AllOf2SharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2SharedName)
+
+func (s *RefStressObjectPutAllOf2AllOf2SharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf2AllOf2SharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3 struct {
+	Count            RefStressObjectPutAllOf3Count            `json:"count"`
+	Final            RefStressObjectPutAllOf3Final            `json:"final"`
+	FinalCode        RefStressObjectPutAllOf3FinalCode        `json:"finalCode"`
+	Finals           RefStressObjectPutAllOf3Finals           `json:"finals"`
+	Metadata         RefStressObjectPutAllOf3Metadata         `json:"metadata"`
+	MiddleFlag       RefStressObjectPutAllOf3MiddleFlag       `json:"middleFlag"`
+	Nested           RefStressObjectPutAllOf3Nested           `json:"nested"`
+	NullableRequired RefStressObjectPutAllOf3NullableRequired `json:"nullableRequired"`
+	OptionalCode     *RefStressObjectPutAllOf3OptionalCode    `json:"optionalCode,omitzero"`
+	OptionalShared   *RefStressObjectPutAllOf3OptionalShared  `json:"optionalShared,omitzero"`
+	RootFlag         RefStressObjectPutAllOf3RootFlag         `json:"rootFlag"`
+	SharedName       RefStressObjectPutAllOf3SharedName       `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3)(nil)
+
+func (o *RefStressObjectPutAllOf3) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasCount bool
+	var hasFinal bool
+	var hasFinalCode bool
+	var hasFinals bool
+	var hasMetadata bool
+	var hasMiddleFlag bool
+	var hasNested bool
+	var hasNullableRequired bool
+	var hasRootFlag bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "count":
+			hasCount = true
+
+			var count RefStressObjectPutAllOf3Count
+			err = json.Unmarshal(value, &count)
+			if err != nil {
+				return err
+			}
+			o.Count = count
+		case "final":
+			hasFinal = true
+
+			var final RefStressObjectPutAllOf3Final
+			err = json.Unmarshal(value, &final)
+			if err != nil {
+				return err
+			}
+			o.Final = final
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf3FinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "finals":
+			hasFinals = true
+
+			var finals RefStressObjectPutAllOf3Finals
+			err = json.Unmarshal(value, &finals)
+			if err != nil {
+				return err
+			}
+			o.Finals = finals
+		case "metadata":
+			hasMetadata = true
+
+			var metadata RefStressObjectPutAllOf3Metadata
+			err = json.Unmarshal(value, &metadata)
+			if err != nil {
+				return err
+			}
+			o.Metadata = metadata
+		case "middleFlag":
+			hasMiddleFlag = true
+
+			var middleFlag RefStressObjectPutAllOf3MiddleFlag
+			err = json.Unmarshal(value, &middleFlag)
+			if err != nil {
+				return err
+			}
+			o.MiddleFlag = middleFlag
+		case "nested":
+			hasNested = true
+
+			var nested RefStressObjectPutAllOf3Nested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = nested
+		case "nullableRequired":
+			hasNullableRequired = true
+
+			var nullableRequired RefStressObjectPutAllOf3NullableRequired
+			err = json.Unmarshal(value, &nullableRequired)
+			if err != nil {
+				return err
+			}
+			o.NullableRequired = nullableRequired
+		case "optionalCode":
+
+			var optionalCode RefStressObjectPutAllOf3OptionalCode
+			err = json.Unmarshal(value, &optionalCode)
+			if err != nil {
+				return err
+			}
+			o.OptionalCode = &optionalCode
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf3OptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "rootFlag":
+			hasRootFlag = true
+
+			var rootFlag RefStressObjectPutAllOf3RootFlag
+			err = json.Unmarshal(value, &rootFlag)
+			if err != nil {
+				return err
+			}
+			o.RootFlag = rootFlag
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf3SharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasCount {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "count")
+	}
+	if !hasFinal {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "final")
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasFinals {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finals")
+	}
+	if !hasMetadata {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
+	}
+	if !hasMiddleFlag {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "middleFlag")
+	}
+	if !hasNested {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nested")
+	}
+	if !hasNullableRequired {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nullableRequired")
+	}
+	if !hasRootFlag {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3Count json.Number
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3Count)
+
+func (n *RefStressObjectPutAllOf3Count) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, jsonNull) {
+		return NullForNotNullableNumberError
+	}
+
+	if len(trimmed) == 0 || trimmed[0] == '"' {
+		return NonNumberForNumberSchemaError
+	}
+
+	var value json.Number
+	err := json.Unmarshal(trimmed, &value)
+	if err != nil {
+		return NonNumberForNumberSchemaError
+	}
+	*n = RefStressObjectPutAllOf3Count(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3Final struct {
+	FinalCode      RefStressObjectPutAllOf3FinalFinalCode       `json:"finalCode"`
+	Nested         *RefStressObjectPutAllOf3FinalNested         `json:"nested,omitzero"`
+	OptionalShared *RefStressObjectPutAllOf3FinalOptionalShared `json:"optionalShared,omitzero"`
+	SharedName     RefStressObjectPutAllOf3FinalSharedName      `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3Final)(nil)
+
+func (o *RefStressObjectPutAllOf3Final) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinalCode bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf3FinalFinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "nested":
+
+			var nested RefStressObjectPutAllOf3FinalNested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf3FinalOptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf3FinalSharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalFinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalFinalCode)
+
+func (s *RefStressObjectPutAllOf3FinalFinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3FinalFinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalNested struct {
+	Leaf     *RefStressObjectPutAllOf3FinalNestedLeaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf3FinalNestedSameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3FinalNested)(nil)
+
+func (o *RefStressObjectPutAllOf3FinalNested) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf3FinalNestedLeaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf3FinalNestedSameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalNestedLeaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalNestedLeaf)
+
+func (s *RefStressObjectPutAllOf3FinalNestedLeaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3FinalNestedLeaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalNestedSameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalNestedSameName)
+
+func (s *RefStressObjectPutAllOf3FinalNestedSameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalOptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalOptionalShared)
+
+func (s *RefStressObjectPutAllOf3FinalOptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalSharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalSharedName)
+
+func (s *RefStressObjectPutAllOf3FinalSharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3FinalSharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalCode)
+
+func (s *RefStressObjectPutAllOf3FinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3FinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3Finals []RefStressObjectPutAllOf3FinalsItem
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3Finals)
+
+func (a *RefStressObjectPutAllOf3Finals) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return fmt.Errorf("null for not nullable array")
+	}
+
+	var value []RefStressObjectPutAllOf3FinalsItem
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return err
+	}
+	*a = RefStressObjectPutAllOf3Finals(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalsItem struct {
+	FinalCode      RefStressObjectPutAllOf3FinalsItemFinalCode       `json:"finalCode"`
+	Nested         *RefStressObjectPutAllOf3FinalsItemNested         `json:"nested,omitzero"`
+	OptionalShared *RefStressObjectPutAllOf3FinalsItemOptionalShared `json:"optionalShared,omitzero"`
+	SharedName     RefStressObjectPutAllOf3FinalsItemSharedName      `json:"sharedName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3FinalsItem)(nil)
+
+func (o *RefStressObjectPutAllOf3FinalsItem) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasFinalCode bool
+	var hasSharedName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "finalCode":
+			hasFinalCode = true
+
+			var finalCode RefStressObjectPutAllOf3FinalsItemFinalCode
+			err = json.Unmarshal(value, &finalCode)
+			if err != nil {
+				return err
+			}
+			o.FinalCode = finalCode
+		case "nested":
+
+			var nested RefStressObjectPutAllOf3FinalsItemNested
+			err = json.Unmarshal(value, &nested)
+			if err != nil {
+				return err
+			}
+			o.Nested = &nested
+		case "optionalShared":
+
+			var optionalShared RefStressObjectPutAllOf3FinalsItemOptionalShared
+			err = json.Unmarshal(value, &optionalShared)
+			if err != nil {
+				return err
+			}
+			o.OptionalShared = &optionalShared
+		case "sharedName":
+			hasSharedName = true
+
+			var sharedName RefStressObjectPutAllOf3FinalsItemSharedName
+			err = json.Unmarshal(value, &sharedName)
+			if err != nil {
+				return err
+			}
+			o.SharedName = sharedName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasFinalCode {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
+	}
+	if !hasSharedName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalsItemFinalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalsItemFinalCode)
+
+func (s *RefStressObjectPutAllOf3FinalsItemFinalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3FinalsItemFinalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalsItemNested struct {
+	Leaf     *RefStressObjectPutAllOf3FinalsItemNestedLeaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf3FinalsItemNestedSameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3FinalsItemNested)(nil)
+
+func (o *RefStressObjectPutAllOf3FinalsItemNested) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf3FinalsItemNestedLeaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf3FinalsItemNestedSameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalsItemNestedLeaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalsItemNestedLeaf)
+
+func (s *RefStressObjectPutAllOf3FinalsItemNestedLeaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3FinalsItemNestedLeaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalsItemNestedSameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalsItemNestedSameName)
+
+func (s *RefStressObjectPutAllOf3FinalsItemNestedSameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalsItemOptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalsItemOptionalShared)
+
+func (s *RefStressObjectPutAllOf3FinalsItemOptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3FinalsItemSharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalsItemSharedName)
+
+func (s *RefStressObjectPutAllOf3FinalsItemSharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3FinalsItemSharedName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3Metadata struct {
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3Metadata)(nil)
+
+func (o *RefStressObjectPutAllOf3Metadata) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		default:
+			var additionalProperty RefStressObjectPutAllOf3MetadataAdditionalProperty
+			err = json.Unmarshal(value, &additionalProperty)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3MetadataAdditionalProperty string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3MetadataAdditionalProperty)
+
+func (s *RefStressObjectPutAllOf3MetadataAdditionalProperty) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3MetadataAdditionalProperty(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3MiddleFlag bool
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3MiddleFlag)
+
+func (b *RefStressObjectPutAllOf3MiddleFlag) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableBoolError
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	*b = RefStressObjectPutAllOf3MiddleFlag(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3Nested struct {
+	RefStressObjectPutAllOf3NestedAllOf1
+	RefStressObjectPutAllOf3NestedAllOf2
+	RefStressObjectPutAllOf3NestedAllOf3
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3Nested)(nil)
+
+func (a *RefStressObjectPutAllOf3Nested) UnmarshalJSON(data []byte) error {
+	var errs []error
+	if err := a.RefStressObjectPutAllOf3NestedAllOf1.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf3NestedAllOf2.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+	if err := a.RefStressObjectPutAllOf3NestedAllOf3.UnmarshalJSON(data); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+type RefStressObjectPutAllOf3NestedAllOf1 struct {
+	Leaf     *RefStressObjectPutAllOf3NestedAllOf1Leaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf3NestedAllOf1SameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3NestedAllOf1)(nil)
+
+func (o *RefStressObjectPutAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf3NestedAllOf1Leaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf3NestedAllOf1SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf1Leaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NestedAllOf1Leaf)
+
+func (s *RefStressObjectPutAllOf3NestedAllOf1Leaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3NestedAllOf1Leaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf1SameName struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NestedAllOf1SameName)
+
+func (s *RefStressObjectPutAllOf3NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf2 struct {
+	Leaf     *RefStressObjectPutAllOf3NestedAllOf2Leaf    `json:"leaf,omitzero"`
+	SameName RefStressObjectPutAllOf3NestedAllOf2SameName `json:"sameName"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3NestedAllOf2)(nil)
+
+func (o *RefStressObjectPutAllOf3NestedAllOf2) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "leaf":
+
+			var leaf RefStressObjectPutAllOf3NestedAllOf2Leaf
+			err = json.Unmarshal(value, &leaf)
+			if err != nil {
+				return err
+			}
+			o.Leaf = &leaf
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf3NestedAllOf2SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf2Leaf string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NestedAllOf2Leaf)
+
+func (s *RefStressObjectPutAllOf3NestedAllOf2Leaf) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3NestedAllOf2Leaf(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf2SameName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NestedAllOf2SameName)
+
+func (s *RefStressObjectPutAllOf3NestedAllOf2SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3NestedAllOf2SameName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf3 struct {
+	SameName RefStressObjectPutAllOf3NestedAllOf3SameName `json:"sameName"`
+	Sealed   RefStressObjectPutAllOf3NestedAllOf3Sealed   `json:"sealed"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3NestedAllOf3)(nil)
+
+func (o *RefStressObjectPutAllOf3NestedAllOf3) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasSameName bool
+	var hasSealed bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "sameName":
+			hasSameName = true
+
+			var sameName RefStressObjectPutAllOf3NestedAllOf3SameName
+			err = json.Unmarshal(value, &sameName)
+			if err != nil {
+				return err
+			}
+			o.SameName = sameName
+		case "sealed":
+			hasSealed = true
+
+			var sealed RefStressObjectPutAllOf3NestedAllOf3Sealed
+			err = json.Unmarshal(value, &sealed)
+			if err != nil {
+				return err
+			}
+			o.Sealed = sealed
+		default:
+			continue
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasSameName {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
+	}
+	if !hasSealed {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf3SameName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NestedAllOf3SameName)
+
+func (s *RefStressObjectPutAllOf3NestedAllOf3SameName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3NestedAllOf3SameName(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf3Sealed struct {
+	Locked RefStressObjectPutAllOf3NestedAllOf3SealedLocked `json:"locked"`
+}
+
+var _ json.Unmarshaler = (*RefStressObjectPutAllOf3NestedAllOf3Sealed)(nil)
+
+func (o *RefStressObjectPutAllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return NotAnObjectError
+	}
+	var hasLocked bool
+
+	for d.More() {
+		nameTok, nameErr := d.Token()
+		if nameErr != nil {
+			return nameErr
+		}
+
+		name := nameTok.(string)
+
+		var value json.RawMessage
+		err = d.Decode(&value)
+		if err != nil {
+			return err
+		}
+
+		switch name {
+		case "locked":
+			hasLocked = true
+
+			var locked RefStressObjectPutAllOf3NestedAllOf3SealedLocked
+			err = json.Unmarshal(value, &locked)
+			if err != nil {
+				return err
+			}
+			o.Locked = locked
+		default:
+			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
+		return NotAnObjectError
+	}
+	if !hasLocked {
+		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
+	}
+
+	return nil
+}
+
+type RefStressObjectPutAllOf3NestedAllOf3SealedLocked bool
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NestedAllOf3SealedLocked)
+
+func (b *RefStressObjectPutAllOf3NestedAllOf3SealedLocked) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableBoolError
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	*b = RefStressObjectPutAllOf3NestedAllOf3SealedLocked(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3NullableRequired struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NullableRequired)
+
+func (s *RefStressObjectPutAllOf3NullableRequired) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3OptionalCode string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3OptionalCode)
+
+func (s *RefStressObjectPutAllOf3OptionalCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3OptionalCode(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3OptionalShared struct {
+	Value *string
+}
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3OptionalShared)
+
+func (s *RefStressObjectPutAllOf3OptionalShared) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		s.Value = nil
+		return nil
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	s.Value = new(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3RootFlag bool
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3RootFlag)
+
+func (b *RefStressObjectPutAllOf3RootFlag) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableBoolError
+	}
+
+	var value bool
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonBoolForBoolSchemaError
+	}
+	*b = RefStressObjectPutAllOf3RootFlag(value)
+	return nil
+}
+
+type RefStressObjectPutAllOf3SharedName string
+
+var _ json.Unmarshaler = new(RefStressObjectPutAllOf3SharedName)
+
+func (s *RefStressObjectPutAllOf3SharedName) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		return NullForNotNullableStringError
+	}
+
+	var value string
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return NonStringForStringSchemaError
+	}
+	*s = RefStressObjectPutAllOf3SharedName(value)
+	return nil
+}
+
 type RefStressObject struct {
 	RefStressObjectAllOf1
 	RefStressObjectAllOf2
