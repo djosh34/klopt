@@ -1,14 +1,7 @@
 package testgenerator
 
-import "encoding/json"
-
-type Caseable interface {
-	ValidCases() []Case
-	InvalidCases() []Case
-	Merge(SchemaNode) (SchemaNode, error)
+func GenerateValid(openAPIYAMLSpec []byte, operationID string, unmarshal func([]byte) error) {
 }
 
-type Case struct {
-	Name  string
-	Value json.RawMessage
+func GenerateInvalid(openAPIYAMLSpec []byte, operationID string, unmarshal func([]byte) error) {
 }

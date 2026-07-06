@@ -13,7 +13,7 @@ var exampleOpenAPI = []byte(`
 {{- range .Operations }}
 
 func Test{{ .TestName }}(t *testing.T) {
-	testgenerator.RunJSONRequestBodyOperationCases(t, exampleOpenAPI, "{{ .OperationID }}", func(data []byte) error {
+	testgenerator.GenerateValid(exampleOpenAPI, "{{ .OperationID }}", func(data []byte) error {
 		var value {{ .TypeName }}
 		return value.UnmarshalJSON(data)
 	})
@@ -23,7 +23,7 @@ func Test{{ .TestName }}(t *testing.T) {
 {{- range .ObjectSchemas }}
 
 func Test{{ .TestName }}(t *testing.T) {
-	testgenerator.RunMalformedObjectCases(t, func(data []byte) error {
+	testgenerator.GenerateInvalid(exampleOpenAPI, "{{ .TestName }}", func(data []byte) error {
 		var value {{ .TypeName }}
 		return value.UnmarshalJSON(data)
 	})
