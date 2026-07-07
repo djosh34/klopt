@@ -177,6 +177,22 @@ maxProperties: 3
 				domainStore: domainStore{},
 				parse: func(node *json.RawMessage) (types.Domain, error) {
 					require.Less(t, parseCall, len(tt.parseDomains))
+					var propertyJSONKV JSONKV
+					require.NoError(t, json.Unmarshal(*node, &propertyJSONKV))
+					if len(tt.parseDomains) > 1 {
+						if propertyTypeJSON, ok := propertyJSONKV["type"]; ok {
+							var propertyType string
+							require.NoError(t, json.Unmarshal(propertyTypeJSON, &propertyType))
+							switch propertyType {
+							case "string":
+								parseCall++
+								return propertyNameDomain, nil
+							case "integer":
+								parseCall++
+								return propertyAgeDomain, nil
+							}
+						}
+					}
 					domain := tt.parseDomains[parseCall]
 					parseCall++
 					return domain, nil
@@ -438,6 +454,12 @@ func TestObjectDomainHashAndPropertyErrors(t *testing.T) {
 func TestParseObjectErrorBranches(t *testing.T) {
 	t.Run("invalid json", func(t *testing.T) {
 		node := json.RawMessage(`{`)
+		_, err := (&DomainContext{}).ParseObject(&node)
+		require.Error(t, err)
+	})
+
+	t.Run("object struct decode error", func(t *testing.T) {
+		node := json.RawMessage(`{"type":{}}`)
 		_, err := (&DomainContext{}).ParseObject(&node)
 		require.Error(t, err)
 	})
