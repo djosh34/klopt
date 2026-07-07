@@ -59,6 +59,9 @@ type ObjectDomain struct {
 }
 
 func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
+	if allOfDomain, ok := domain.(*AllOfDomain); ok {
+		return allOfDomain.AllOfMerge(o)
+	}
 	if _, ok := domain.(*ObjectDomain); !ok {
 		return nil, errors.New("domain is not ObjectDomain")
 	}

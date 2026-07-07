@@ -20,6 +20,9 @@ type NumberDomain struct {
 }
 
 func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
+	if allOfDomain, ok := domain.(*AllOfDomain); ok {
+		return allOfDomain.AllOfMerge(n)
+	}
 	if _, ok := domain.(*NumberDomain); !ok {
 		return nil, errors.New("domain is not NumberDomain")
 	}

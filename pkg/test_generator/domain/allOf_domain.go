@@ -15,11 +15,26 @@ type AllOfDomain struct {
 }
 
 func (a *AllOfDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
-	if _, ok := domain.(*AllOfDomain); !ok {
-		return nil, errors.New("domain is not AllOfDomain")
+	if a == nil {
+		return nil, errors.New("allOf domain cannot be nil")
+	}
+	if domain == nil {
+		return nil, errors.New("domain cannot be nil")
 	}
 
-	return nil, errors.New("NOT IMPLEMENTED")
+	a.Domains = append(a.Domains, domain)
+	if a.MergedDomain == nil {
+		a.MergedDomain = domain
+		return a, nil
+	}
+
+	mergedDomain, err := a.MergedDomain.AllOfMerge(domain)
+	if err != nil {
+		return nil, err
+	}
+	a.MergedDomain = mergedDomain
+
+	return a, nil
 }
 
 func (a *AllOfDomain) ToHasher() (types.Hasher, error) {
@@ -56,6 +71,11 @@ func (a *AllOfDomain) ToHasher() (types.Hasher, error) {
 }
 
 func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (AllOfDomain, error) {
+	// Check if has AllOf, if not, error
+
+	// Parse each AllOf item as Object, cuz allOf is always array of objects
+
+	// Call merge on Domains Array
 
 	return AllOfDomain{}, errors.New("NOT IMPLEMENTED")
 }

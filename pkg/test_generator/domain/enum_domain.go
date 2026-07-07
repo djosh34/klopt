@@ -13,6 +13,9 @@ type EnumDomain struct {
 }
 
 func (e *EnumDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
+	if allOfDomain, ok := domain.(*AllOfDomain); ok {
+		return allOfDomain.AllOfMerge(e)
+	}
 	if _, ok := domain.(*EnumDomain); !ok {
 		return nil, errors.New("domain is not EnumDomain")
 	}

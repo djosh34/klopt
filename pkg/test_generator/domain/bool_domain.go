@@ -13,6 +13,9 @@ type BoolDomain struct {
 }
 
 func (b *BoolDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
+	if allOfDomain, ok := domain.(*AllOfDomain); ok {
+		return allOfDomain.AllOfMerge(b)
+	}
 	if _, ok := domain.(*BoolDomain); !ok {
 		return nil, errors.New("domain is not BoolDomain")
 	}

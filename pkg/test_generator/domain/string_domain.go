@@ -23,6 +23,9 @@ type StringDomain struct {
 }
 
 func (domain *StringDomain) AllOfMerge(otherDomain types.Domain) (types.Domain, error) {
+	if allOfDomain, ok := otherDomain.(*AllOfDomain); ok {
+		return allOfDomain.AllOfMerge(domain)
+	}
 	if _, ok := otherDomain.(*StringDomain); !ok {
 		return nil, errors.New("domain is not StringDomain")
 	}

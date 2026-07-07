@@ -17,6 +17,9 @@ type ArrayDomain struct {
 }
 
 func (a *ArrayDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
+	if allOfDomain, ok := domain.(*AllOfDomain); ok {
+		return allOfDomain.AllOfMerge(a)
+	}
 	if _, ok := domain.(*ArrayDomain); !ok {
 		return nil, errors.New("domain is not ArrayDomain")
 	}
