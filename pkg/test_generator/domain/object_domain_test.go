@@ -26,13 +26,15 @@ func rawObjectFromYAML(t *testing.T, yamlString string) *json.RawMessage {
 	return node
 }
 
-func requireDomainStoreKeys(t *testing.T, dc *DomainContext, expectedKeys ...Hash) {
+func requireDomainStoreDomains(t *testing.T, dc *DomainContext, expectedDomains ...Domain) {
 	t.Helper()
 
-	require.Len(t, dc.domainStore, len(expectedKeys))
-	for _, expectedKey := range expectedKeys {
-		require.Contains(t, dc.domainStore, expectedKey)
+	storedDomains := make([]Domain, 0, len(dc.domainStore))
+	for storedDomain := range dc.domainStore {
+		storedDomains = append(storedDomains, storedDomain)
 	}
+
+	require.ElementsMatch(t, expectedDomains, storedDomains)
 }
 
 func TestParseObjectParsesValidObjectSchemas(t *testing.T) {
@@ -45,18 +47,11 @@ func TestParseObjectParsesValidObjectSchemas(t *testing.T) {
 	ageProperty := &Property{Key: "age", Domain: propertyAgeDomain}
 	nameProperty := &Property{Key: "name", Domain: propertyNameDomain}
 	requiredNameProperty := &Property{Key: "name", Domain: propertyNameDomain, Required: true}
-	agePropertyDomainHash, err := ageProperty.GenerateHash()
-	require.NoError(t, err)
-	namePropertyDomainHash, err := nameProperty.GenerateHash()
-	require.NoError(t, err)
-	requiredNamePropertyDomainHash, err := requiredNameProperty.GenerateHash()
-	require.NoError(t, err)
-
 	tests := map[string]struct {
-		yamlString       string
-		parseDomains     []Domain
-		expectedStoreKey []Hash
-		expected         ObjectDomain
+		yamlString    string
+		parseDomains  []Domain
+		expectedStore []Domain
+		expected      ObjectDomain
 	}{
 		"empty object schema defaults additionalProperties to true": {
 			yamlString: `
@@ -94,8 +89,8 @@ properties:
   age:
     type: integer
 `,
-			parseDomains:     []Domain{propertyNameDomain, propertyAgeDomain},
-			expectedStoreKey: []Hash{propertyNameHash, propertyAgeHash, agePropertyDomainHash, namePropertyDomainHash},
+			parseDomains:  []Domain{propertyNameDomain, propertyAgeDomain},
+			expectedStore: []Domain{propertyNameDomain, propertyAgeDomain, ageProperty, nameProperty},
 			expected: ObjectDomain{
 				Properties:             []Domain{ageProperty, nameProperty},
 				AdditionalPropertyKind: AdditionalTrue,
@@ -110,8 +105,8 @@ properties:
   name:
     type: string
 `,
-			parseDomains:     []Domain{propertyNameDomain},
-			expectedStoreKey: []Hash{propertyNameHash, requiredNamePropertyDomainHash},
+			parseDomains:  []Domain{propertyNameDomain},
+			expectedStore: []Domain{propertyNameDomain, requiredNameProperty},
 			expected: ObjectDomain{
 				Properties:             []Domain{requiredNameProperty},
 				AdditionalPropertyKind: AdditionalTrue,
@@ -141,8 +136,8 @@ type: object
 additionalProperties:
   type: string
 `,
-			parseDomains:     []Domain{additionalPropertyDomain},
-			expectedStoreKey: []Hash{additionalPropertyHash},
+			parseDomains:  []Domain{additionalPropertyDomain},
+			expectedStore: []Domain{additionalPropertyDomain},
 			expected: ObjectDomain{
 				AdditionalPropertyKind:   AdditionalSchema,
 				AdditionalPropertyDomain: additionalPropertyDomain,
@@ -167,7 +162,7 @@ maxProperties: 3
 			node := rawObjectFromYAML(t, tt.yamlString)
 			parseCall := 0
 			dc := DomainContext{
-				domainStore: map[Hash]Domain{},
+				domainStore: domainStore{},
 				parse: func(node *json.RawMessage) (Domain, error) {
 					require.Less(t, parseCall, len(tt.parseDomains))
 					domain := tt.parseDomains[parseCall]
@@ -179,7 +174,7 @@ maxProperties: 3
 			objectDomain, err := dc.ParseObject(node)
 			require.NoError(t, err)
 			require.Equal(t, len(tt.parseDomains), parseCall)
-			requireDomainStoreKeys(t, &dc, tt.expectedStoreKey...)
+			requireDomainStoreDomains(t, &dc, tt.expectedStore...)
 			require.Equal(t, tt.expected, objectDomain)
 		})
 	}
@@ -211,11 +206,8 @@ properties:
 	require.Len(t, dc.domainStore, 2)
 
 	for _, enumDomain := range objectDomain.Enum {
-		hash, hashErr := enumDomain.GenerateHash()
-		require.NoError(t, hashErr)
-		domain, ok := dc.domainStore[hash]
-		require.True(t, ok)
-		require.IsType(t, new(EnumDomain), domain)
+		require.Contains(t, dc.domainStore, enumDomain)
+		require.IsType(t, new(EnumDomain), enumDomain)
 	}
 }
 
@@ -359,7 +351,7 @@ properties:
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
 			node := rawObjectFromYAML(t, tt.yamlString)
-			dc := DomainContext{domainStore: map[Hash]Domain{}}
+			dc := DomainContext{domainStore: domainStore{}}
 
 			objectDomain, err := dc.ParseObject(node)
 			require.Error(t, err)

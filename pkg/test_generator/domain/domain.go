@@ -13,27 +13,23 @@ type Hasher interface {
 //}
 
 type Domain interface {
-	Hasher
+	//Hasher
 	//AllOfMerger
 }
 
+type domainStore = map[Domain]struct{}
 type DomainContext struct {
 	// Each Domain that is created, must be added here
-	domainStore map[Hash]Domain
+	domainStore domainStore
 	// Exists only for testing, to 'mock'/'inject' wanted parse outputs
 	parse func(node *json.RawMessage) (Domain, error)
 }
 
 func (dc *DomainContext) AddDomain(domain Domain) error {
-	hash, hashErr := domain.GenerateHash()
-	if hashErr != nil {
-		return hashErr
-	}
-
 	if dc.domainStore == nil {
-		dc.domainStore = make(map[Hash]Domain)
+		dc.domainStore = make(map[Domain]struct{})
 	}
-	dc.domainStore[hash] = domain
+	dc.domainStore[domain] = struct{}{}
 	return nil
 }
 
