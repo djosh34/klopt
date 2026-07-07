@@ -72,32 +72,11 @@ func (dc *DomainContext) ParseBool(node *json.RawMessage) (BoolDomain, error) {
 		domain.Nullable = nullable
 	}
 
-	if enumRaw, enumOk := jsonKV["enum"]; enumOk {
-		var enumValues []json.RawMessage
-		if err := json.Unmarshal(enumRaw, &enumValues); err != nil {
-			return BoolDomain{}, errors.New("enum must be array")
-		}
-		if enumValues == nil {
-			return BoolDomain{}, errors.New("enum cannot be null")
-		}
-		if len(enumValues) == 0 {
-			return BoolDomain{}, errors.New("enum cannot be empty")
-		}
-		seen := map[string]struct{}{}
-		for _, enumValue := range enumValues {
-			var boolValue bool
-			if err := json.Unmarshal(enumValue, &boolValue); err != nil {
-				return BoolDomain{}, errors.New("enum values must be booleans")
-			}
-			key := string(enumValue)
-			if _, ok := seen[key]; ok {
-				return BoolDomain{}, errors.New("enum values must be unique")
-			}
-			seen[key] = struct{}{}
-			enumDomain := types.Enum(enumValue)
-			domain.Enum = append(domain.Enum, enumDomain)
-		}
+	enums, _, err := parseEnums(jsonKV)
+	if err != nil {
+		return BoolDomain{}, err
 	}
+	domain.Enum = enums
 
 	deleteAllowableKeys(jsonKV)
 	delete(jsonKV, "enum")

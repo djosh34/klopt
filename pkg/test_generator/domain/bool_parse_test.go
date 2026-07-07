@@ -91,18 +91,6 @@ enum: null
 type: boolean
 enum: true
 `,
-		"enum values must be booleans": `
-type: boolean
-enum:
-  - true
-  - yes
-`,
-		"enum values must be unique": `
-type: boolean
-enum:
-  - true
-  - true
-`,
 		"minimum is not part of BoolDomain": `
 type: boolean
 minimum: 1

@@ -185,14 +185,13 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 }
 
 type JSONObject struct {
-	Type                 string            `json:"type"`
-	Nullable             bool              `json:"nullable"`
-	Required             []string          `json:"required"`
-	Properties           JSONKV            `json:"properties"`
-	AdditionalProperties *json.RawMessage  `json:"additionalProperties"`
-	MinProperties        *int              `json:"minProperties"`
-	MaxProperties        *int              `json:"maxProperties"`
-	EnumRaw              []json.RawMessage `json:"enum"`
+	Type                 string           `json:"type"`
+	Nullable             bool             `json:"nullable"`
+	Required             []string         `json:"required"`
+	Properties           JSONKV           `json:"properties"`
+	AdditionalProperties *json.RawMessage `json:"additionalProperties"`
+	MinProperties        *int             `json:"minProperties"`
+	MaxProperties        *int             `json:"maxProperties"`
 }
 
 type PropertyAlreadyExistsError struct {
@@ -235,14 +234,13 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 
 	objectDomain = ObjectDomain{}
 
-	// Parse Enums early, and if it exists, return early (we will not check that enum is valid, and only populate enum field of ObjectDomain)
-	if _, enumOk := jsonKV["enum"]; enumOk {
-		for _, enumValue := range jsonObject.EnumRaw {
-			enumDomain := types.Enum(enumValue)
-
-			objectDomain.Enum = append(objectDomain.Enum, enumDomain)
-		}
-
+	// Parse Enums early, and if it exists, return early.
+	enums, hasEnums, err := parseEnums(jsonKV)
+	if err != nil {
+		return ObjectDomain{}, err
+	}
+	if hasEnums {
+		objectDomain.Enum = enums
 		return objectDomain, nil
 	}
 

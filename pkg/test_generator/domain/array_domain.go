@@ -90,22 +90,11 @@ func (dc *DomainContext) ParseArray(node *json.RawMessage) (ArrayDomain, error) 
 		domain.Nullable = nullable
 	}
 
-	if enumRaw, enumOk := jsonKV["enum"]; enumOk {
-		var enumValues []json.RawMessage
-		if err := json.Unmarshal(enumRaw, &enumValues); err != nil {
-			return ArrayDomain{}, errors.New("enum must be array")
-		}
-		if enumValues == nil {
-			return ArrayDomain{}, errors.New("enum cannot be null")
-		}
-		if len(enumValues) == 0 {
-			return ArrayDomain{}, errors.New("enum cannot be empty")
-		}
-		for _, enumValue := range enumValues {
-			enumDomain := types.Enum(enumValue)
-			domain.Enum = append(domain.Enum, enumDomain)
-		}
+	enums, _, err := parseEnums(jsonKV)
+	if err != nil {
+		return ArrayDomain{}, err
 	}
+	domain.Enum = enums
 
 	itemsRaw, ok := jsonKV["items"]
 	if !ok {

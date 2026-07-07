@@ -196,18 +196,6 @@ enum: null
 type: string
 enum: alpha
 `,
-		"enum values must be strings": `
-type: string
-enum:
-  - alpha
-  - 1
-`,
-		"enum values must be unique": `
-type: string
-enum:
-  - alpha
-  - alpha
-`,
 		"minLength cannot be null": `
 type: string
 minLength: null

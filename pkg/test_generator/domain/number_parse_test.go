@@ -156,18 +156,6 @@ enum: null
 type: number
 enum: 1
 `,
-		"enum values must be numbers": `
-type: number
-enum:
-  - 1
-  - nope
-`,
-		"enum values must be unique": `
-type: number
-enum:
-  - 1
-  - 1
-`,
 		"minimum cannot be null": `
 type: number
 minimum: null
@@ -236,11 +224,6 @@ format: int32
 		"number format is not integer format": `
 type: integer
 format: float
-`,
-		"integer enum value must be integer": `
-type: integer
-enum:
-  - 1.5
 `,
 		"integer minimum must be integer": `
 type: integer

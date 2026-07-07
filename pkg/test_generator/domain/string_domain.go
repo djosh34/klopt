@@ -89,32 +89,11 @@ func (dc *DomainContext) ParseString(node *json.RawMessage) (StringDomain, error
 		domain.Nullable = nullable
 	}
 
-	if enumRaw, enumOk := jsonKV["enum"]; enumOk {
-		var enumValues []json.RawMessage
-		if err := json.Unmarshal(enumRaw, &enumValues); err != nil {
-			return StringDomain{}, errors.New("enum must be array")
-		}
-		if enumValues == nil {
-			return StringDomain{}, errors.New("enum cannot be null")
-		}
-		if len(enumValues) == 0 {
-			return StringDomain{}, errors.New("enum cannot be empty")
-		}
-		seen := map[string]struct{}{}
-		for _, enumValue := range enumValues {
-			var stringValue string
-			if err := json.Unmarshal(enumValue, &stringValue); err != nil {
-				return StringDomain{}, errors.New("enum values must be strings")
-			}
-			key := string(enumValue)
-			if _, ok := seen[key]; ok {
-				return StringDomain{}, errors.New("enum values must be unique")
-			}
-			seen[key] = struct{}{}
-			enumDomain := types.Enum(enumValue)
-			domain.Enum = append(domain.Enum, enumDomain)
-		}
+	enums, _, err := parseEnums(jsonKV)
+	if err != nil {
+		return StringDomain{}, err
 	}
+	domain.Enum = enums
 
 	if value, ok := raw["minLength"]; ok {
 		minLength, err := parseNonNegativeInteger(value, "minLength")

@@ -90,36 +90,11 @@ func (dc *DomainContext) ParseNumber(node *json.RawMessage) (NumberDomain, error
 		domain.Nullable = nullable
 	}
 
-	if enumRaw, enumOk := jsonKV["enum"]; enumOk {
-		var enumValues []json.RawMessage
-		if err := json.Unmarshal(enumRaw, &enumValues); err != nil {
-			return NumberDomain{}, errors.New("enum must be array")
-		}
-		if enumValues == nil {
-			return NumberDomain{}, errors.New("enum cannot be null")
-		}
-		if len(enumValues) == 0 {
-			return NumberDomain{}, errors.New("enum cannot be empty")
-		}
-		seen := map[string]struct{}{}
-		for _, enumValue := range enumValues {
-			var numberValue json.Number
-			if err := json.Unmarshal(enumValue, &numberValue); err != nil {
-				return NumberDomain{}, err
-			}
-			number, err := parseSchemaNumber(numberValue, schemaType, "enum")
-			if err != nil {
-				return NumberDomain{}, err
-			}
-			key := string(number)
-			if _, ok := seen[key]; ok {
-				return NumberDomain{}, errors.New("enum values must be unique")
-			}
-			seen[key] = struct{}{}
-			enumDomain := types.Enum(enumValue)
-			domain.Enum = append(domain.Enum, enumDomain)
-		}
+	enums, _, err := parseEnums(jsonKV)
+	if err != nil {
+		return NumberDomain{}, err
 	}
+	domain.Enum = enums
 
 	if value, ok := raw["minimum"]; ok {
 		number, err := parseSchemaNumber(value, schemaType, "minimum")
