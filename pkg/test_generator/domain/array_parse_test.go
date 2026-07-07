@@ -119,6 +119,31 @@ items: {}
 	}
 }
 
+func TestParseArrayParsesEnum(t *testing.T) {
+	node := rawObjectFromYAML(t, `
+type: array
+items:
+  type: string
+enum:
+  - [alpha]
+  - [beta]
+`)
+
+	dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
+		return &StringDomain{}, nil
+	}}
+
+	arrayDomain, err := dc.ParseArray(node)
+	require.NoError(t, err)
+	require.Len(t, arrayDomain.Enum, 2)
+	require.Len(t, dc.domainStore, 3)
+
+	for _, enumDomain := range arrayDomain.Enum {
+		require.Contains(t, dc.domainStore, enumDomain)
+		require.IsType(t, new(EnumDomain), enumDomain)
+	}
+}
+
 func TestParseArrayRejectsInvalidArraySchemas(t *testing.T) {
 	tests := map[string]string{
 		"missing type": `
@@ -145,6 +170,24 @@ items:
 `,
 		"items is required": `
 type: array
+`,
+		"enum cannot be null": `
+type: array
+items:
+  type: string
+enum: null
+`,
+		"enum cannot be empty": `
+type: array
+items:
+  type: string
+enum: []
+`,
+		"enum must be array": `
+type: array
+items:
+  type: string
+enum: alpha
 `,
 		"items cannot be null": `
 type: array

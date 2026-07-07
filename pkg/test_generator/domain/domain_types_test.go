@@ -33,5 +33,5 @@ func TestArrayDomainMarshalJSONZeroValueIncludesAllFields(t *testing.T) {
 	jsonBytes, err := json.Marshal(ArrayDomain{})
 	require.NoError(t, err)
 
-	require.JSONEq(t, `{"nullable":false,"items":null,"minItems":0,"maxItems":null}`, string(jsonBytes))
+	require.JSONEq(t, `{"nullable":false,"enum":null,"items":null,"minItems":0,"maxItems":null}`, string(jsonBytes))
 }

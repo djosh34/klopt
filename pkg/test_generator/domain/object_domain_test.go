@@ -198,16 +198,13 @@ additionalProperties:
 				AdditionalPropertyDomain: additionalPropertyDomain,
 			},
 		},
-		"additionalProperties empty schema object": {
+		"additionalProperties empty schema object is free-form": {
 			yamlString: `
 type: object
 additionalProperties: {}
 `,
-			parseDomains:  []types.Domain{additionalPropertyDomain},
-			expectedStore: []types.Domain{additionalPropertyDomain},
 			expected: ObjectDomain{
-				AdditionalPropertyKind:   AdditionalSchema,
-				AdditionalPropertyDomain: additionalPropertyDomain,
+				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
 		"additionalProperties ref is parsed as resolved target domain": {
@@ -285,6 +282,70 @@ maxProperties: 0
 			require.Equal(t, tt.expected, objectDomain)
 		})
 	}
+}
+
+func TestParseObjectParsesNestedObjectWithDefaultParser(t *testing.T) {
+	const objectSchemaYAML = `
+type: object
+required:
+  - contact_info
+properties:
+  id:
+    type: integer
+  contact_info:
+    type: object
+    properties:
+      email:
+        type: string
+      phone:
+        type: string
+`
+
+	node := rawObjectFromYAML(t, objectSchemaYAML)
+	objectDomain, err := (&DomainContext{}).ParseObject(node)
+	require.NoError(t, err)
+	require.Len(t, objectDomain.Properties, 2)
+	require.Equal(t, "contact_info", objectDomain.Properties[0].(*Property).Key)
+	require.True(t, objectDomain.Properties[0].(*Property).Required)
+	require.IsType(t, new(ObjectDomain), objectDomain.Properties[0].(*Property).Domain)
+	require.Equal(t, "id", objectDomain.Properties[1].(*Property).Key)
+}
+
+func TestObjectDomainAllOfMerge(t *testing.T) {
+	first := &ObjectDomain{
+		Properties:             []types.Domain{&Property{Key: "id", Required: true}},
+		AdditionalPropertyKind: AdditionalTrue,
+		MinProps:               1,
+		MaxProps:               new(5),
+	}
+	second := &ObjectDomain{
+		Nullable:               true,
+		Properties:             []types.Domain{&Property{Key: "name"}},
+		AdditionalPropertyKind: AdditionalFalse,
+		MinProps:               2,
+		MaxProps:               new(3),
+	}
+
+	mergedDomain, err := first.AllOfMerge(second)
+	require.NoError(t, err)
+	require.Equal(t, &ObjectDomain{
+		Nullable:               true,
+		Properties:             []types.Domain{&Property{Key: "id", Required: true}, &Property{Key: "name"}},
+		AdditionalPropertyKind: AdditionalFalse,
+		MinProps:               2,
+		MaxProps:               new(3),
+	}, mergedDomain)
+}
+
+func TestObjectDomainAllOfMergeErrors(t *testing.T) {
+	_, err := (*ObjectDomain)(nil).AllOfMerge(&ObjectDomain{})
+	require.ErrorContains(t, err, "object domain cannot be nil")
+
+	_, err = (&ObjectDomain{}).AllOfMerge(&StringDomain{})
+	require.ErrorContains(t, err, "domain is not ObjectDomain")
+
+	_, err = (&ObjectDomain{Properties: []types.Domain{&Property{Key: "id"}}}).AllOfMerge(&ObjectDomain{Properties: []types.Domain{&Property{Key: "id"}}})
+	require.ErrorAs(t, err, new(*PropertyAlreadyExistsError))
 }
 
 func TestParseObjectParsesEnumAndReturnsEarly(t *testing.T) {
@@ -603,7 +664,8 @@ type: object
 properties:
   name:
     type: string
-additionalProperties: {}
+additionalProperties:
+  type: string
 `,
 			parse: func(parseCall int) (types.Domain, error) {
 				if parseCall == 0 {

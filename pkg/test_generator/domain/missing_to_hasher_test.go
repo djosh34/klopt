@@ -18,8 +18,8 @@ func TestMissingDomainsToHasher(t *testing.T) {
 		expected types.Hasher
 	}{
 		"array": {
-			domain:   &ArrayDomain{Nullable: true, Items: &StringDomain{}, MinItems: 1, MaxItems: new(3)},
-			expected: &hashables.ArrayHashable{Nullable: true, Items: &hashables.StringHashable{}, MinItems: 1, MaxItems: new(3)},
+			domain:   &ArrayDomain{Nullable: true, Enum: []types.Domain{&EnumDomain{}}, Items: &StringDomain{}, MinItems: 1, MaxItems: new(3)},
+			expected: &hashables.ArrayHashable{Nullable: true, Enum: []types.Hasher{&hashables.EnumHashable{}}, Items: &hashables.StringHashable{}, MinItems: 1, MaxItems: new(3)},
 		},
 		"array with nil items": {
 			domain:   &ArrayDomain{Nullable: true},

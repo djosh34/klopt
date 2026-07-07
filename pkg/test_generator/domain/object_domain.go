@@ -59,14 +59,91 @@ type ObjectDomain struct {
 }
 
 func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
+	if o == nil {
+		return nil, errors.New("object domain cannot be nil")
+	}
 	if allOfDomain, ok := domain.(*AllOfDomain); ok {
 		return allOfDomain.AllOfMerge(o)
 	}
-	if _, ok := domain.(*ObjectDomain); !ok {
+	otherObject, ok := domain.(*ObjectDomain)
+	if !ok {
 		return nil, errors.New("domain is not ObjectDomain")
 	}
 
-	return nil, errors.New("NOT IMPLEMENTED")
+	merged := *o
+	merged.Nullable = o.Nullable || otherObject.Nullable
+	if o.Enum != nil || otherObject.Enum != nil {
+		merged.Enum = append(append([]types.Domain{}, o.Enum...), otherObject.Enum...)
+	}
+	merged.MinProps = max(o.MinProps, otherObject.MinProps)
+	merged.MaxProps = tighterMaxProps(o.MaxProps, otherObject.MaxProps)
+
+	propertiesByKey := make(map[string]types.Domain, len(o.Properties)+len(otherObject.Properties))
+	for _, propertyDomain := range o.Properties {
+		property, ok := propertyDomain.(*Property)
+		if !ok {
+			return nil, errors.New("object property domain is not Property")
+		}
+		propertiesByKey[property.Key] = propertyDomain
+	}
+	for _, propertyDomain := range otherObject.Properties {
+		property, ok := propertyDomain.(*Property)
+		if !ok {
+			return nil, errors.New("object property domain is not Property")
+		}
+		if _, exists := propertiesByKey[property.Key]; exists {
+			return nil, &PropertyAlreadyExistsError{Key: property.Key}
+		}
+		propertiesByKey[property.Key] = propertyDomain
+	}
+
+	propertyKeys := make([]string, 0, len(propertiesByKey))
+	for propertyKey := range propertiesByKey {
+		propertyKeys = append(propertyKeys, propertyKey)
+	}
+	sort.Strings(propertyKeys)
+	merged.Properties = make([]types.Domain, 0, len(propertyKeys))
+	for _, propertyKey := range propertyKeys {
+		merged.Properties = append(merged.Properties, propertiesByKey[propertyKey])
+	}
+
+	additionalKind, additionalDomain, err := mergeAdditionalProperties(o, otherObject)
+	if err != nil {
+		return nil, err
+	}
+	merged.AdditionalPropertyKind = additionalKind
+	merged.AdditionalPropertyDomain = additionalDomain
+
+	return &merged, nil
+}
+
+func tighterMaxProps(first *int, second *int) *int {
+	if first == nil {
+		return second
+	}
+	if second == nil || *first <= *second {
+		return first
+	}
+	return second
+}
+
+func mergeAdditionalProperties(first *ObjectDomain, second *ObjectDomain) (AdditionalPropertyKind, types.Domain, error) {
+	if first.AdditionalPropertyKind == AdditionalFalse || second.AdditionalPropertyKind == AdditionalFalse {
+		return AdditionalFalse, nil, nil
+	}
+	if first.AdditionalPropertyKind == AdditionalSchema && second.AdditionalPropertyKind == AdditionalSchema {
+		if first.AdditionalPropertyDomain == second.AdditionalPropertyDomain {
+			return AdditionalSchema, first.AdditionalPropertyDomain, nil
+		}
+		return AdditionalSchema, nil, errors.New("cannot merge different additionalProperties schemas")
+	}
+	if first.AdditionalPropertyKind == AdditionalSchema {
+		return AdditionalSchema, first.AdditionalPropertyDomain, nil
+	}
+	if second.AdditionalPropertyKind == AdditionalSchema {
+		return AdditionalSchema, second.AdditionalPropertyDomain, nil
+	}
+	return AdditionalTrue, nil, nil
 }
 
 func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
@@ -137,7 +214,19 @@ func (p *PropertyAlreadyExistsError) Error() string {
 	return fmt.Sprintf("property %q already exists in object", p.Key)
 }
 
-func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error) {
+func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain ObjectDomain, err error) {
+	originalStore := dc.domainStore
+	if originalStore != nil {
+		originalStore = make(domainStore, len(dc.domainStore))
+		for domain := range dc.domainStore {
+			originalStore[domain] = struct{}{}
+		}
+	}
+	defer func() {
+		if err != nil {
+			dc.domainStore = originalStore
+		}
+	}()
 	jsonKV := make(JSONKV)
 
 	decodeKVErr := json.Unmarshal(*node, &jsonKV)
@@ -155,7 +244,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 		return ObjectDomain{}, fmt.Errorf("object schema type must be object, got %q", jsonObject.Type)
 	}
 
-	objectDomain := ObjectDomain{}
+	objectDomain = ObjectDomain{}
 
 	// Parse Enums early, and if it exists, return early (we will not check that enum is valid, and only populate enum field of ObjectDomain)
 	if _, enumOk := jsonKV["enum"]; enumOk {
@@ -268,21 +357,26 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 			return ObjectDomain{}, errors.New("additionalProperties cannot be null")
 		}
 
-		var boolValue bool
-		if boolErr := json.Unmarshal(*additionalProperties, &boolValue); boolErr == nil {
-			if boolValue {
-				objectDomain.AdditionalPropertyKind = AdditionalTrue
-			} else {
-				objectDomain.AdditionalPropertyKind = AdditionalFalse
-			}
+		var additionalPropertiesKV JSONKV
+		if additionalPropertiesKVErr := json.Unmarshal(*additionalProperties, &additionalPropertiesKV); additionalPropertiesKVErr == nil && len(additionalPropertiesKV) == 0 {
+			objectDomain.AdditionalPropertyKind = AdditionalTrue
 		} else {
-			additionalPropertyDomain, additionalPropertyErr := dc.Parse(additionalProperties)
-			if additionalPropertyErr != nil {
-				return ObjectDomain{}, additionalPropertyErr
-			}
+			var boolValue bool
+			if boolErr := json.Unmarshal(*additionalProperties, &boolValue); boolErr == nil {
+				if boolValue {
+					objectDomain.AdditionalPropertyKind = AdditionalTrue
+				} else {
+					objectDomain.AdditionalPropertyKind = AdditionalFalse
+				}
+			} else {
+				additionalPropertyDomain, additionalPropertyErr := dc.Parse(additionalProperties)
+				if additionalPropertyErr != nil {
+					return ObjectDomain{}, additionalPropertyErr
+				}
 
-			objectDomain.AdditionalPropertyKind = AdditionalSchema
-			objectDomain.AdditionalPropertyDomain = additionalPropertyDomain
+				objectDomain.AdditionalPropertyKind = AdditionalSchema
+				objectDomain.AdditionalPropertyDomain = additionalPropertyDomain
+			}
 		}
 	}
 
