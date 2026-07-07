@@ -1,9 +1,11 @@
-package testgenerator
+package domain
 
 import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	testgenerator "decode_and_validate_generator/pkg/test_generator"
 
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +21,7 @@ func (f fakeObjectTestDomain) GenerateHash() (Hash, error) {
 func rawObjectFromYAML(t *testing.T, yamlString string) *json.RawMessage {
 	t.Helper()
 
-	node, err := YAMLBytesToJSONRawMessage([]byte(yamlString))
+	node, err := testgenerator.YAMLBytesToJSONRawMessage([]byte(yamlString))
 	require.NoError(t, err)
 	return node
 }

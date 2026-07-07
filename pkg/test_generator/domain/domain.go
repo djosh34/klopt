@@ -1,4 +1,4 @@
-package testgenerator
+package domain
 
 import "encoding/json"
 
