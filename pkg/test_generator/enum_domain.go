@@ -1,16 +1,19 @@
 package testgenerator
 
-import (
-	"encoding/json"
+import "encoding/json"
 
-	"gopkg.in/yaml.v3"
-)
+var _ Hasher = new(EnumDomain)
 
 // nil == null
 type EnumDomain struct {
 	Value *json.RawMessage
 }
 
-func NewEnumFromYaml(node yaml.Node) (EnumDomain, error) {
+func (e *EnumDomain) GenerateHash() (Hash, error) {
+	//TODO implement me
+	panic("implement me")
+}
 
+func NewEnumFromJSON(node *json.RawMessage) (EnumDomain, error) {
+	return EnumDomain{Value: node}, nil
 }

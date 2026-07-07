@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 const openAPIObjectSchemaSpec = `
@@ -30,17 +29,13 @@ paths:
 `
 
 func TestOpenAPIRequestBodySchemaNodeReturnsObjectSchemaNode(t *testing.T) {
-	schemaNode, err := OpenAPIRequestBodySchemaNode([]byte(openAPIObjectSchemaSpec), "createThing")
+	openAPIJSONSpec, err := YAMLBytesToJSONRawMessage([]byte(openAPIObjectSchemaSpec))
 	require.NoError(t, err)
 
-	require.Equal(t, yaml.MappingNode, schemaNode.Kind)
-	require.Len(t, schemaNode.Content, 6)
-	require.Equal(t, "type", schemaNode.Content[0].Value)
-	require.Equal(t, "object", schemaNode.Content[1].Value)
-	require.Equal(t, "required", schemaNode.Content[2].Value)
-	require.Equal(t, yaml.SequenceNode, schemaNode.Content[3].Kind)
-	require.Equal(t, "properties", schemaNode.Content[4].Value)
-	require.Equal(t, yaml.MappingNode, schemaNode.Content[5].Kind)
+	schemaNode, err := OpenAPIRequestBodySchemaNode(openAPIJSONSpec, "createThing")
+	require.NoError(t, err)
+
+	require.JSONEq(t, `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`, string(*schemaNode))
 }
 
 func TestOpenAPIRequestBodySchemaNodeReturnsRefSchemaNode(t *testing.T) {
@@ -64,13 +59,13 @@ components:
       type: object
 `)
 
-	schemaNode, err := OpenAPIRequestBodySchemaNode(openAPISpec, "updateThing")
+	openAPIJSONSpec, err := YAMLBytesToJSONRawMessage(openAPISpec)
 	require.NoError(t, err)
 
-	require.Equal(t, yaml.MappingNode, schemaNode.Kind)
-	require.Len(t, schemaNode.Content, 2)
-	require.Equal(t, "$ref", schemaNode.Content[0].Value)
-	require.Equal(t, "#/components/schemas/Thing", schemaNode.Content[1].Value)
+	schemaNode, err := OpenAPIRequestBodySchemaNode(openAPIJSONSpec, "updateThing")
+	require.NoError(t, err)
+
+	require.JSONEq(t, `{"$ref":"#/components/schemas/Thing"}`, string(*schemaNode))
 }
 
 func TestOpenAPIRequestBodySchemaNodeErrors(t *testing.T) {
@@ -79,11 +74,6 @@ func TestOpenAPIRequestBodySchemaNodeErrors(t *testing.T) {
 		operationID string
 		wantError   string
 	}{
-		"invalid yaml": {
-			openAPISpec: "paths: [",
-			operationID: "createThing",
-			wantError:   "parse openapi yaml spec",
-		},
 		"operation not found": {
 			openAPISpec: openAPIObjectSchemaSpec,
 			operationID: "missingThing",
@@ -159,7 +149,10 @@ paths:
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := OpenAPIRequestBodySchemaNode([]byte(tt.openAPISpec), tt.operationID)
+			openAPIJSONSpec, err := YAMLBytesToJSONRawMessage([]byte(tt.openAPISpec))
+			require.NoError(t, err)
+
+			_, err = OpenAPIRequestBodySchemaNode(openAPIJSONSpec, tt.operationID)
 			require.Error(t, err)
 			require.ErrorContains(t, err, tt.wantError)
 		})
@@ -197,7 +190,7 @@ func TestGenerateFunctionsWrapOpenAPIParseErrors(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := tt.generate([]byte(openAPIObjectSchemaSpec), "missingThing", nil)
+			err := tt.generate([]byte(openAPIObjectSchemaSpec), "missingThing", func(_ []byte) error { return nil })
 			require.Error(t, err)
 			require.ErrorContains(t, err, "openapi yaml spec parse failed")
 			require.ErrorContains(t, err, `operationId "missingThing" not found`)

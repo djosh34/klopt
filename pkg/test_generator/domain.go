@@ -1,6 +1,6 @@
 package testgenerator
 
-import "gopkg.in/yaml.v3"
+import "encoding/json"
 
 type Hash [32]byte
 
@@ -21,10 +21,10 @@ type DomainContext struct {
 	// Each Domain that is created, must be added here
 	domainStore map[Hash]Domain
 	// Exists only for testing, to 'mock'/'inject' wanted parse outputs
-	parse func(node yaml.Node) (*Hash, error)
+	parse func(node *json.RawMessage) (*Hash, error)
 }
 
-func (dc *DomainContext) Parse(node yaml.Node) (*Hash, error) {
+func (dc *DomainContext) Parse(node *json.RawMessage) (*Hash, error) {
 	if dc.parse != nil {
 		return dc.parse(node)
 	}
@@ -32,7 +32,8 @@ func (dc *DomainContext) Parse(node yaml.Node) (*Hash, error) {
 	return dc.ParseDefault(node)
 }
 
-func (dc *DomainContext) ParseDefault(node yaml.Node) (*Hash, error) {
+func (dc *DomainContext) ParseDefault(node *json.RawMessage) (*Hash, error) {
+	_ = node
 
 	return nil, nil
 }

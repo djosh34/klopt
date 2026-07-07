@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 func TestParseObjectWithAllObjectSchemaFields(t *testing.T) {
@@ -21,12 +20,10 @@ minProperties: 1
 maxProperties: 3
 `
 
-	var node yaml.Node
-	err := yaml.Unmarshal([]byte(objectSchemaYAML), &node)
+	node, err := YAMLBytesToJSONRawMessage([]byte(objectSchemaYAML))
 	require.NoError(t, err)
-	require.Len(t, node.Content, 1)
 
 	dc := DomainContext{}
-	_, err = dc.ParseObject(*node.Content[0])
+	_, err = dc.ParseObject(node)
 	require.NoError(t, err)
 }
