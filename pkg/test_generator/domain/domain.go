@@ -3,7 +3,24 @@ package domain
 import (
 	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
+	"errors"
+	"fmt"
 )
+
+type JSONKV map[string]json.RawMessage
+
+var alwaysAllowableKeys = []string{
+	"type",
+	"nullable",
+	"title",
+	"description",
+}
+
+func deleteAllowableKeys(jsonKV JSONKV) {
+	for _, key := range alwaysAllowableKeys {
+		delete(jsonKV, key)
+	}
+}
 
 type domainStore = map[types.Domain]struct{}
 type DomainContext struct {
@@ -36,7 +53,49 @@ func (dc *DomainContext) Parse(node *json.RawMessage) (types.Domain, error) {
 }
 
 func (dc *DomainContext) parseDefault(node *json.RawMessage) (types.Domain, error) {
-	_ = node
+	parseErrors := make([]error, 0, 7)
 
-	return nil, nil
+	allOfDomain, allOfErr := dc.ParseAllOf(node)
+	if allOfErr == nil {
+		return &allOfDomain, nil
+	}
+	parseErrors = append(parseErrors, allOfErr)
+
+	objectDomain, objectErr := dc.ParseObject(node)
+	if objectErr == nil {
+		return &objectDomain, nil
+	}
+	parseErrors = append(parseErrors, objectErr)
+
+	arrayDomain, arrayErr := dc.ParseArray(node)
+	if arrayErr == nil {
+		return &arrayDomain, nil
+	}
+	parseErrors = append(parseErrors, arrayErr)
+
+	stringDomain, stringErr := dc.ParseString(node)
+	if stringErr == nil {
+		return &stringDomain, nil
+	}
+	parseErrors = append(parseErrors, stringErr)
+
+	numberDomain, numberErr := dc.ParseNumber(node)
+	if numberErr == nil {
+		return &numberDomain, nil
+	}
+	parseErrors = append(parseErrors, numberErr)
+
+	integerDomain, integerErr := dc.ParseInteger(node)
+	if integerErr == nil {
+		return &integerDomain, nil
+	}
+	parseErrors = append(parseErrors, integerErr)
+
+	boolDomain, boolErr := dc.ParseBool(node)
+	if boolErr == nil {
+		return &boolDomain, nil
+	}
+	parseErrors = append(parseErrors, boolErr)
+
+	return nil, fmt.Errorf("unsupported node type: %w", errors.Join(parseErrors...))
 }

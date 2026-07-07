@@ -149,6 +149,10 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 		return ObjectDomain{}, decodeErr
 	}
 
+	if _, typeOk := jsonKV["type"]; typeOk && jsonObject.Type != "object" {
+		return ObjectDomain{}, fmt.Errorf("object schema type must be object, got %q", jsonObject.Type)
+	}
+
 	objectDomain := ObjectDomain{}
 
 	// Parse Enums early, and if it exists, return early (we will not check that enum is valid, and only populate enum field of ObjectDomain)
