@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"decode_and_validate_generator/pkg/test_generator/types"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -46,7 +47,7 @@ enum:
   - 1
   - 2.5
 `,
-			expected: NumberDomain{Type: "number", Enum: []Number{Number("1"), Number("2.5")}},
+			expected: NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("1"), types.Enum("2.5")}},
 		},
 		"minimum maximum and exclusive bounds": {
 			yamlString: `
@@ -89,7 +90,7 @@ minimum: -10
 maximum: 10
 multipleOf: 2
 `,
-			expected: NumberDomain{Type: "integer", Enum: []Number{Number("1")}, Minimum: new(Number("-10")), Maximum: new(Number("10")), MultipleOf: new(Number("2")), Format: new("int32")},
+			expected: NumberDomain{Type: "integer", Enum: []types.Enum{types.Enum("1")}, Minimum: new(Number("-10")), Maximum: new(Number("10")), MultipleOf: new(Number("2")), Format: new("int32")},
 		},
 		"integer int64": {
 			yamlString: `
@@ -111,7 +112,7 @@ exclusiveMaximum: false
 multipleOf: 2.5
 format: double
 `,
-			expected: NumberDomain{Type: "number", Nullable: true, Enum: []Number{Number("2.5")}, Minimum: new(Number("0.5")), Maximum: new(Number("10.5")), ExclusiveMinimum: true, MultipleOf: new(Number("2.5")), Format: new("double")},
+			expected: NumberDomain{Type: "number", Nullable: true, Enum: []types.Enum{types.Enum("2.5")}, Minimum: new(Number("0.5")), Maximum: new(Number("10.5")), ExclusiveMinimum: true, MultipleOf: new(Number("2.5")), Format: new("double")},
 		},
 	}
 

@@ -27,7 +27,7 @@ func TestArrayHashableGenerateHash(t *testing.T) {
 }
 
 func TestBoolHashableGenerateHash(t *testing.T) {
-	hashable := BoolHashable{Nullable: true, Enum: []bool{true, false}}
+	hashable := BoolHashable{Nullable: true, Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}
 	jsonBytes, err := json.Marshal(boolHashableHashJSON{Type: "bool", Value: hashable})
 	require.NoError(t, err)
 
@@ -40,7 +40,7 @@ func TestNumberHashableGenerateHash(t *testing.T) {
 	minimum := Number("1")
 	maximum := Number("10")
 	multipleOf := Number("0.5")
-	hashable := NumberHashable{Type: "number", Nullable: true, Enum: []Number{Number("1"), Number("2")}, Minimum: &minimum, Maximum: &maximum, ExclusiveMinimum: true, ExclusiveMaximum: true, MultipleOf: &multipleOf, Format: new("float")}
+	hashable := NumberHashable{Type: "number", Nullable: true, Enum: []types.Enum{types.Enum("1"), types.Enum("2")}, Minimum: &minimum, Maximum: &maximum, ExclusiveMinimum: true, ExclusiveMaximum: true, MultipleOf: &multipleOf, Format: new("float")}
 	jsonBytes, err := json.Marshal(numberHashableHashJSON{Type: "number", Value: hashable})
 	require.NoError(t, err)
 

@@ -12,7 +12,7 @@ import (
 type ArrayDomain struct {
 	Nullable bool `json:"nullable"`
 
-	Enum []types.Domain `json:"enum"`
+	Enum []types.Enum `json:"enum"`
 
 	Items types.Domain `json:"items"`
 
@@ -36,18 +36,6 @@ func (a *ArrayDomain) ToHasher() (types.Hasher, error) {
 		return nil, errors.New("domain of array cannot be nil")
 	}
 
-	var enumHashers []types.Hasher
-	if a.Enum != nil {
-		enumHashers = make([]types.Hasher, 0, len(a.Enum))
-		for _, enumDomain := range a.Enum {
-			hasher, err := enumDomain.ToHasher()
-			if err != nil {
-				return nil, err
-			}
-			enumHashers = append(enumHashers, hasher)
-		}
-	}
-
 	var itemsHasher types.Hasher
 	if a.Items != nil {
 		hasher, err := a.Items.ToHasher()
@@ -59,7 +47,7 @@ func (a *ArrayDomain) ToHasher() (types.Hasher, error) {
 
 	return &hashables.ArrayHashable{
 		Nullable: a.Nullable,
-		Enum:     enumHashers,
+		Enum:     a.Enum,
 		Items:    itemsHasher,
 		MinItems: a.MinItems,
 		MaxItems: a.MaxItems,
@@ -114,9 +102,8 @@ func (dc *DomainContext) ParseArray(node *json.RawMessage) (ArrayDomain, error) 
 			return ArrayDomain{}, errors.New("enum cannot be empty")
 		}
 		for _, enumValue := range enumValues {
-			enumDomain := NewEnumFromJSON(&enumValue)
-			dc.AddDomain(&enumDomain)
-			domain.Enum = append(domain.Enum, &enumDomain)
+			enumDomain := types.Enum(enumValue)
+			domain.Enum = append(domain.Enum, enumDomain)
 		}
 	}
 

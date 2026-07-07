@@ -12,9 +12,9 @@ import (
 )
 
 type NumberDomain struct {
-	Type     string   `json:"type"`
-	Nullable bool     `json:"nullable"`
-	Enum     []Number `json:"enum"`
+	Type     string       `json:"type"`
+	Nullable bool         `json:"nullable"`
+	Enum     []types.Enum `json:"enum"`
 
 	Minimum          *Number `json:"minimum"`
 	Maximum          *Number `json:"maximum"`
@@ -43,7 +43,7 @@ func (n *NumberDomain) ToHasher() (types.Hasher, error) {
 	return &hashables.NumberHashable{
 		Type:             n.Type,
 		Nullable:         n.Nullable,
-		Enum:             toHashableNumbers(n.Enum),
+		Enum:             n.Enum,
 		Minimum:          toHashableNumberPtr(n.Minimum),
 		Maximum:          toHashableNumberPtr(n.Maximum),
 		ExclusiveMinimum: n.ExclusiveMinimum,
@@ -90,17 +90,24 @@ func (dc *DomainContext) ParseNumber(node *json.RawMessage) (NumberDomain, error
 		domain.Nullable = nullable
 	}
 
-	if value, ok := raw["enum"]; ok {
-		values, ok := value.([]any)
-		if !ok || values == nil {
+	if enumRaw, enumOk := jsonKV["enum"]; enumOk {
+		var enumValues []json.RawMessage
+		if err := json.Unmarshal(enumRaw, &enumValues); err != nil {
 			return NumberDomain{}, errors.New("enum must be array")
 		}
-		if len(values) == 0 {
+		if enumValues == nil {
+			return NumberDomain{}, errors.New("enum cannot be null")
+		}
+		if len(enumValues) == 0 {
 			return NumberDomain{}, errors.New("enum cannot be empty")
 		}
 		seen := map[string]struct{}{}
-		for _, item := range values {
-			number, err := parseSchemaNumber(item, schemaType, "enum")
+		for _, enumValue := range enumValues {
+			var numberValue json.Number
+			if err := json.Unmarshal(enumValue, &numberValue); err != nil {
+				return NumberDomain{}, err
+			}
+			number, err := parseSchemaNumber(numberValue, schemaType, "enum")
 			if err != nil {
 				return NumberDomain{}, err
 			}
@@ -109,7 +116,8 @@ func (dc *DomainContext) ParseNumber(node *json.RawMessage) (NumberDomain, error
 				return NumberDomain{}, errors.New("enum values must be unique")
 			}
 			seen[key] = struct{}{}
-			domain.Enum = append(domain.Enum, number)
+			enumDomain := types.Enum(enumValue)
+			domain.Enum = append(domain.Enum, enumDomain)
 		}
 	}
 

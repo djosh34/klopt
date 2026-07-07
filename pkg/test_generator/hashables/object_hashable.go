@@ -44,7 +44,7 @@ const (
 type ObjectHashable struct {
 	Nullable bool
 
-	Enum []types.Hasher
+	Enum []types.Enum
 
 	Properties []types.Hasher
 

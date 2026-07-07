@@ -13,7 +13,7 @@ import (
 type StringDomain struct {
 	Nullable bool `json:"nullable"`
 
-	Enum []string `json:"enum"`
+	Enum []types.Enum `json:"enum"`
 
 	types.Pattern `json:"pattern"`
 	types.Format  `json:"format"`
@@ -89,25 +89,30 @@ func (dc *DomainContext) ParseString(node *json.RawMessage) (StringDomain, error
 		domain.Nullable = nullable
 	}
 
-	if value, ok := raw["enum"]; ok {
-		values, ok := value.([]any)
-		if !ok || values == nil {
+	if enumRaw, enumOk := jsonKV["enum"]; enumOk {
+		var enumValues []json.RawMessage
+		if err := json.Unmarshal(enumRaw, &enumValues); err != nil {
 			return StringDomain{}, errors.New("enum must be array")
 		}
-		if len(values) == 0 {
+		if enumValues == nil {
+			return StringDomain{}, errors.New("enum cannot be null")
+		}
+		if len(enumValues) == 0 {
 			return StringDomain{}, errors.New("enum cannot be empty")
 		}
 		seen := map[string]struct{}{}
-		for _, item := range values {
-			stringValue, ok := item.(string)
-			if !ok {
+		for _, enumValue := range enumValues {
+			var stringValue string
+			if err := json.Unmarshal(enumValue, &stringValue); err != nil {
 				return StringDomain{}, errors.New("enum values must be strings")
 			}
-			if _, ok := seen[stringValue]; ok {
+			key := string(enumValue)
+			if _, ok := seen[key]; ok {
 				return StringDomain{}, errors.New("enum values must be unique")
 			}
-			seen[stringValue] = struct{}{}
-			domain.Enum = append(domain.Enum, stringValue)
+			seen[key] = struct{}{}
+			enumDomain := types.Enum(enumValue)
+			domain.Enum = append(domain.Enum, enumDomain)
 		}
 	}
 

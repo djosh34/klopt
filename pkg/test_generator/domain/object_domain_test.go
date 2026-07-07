@@ -371,12 +371,7 @@ properties:
 	objectDomain, err := dc.ParseObject(node)
 	require.NoError(t, err)
 	require.Len(t, objectDomain.Enum, 2)
-	require.Len(t, dc.domainStore, 2)
-
-	for _, enumDomain := range objectDomain.Enum {
-		require.Contains(t, dc.domainStore, enumDomain)
-		require.IsType(t, new(EnumDomain), enumDomain)
-	}
+	require.Len(t, dc.domainStore, 0)
 }
 
 func TestParseObjectRejectsInvalidObjectSchemas(t *testing.T) {
@@ -721,7 +716,7 @@ func TestObjectDomainToHasher(t *testing.T) {
 	maxProps := new(3)
 	object := ObjectDomain{
 		Nullable:                 true,
-		Enum:                     []types.Domain{&EnumDomain{}},
+		Enum:                     []types.Enum{{}},
 		Properties:               []types.Domain{&Property{Key: "name", Domain: &StringDomain{}, Required: true}},
 		AdditionalPropertyKind:   AdditionalSchema,
 		AdditionalPropertyDomain: &StringDomain{},
@@ -733,7 +728,7 @@ func TestObjectDomainToHasher(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, &hashables.ObjectHashable{
 		Nullable:                 true,
-		Enum:                     []types.Hasher{&hashables.EnumHashable{}},
+		Enum:                     []types.Enum{{}},
 		Properties:               []types.Hasher{&hashables.PropertyHashable{Key: "name", Hasher: &hashables.StringHashable{}, Required: true}},
 		AdditionalPropertyKind:   hashables.AdditionalSchema,
 		AdditionalPropertyDomain: &hashables.StringHashable{},

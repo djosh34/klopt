@@ -10,8 +10,8 @@ import (
 )
 
 type BoolDomain struct {
-	Nullable bool   `json:"nullable"`
-	Enum     []bool `json:"enum"`
+	Nullable bool         `json:"nullable"`
+	Enum     []types.Enum `json:"enum"`
 }
 
 func (b *BoolDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
@@ -72,25 +72,30 @@ func (dc *DomainContext) ParseBool(node *json.RawMessage) (BoolDomain, error) {
 		domain.Nullable = nullable
 	}
 
-	if value, ok := raw["enum"]; ok {
-		values, ok := value.([]any)
-		if !ok || values == nil {
+	if enumRaw, enumOk := jsonKV["enum"]; enumOk {
+		var enumValues []json.RawMessage
+		if err := json.Unmarshal(enumRaw, &enumValues); err != nil {
 			return BoolDomain{}, errors.New("enum must be array")
 		}
-		if len(values) == 0 {
+		if enumValues == nil {
+			return BoolDomain{}, errors.New("enum cannot be null")
+		}
+		if len(enumValues) == 0 {
 			return BoolDomain{}, errors.New("enum cannot be empty")
 		}
-		seen := map[bool]struct{}{}
-		for _, item := range values {
-			boolValue, ok := item.(bool)
-			if !ok {
+		seen := map[string]struct{}{}
+		for _, enumValue := range enumValues {
+			var boolValue bool
+			if err := json.Unmarshal(enumValue, &boolValue); err != nil {
 				return BoolDomain{}, errors.New("enum values must be booleans")
 			}
-			if _, ok := seen[boolValue]; ok {
+			key := string(enumValue)
+			if _, ok := seen[key]; ok {
 				return BoolDomain{}, errors.New("enum values must be unique")
 			}
-			seen[boolValue] = struct{}{}
-			domain.Enum = append(domain.Enum, boolValue)
+			seen[key] = struct{}{}
+			enumDomain := types.Enum(enumValue)
+			domain.Enum = append(domain.Enum, enumDomain)
 		}
 	}
 

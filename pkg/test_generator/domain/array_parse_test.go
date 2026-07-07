@@ -136,12 +136,7 @@ enum:
 	arrayDomain, err := dc.ParseArray(node)
 	require.NoError(t, err)
 	require.Len(t, arrayDomain.Enum, 2)
-	require.Len(t, dc.domainStore, 3)
-
-	for _, enumDomain := range arrayDomain.Enum {
-		require.Contains(t, dc.domainStore, enumDomain)
-		require.IsType(t, new(EnumDomain), enumDomain)
-	}
+	require.Len(t, dc.domainStore, 1)
 }
 
 func TestParseArrayRejectsInvalidArraySchemas(t *testing.T) {

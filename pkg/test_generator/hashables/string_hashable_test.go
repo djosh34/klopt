@@ -14,7 +14,7 @@ func TestStringHashableImplementsHasher(t *testing.T) {
 func TestStringHashableGenerateHash(t *testing.T) {
 	hashable := StringHashable{
 		Nullable:         true,
-		Enum:             []string{"alpha", "beta"},
+		Enum:             []types.Enum{types.Enum("\"alpha\""), types.Enum("\"beta\"")},
 		Pattern:          types.Pattern{"^[a-z]+$"},
 		Format:           types.Format{"email"},
 		XValidExamples:   []string{"alpha"},

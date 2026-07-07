@@ -10,9 +10,9 @@ import (
 type Number []byte
 
 type NumberHashable struct {
-	Type     string   `json:"type"`
-	Nullable bool     `json:"nullable"`
-	Enum     []Number `json:"enum"`
+	Type     string       `json:"type"`
+	Nullable bool         `json:"nullable"`
+	Enum     []types.Enum `json:"enum"`
 
 	Minimum          *Number `json:"minimum"`
 	Maximum          *Number `json:"maximum"`

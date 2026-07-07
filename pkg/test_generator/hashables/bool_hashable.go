@@ -8,8 +8,8 @@ import (
 )
 
 type BoolHashable struct {
-	Nullable bool   `json:"nullable"`
-	Enum     []bool `json:"enum"`
+	Nullable bool         `json:"nullable"`
+	Enum     []types.Enum `json:"enum"`
 }
 
 type boolHashableHashJSON struct {

@@ -18,29 +18,28 @@ func TestMissingDomainsToHasher(t *testing.T) {
 		expected types.Hasher
 	}{
 		"array": {
-			domain:   &ArrayDomain{Nullable: true, Enum: []types.Domain{&EnumDomain{}}, Items: &StringDomain{}, MinItems: 1, MaxItems: new(3)},
-			expected: &hashables.ArrayHashable{Nullable: true, Enum: []types.Hasher{&hashables.EnumHashable{}}, Items: &hashables.StringHashable{}, MinItems: 1, MaxItems: new(3)},
+			domain:   &ArrayDomain{Nullable: true, Enum: []types.Enum{{}}, Items: &StringDomain{}, MinItems: 1, MaxItems: new(3)},
+			expected: &hashables.ArrayHashable{Nullable: true, Enum: []types.Enum{{}}, Items: &hashables.StringHashable{}, MinItems: 1, MaxItems: new(3)},
 		},
 		"array with nil items": {
 			domain:   &ArrayDomain{Nullable: true},
 			expected: &hashables.ArrayHashable{Nullable: true},
 		},
 		"bool": {
-			domain:   &BoolDomain{Nullable: true, Enum: []bool{true}},
-			expected: &hashables.BoolHashable{Nullable: true, Enum: []bool{true}},
+			domain:   &BoolDomain{Nullable: true, Enum: []types.Enum{types.Enum("true")}},
+			expected: &hashables.BoolHashable{Nullable: true, Enum: []types.Enum{types.Enum("true")}},
 		},
 		"number": {
-			domain:   &NumberDomain{Type: "number", Nullable: true, Enum: []Number{Number("1")}, Minimum: &minimum, Maximum: &maximum, ExclusiveMinimum: true, ExclusiveMaximum: true, MultipleOf: &multipleOf, Format: new("double")},
-			expected: &hashables.NumberHashable{Type: "number", Nullable: true, Enum: []hashables.Number{hashables.Number("1")}, Minimum: new(hashables.Number("1")), Maximum: new(hashables.Number("10")), ExclusiveMinimum: true, ExclusiveMaximum: true, MultipleOf: new(hashables.Number("2")), Format: new("double")},
+			domain:   &NumberDomain{Type: "number", Nullable: true, Enum: []types.Enum{types.Enum("1")}, Minimum: &minimum, Maximum: &maximum, ExclusiveMinimum: true, ExclusiveMaximum: true, MultipleOf: &multipleOf, Format: new("double")},
+			expected: &hashables.NumberHashable{Type: "number", Nullable: true, Enum: []types.Enum{types.Enum("1")}, Minimum: new(hashables.Number("1")), Maximum: new(hashables.Number("10")), ExclusiveMinimum: true, ExclusiveMaximum: true, MultipleOf: new(hashables.Number("2")), Format: new("double")},
 		},
 		"integer": {
-			domain:   &NumberDomain{Type: "integer", Nullable: true, Enum: []Number{Number("1")}, Minimum: &minimum, Format: new("int32")},
-			expected: &hashables.NumberHashable{Type: "integer", Nullable: true, Enum: []hashables.Number{hashables.Number("1")}, Minimum: new(hashables.Number("1")), Format: new("int32")},
+			domain:   &NumberDomain{Type: "integer", Nullable: true, Enum: []types.Enum{types.Enum("1")}, Minimum: &minimum, Format: new("int32")},
+			expected: &hashables.NumberHashable{Type: "integer", Nullable: true, Enum: []types.Enum{types.Enum("1")}, Minimum: new(hashables.Number("1")), Format: new("int32")},
 		},
 		"allOf": {
 			domain: &AllOfDomain{Domains: []types.Domain{&StringDomain{}}, MergedDomain: &ObjectDomain{}},
 			expected: &hashables.AllOfHashable{Domains: []types.Hasher{&hashables.StringHashable{}}, MergedDomain: &hashables.ObjectHashable{
-				Enum:       []types.Hasher{},
 				Properties: []types.Hasher{},
 			}},
 		},

@@ -10,7 +10,7 @@ import (
 type ArrayHashable struct {
 	Nullable bool `json:"nullable"`
 
-	Enum []types.Hasher `json:"enum"`
+	Enum []types.Enum `json:"enum"`
 
 	Items types.Hasher `json:"items"`
 

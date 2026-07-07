@@ -47,7 +47,7 @@ func (p *Property) ToHasher() (types.Hasher, error) {
 type ObjectDomain struct {
 	Nullable bool
 
-	Enum []types.Domain
+	Enum []types.Enum
 
 	Properties []types.Domain
 
@@ -73,7 +73,7 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	merged := *o
 	merged.Nullable = o.Nullable || otherObject.Nullable
 	if o.Enum != nil || otherObject.Enum != nil {
-		merged.Enum = append(append([]types.Domain{}, o.Enum...), otherObject.Enum...)
+		merged.Enum = append(append([]types.Enum{}, o.Enum...), otherObject.Enum...)
 	}
 	merged.MinProps = max(o.MinProps, otherObject.MinProps)
 	merged.MaxProps = tighterMaxProps(o.MaxProps, otherObject.MaxProps)
@@ -151,17 +151,6 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 		return nil, errors.New("object domain cannot be nil")
 	}
 
-	enumHashers := make([]types.Hasher, 0, len(o.Enum))
-	if o.Enum != nil {
-		for _, enumDomain := range o.Enum {
-			hasher, err := enumDomain.ToHasher()
-			if err != nil {
-				return nil, err
-			}
-			enumHashers = append(enumHashers, hasher)
-		}
-	}
-
 	propertyHashers := make([]types.Hasher, 0, len(o.Properties))
 	for _, propertyDomain := range o.Properties {
 		hasher, err := propertyDomain.ToHasher()
@@ -186,7 +175,7 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 
 	return &hashables.ObjectHashable{
 		Nullable:                 o.Nullable,
-		Enum:                     enumHashers,
+		Enum:                     o.Enum,
 		Properties:               propertyHashers,
 		AdditionalPropertyKind:   hashables.AdditionalPropertyKind(o.AdditionalPropertyKind),
 		AdditionalPropertyDomain: additionalPropertyHasher,
@@ -203,7 +192,7 @@ type JSONObject struct {
 	AdditionalProperties *json.RawMessage  `json:"additionalProperties"`
 	MinProperties        *int              `json:"minProperties"`
 	MaxProperties        *int              `json:"maxProperties"`
-	Enum                 []json.RawMessage `json:"enum"`
+	EnumRaw              []json.RawMessage `json:"enum"`
 }
 
 type PropertyAlreadyExistsError struct {
@@ -248,11 +237,10 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 
 	// Parse Enums early, and if it exists, return early (we will not check that enum is valid, and only populate enum field of ObjectDomain)
 	if _, enumOk := jsonKV["enum"]; enumOk {
-		for _, enumValue := range jsonObject.Enum {
-			enumDomain := NewEnumFromJSON(&enumValue)
-			dc.AddDomain(&enumDomain)
+		for _, enumValue := range jsonObject.EnumRaw {
+			enumDomain := types.Enum(enumValue)
 
-			objectDomain.Enum = append(objectDomain.Enum, &enumDomain)
+			objectDomain.Enum = append(objectDomain.Enum, enumDomain)
 		}
 
 		return objectDomain, nil

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"decode_and_validate_generator/pkg/test_generator/types"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -46,7 +47,7 @@ enum:
   - true
   - false
 `,
-			expected: BoolDomain{Enum: []bool{true, false}},
+			expected: BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}},
 		},
 	}
 

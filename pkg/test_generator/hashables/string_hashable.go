@@ -10,7 +10,7 @@ import (
 type StringHashable struct {
 	Nullable bool `json:"nullable"`
 
-	Enum []string `json:"enum"`
+	Enum []types.Enum `json:"enum"`
 
 	types.Pattern `json:"pattern"`
 	types.Format  `json:"format"`

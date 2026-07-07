@@ -47,7 +47,7 @@ enum:
   - alpha
   - beta
 `,
-			expected: StringDomain{Enum: []string{"alpha", "beta"}},
+			expected: StringDomain{Enum: []types.Enum{types.Enum("\"alpha\""), types.Enum("\"beta\"")}},
 		},
 		"minLength and maxLength": {
 			yamlString: `
@@ -152,7 +152,7 @@ x-invalid-examples:
 minLength: 2
 maxLength: 10
 `,
-			expected: StringDomain{Nullable: true, Enum: []string{"ID-123"}, Pattern: types.Pattern{"^ID-[0-9]+$"}, Format: types.Format{"internal-id"}, XValidExamples: []string{"ID-123"}, XInvalidExamples: []string{"nope"}, MinLength: 2, MaxLength: new(10)},
+			expected: StringDomain{Nullable: true, Enum: []types.Enum{types.Enum("\"ID-123\"")}, Pattern: types.Pattern{"^ID-[0-9]+$"}, Format: types.Format{"internal-id"}, XValidExamples: []string{"ID-123"}, XInvalidExamples: []string{"nope"}, MinLength: 2, MaxLength: new(10)},
 		},
 	}
 
