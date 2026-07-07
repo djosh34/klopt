@@ -3,6 +3,7 @@ package testgenerator
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 )
 
 type StringDomain struct {
@@ -17,10 +18,24 @@ type StringDomain struct {
 	MaxLength *int `json:"maxLength"`
 }
 
+type stringDomainHashJson struct {
+	Type  string       `json:"type"`
+	Value StringDomain `json:"value"`
+}
+
 var _ Hasher = new(StringDomain)
 
 func (domain *StringDomain) GenerateHash() (Hash, error) {
-	jsonBytes, err := json.Marshal(domain)
+	if domain == nil {
+		return Hash{}, errors.New("domain of string cannot be nil")
+	}
+
+	sdJson := stringDomainHashJson{
+		Type:  "string",
+		Value: *domain,
+	}
+
+	jsonBytes, err := json.Marshal(&sdJson)
 	if err != nil {
 		return Hash{}, err
 	}

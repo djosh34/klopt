@@ -80,6 +80,29 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 	objectDomain := ObjectDomain{}
 
 	// Parse Enums early, and if it exists, return early (we will not check that enum is valid, and only populate enum field of ObjectDomain)
+	if _, enumOk := jsonKV["enum"]; enumOk {
+		if dc.domainStore == nil {
+			dc.domainStore = make(map[Hash]Domain)
+		}
+
+		for _, enumValue := range jsonObject.Enum {
+			enumDomain, enumErr := NewEnumFromJSON(&enumValue)
+			if enumErr != nil {
+				return ObjectDomain{}, enumErr
+			}
+
+			enumHash, enumHashErr := enumDomain.GenerateHash()
+			if enumHashErr != nil {
+				return ObjectDomain{}, enumHashErr
+			}
+
+			dc.domainStore[enumHash] = &enumDomain
+			hash := enumHash
+			objectDomain.Enum = append(objectDomain.Enum, &hash)
+		}
+
+		return objectDomain, nil
+	}
 
 	properties := make(map[string]Property, len(jsonObject.Properties))
 
