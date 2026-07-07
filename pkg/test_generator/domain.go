@@ -5,7 +5,7 @@ import "gopkg.in/yaml.v3"
 type Hash [32]byte
 
 type Hasher interface {
-	Hash() Hash
+	Hash() (Hash, error)
 }
 
 type AllOfMerger interface {

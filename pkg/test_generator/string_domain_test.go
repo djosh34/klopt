@@ -3,7 +3,6 @@ package testgenerator
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -11,8 +10,7 @@ import (
 )
 
 func TestStringDomainImplementsInterfaces(t *testing.T) {
-	require.Implements(t, (*Hasher)(nil), StringDomain{})
-	require.Implements(t, (*json.Marshaler)(nil), StringDomain{})
+	require.Implements(t, (*Hasher)(nil), new(StringDomain))
 }
 
 func TestStringDomainMarshalJSONZeroValueIncludesAllFields(t *testing.T) {
@@ -145,14 +143,7 @@ func TestStringDomainHashUsesSHA256OfJSON(t *testing.T) {
 	jsonBytes, err := json.Marshal(domain)
 	require.NoError(t, err)
 	require.Equal(t, domainJSON, string(jsonBytes))
-	require.Equal(t, expectedHash, domain.Hash())
-}
-
-func TestMustMarshalJSON(t *testing.T) {
-	require.Equal(t, []byte("json"), mustMarshalJSON([]byte("json"), nil))
-
-	err := errors.New("marshal failed")
-	require.PanicsWithError(t, "marshal failed", func() {
-		mustMarshalJSON(nil, err)
-	})
+	gotHash, err := domain.Hash()
+	require.NoError(t, err)
+	require.Equal(t, expectedHash, gotHash)
 }

@@ -19,14 +19,11 @@ type StringDomain struct {
 
 var _ Hasher = new(StringDomain)
 
-func (domain *StringDomain) Hash() Hash {
-	return sha256.Sum256(mustMarshalJSON(json.Marshal(domain)))
-}
-
-func mustMarshalJSON(jsonBytes []byte, err error) []byte {
+func (domain *StringDomain) Hash() (Hash, error) {
+	jsonBytes, err := json.Marshal(domain)
 	if err != nil {
-		panic(err)
+		return Hash{}, err
 	}
 
-	return jsonBytes
+	return sha256.Sum256(jsonBytes), nil
 }
