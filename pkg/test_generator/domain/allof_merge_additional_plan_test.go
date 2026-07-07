@@ -1,9 +1,10 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -82,7 +83,7 @@ func TestAllOfDomainAdditionalAllOfMergePlanCases(t *testing.T) {
 			right: &StringDomain{Nullable: true},
 			want:  &AllOfDomain{Domains: []types.Domain{&StringDomain{Nullable: true}}, MergedDomain: &StringDomain{}},
 		},
-		"nullable false false": {
+		"nullable false": {
 			left:  &AllOfDomain{MergedDomain: &StringDomain{}},
 			right: &StringDomain{},
 			want:  &AllOfDomain{Domains: []types.Domain{&StringDomain{}}, MergedDomain: &StringDomain{}},
@@ -135,6 +136,7 @@ func TestPrimitiveDomainAllOfDelegationPlanCases(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got, err := tt.left.AllOfMerge(tt.right)
 			require.NoError(t, err)
+
 			allOf, ok := got.(*AllOfDomain)
 			require.True(t, ok)
 			require.Equal(t, tt.wantMerged, allOf.MergedDomain)
@@ -148,20 +150,20 @@ func TestStringDomainAdditionalAllOfMergePlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"enum nil nil":                        {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
-		"pattern nil nil":                     {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
+		"enum nil":                            {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
+		"pattern nil":                         {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
 		"pattern nil right":                   {left: &StringDomain{}, right: &StringDomain{Pattern: types.Pattern{"p2"}}, want: &StringDomain{Pattern: types.Pattern{"p2"}}},
 		"pattern left nil":                    {left: &StringDomain{Pattern: types.Pattern{"p1"}}, right: &StringDomain{}, want: &StringDomain{Pattern: types.Pattern{"p1"}}},
 		"pattern concat":                      {left: &StringDomain{Pattern: types.Pattern{"p1"}}, right: &StringDomain{Pattern: types.Pattern{"p2"}}, want: &StringDomain{Pattern: types.Pattern{"p1", "p2"}}},
-		"format nil nil":                      {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
+		"format nil":                          {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
 		"format nil right":                    {left: &StringDomain{}, right: &StringDomain{Format: types.Format{"email"}}, want: &StringDomain{Format: types.Format{"email"}}},
 		"format left nil":                     {left: &StringDomain{Format: types.Format{"uuid"}}, right: &StringDomain{}, want: &StringDomain{Format: types.Format{"uuid"}}},
 		"format concat":                       {left: &StringDomain{Format: types.Format{"email"}}, right: &StringDomain{Format: types.Format{"uuid"}}, want: &StringDomain{Format: types.Format{"email", "uuid"}}},
-		"valid examples nil nil":              {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
+		"valid examples nil":                  {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
 		"valid examples left nil":             {left: &StringDomain{XValidExamples: []string{"a", "b"}}, right: &StringDomain{}, want: &StringDomain{XValidExamples: []string{"a", "b"}}},
 		"valid examples preserves left order": {left: &StringDomain{XValidExamples: []string{"b", "a"}}, right: &StringDomain{XValidExamples: []string{"a", "b"}}, want: &StringDomain{XValidExamples: []string{"b", "a"}}},
 		"enum valid preserves left order":     {left: &StringDomain{Enum: []types.Enum{types.Enum("\"b\""), types.Enum("\"a\"")}}, right: &StringDomain{XValidExamples: []string{"a", "b"}}, want: &StringDomain{Enum: []types.Enum{types.Enum("\"b\""), types.Enum("\"a\"")}, XValidExamples: []string{"b", "a"}}},
-		"invalid examples nil nil":            {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
+		"invalid examples nil":                {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
 		"invalid examples nil right":          {left: &StringDomain{}, right: &StringDomain{XInvalidExamples: []string{"x"}}, want: &StringDomain{XInvalidExamples: []string{"x"}}},
 		"invalid examples left nil":           {left: &StringDomain{XInvalidExamples: []string{"x"}}, right: &StringDomain{}, want: &StringDomain{XInvalidExamples: []string{"x"}}},
 		"enum and invalid examples both kept": {left: &StringDomain{Enum: []types.Enum{types.Enum("\"ok\"")}, XInvalidExamples: []string{"ok"}}, right: &StringDomain{}, want: &StringDomain{Enum: []types.Enum{types.Enum("\"ok\"")}, XInvalidExamples: []string{"ok"}}},
@@ -187,10 +189,10 @@ func TestNumberDomainAdditionalAllOfMergePlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"nullable false false":                  {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
+		"nullable false":                        {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
 		"nullable false true":                   {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number", Nullable: true}, want: &NumberDomain{Type: "number"}},
 		"nullable true false":                   {left: &NumberDomain{Type: "number", Nullable: true}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
-		"enum nil nil":                          {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
+		"enum nil":                              {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
 		"enum left nil":                         {left: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("1"), types.Enum("2")}}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("1"), types.Enum("2")}}},
 		"enum preserves left order":             {left: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("2"), types.Enum("1")}}, right: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("1"), types.Enum("2")}}, want: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("2"), types.Enum("1")}}},
 		"minimum nil left":                      {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number", Minimum: new(Number("1"))}, want: &NumberDomain{Type: "number", Minimum: new(Number("1"))}},
@@ -209,7 +211,7 @@ func TestNumberDomainAdditionalAllOfMergePlanCases(t *testing.T) {
 		"multiple nil right":                    {left: &NumberDomain{Type: "number", MultipleOf: new(Number("2"))}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number", MultipleOf: new(Number("2"))}},
 		"multiple decimal divisibility":         {left: &NumberDomain{Type: "number", MultipleOf: new(Number("0.5"))}, right: &NumberDomain{Type: "number", MultipleOf: new(Number("0.25"))}, want: &NumberDomain{Type: "number", MultipleOf: new(Number("0.5"))}},
 		"integer type keeps decimal multiple":   {left: &NumberDomain{Type: "number", MultipleOf: new(Number("2.5"))}, right: &NumberDomain{Type: "integer"}, want: &NumberDomain{Type: "integer", MultipleOf: new(Number("2.5"))}},
-		"format nil nil":                        {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
+		"format nil":                            {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
 		"format left nil":                       {left: &NumberDomain{Type: "number", Format: new("double")}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number", Format: new("double")}},
 		"format same":                           {left: &NumberDomain{Type: "number", Format: new("float")}, right: &NumberDomain{Type: "number", Format: new("float")}, want: &NumberDomain{Type: "number", Format: new("float")}},
 		"number integer int64 format":           {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "integer", Format: new("int64")}, want: &NumberDomain{Type: "integer", Format: new("int64")}},
@@ -256,10 +258,10 @@ func TestArrayDomainAdditionalAllOfMergePlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"nullable false false":   {left: &ArrayDomain{}, right: &ArrayDomain{}, want: &ArrayDomain{}},
+		"nullable false":         {left: &ArrayDomain{}, right: &ArrayDomain{}, want: &ArrayDomain{}},
 		"nullable false true":    {left: &ArrayDomain{}, right: &ArrayDomain{Nullable: true}, want: &ArrayDomain{}},
 		"nullable true false":    {left: &ArrayDomain{Nullable: true}, right: &ArrayDomain{}, want: &ArrayDomain{}},
-		"enum nil nil":           {left: &ArrayDomain{}, right: &ArrayDomain{}, want: &ArrayDomain{}},
+		"enum nil":               {left: &ArrayDomain{}, right: &ArrayDomain{}, want: &ArrayDomain{}},
 		"enum left nil":          {left: &ArrayDomain{Enum: []types.Enum{types.Enum(`["a"]`), types.Enum(`["b"]`)}}, right: &ArrayDomain{}, want: &ArrayDomain{Enum: []types.Enum{types.Enum(`["a"]`), types.Enum(`["b"]`)}}},
 		"min items larger right": {left: &ArrayDomain{MinItems: 1}, right: &ArrayDomain{MinItems: 3}, want: &ArrayDomain{MinItems: 3}},
 		"min items larger left":  {left: &ArrayDomain{MinItems: 3}, right: &ArrayDomain{MinItems: 1}, want: &ArrayDomain{MinItems: 3}},
@@ -302,10 +304,10 @@ func TestObjectDomainAdditionalAllOfMergePlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"nullable false false":                     {left: &ObjectDomain{}, right: &ObjectDomain{}, want: &ObjectDomain{}},
+		"nullable false":                           {left: &ObjectDomain{}, right: &ObjectDomain{}, want: &ObjectDomain{}},
 		"nullable false true":                      {left: &ObjectDomain{}, right: &ObjectDomain{Nullable: true}, want: &ObjectDomain{}},
 		"nullable true false":                      {left: &ObjectDomain{Nullable: true}, right: &ObjectDomain{}, want: &ObjectDomain{}},
-		"enum nil nil":                             {left: &ObjectDomain{}, right: &ObjectDomain{}, want: &ObjectDomain{}},
+		"enum nil":                                 {left: &ObjectDomain{}, right: &ObjectDomain{}, want: &ObjectDomain{}},
 		"enum left nil":                            {left: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"a":1}`), types.Enum(`{"b":2}`)}}, right: &ObjectDomain{}, want: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"a":1}`), types.Enum(`{"b":2}`)}}},
 		"disjoint props already sorted":            {left: &ObjectDomain{Properties: []Property{{Key: "a"}}, AdditionalPropertyKind: AdditionalTrue}, right: &ObjectDomain{Properties: []Property{{Key: "b"}}, AdditionalPropertyKind: AdditionalTrue}, want: &ObjectDomain{Properties: []Property{{Key: "a"}, {Key: "b"}}, AdditionalPropertyKind: AdditionalTrue}},
 		"same prop optional nil":                   {left: &ObjectDomain{Properties: []Property{{Key: "a"}}}, right: &ObjectDomain{Properties: []Property{{Key: "a"}}}, want: &ObjectDomain{Properties: []Property{{Key: "a"}}}},
@@ -323,9 +325,9 @@ func TestObjectDomainAdditionalAllOfMergePlanCases(t *testing.T) {
 		"right prop merged with left schema":       {left: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, right: &ObjectDomain{Properties: []Property{{Key: "a", Domain: &StringDomain{MinLength: 1}}}}, want: &ObjectDomain{Properties: []Property{{Key: "a", Domain: &StringDomain{MinLength: 1, MaxLength: new(5)}}}, AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}},
 		"right optional nil prop with left schema": {left: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, right: &ObjectDomain{Properties: []Property{{Key: "a"}}}, want: &ObjectDomain{Properties: []Property{{Key: "a", Domain: &StringDomain{MaxLength: new(5)}}}, AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}},
 		"right required nil prop with left schema": {left: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, right: &ObjectDomain{Properties: []Property{{Key: "a", Required: true}}}, want: &ObjectDomain{Properties: []Property{{Key: "a", Required: true, Domain: &StringDomain{MaxLength: new(5)}}}, AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}},
-		"additional true true":                     {left: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}},
+		"additional true":                          {left: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}},
 		"additional false true":                    {left: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}},
-		"additional false false":                   {left: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}},
+		"additional false":                         {left: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}},
 		"additional schema true":                   {left: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}},
 		"additional false schema":                  {left: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}},
 		"min props larger right":                   {left: &ObjectDomain{MinProps: 1}, right: &ObjectDomain{MinProps: 3}, want: &ObjectDomain{MinProps: 3}},

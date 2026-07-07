@@ -35,6 +35,7 @@ func coloredStandardDiff(expected, actual string) string {
 			builder.WriteString(" ")
 			builder.WriteString(alignedLine.Left)
 			builder.WriteString("\n")
+
 			continue
 		}
 
@@ -105,6 +106,7 @@ func comparableFiles(t *testing.T, root string, exceptions map[string]struct{}) 
 		}
 
 		files[rel] = struct{}{}
+
 		return nil
 	})
 	require.NoError(t, err)

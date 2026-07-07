@@ -1,10 +1,11 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +22,7 @@ func TestAllOfDomainAllOfMergeValidPlanCases(t *testing.T) {
 		"number integer":      {left: &AllOfDomain{MergedDomain: &NumberDomain{Type: "number"}}, right: &NumberDomain{Type: "integer"}, want: &AllOfDomain{Domains: []types.Domain{&NumberDomain{Type: "integer"}}, MergedDomain: &NumberDomain{Type: "integer"}}},
 		"array":               {left: &AllOfDomain{MergedDomain: &ArrayDomain{MinItems: 1}}, right: &ArrayDomain{MaxItems: new(3)}, want: &AllOfDomain{Domains: []types.Domain{&ArrayDomain{MaxItems: new(3)}}, MergedDomain: &ArrayDomain{MinItems: 1, MaxItems: new(3)}}},
 		"bool":                {left: &AllOfDomain{MergedDomain: &BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}}, right: &BoolDomain{Enum: []types.Enum{types.Enum("false")}}, want: &AllOfDomain{Domains: []types.Domain{&BoolDomain{Enum: []types.Enum{types.Enum("false")}}}, MergedDomain: &BoolDomain{Enum: []types.Enum{types.Enum("false")}}}},
-		"nullable true true":  {left: &AllOfDomain{MergedDomain: &StringDomain{Nullable: true}}, right: &StringDomain{Nullable: true}, want: &AllOfDomain{Domains: []types.Domain{&StringDomain{Nullable: true}}, MergedDomain: &StringDomain{Nullable: true}}},
+		"nullable true":       {left: &AllOfDomain{MergedDomain: &StringDomain{Nullable: true}}, right: &StringDomain{Nullable: true}, want: &AllOfDomain{Domains: []types.Domain{&StringDomain{Nullable: true}}, MergedDomain: &StringDomain{Nullable: true}}},
 		"nullable true false": {left: &AllOfDomain{MergedDomain: &StringDomain{Nullable: true}}, right: &StringDomain{}, want: &AllOfDomain{Domains: []types.Domain{&StringDomain{}}, MergedDomain: &StringDomain{}}},
 		"allOf plus allOf":    {left: &AllOfDomain{Domains: []types.Domain{&StringDomain{MinLength: 1}}, MergedDomain: &StringDomain{MinLength: 1}}, right: &AllOfDomain{Domains: []types.Domain{&StringDomain{MaxLength: new(5)}, &StringDomain{Enum: []types.Enum{types.Enum(`"abc"`)}}}, MergedDomain: &StringDomain{MaxLength: new(5), Enum: []types.Enum{types.Enum(`"abc"`)}}}, want: &AllOfDomain{Domains: []types.Domain{&StringDomain{MinLength: 1}, &StringDomain{MaxLength: new(5)}, &StringDomain{Enum: []types.Enum{types.Enum(`"abc"`)}}}, MergedDomain: &StringDomain{MinLength: 1, MaxLength: new(5), Enum: []types.Enum{types.Enum(`"abc"`)}}}},
 	}
@@ -55,8 +56,10 @@ func TestAllOfDomainAllOfMergeInvalidPlanCases(t *testing.T) {
 			require.Equal(t, before, *tt.left)
 		})
 	}
+
 	t.Run("nil receiver", func(t *testing.T) {
 		var left *AllOfDomain
+
 		got, err := left.AllOfMerge(&StringDomain{})
 		require.Error(t, err)
 		require.Nil(t, got)
@@ -118,6 +121,7 @@ func TestParseAllOfInvalidPlanCases(t *testing.T) {
 			if calls == 2 {
 				return nil, errors.New("boom")
 			}
+
 			return &StringDomain{}, nil
 		}
 		got, err := dc.Parse(&raw)

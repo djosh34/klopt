@@ -60,6 +60,7 @@ func wrapTemplateError(templateErr error) error {
 	}
 
 	replacer := strings.NewReplacer(replacements...)
+
 	return transformError(templateErr, replacer.Replace)
 }
 
@@ -83,6 +84,7 @@ func transformError(err error, transform func(string) string) error {
 
 	if unwrapper, ok := err.(interface{ Unwrap() []error }); ok {
 		unwrappedErrors := unwrapper.Unwrap()
+
 		transformedErrors := make([]error, 0, len(unwrappedErrors))
 		for _, unwrappedError := range unwrappedErrors {
 			transformedErrors = append(transformedErrors, transformError(unwrappedError, transform))

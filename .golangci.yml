@@ -22,6 +22,9 @@ linters:
     - staticcheck
     - wsl_v5
   settings:
+    govet:
+      enable:
+        - shadow
     depguard:
       rules:
         main:

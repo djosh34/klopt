@@ -2,8 +2,9 @@
 package example
 
 import (
-	"decode_and_validate_generator/pkg/peekjson"
 	"encoding/json"
+
+	"decode_and_validate_generator/pkg/peekjson"
 )
 
 type Decoder interface {

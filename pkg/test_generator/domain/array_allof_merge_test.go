@@ -1,8 +1,9 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -13,13 +14,13 @@ func TestArrayDomainAllOfMergeValidPlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"nullable true true":              {left: &ArrayDomain{Nullable: true}, right: &ArrayDomain{Nullable: true}, want: &ArrayDomain{Nullable: true}},
+		"nullable true":                   {left: &ArrayDomain{Nullable: true}, right: &ArrayDomain{Nullable: true}, want: &ArrayDomain{Nullable: true}},
 		"enum nil right":                  {left: &ArrayDomain{}, right: &ArrayDomain{Enum: []types.Enum{types.Enum(`["a"]`), types.Enum(`["b"]`)}}, want: &ArrayDomain{Enum: []types.Enum{types.Enum(`["a"]`), types.Enum(`["b"]`)}}},
 		"enum intersection":               {left: &ArrayDomain{Enum: []types.Enum{types.Enum(`["a"]`), types.Enum(`["b"]`), types.Enum(`["c"]`)}}, right: &ArrayDomain{Enum: []types.Enum{types.Enum(`["b"]`), types.Enum(`["c"]`), types.Enum(`["d"]`)}}, want: &ArrayDomain{Enum: []types.Enum{types.Enum(`["b"]`), types.Enum(`["c"]`)}}},
 		"enum preserves order":            {left: &ArrayDomain{Enum: []types.Enum{types.Enum(`["b"]`), types.Enum(`["a"]`)}}, right: &ArrayDomain{Enum: []types.Enum{types.Enum(`["a"]`), types.Enum(`["b"]`)}}, want: &ArrayDomain{Enum: []types.Enum{types.Enum(`["b"]`), types.Enum(`["a"]`)}}},
 		"enum raw null":                   {left: &ArrayDomain{Enum: []types.Enum{types.Enum(`null`), types.Enum(`["a"]`)}}, right: &ArrayDomain{Enum: []types.Enum{types.Enum(`["b"]`), types.Enum(`null`)}}, want: &ArrayDomain{Enum: []types.Enum{types.Enum(`null`)}}},
 		"enum not filtered":               {left: &ArrayDomain{Enum: []types.Enum{types.Enum(`["too-long"]`)}, MinItems: 99}, right: &ArrayDomain{MaxItems: new(0)}, want: &ArrayDomain{Enum: []types.Enum{types.Enum(`["too-long"]`)}, MinItems: 99, MaxItems: new(0)}},
-		"items nil nil":                   {left: &ArrayDomain{}, right: &ArrayDomain{}, want: &ArrayDomain{}},
+		"items nil":                       {left: &ArrayDomain{}, right: &ArrayDomain{}, want: &ArrayDomain{}},
 		"items nil domain":                {left: &ArrayDomain{}, right: &ArrayDomain{Items: &StringDomain{MinLength: 1}}, want: &ArrayDomain{Items: &StringDomain{MinLength: 1}}},
 		"items domain nil":                {left: &ArrayDomain{Items: &StringDomain{MinLength: 1}}, right: &ArrayDomain{}, want: &ArrayDomain{Items: &StringDomain{MinLength: 1}}},
 		"items string merge":              {left: &ArrayDomain{Items: &StringDomain{MinLength: 1}}, right: &ArrayDomain{Items: &StringDomain{MaxLength: new(5)}}, want: &ArrayDomain{Items: &StringDomain{MinLength: 1, MaxLength: new(5)}}},
@@ -58,8 +59,10 @@ func TestArrayDomainAllOfMergeInvalidPlanCases(t *testing.T) {
 			require.Equal(t, before, *tt.left)
 		})
 	}
+
 	t.Run("nil receiver", func(t *testing.T) {
 		var left *ArrayDomain
+
 		got, err := left.AllOfMerge(&ArrayDomain{})
 		require.Error(t, err)
 		require.Nil(t, got)

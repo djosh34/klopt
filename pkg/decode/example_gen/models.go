@@ -31,15 +31,19 @@ var _ json.Unmarshaler = new(StringNoFormatNullable)
 func (s *StringNoFormatNullable) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -53,11 +57,14 @@ func (s *StringNoFormatNotNullable) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = StringNoFormatNotNullable(value)
+
 	return nil
 }
 
@@ -74,9 +81,11 @@ func (a *RefStressObjectPut) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectPutAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -97,9 +106,11 @@ func (a *RefStressObjectPutAllOf1) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectPutAllOf1AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf1AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf1AllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -124,11 +135,15 @@ func (o *RefStressObjectPutAllOf1AllOf1) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -139,6 +154,7 @@ func (o *RefStressObjectPutAllOf1AllOf1) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -149,49 +165,59 @@ func (o *RefStressObjectPutAllOf1AllOf1) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf1AllOf1FinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectPutAllOf1AllOf1Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf1AllOf1OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf1AllOf1SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -209,11 +235,14 @@ func (s *RefStressObjectPutAllOf1AllOf1FinalCode) UnmarshalJSON(data []byte) err
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf1FinalCode(value)
+
 	return nil
 }
 
@@ -228,6 +257,7 @@ func (o *RefStressObjectPutAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error 
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -235,9 +265,11 @@ func (o *RefStressObjectPutAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -249,6 +281,7 @@ func (o *RefStressObjectPutAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -256,32 +289,38 @@ func (o *RefStressObjectPutAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error 
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf1AllOf1NestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf1NestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -299,11 +338,14 @@ func (s *RefStressObjectPutAllOf1AllOf1NestedLeaf) UnmarshalJSON(data []byte) er
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf1NestedLeaf(value)
+
 	return nil
 }
 
@@ -316,15 +358,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf1NestedSameName)
 func (s *RefStressObjectPutAllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -337,15 +383,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf1OptionalShared)
 func (s *RefStressObjectPutAllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -359,11 +409,14 @@ func (s *RefStressObjectPutAllOf1AllOf1SharedName) UnmarshalJSON(data []byte) er
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf1SharedName(value)
+
 	return nil
 }
 
@@ -379,6 +432,7 @@ func (a *RefStressObjectPutAllOf1AllOf2) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectPutAllOf1AllOf2AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf1AllOf2AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -398,6 +452,7 @@ func (a *RefStressObjectPutAllOf1AllOf2AllOf1) UnmarshalJSON(data []byte) error 
 	if err := a.RefStressObjectPutAllOf1AllOf2AllOf1AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf1AllOf2AllOf1AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -422,11 +477,15 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -437,6 +496,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -447,49 +507,59 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) 
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf1AllOf2AllOf1AllOf1OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -507,11 +577,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode) UnmarshalJSON(data
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf1FinalCode(value)
+
 	return nil
 }
 
@@ -526,6 +599,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -533,9 +607,11 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -547,6 +623,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -554,32 +631,38 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -597,11 +680,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf) UnmarshalJSON(dat
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedLeaf(value)
+
 	return nil
 }
 
@@ -614,15 +700,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedSam
 func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -635,15 +725,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf1AllOf1OptionalS
 func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -657,11 +751,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName) UnmarshalJSON(dat
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf1SharedName(value)
+
 	return nil
 }
 
@@ -676,6 +773,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) 
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -683,9 +781,11 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSharedName bool
 
 	for d.More() {
@@ -697,6 +797,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -704,32 +805,38 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) 
 
 		switch name {
 		case "optionalCode":
-
 			var optionalCode RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode
+
 			err = json.Unmarshal(value, &optionalCode)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalCode = &optionalCode
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -747,11 +854,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode) UnmarshalJSON(d
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf2OptionalCode(value)
+
 	return nil
 }
 
@@ -765,11 +875,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName) UnmarshalJSON(dat
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf1AllOf2SharedName(value)
+
 	return nil
 }
 
@@ -789,11 +902,15 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2) UnmarshalJSON(data []byte) error 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasMiddleFlag bool
-	var hasSharedName bool
+
+	var (
+		hasMiddleFlag bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -804,6 +921,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2) UnmarshalJSON(data []byte) error 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -814,41 +932,50 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2) UnmarshalJSON(data []byte) error 
 			hasMiddleFlag = true
 
 			var middleFlag RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag
+
 			err = json.Unmarshal(value, &middleFlag)
 			if err != nil {
 				return err
 			}
+
 			o.MiddleFlag = middleFlag
 		case "nested":
-
 			var nested RefStressObjectPutAllOf1AllOf2AllOf2Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf1AllOf2AllOf2SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasMiddleFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "middleFlag")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -866,11 +993,14 @@ func (b *RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag) UnmarshalJSON(data []by
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectPutAllOf1AllOf2AllOf2MiddleFlag(value)
+
 	return nil
 }
 
@@ -887,9 +1017,11 @@ func (a *RefStressObjectPutAllOf1AllOf2AllOf2Nested) UnmarshalJSON(data []byte) 
 	if err := a.RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -908,6 +1040,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -915,9 +1048,11 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -929,6 +1064,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -936,32 +1072,38 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -979,11 +1121,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf) UnmarshalJSON(dat
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Leaf(value)
+
 	return nil
 }
 
@@ -996,15 +1141,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1Sam
 func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -1023,9 +1172,11 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2) UnmarshalJSON(data []
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -1037,6 +1188,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2) UnmarshalJSON(data []
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1044,32 +1196,38 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2) UnmarshalJSON(data []
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -1087,11 +1245,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf) UnmarshalJSON(dat
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2Leaf(value)
+
 	return nil
 }
 
@@ -1105,11 +1266,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName) UnmarshalJSON
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf2SameName(value)
+
 	return nil
 }
 
@@ -1128,11 +1292,15 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3) UnmarshalJSON(data []
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasSameName bool
-	var hasSealed bool
+
+	var (
+		hasSameName bool
+		hasSealed   bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -1143,6 +1311,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3) UnmarshalJSON(data []
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1153,33 +1322,41 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3) UnmarshalJSON(data []
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		case "sealed":
 			hasSealed = true
 
 			var sealed RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed
+
 			err = json.Unmarshal(value, &sealed)
 			if err != nil {
 				return err
 			}
+
 			o.Sealed = sealed
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
+
 	if !hasSealed {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
 	}
@@ -1197,11 +1374,14 @@ func (s *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName) UnmarshalJSON
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SameName(value)
+
 	return nil
 }
 
@@ -1219,9 +1399,11 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed) UnmarshalJSON(d
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasLocked bool
 
 	for d.More() {
@@ -1233,6 +1415,7 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed) UnmarshalJSON(d
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1243,21 +1426,26 @@ func (o *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3Sealed) UnmarshalJSON(d
 			hasLocked = true
 
 			var locked RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked
+
 			err = json.Unmarshal(value, &locked)
 			if err != nil {
 				return err
 			}
+
 			o.Locked = locked
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasLocked {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
 	}
@@ -1275,11 +1463,14 @@ func (b *RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked) Unmarshal
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectPutAllOf1AllOf2AllOf2NestedAllOf3SealedLocked(value)
+
 	return nil
 }
 
@@ -1292,15 +1483,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf2AllOf2SharedName)
 func (s *RefStressObjectPutAllOf1AllOf2AllOf2SharedName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -1322,12 +1517,16 @@ func (o *RefStressObjectPutAllOf1AllOf3) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinal bool
-	var hasNested bool
-	var hasNullableRequired bool
+
+	var (
+		hasFinal            bool
+		hasNested           bool
+		hasNullableRequired bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -1338,6 +1537,7 @@ func (o *RefStressObjectPutAllOf1AllOf3) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1348,61 +1548,74 @@ func (o *RefStressObjectPutAllOf1AllOf3) UnmarshalJSON(data []byte) error {
 			hasFinal = true
 
 			var final RefStressObjectPutAllOf1AllOf3Final
+
 			err = json.Unmarshal(value, &final)
 			if err != nil {
 				return err
 			}
+
 			o.Final = final
 		case "nested":
 			hasNested = true
 
 			var nested RefStressObjectPutAllOf1AllOf3Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = nested
 		case "nullableRequired":
 			hasNullableRequired = true
 
 			var nullableRequired RefStressObjectPutAllOf1AllOf3NullableRequired
+
 			err = json.Unmarshal(value, &nullableRequired)
 			if err != nil {
 				return err
 			}
+
 			o.NullableRequired = nullableRequired
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf1AllOf3OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
-
 			var sharedName RefStressObjectPutAllOf1AllOf3SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = &sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinal {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "final")
 	}
+
 	if !hasNested {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nested")
 	}
+
 	if !hasNullableRequired {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nullableRequired")
 	}
@@ -1427,11 +1640,15 @@ func (o *RefStressObjectPutAllOf1AllOf3Final) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -1442,6 +1659,7 @@ func (o *RefStressObjectPutAllOf1AllOf3Final) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1452,49 +1670,59 @@ func (o *RefStressObjectPutAllOf1AllOf3Final) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf1AllOf3FinalFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectPutAllOf1AllOf3FinalNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf1AllOf3FinalOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf1AllOf3FinalSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -1512,11 +1740,14 @@ func (s *RefStressObjectPutAllOf1AllOf3FinalFinalCode) UnmarshalJSON(data []byte
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf3FinalFinalCode(value)
+
 	return nil
 }
 
@@ -1531,6 +1762,7 @@ func (o *RefStressObjectPutAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) e
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -1538,9 +1770,11 @@ func (o *RefStressObjectPutAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) e
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -1552,6 +1786,7 @@ func (o *RefStressObjectPutAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) e
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1559,32 +1794,38 @@ func (o *RefStressObjectPutAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) e
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf1AllOf3FinalNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf3FinalNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -1602,11 +1843,14 @@ func (s *RefStressObjectPutAllOf1AllOf3FinalNestedLeaf) UnmarshalJSON(data []byt
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf3FinalNestedLeaf(value)
+
 	return nil
 }
 
@@ -1619,15 +1863,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3FinalNestedSameName)
 func (s *RefStressObjectPutAllOf1AllOf3FinalNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -1640,15 +1888,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3FinalOptionalShared)
 func (s *RefStressObjectPutAllOf1AllOf3FinalOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -1662,11 +1914,14 @@ func (s *RefStressObjectPutAllOf1AllOf3FinalSharedName) UnmarshalJSON(data []byt
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf3FinalSharedName(value)
+
 	return nil
 }
 
@@ -1683,9 +1938,11 @@ func (a *RefStressObjectPutAllOf1AllOf3Nested) UnmarshalJSON(data []byte) error 
 	if err := a.RefStressObjectPutAllOf1AllOf3NestedAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf1AllOf3NestedAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf1AllOf3NestedAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -1704,6 +1961,7 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) 
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -1711,9 +1969,11 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -1725,6 +1985,7 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1732,32 +1993,38 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) 
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf3NestedAllOf1SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -1775,11 +2042,14 @@ func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf) UnmarshalJSON(data []by
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf3NestedAllOf1Leaf(value)
+
 	return nil
 }
 
@@ -1792,15 +2062,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NestedAllOf1SameName)
 func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -1819,9 +2093,11 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf2) UnmarshalJSON(data []byte) 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -1833,6 +2109,7 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf2) UnmarshalJSON(data []byte) 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1840,32 +2117,38 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf2) UnmarshalJSON(data []byte) 
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -1883,11 +2166,14 @@ func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf) UnmarshalJSON(data []by
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf3NestedAllOf2Leaf(value)
+
 	return nil
 }
 
@@ -1901,11 +2187,14 @@ func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName) UnmarshalJSON(data 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf3NestedAllOf2SameName(value)
+
 	return nil
 }
 
@@ -1924,11 +2213,15 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf3) UnmarshalJSON(data []byte) 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasSameName bool
-	var hasSealed bool
+
+	var (
+		hasSameName bool
+		hasSealed   bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -1939,6 +2232,7 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf3) UnmarshalJSON(data []byte) 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -1949,33 +2243,41 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf3) UnmarshalJSON(data []byte) 
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		case "sealed":
 			hasSealed = true
 
 			var sealed RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed
+
 			err = json.Unmarshal(value, &sealed)
 			if err != nil {
 				return err
 			}
+
 			o.Sealed = sealed
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
+
 	if !hasSealed {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
 	}
@@ -1993,11 +2295,14 @@ func (s *RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName) UnmarshalJSON(data 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf1AllOf3NestedAllOf3SameName(value)
+
 	return nil
 }
 
@@ -2015,9 +2320,11 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed) UnmarshalJSON(data []
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasLocked bool
 
 	for d.More() {
@@ -2029,6 +2336,7 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed) UnmarshalJSON(data []
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -2039,21 +2347,26 @@ func (o *RefStressObjectPutAllOf1AllOf3NestedAllOf3Sealed) UnmarshalJSON(data []
 			hasLocked = true
 
 			var locked RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked
+
 			err = json.Unmarshal(value, &locked)
 			if err != nil {
 				return err
 			}
+
 			o.Locked = locked
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasLocked {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
 	}
@@ -2071,11 +2384,14 @@ func (b *RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked) UnmarshalJSON(d
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectPutAllOf1AllOf3NestedAllOf3SealedLocked(value)
+
 	return nil
 }
 
@@ -2088,15 +2404,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3NullableRequired)
 func (s *RefStressObjectPutAllOf1AllOf3NullableRequired) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -2109,15 +2429,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3OptionalShared)
 func (s *RefStressObjectPutAllOf1AllOf3OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -2130,15 +2454,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf1AllOf3SharedName)
 func (s *RefStressObjectPutAllOf1AllOf3SharedName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -2154,6 +2482,7 @@ func (a *RefStressObjectPutAllOf2) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectPutAllOf2AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf2AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -2173,6 +2502,7 @@ func (a *RefStressObjectPutAllOf2AllOf1) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectPutAllOf2AllOf1AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf2AllOf1AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -2197,11 +2527,15 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) error 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -2212,6 +2546,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) error 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -2222,49 +2557,59 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) error 
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf2AllOf1AllOf1FinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectPutAllOf2AllOf1AllOf1Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf2AllOf1AllOf1OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf2AllOf1AllOf1SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -2282,11 +2627,14 @@ func (s *RefStressObjectPutAllOf2AllOf1AllOf1FinalCode) UnmarshalJSON(data []byt
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf1AllOf1FinalCode(value)
+
 	return nil
 }
 
@@ -2301,6 +2649,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) 
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -2308,9 +2657,11 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -2322,6 +2673,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -2329,32 +2681,38 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) 
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf2AllOf1AllOf1NestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -2372,11 +2730,14 @@ func (s *RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf) UnmarshalJSON(data []by
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf1AllOf1NestedLeaf(value)
+
 	return nil
 }
 
@@ -2389,15 +2750,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf1NestedSameName)
 func (s *RefStressObjectPutAllOf2AllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -2410,15 +2775,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf1OptionalShared)
 func (s *RefStressObjectPutAllOf2AllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -2432,11 +2801,14 @@ func (s *RefStressObjectPutAllOf2AllOf1AllOf1SharedName) UnmarshalJSON(data []by
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf1AllOf1SharedName(value)
+
 	return nil
 }
 
@@ -2456,11 +2828,15 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) error 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasMetadata bool
-	var hasRootFlag bool
+
+	var (
+		hasMetadata bool
+		hasRootFlag bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -2471,6 +2847,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) error 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -2478,44 +2855,53 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) error 
 
 		switch name {
 		case "final":
-
 			var final RefStressObjectPutAllOf2AllOf1AllOf2Final
+
 			err = json.Unmarshal(value, &final)
 			if err != nil {
 				return err
 			}
+
 			o.Final = &final
 		case "metadata":
 			hasMetadata = true
 
 			var metadata RefStressObjectPutAllOf2AllOf1AllOf2Metadata
+
 			err = json.Unmarshal(value, &metadata)
 			if err != nil {
 				return err
 			}
+
 			o.Metadata = metadata
 		case "rootFlag":
 			hasRootFlag = true
 
 			var rootFlag RefStressObjectPutAllOf2AllOf1AllOf2RootFlag
+
 			err = json.Unmarshal(value, &rootFlag)
 			if err != nil {
 				return err
 			}
+
 			o.RootFlag = rootFlag
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasMetadata {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
 	}
+
 	if !hasRootFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
 	}
@@ -2540,11 +2926,15 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2Final) UnmarshalJSON(data []byte) e
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -2555,6 +2945,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2Final) UnmarshalJSON(data []byte) e
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -2565,49 +2956,59 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2Final) UnmarshalJSON(data []byte) e
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectPutAllOf2AllOf1AllOf2FinalNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf2AllOf1AllOf2FinalOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -2625,11 +3026,14 @@ func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode) UnmarshalJSON(data 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf1AllOf2FinalFinalCode(value)
+
 	return nil
 }
 
@@ -2644,6 +3048,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []b
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -2651,9 +3056,11 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []b
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -2665,6 +3072,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []b
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -2672,32 +3080,38 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []b
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -2715,11 +3129,14 @@ func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf) UnmarshalJSON(data
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedLeaf(value)
+
 	return nil
 }
 
@@ -2732,15 +3149,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedSame
 func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -2753,15 +3174,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf1AllOf2FinalOptionalSh
 func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -2775,16 +3200,18 @@ func (s *RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName) UnmarshalJSON(data
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf1AllOf2FinalSharedName(value)
+
 	return nil
 }
 
-type RefStressObjectPutAllOf2AllOf1AllOf2Metadata struct {
-}
+type RefStressObjectPutAllOf2AllOf1AllOf2Metadata struct{}
 
 var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf1AllOf2Metadata)(nil)
 
@@ -2796,6 +3223,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2Metadata) UnmarshalJSON(data []byte
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -2809,6 +3237,7 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2Metadata) UnmarshalJSON(data []byte
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -2817,15 +3246,18 @@ func (o *RefStressObjectPutAllOf2AllOf1AllOf2Metadata) UnmarshalJSON(data []byte
 		switch name {
 		default:
 			var additionalProperty RefStressObjectPutAllOf2AllOf1AllOf2MetadataAdditionalProperty
+
 			err = json.Unmarshal(value, &additionalProperty)
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -2843,11 +3275,14 @@ func (s *RefStressObjectPutAllOf2AllOf1AllOf2MetadataAdditionalProperty) Unmarsh
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf1AllOf2MetadataAdditionalProperty(value)
+
 	return nil
 }
 
@@ -2861,11 +3296,14 @@ func (b *RefStressObjectPutAllOf2AllOf1AllOf2RootFlag) UnmarshalJSON(data []byte
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectPutAllOf2AllOf1AllOf2RootFlag(value)
+
 	return nil
 }
 
@@ -2887,13 +3325,17 @@ func (o *RefStressObjectPutAllOf2AllOf2) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasCount bool
-	var hasFinals bool
-	var hasMetadata bool
-	var hasRootFlag bool
+
+	var (
+		hasCount    bool
+		hasFinals   bool
+		hasMetadata bool
+		hasRootFlag bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -2904,6 +3346,7 @@ func (o *RefStressObjectPutAllOf2AllOf2) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -2914,65 +3357,80 @@ func (o *RefStressObjectPutAllOf2AllOf2) UnmarshalJSON(data []byte) error {
 			hasCount = true
 
 			var count RefStressObjectPutAllOf2AllOf2Count
+
 			err = json.Unmarshal(value, &count)
 			if err != nil {
 				return err
 			}
+
 			o.Count = count
 		case "finals":
 			hasFinals = true
 
 			var finals RefStressObjectPutAllOf2AllOf2Finals
+
 			err = json.Unmarshal(value, &finals)
 			if err != nil {
 				return err
 			}
+
 			o.Finals = finals
 		case "metadata":
 			hasMetadata = true
 
 			var metadata RefStressObjectPutAllOf2AllOf2Metadata
+
 			err = json.Unmarshal(value, &metadata)
 			if err != nil {
 				return err
 			}
+
 			o.Metadata = metadata
 		case "rootFlag":
 			hasRootFlag = true
 
 			var rootFlag RefStressObjectPutAllOf2AllOf2RootFlag
+
 			err = json.Unmarshal(value, &rootFlag)
 			if err != nil {
 				return err
 			}
+
 			o.RootFlag = rootFlag
 		case "sharedName":
-
 			var sharedName RefStressObjectPutAllOf2AllOf2SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = &sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasCount {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "count")
 	}
+
 	if !hasFinals {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finals")
 	}
+
 	if !hasMetadata {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
 	}
+
 	if !hasRootFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
 	}
@@ -2995,11 +3453,14 @@ func (n *RefStressObjectPutAllOf2AllOf2Count) UnmarshalJSON(data []byte) error {
 	}
 
 	var value json.Number
+
 	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
 		return NonNumberForNumberSchemaError
 	}
+
 	*n = RefStressObjectPutAllOf2AllOf2Count(value)
+
 	return nil
 }
 
@@ -3013,11 +3474,14 @@ func (a *RefStressObjectPutAllOf2AllOf2Finals) UnmarshalJSON(data []byte) error 
 	}
 
 	var value []RefStressObjectPutAllOf2AllOf2FinalsItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	*a = RefStressObjectPutAllOf2AllOf2Finals(value)
+
 	return nil
 }
 
@@ -3038,11 +3502,15 @@ func (o *RefStressObjectPutAllOf2AllOf2FinalsItem) UnmarshalJSON(data []byte) er
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -3053,6 +3521,7 @@ func (o *RefStressObjectPutAllOf2AllOf2FinalsItem) UnmarshalJSON(data []byte) er
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -3063,49 +3532,59 @@ func (o *RefStressObjectPutAllOf2AllOf2FinalsItem) UnmarshalJSON(data []byte) er
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectPutAllOf2AllOf2FinalsItemNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf2AllOf2FinalsItemOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf2AllOf2FinalsItemSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -3123,11 +3602,14 @@ func (s *RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode) UnmarshalJSON(data [
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf2FinalsItemFinalCode(value)
+
 	return nil
 }
 
@@ -3142,6 +3624,7 @@ func (o *RefStressObjectPutAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []by
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -3149,9 +3632,11 @@ func (o *RefStressObjectPutAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []by
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -3163,6 +3648,7 @@ func (o *RefStressObjectPutAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []by
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -3170,32 +3656,38 @@ func (o *RefStressObjectPutAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []by
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf2AllOf2FinalsItemNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -3213,11 +3705,14 @@ func (s *RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf) UnmarshalJSON(data 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf2FinalsItemNestedLeaf(value)
+
 	return nil
 }
 
@@ -3230,15 +3725,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2FinalsItemNestedSameN
 func (s *RefStressObjectPutAllOf2AllOf2FinalsItemNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -3251,15 +3750,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf2AllOf2FinalsItemOptionalSha
 func (s *RefStressObjectPutAllOf2AllOf2FinalsItemOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -3273,16 +3776,18 @@ func (s *RefStressObjectPutAllOf2AllOf2FinalsItemSharedName) UnmarshalJSON(data 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf2FinalsItemSharedName(value)
+
 	return nil
 }
 
-type RefStressObjectPutAllOf2AllOf2Metadata struct {
-}
+type RefStressObjectPutAllOf2AllOf2Metadata struct{}
 
 var _ json.Unmarshaler = (*RefStressObjectPutAllOf2AllOf2Metadata)(nil)
 
@@ -3294,6 +3799,7 @@ func (o *RefStressObjectPutAllOf2AllOf2Metadata) UnmarshalJSON(data []byte) erro
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -3307,6 +3813,7 @@ func (o *RefStressObjectPutAllOf2AllOf2Metadata) UnmarshalJSON(data []byte) erro
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -3315,15 +3822,18 @@ func (o *RefStressObjectPutAllOf2AllOf2Metadata) UnmarshalJSON(data []byte) erro
 		switch name {
 		default:
 			var additionalProperty RefStressObjectPutAllOf2AllOf2MetadataAdditionalProperty
+
 			err = json.Unmarshal(value, &additionalProperty)
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -3341,11 +3851,14 @@ func (s *RefStressObjectPutAllOf2AllOf2MetadataAdditionalProperty) UnmarshalJSON
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf2MetadataAdditionalProperty(value)
+
 	return nil
 }
 
@@ -3359,11 +3872,14 @@ func (b *RefStressObjectPutAllOf2AllOf2RootFlag) UnmarshalJSON(data []byte) erro
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectPutAllOf2AllOf2RootFlag(value)
+
 	return nil
 }
 
@@ -3377,11 +3893,14 @@ func (s *RefStressObjectPutAllOf2AllOf2SharedName) UnmarshalJSON(data []byte) er
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf2AllOf2SharedName(value)
+
 	return nil
 }
 
@@ -3410,19 +3929,23 @@ func (o *RefStressObjectPutAllOf3) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasCount bool
-	var hasFinal bool
-	var hasFinalCode bool
-	var hasFinals bool
-	var hasMetadata bool
-	var hasMiddleFlag bool
-	var hasNested bool
-	var hasNullableRequired bool
-	var hasRootFlag bool
-	var hasSharedName bool
+
+	var (
+		hasCount            bool
+		hasFinal            bool
+		hasFinalCode        bool
+		hasFinals           bool
+		hasMetadata         bool
+		hasMiddleFlag       bool
+		hasNested           bool
+		hasNullableRequired bool
+		hasRootFlag         bool
+		hasSharedName       bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -3433,6 +3956,7 @@ func (o *RefStressObjectPutAllOf3) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -3443,145 +3967,179 @@ func (o *RefStressObjectPutAllOf3) UnmarshalJSON(data []byte) error {
 			hasCount = true
 
 			var count RefStressObjectPutAllOf3Count
+
 			err = json.Unmarshal(value, &count)
 			if err != nil {
 				return err
 			}
+
 			o.Count = count
 		case "final":
 			hasFinal = true
 
 			var final RefStressObjectPutAllOf3Final
+
 			err = json.Unmarshal(value, &final)
 			if err != nil {
 				return err
 			}
+
 			o.Final = final
 		case "finalCode":
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf3FinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "finals":
 			hasFinals = true
 
 			var finals RefStressObjectPutAllOf3Finals
+
 			err = json.Unmarshal(value, &finals)
 			if err != nil {
 				return err
 			}
+
 			o.Finals = finals
 		case "metadata":
 			hasMetadata = true
 
 			var metadata RefStressObjectPutAllOf3Metadata
+
 			err = json.Unmarshal(value, &metadata)
 			if err != nil {
 				return err
 			}
+
 			o.Metadata = metadata
 		case "middleFlag":
 			hasMiddleFlag = true
 
 			var middleFlag RefStressObjectPutAllOf3MiddleFlag
+
 			err = json.Unmarshal(value, &middleFlag)
 			if err != nil {
 				return err
 			}
+
 			o.MiddleFlag = middleFlag
 		case "nested":
 			hasNested = true
 
 			var nested RefStressObjectPutAllOf3Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = nested
 		case "nullableRequired":
 			hasNullableRequired = true
 
 			var nullableRequired RefStressObjectPutAllOf3NullableRequired
+
 			err = json.Unmarshal(value, &nullableRequired)
 			if err != nil {
 				return err
 			}
+
 			o.NullableRequired = nullableRequired
 		case "optionalCode":
-
 			var optionalCode RefStressObjectPutAllOf3OptionalCode
+
 			err = json.Unmarshal(value, &optionalCode)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalCode = &optionalCode
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf3OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "rootFlag":
 			hasRootFlag = true
 
 			var rootFlag RefStressObjectPutAllOf3RootFlag
+
 			err = json.Unmarshal(value, &rootFlag)
 			if err != nil {
 				return err
 			}
+
 			o.RootFlag = rootFlag
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf3SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasCount {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "count")
 	}
+
 	if !hasFinal {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "final")
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasFinals {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finals")
 	}
+
 	if !hasMetadata {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
 	}
+
 	if !hasMiddleFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "middleFlag")
 	}
+
 	if !hasNested {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nested")
 	}
+
 	if !hasNullableRequired {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nullableRequired")
 	}
+
 	if !hasRootFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -3604,11 +4162,14 @@ func (n *RefStressObjectPutAllOf3Count) UnmarshalJSON(data []byte) error {
 	}
 
 	var value json.Number
+
 	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
 		return NonNumberForNumberSchemaError
 	}
+
 	*n = RefStressObjectPutAllOf3Count(value)
+
 	return nil
 }
 
@@ -3629,11 +4190,15 @@ func (o *RefStressObjectPutAllOf3Final) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -3644,6 +4209,7 @@ func (o *RefStressObjectPutAllOf3Final) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -3654,49 +4220,59 @@ func (o *RefStressObjectPutAllOf3Final) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf3FinalFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectPutAllOf3FinalNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf3FinalOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf3FinalSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -3714,11 +4290,14 @@ func (s *RefStressObjectPutAllOf3FinalFinalCode) UnmarshalJSON(data []byte) erro
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3FinalFinalCode(value)
+
 	return nil
 }
 
@@ -3733,6 +4312,7 @@ func (o *RefStressObjectPutAllOf3FinalNested) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -3740,9 +4320,11 @@ func (o *RefStressObjectPutAllOf3FinalNested) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -3754,6 +4336,7 @@ func (o *RefStressObjectPutAllOf3FinalNested) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -3761,32 +4344,38 @@ func (o *RefStressObjectPutAllOf3FinalNested) UnmarshalJSON(data []byte) error {
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf3FinalNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf3FinalNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -3804,11 +4393,14 @@ func (s *RefStressObjectPutAllOf3FinalNestedLeaf) UnmarshalJSON(data []byte) err
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3FinalNestedLeaf(value)
+
 	return nil
 }
 
@@ -3821,15 +4413,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalNestedSameName)
 func (s *RefStressObjectPutAllOf3FinalNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -3842,15 +4438,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalOptionalShared)
 func (s *RefStressObjectPutAllOf3FinalOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -3864,11 +4464,14 @@ func (s *RefStressObjectPutAllOf3FinalSharedName) UnmarshalJSON(data []byte) err
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3FinalSharedName(value)
+
 	return nil
 }
 
@@ -3882,11 +4485,14 @@ func (s *RefStressObjectPutAllOf3FinalCode) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3FinalCode(value)
+
 	return nil
 }
 
@@ -3900,11 +4506,14 @@ func (a *RefStressObjectPutAllOf3Finals) UnmarshalJSON(data []byte) error {
 	}
 
 	var value []RefStressObjectPutAllOf3FinalsItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	*a = RefStressObjectPutAllOf3Finals(value)
+
 	return nil
 }
 
@@ -3925,11 +4534,15 @@ func (o *RefStressObjectPutAllOf3FinalsItem) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -3940,6 +4553,7 @@ func (o *RefStressObjectPutAllOf3FinalsItem) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -3950,49 +4564,59 @@ func (o *RefStressObjectPutAllOf3FinalsItem) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectPutAllOf3FinalsItemFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectPutAllOf3FinalsItemNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectPutAllOf3FinalsItemOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectPutAllOf3FinalsItemSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -4010,11 +4634,14 @@ func (s *RefStressObjectPutAllOf3FinalsItemFinalCode) UnmarshalJSON(data []byte)
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3FinalsItemFinalCode(value)
+
 	return nil
 }
 
@@ -4029,6 +4656,7 @@ func (o *RefStressObjectPutAllOf3FinalsItemNested) UnmarshalJSON(data []byte) er
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -4036,9 +4664,11 @@ func (o *RefStressObjectPutAllOf3FinalsItemNested) UnmarshalJSON(data []byte) er
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -4050,6 +4680,7 @@ func (o *RefStressObjectPutAllOf3FinalsItemNested) UnmarshalJSON(data []byte) er
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -4057,32 +4688,38 @@ func (o *RefStressObjectPutAllOf3FinalsItemNested) UnmarshalJSON(data []byte) er
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf3FinalsItemNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf3FinalsItemNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -4100,11 +4737,14 @@ func (s *RefStressObjectPutAllOf3FinalsItemNestedLeaf) UnmarshalJSON(data []byte
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3FinalsItemNestedLeaf(value)
+
 	return nil
 }
 
@@ -4117,15 +4757,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalsItemNestedSameName)
 func (s *RefStressObjectPutAllOf3FinalsItemNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -4138,15 +4782,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf3FinalsItemOptionalShared)
 func (s *RefStressObjectPutAllOf3FinalsItemOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -4160,16 +4808,18 @@ func (s *RefStressObjectPutAllOf3FinalsItemSharedName) UnmarshalJSON(data []byte
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3FinalsItemSharedName(value)
+
 	return nil
 }
 
-type RefStressObjectPutAllOf3Metadata struct {
-}
+type RefStressObjectPutAllOf3Metadata struct{}
 
 var _ json.Unmarshaler = (*RefStressObjectPutAllOf3Metadata)(nil)
 
@@ -4181,6 +4831,7 @@ func (o *RefStressObjectPutAllOf3Metadata) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -4194,6 +4845,7 @@ func (o *RefStressObjectPutAllOf3Metadata) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -4202,15 +4854,18 @@ func (o *RefStressObjectPutAllOf3Metadata) UnmarshalJSON(data []byte) error {
 		switch name {
 		default:
 			var additionalProperty RefStressObjectPutAllOf3MetadataAdditionalProperty
+
 			err = json.Unmarshal(value, &additionalProperty)
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -4228,11 +4883,14 @@ func (s *RefStressObjectPutAllOf3MetadataAdditionalProperty) UnmarshalJSON(data 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3MetadataAdditionalProperty(value)
+
 	return nil
 }
 
@@ -4246,11 +4904,14 @@ func (b *RefStressObjectPutAllOf3MiddleFlag) UnmarshalJSON(data []byte) error {
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectPutAllOf3MiddleFlag(value)
+
 	return nil
 }
 
@@ -4267,9 +4928,11 @@ func (a *RefStressObjectPutAllOf3Nested) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectPutAllOf3NestedAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf3NestedAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectPutAllOf3NestedAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -4288,6 +4951,7 @@ func (o *RefStressObjectPutAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error 
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -4295,9 +4959,11 @@ func (o *RefStressObjectPutAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -4309,6 +4975,7 @@ func (o *RefStressObjectPutAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -4316,32 +4983,38 @@ func (o *RefStressObjectPutAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error 
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf3NestedAllOf1Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf3NestedAllOf1SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -4359,11 +5032,14 @@ func (s *RefStressObjectPutAllOf3NestedAllOf1Leaf) UnmarshalJSON(data []byte) er
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3NestedAllOf1Leaf(value)
+
 	return nil
 }
 
@@ -4376,15 +5052,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NestedAllOf1SameName)
 func (s *RefStressObjectPutAllOf3NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -4403,9 +5083,11 @@ func (o *RefStressObjectPutAllOf3NestedAllOf2) UnmarshalJSON(data []byte) error 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -4417,6 +5099,7 @@ func (o *RefStressObjectPutAllOf3NestedAllOf2) UnmarshalJSON(data []byte) error 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -4424,32 +5107,38 @@ func (o *RefStressObjectPutAllOf3NestedAllOf2) UnmarshalJSON(data []byte) error 
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectPutAllOf3NestedAllOf2Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf3NestedAllOf2SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -4467,11 +5156,14 @@ func (s *RefStressObjectPutAllOf3NestedAllOf2Leaf) UnmarshalJSON(data []byte) er
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3NestedAllOf2Leaf(value)
+
 	return nil
 }
 
@@ -4485,11 +5177,14 @@ func (s *RefStressObjectPutAllOf3NestedAllOf2SameName) UnmarshalJSON(data []byte
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3NestedAllOf2SameName(value)
+
 	return nil
 }
 
@@ -4508,11 +5203,15 @@ func (o *RefStressObjectPutAllOf3NestedAllOf3) UnmarshalJSON(data []byte) error 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasSameName bool
-	var hasSealed bool
+
+	var (
+		hasSameName bool
+		hasSealed   bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -4523,6 +5222,7 @@ func (o *RefStressObjectPutAllOf3NestedAllOf3) UnmarshalJSON(data []byte) error 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -4533,33 +5233,41 @@ func (o *RefStressObjectPutAllOf3NestedAllOf3) UnmarshalJSON(data []byte) error 
 			hasSameName = true
 
 			var sameName RefStressObjectPutAllOf3NestedAllOf3SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		case "sealed":
 			hasSealed = true
 
 			var sealed RefStressObjectPutAllOf3NestedAllOf3Sealed
+
 			err = json.Unmarshal(value, &sealed)
 			if err != nil {
 				return err
 			}
+
 			o.Sealed = sealed
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
+
 	if !hasSealed {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
 	}
@@ -4577,11 +5285,14 @@ func (s *RefStressObjectPutAllOf3NestedAllOf3SameName) UnmarshalJSON(data []byte
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3NestedAllOf3SameName(value)
+
 	return nil
 }
 
@@ -4599,9 +5310,11 @@ func (o *RefStressObjectPutAllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byte) 
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasLocked bool
 
 	for d.More() {
@@ -4613,6 +5326,7 @@ func (o *RefStressObjectPutAllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byte) 
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -4623,21 +5337,26 @@ func (o *RefStressObjectPutAllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byte) 
 			hasLocked = true
 
 			var locked RefStressObjectPutAllOf3NestedAllOf3SealedLocked
+
 			err = json.Unmarshal(value, &locked)
 			if err != nil {
 				return err
 			}
+
 			o.Locked = locked
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasLocked {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
 	}
@@ -4655,11 +5374,14 @@ func (b *RefStressObjectPutAllOf3NestedAllOf3SealedLocked) UnmarshalJSON(data []
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectPutAllOf3NestedAllOf3SealedLocked(value)
+
 	return nil
 }
 
@@ -4672,15 +5394,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf3NullableRequired)
 func (s *RefStressObjectPutAllOf3NullableRequired) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -4694,11 +5420,14 @@ func (s *RefStressObjectPutAllOf3OptionalCode) UnmarshalJSON(data []byte) error 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3OptionalCode(value)
+
 	return nil
 }
 
@@ -4711,15 +5440,19 @@ var _ json.Unmarshaler = new(RefStressObjectPutAllOf3OptionalShared)
 func (s *RefStressObjectPutAllOf3OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -4733,11 +5466,14 @@ func (b *RefStressObjectPutAllOf3RootFlag) UnmarshalJSON(data []byte) error {
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectPutAllOf3RootFlag(value)
+
 	return nil
 }
 
@@ -4751,11 +5487,14 @@ func (s *RefStressObjectPutAllOf3SharedName) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectPutAllOf3SharedName(value)
+
 	return nil
 }
 
@@ -4772,9 +5511,11 @@ func (a *RefStressObject) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -4795,9 +5536,11 @@ func (a *RefStressObjectAllOf1) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectAllOf1AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf1AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf1AllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -4822,11 +5565,15 @@ func (o *RefStressObjectAllOf1AllOf1) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -4837,6 +5584,7 @@ func (o *RefStressObjectAllOf1AllOf1) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -4847,49 +5595,59 @@ func (o *RefStressObjectAllOf1AllOf1) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf1AllOf1FinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectAllOf1AllOf1Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf1AllOf1OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf1AllOf1SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -4907,11 +5665,14 @@ func (s *RefStressObjectAllOf1AllOf1FinalCode) UnmarshalJSON(data []byte) error 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf1FinalCode(value)
+
 	return nil
 }
 
@@ -4926,6 +5687,7 @@ func (o *RefStressObjectAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -4933,9 +5695,11 @@ func (o *RefStressObjectAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -4947,6 +5711,7 @@ func (o *RefStressObjectAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -4954,32 +5719,38 @@ func (o *RefStressObjectAllOf1AllOf1Nested) UnmarshalJSON(data []byte) error {
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf1AllOf1NestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf1NestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -4997,11 +5768,14 @@ func (s *RefStressObjectAllOf1AllOf1NestedLeaf) UnmarshalJSON(data []byte) error
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf1NestedLeaf(value)
+
 	return nil
 }
 
@@ -5014,15 +5788,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf1NestedSameName)
 func (s *RefStressObjectAllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -5035,15 +5813,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf1OptionalShared)
 func (s *RefStressObjectAllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -5057,11 +5839,14 @@ func (s *RefStressObjectAllOf1AllOf1SharedName) UnmarshalJSON(data []byte) error
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf1SharedName(value)
+
 	return nil
 }
 
@@ -5077,6 +5862,7 @@ func (a *RefStressObjectAllOf1AllOf2) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectAllOf1AllOf2AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf1AllOf2AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -5096,6 +5882,7 @@ func (a *RefStressObjectAllOf1AllOf2AllOf1) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectAllOf1AllOf2AllOf1AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf1AllOf2AllOf1AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -5120,11 +5907,15 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) err
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -5135,6 +5926,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) err
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -5145,49 +5937,59 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) err
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf1AllOf2AllOf1AllOf1FinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectAllOf1AllOf2AllOf1AllOf1Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf1AllOf2AllOf1AllOf1OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf1AllOf2AllOf1AllOf1SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -5205,11 +6007,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf1AllOf1FinalCode) UnmarshalJSON(data []
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf1AllOf1FinalCode(value)
+
 	return nil
 }
 
@@ -5224,6 +6029,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byt
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -5231,9 +6037,11 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byt
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -5245,6 +6053,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byt
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -5252,32 +6061,38 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byt
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf1AllOf2AllOf1AllOf1NestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf2AllOf1AllOf1NestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -5295,11 +6110,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf1AllOf1NestedLeaf) UnmarshalJSON(data [
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf1AllOf1NestedLeaf(value)
+
 	return nil
 }
 
@@ -5312,15 +6130,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf2AllOf1AllOf1NestedSameNa
 func (s *RefStressObjectAllOf1AllOf2AllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -5333,15 +6155,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf2AllOf1AllOf1OptionalShar
 func (s *RefStressObjectAllOf1AllOf2AllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -5355,11 +6181,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf1AllOf1SharedName) UnmarshalJSON(data [
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf1AllOf1SharedName(value)
+
 	return nil
 }
 
@@ -5374,6 +6203,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) err
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -5381,9 +6211,11 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) err
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSharedName bool
 
 	for d.More() {
@@ -5395,6 +6227,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) err
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -5402,32 +6235,38 @@ func (o *RefStressObjectAllOf1AllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) err
 
 		switch name {
 		case "optionalCode":
-
 			var optionalCode RefStressObjectAllOf1AllOf2AllOf1AllOf2OptionalCode
+
 			err = json.Unmarshal(value, &optionalCode)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalCode = &optionalCode
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf1AllOf2AllOf1AllOf2SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -5445,11 +6284,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf1AllOf2OptionalCode) UnmarshalJSON(data
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf1AllOf2OptionalCode(value)
+
 	return nil
 }
 
@@ -5463,11 +6305,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf1AllOf2SharedName) UnmarshalJSON(data [
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf1AllOf2SharedName(value)
+
 	return nil
 }
 
@@ -5487,11 +6332,15 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasMiddleFlag bool
-	var hasSharedName bool
+
+	var (
+		hasMiddleFlag bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -5502,6 +6351,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -5512,41 +6362,50 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2) UnmarshalJSON(data []byte) error {
 			hasMiddleFlag = true
 
 			var middleFlag RefStressObjectAllOf1AllOf2AllOf2MiddleFlag
+
 			err = json.Unmarshal(value, &middleFlag)
 			if err != nil {
 				return err
 			}
+
 			o.MiddleFlag = middleFlag
 		case "nested":
-
 			var nested RefStressObjectAllOf1AllOf2AllOf2Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf1AllOf2AllOf2SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasMiddleFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "middleFlag")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -5564,11 +6423,14 @@ func (b *RefStressObjectAllOf1AllOf2AllOf2MiddleFlag) UnmarshalJSON(data []byte)
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectAllOf1AllOf2AllOf2MiddleFlag(value)
+
 	return nil
 }
 
@@ -5585,9 +6447,11 @@ func (a *RefStressObjectAllOf1AllOf2AllOf2Nested) UnmarshalJSON(data []byte) err
 	if err := a.RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -5606,6 +6470,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []byt
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -5613,9 +6478,11 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []byt
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -5627,6 +6494,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []byt
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -5634,32 +6502,38 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1) UnmarshalJSON(data []byt
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -5677,11 +6551,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1Leaf) UnmarshalJSON(data [
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1Leaf(value)
+
 	return nil
 }
 
@@ -5694,15 +6571,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1SameNa
 func (s *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -5721,9 +6602,11 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2) UnmarshalJSON(data []byt
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -5735,6 +6618,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2) UnmarshalJSON(data []byt
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -5742,32 +6626,38 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2) UnmarshalJSON(data []byt
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -5785,11 +6675,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2Leaf) UnmarshalJSON(data [
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2Leaf(value)
+
 	return nil
 }
 
@@ -5803,11 +6696,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2SameName) UnmarshalJSON(da
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf2NestedAllOf2SameName(value)
+
 	return nil
 }
 
@@ -5826,11 +6722,15 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3) UnmarshalJSON(data []byt
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasSameName bool
-	var hasSealed bool
+
+	var (
+		hasSameName bool
+		hasSealed   bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -5841,6 +6741,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3) UnmarshalJSON(data []byt
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -5851,33 +6752,41 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3) UnmarshalJSON(data []byt
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		case "sealed":
 			hasSealed = true
 
 			var sealed RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3Sealed
+
 			err = json.Unmarshal(value, &sealed)
 			if err != nil {
 				return err
 			}
+
 			o.Sealed = sealed
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
+
 	if !hasSealed {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
 	}
@@ -5895,11 +6804,14 @@ func (s *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3SameName) UnmarshalJSON(da
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3SameName(value)
+
 	return nil
 }
 
@@ -5917,9 +6829,11 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3Sealed) UnmarshalJSON(data
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasLocked bool
 
 	for d.More() {
@@ -5931,6 +6845,7 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3Sealed) UnmarshalJSON(data
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -5941,21 +6856,26 @@ func (o *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3Sealed) UnmarshalJSON(data
 			hasLocked = true
 
 			var locked RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3SealedLocked
+
 			err = json.Unmarshal(value, &locked)
 			if err != nil {
 				return err
 			}
+
 			o.Locked = locked
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasLocked {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
 	}
@@ -5973,11 +6893,14 @@ func (b *RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3SealedLocked) UnmarshalJSO
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectAllOf1AllOf2AllOf2NestedAllOf3SealedLocked(value)
+
 	return nil
 }
 
@@ -5990,15 +6913,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf2AllOf2SharedName)
 func (s *RefStressObjectAllOf1AllOf2AllOf2SharedName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -6020,12 +6947,16 @@ func (o *RefStressObjectAllOf1AllOf3) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinal bool
-	var hasNested bool
-	var hasNullableRequired bool
+
+	var (
+		hasFinal            bool
+		hasNested           bool
+		hasNullableRequired bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -6036,6 +6967,7 @@ func (o *RefStressObjectAllOf1AllOf3) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -6046,61 +6978,74 @@ func (o *RefStressObjectAllOf1AllOf3) UnmarshalJSON(data []byte) error {
 			hasFinal = true
 
 			var final RefStressObjectAllOf1AllOf3Final
+
 			err = json.Unmarshal(value, &final)
 			if err != nil {
 				return err
 			}
+
 			o.Final = final
 		case "nested":
 			hasNested = true
 
 			var nested RefStressObjectAllOf1AllOf3Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = nested
 		case "nullableRequired":
 			hasNullableRequired = true
 
 			var nullableRequired RefStressObjectAllOf1AllOf3NullableRequired
+
 			err = json.Unmarshal(value, &nullableRequired)
 			if err != nil {
 				return err
 			}
+
 			o.NullableRequired = nullableRequired
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf1AllOf3OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
-
 			var sharedName RefStressObjectAllOf1AllOf3SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = &sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinal {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "final")
 	}
+
 	if !hasNested {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nested")
 	}
+
 	if !hasNullableRequired {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nullableRequired")
 	}
@@ -6125,11 +7070,15 @@ func (o *RefStressObjectAllOf1AllOf3Final) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -6140,6 +7089,7 @@ func (o *RefStressObjectAllOf1AllOf3Final) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -6150,49 +7100,59 @@ func (o *RefStressObjectAllOf1AllOf3Final) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf1AllOf3FinalFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectAllOf1AllOf3FinalNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf1AllOf3FinalOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf1AllOf3FinalSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -6210,11 +7170,14 @@ func (s *RefStressObjectAllOf1AllOf3FinalFinalCode) UnmarshalJSON(data []byte) e
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf3FinalFinalCode(value)
+
 	return nil
 }
 
@@ -6229,6 +7192,7 @@ func (o *RefStressObjectAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) erro
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -6236,9 +7200,11 @@ func (o *RefStressObjectAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) erro
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -6250,6 +7216,7 @@ func (o *RefStressObjectAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) erro
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -6257,32 +7224,38 @@ func (o *RefStressObjectAllOf1AllOf3FinalNested) UnmarshalJSON(data []byte) erro
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf1AllOf3FinalNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf3FinalNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -6300,11 +7273,14 @@ func (s *RefStressObjectAllOf1AllOf3FinalNestedLeaf) UnmarshalJSON(data []byte) 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf3FinalNestedLeaf(value)
+
 	return nil
 }
 
@@ -6317,15 +7293,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf3FinalNestedSameName)
 func (s *RefStressObjectAllOf1AllOf3FinalNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -6338,15 +7318,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf3FinalOptionalShared)
 func (s *RefStressObjectAllOf1AllOf3FinalOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -6360,11 +7344,14 @@ func (s *RefStressObjectAllOf1AllOf3FinalSharedName) UnmarshalJSON(data []byte) 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf3FinalSharedName(value)
+
 	return nil
 }
 
@@ -6381,9 +7368,11 @@ func (a *RefStressObjectAllOf1AllOf3Nested) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectAllOf1AllOf3NestedAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf1AllOf3NestedAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf1AllOf3NestedAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -6402,6 +7391,7 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) err
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -6409,9 +7399,11 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) err
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -6423,6 +7415,7 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) err
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -6430,32 +7423,38 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf1) UnmarshalJSON(data []byte) err
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf1AllOf3NestedAllOf1Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf3NestedAllOf1SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -6473,11 +7472,14 @@ func (s *RefStressObjectAllOf1AllOf3NestedAllOf1Leaf) UnmarshalJSON(data []byte)
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf3NestedAllOf1Leaf(value)
+
 	return nil
 }
 
@@ -6490,15 +7492,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf3NestedAllOf1SameName)
 func (s *RefStressObjectAllOf1AllOf3NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -6517,9 +7523,11 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf2) UnmarshalJSON(data []byte) err
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -6531,6 +7539,7 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf2) UnmarshalJSON(data []byte) err
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -6538,32 +7547,38 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf2) UnmarshalJSON(data []byte) err
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf1AllOf3NestedAllOf2Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf3NestedAllOf2SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -6581,11 +7596,14 @@ func (s *RefStressObjectAllOf1AllOf3NestedAllOf2Leaf) UnmarshalJSON(data []byte)
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf3NestedAllOf2Leaf(value)
+
 	return nil
 }
 
@@ -6599,11 +7617,14 @@ func (s *RefStressObjectAllOf1AllOf3NestedAllOf2SameName) UnmarshalJSON(data []b
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf3NestedAllOf2SameName(value)
+
 	return nil
 }
 
@@ -6622,11 +7643,15 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf3) UnmarshalJSON(data []byte) err
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasSameName bool
-	var hasSealed bool
+
+	var (
+		hasSameName bool
+		hasSealed   bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -6637,6 +7662,7 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf3) UnmarshalJSON(data []byte) err
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -6647,33 +7673,41 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf3) UnmarshalJSON(data []byte) err
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf1AllOf3NestedAllOf3SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		case "sealed":
 			hasSealed = true
 
 			var sealed RefStressObjectAllOf1AllOf3NestedAllOf3Sealed
+
 			err = json.Unmarshal(value, &sealed)
 			if err != nil {
 				return err
 			}
+
 			o.Sealed = sealed
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
+
 	if !hasSealed {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
 	}
@@ -6691,11 +7725,14 @@ func (s *RefStressObjectAllOf1AllOf3NestedAllOf3SameName) UnmarshalJSON(data []b
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf1AllOf3NestedAllOf3SameName(value)
+
 	return nil
 }
 
@@ -6713,9 +7750,11 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byt
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasLocked bool
 
 	for d.More() {
@@ -6727,6 +7766,7 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byt
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -6737,21 +7777,26 @@ func (o *RefStressObjectAllOf1AllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byt
 			hasLocked = true
 
 			var locked RefStressObjectAllOf1AllOf3NestedAllOf3SealedLocked
+
 			err = json.Unmarshal(value, &locked)
 			if err != nil {
 				return err
 			}
+
 			o.Locked = locked
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasLocked {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
 	}
@@ -6769,11 +7814,14 @@ func (b *RefStressObjectAllOf1AllOf3NestedAllOf3SealedLocked) UnmarshalJSON(data
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectAllOf1AllOf3NestedAllOf3SealedLocked(value)
+
 	return nil
 }
 
@@ -6786,15 +7834,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf3NullableRequired)
 func (s *RefStressObjectAllOf1AllOf3NullableRequired) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -6807,15 +7859,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf3OptionalShared)
 func (s *RefStressObjectAllOf1AllOf3OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -6828,15 +7884,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf1AllOf3SharedName)
 func (s *RefStressObjectAllOf1AllOf3SharedName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -6852,6 +7912,7 @@ func (a *RefStressObjectAllOf2) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectAllOf2AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf2AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -6871,6 +7932,7 @@ func (a *RefStressObjectAllOf2AllOf1) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectAllOf2AllOf1AllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf2AllOf1AllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -6895,11 +7957,15 @@ func (o *RefStressObjectAllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -6910,6 +7976,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -6920,49 +7987,59 @@ func (o *RefStressObjectAllOf2AllOf1AllOf1) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf2AllOf1AllOf1FinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectAllOf2AllOf1AllOf1Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf2AllOf1AllOf1OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf2AllOf1AllOf1SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -6980,11 +8057,14 @@ func (s *RefStressObjectAllOf2AllOf1AllOf1FinalCode) UnmarshalJSON(data []byte) 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf1AllOf1FinalCode(value)
+
 	return nil
 }
 
@@ -6999,6 +8079,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) err
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -7006,9 +8087,11 @@ func (o *RefStressObjectAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) err
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -7020,6 +8103,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) err
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -7027,32 +8111,38 @@ func (o *RefStressObjectAllOf2AllOf1AllOf1Nested) UnmarshalJSON(data []byte) err
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf2AllOf1AllOf1NestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf2AllOf1AllOf1NestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -7070,11 +8160,14 @@ func (s *RefStressObjectAllOf2AllOf1AllOf1NestedLeaf) UnmarshalJSON(data []byte)
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf1AllOf1NestedLeaf(value)
+
 	return nil
 }
 
@@ -7087,15 +8180,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf2AllOf1AllOf1NestedSameName)
 func (s *RefStressObjectAllOf2AllOf1AllOf1NestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -7108,15 +8205,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf2AllOf1AllOf1OptionalShared)
 func (s *RefStressObjectAllOf2AllOf1AllOf1OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -7130,11 +8231,14 @@ func (s *RefStressObjectAllOf2AllOf1AllOf1SharedName) UnmarshalJSON(data []byte)
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf1AllOf1SharedName(value)
+
 	return nil
 }
 
@@ -7154,11 +8258,15 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasMetadata bool
-	var hasRootFlag bool
+
+	var (
+		hasMetadata bool
+		hasRootFlag bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -7169,6 +8277,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -7176,44 +8285,53 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2) UnmarshalJSON(data []byte) error {
 
 		switch name {
 		case "final":
-
 			var final RefStressObjectAllOf2AllOf1AllOf2Final
+
 			err = json.Unmarshal(value, &final)
 			if err != nil {
 				return err
 			}
+
 			o.Final = &final
 		case "metadata":
 			hasMetadata = true
 
 			var metadata RefStressObjectAllOf2AllOf1AllOf2Metadata
+
 			err = json.Unmarshal(value, &metadata)
 			if err != nil {
 				return err
 			}
+
 			o.Metadata = metadata
 		case "rootFlag":
 			hasRootFlag = true
 
 			var rootFlag RefStressObjectAllOf2AllOf1AllOf2RootFlag
+
 			err = json.Unmarshal(value, &rootFlag)
 			if err != nil {
 				return err
 			}
+
 			o.RootFlag = rootFlag
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasMetadata {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
 	}
+
 	if !hasRootFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
 	}
@@ -7238,11 +8356,15 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2Final) UnmarshalJSON(data []byte) erro
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -7253,6 +8375,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2Final) UnmarshalJSON(data []byte) erro
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -7263,49 +8386,59 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2Final) UnmarshalJSON(data []byte) erro
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf2AllOf1AllOf2FinalFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectAllOf2AllOf1AllOf2FinalNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf2AllOf1AllOf2FinalOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf2AllOf1AllOf2FinalSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -7323,11 +8456,14 @@ func (s *RefStressObjectAllOf2AllOf1AllOf2FinalFinalCode) UnmarshalJSON(data []b
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf1AllOf2FinalFinalCode(value)
+
 	return nil
 }
 
@@ -7342,6 +8478,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []byte
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -7349,9 +8486,11 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []byte
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -7363,6 +8502,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []byte
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -7370,32 +8510,38 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2FinalNested) UnmarshalJSON(data []byte
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf2AllOf1AllOf2FinalNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf2AllOf1AllOf2FinalNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -7413,11 +8559,14 @@ func (s *RefStressObjectAllOf2AllOf1AllOf2FinalNestedLeaf) UnmarshalJSON(data []
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf1AllOf2FinalNestedLeaf(value)
+
 	return nil
 }
 
@@ -7430,15 +8579,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf2AllOf1AllOf2FinalNestedSameNam
 func (s *RefStressObjectAllOf2AllOf1AllOf2FinalNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -7451,15 +8604,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf2AllOf1AllOf2FinalOptionalShare
 func (s *RefStressObjectAllOf2AllOf1AllOf2FinalOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -7473,16 +8630,18 @@ func (s *RefStressObjectAllOf2AllOf1AllOf2FinalSharedName) UnmarshalJSON(data []
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf1AllOf2FinalSharedName(value)
+
 	return nil
 }
 
-type RefStressObjectAllOf2AllOf1AllOf2Metadata struct {
-}
+type RefStressObjectAllOf2AllOf1AllOf2Metadata struct{}
 
 var _ json.Unmarshaler = (*RefStressObjectAllOf2AllOf1AllOf2Metadata)(nil)
 
@@ -7494,6 +8653,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2Metadata) UnmarshalJSON(data []byte) e
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -7507,6 +8667,7 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2Metadata) UnmarshalJSON(data []byte) e
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -7515,15 +8676,18 @@ func (o *RefStressObjectAllOf2AllOf1AllOf2Metadata) UnmarshalJSON(data []byte) e
 		switch name {
 		default:
 			var additionalProperty RefStressObjectAllOf2AllOf1AllOf2MetadataAdditionalProperty
+
 			err = json.Unmarshal(value, &additionalProperty)
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -7541,11 +8705,14 @@ func (s *RefStressObjectAllOf2AllOf1AllOf2MetadataAdditionalProperty) UnmarshalJ
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf1AllOf2MetadataAdditionalProperty(value)
+
 	return nil
 }
 
@@ -7559,11 +8726,14 @@ func (b *RefStressObjectAllOf2AllOf1AllOf2RootFlag) UnmarshalJSON(data []byte) e
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectAllOf2AllOf1AllOf2RootFlag(value)
+
 	return nil
 }
 
@@ -7585,13 +8755,17 @@ func (o *RefStressObjectAllOf2AllOf2) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasCount bool
-	var hasFinals bool
-	var hasMetadata bool
-	var hasRootFlag bool
+
+	var (
+		hasCount    bool
+		hasFinals   bool
+		hasMetadata bool
+		hasRootFlag bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -7602,6 +8776,7 @@ func (o *RefStressObjectAllOf2AllOf2) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -7612,65 +8787,80 @@ func (o *RefStressObjectAllOf2AllOf2) UnmarshalJSON(data []byte) error {
 			hasCount = true
 
 			var count RefStressObjectAllOf2AllOf2Count
+
 			err = json.Unmarshal(value, &count)
 			if err != nil {
 				return err
 			}
+
 			o.Count = count
 		case "finals":
 			hasFinals = true
 
 			var finals RefStressObjectAllOf2AllOf2Finals
+
 			err = json.Unmarshal(value, &finals)
 			if err != nil {
 				return err
 			}
+
 			o.Finals = finals
 		case "metadata":
 			hasMetadata = true
 
 			var metadata RefStressObjectAllOf2AllOf2Metadata
+
 			err = json.Unmarshal(value, &metadata)
 			if err != nil {
 				return err
 			}
+
 			o.Metadata = metadata
 		case "rootFlag":
 			hasRootFlag = true
 
 			var rootFlag RefStressObjectAllOf2AllOf2RootFlag
+
 			err = json.Unmarshal(value, &rootFlag)
 			if err != nil {
 				return err
 			}
+
 			o.RootFlag = rootFlag
 		case "sharedName":
-
 			var sharedName RefStressObjectAllOf2AllOf2SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = &sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasCount {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "count")
 	}
+
 	if !hasFinals {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finals")
 	}
+
 	if !hasMetadata {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
 	}
+
 	if !hasRootFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
 	}
@@ -7693,11 +8883,14 @@ func (n *RefStressObjectAllOf2AllOf2Count) UnmarshalJSON(data []byte) error {
 	}
 
 	var value json.Number
+
 	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
 		return NonNumberForNumberSchemaError
 	}
+
 	*n = RefStressObjectAllOf2AllOf2Count(value)
+
 	return nil
 }
 
@@ -7711,11 +8904,14 @@ func (a *RefStressObjectAllOf2AllOf2Finals) UnmarshalJSON(data []byte) error {
 	}
 
 	var value []RefStressObjectAllOf2AllOf2FinalsItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	*a = RefStressObjectAllOf2AllOf2Finals(value)
+
 	return nil
 }
 
@@ -7736,11 +8932,15 @@ func (o *RefStressObjectAllOf2AllOf2FinalsItem) UnmarshalJSON(data []byte) error
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -7751,6 +8951,7 @@ func (o *RefStressObjectAllOf2AllOf2FinalsItem) UnmarshalJSON(data []byte) error
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -7761,49 +8962,59 @@ func (o *RefStressObjectAllOf2AllOf2FinalsItem) UnmarshalJSON(data []byte) error
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf2AllOf2FinalsItemFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectAllOf2AllOf2FinalsItemNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf2AllOf2FinalsItemOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf2AllOf2FinalsItemSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -7821,11 +9032,14 @@ func (s *RefStressObjectAllOf2AllOf2FinalsItemFinalCode) UnmarshalJSON(data []by
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf2FinalsItemFinalCode(value)
+
 	return nil
 }
 
@@ -7840,6 +9054,7 @@ func (o *RefStressObjectAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []byte)
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -7847,9 +9062,11 @@ func (o *RefStressObjectAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []byte)
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -7861,6 +9078,7 @@ func (o *RefStressObjectAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []byte)
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -7868,32 +9086,38 @@ func (o *RefStressObjectAllOf2AllOf2FinalsItemNested) UnmarshalJSON(data []byte)
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf2AllOf2FinalsItemNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf2AllOf2FinalsItemNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -7911,11 +9135,14 @@ func (s *RefStressObjectAllOf2AllOf2FinalsItemNestedLeaf) UnmarshalJSON(data []b
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf2FinalsItemNestedLeaf(value)
+
 	return nil
 }
 
@@ -7928,15 +9155,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf2AllOf2FinalsItemNestedSameName
 func (s *RefStressObjectAllOf2AllOf2FinalsItemNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -7949,15 +9180,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf2AllOf2FinalsItemOptionalShared
 func (s *RefStressObjectAllOf2AllOf2FinalsItemOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -7971,16 +9206,18 @@ func (s *RefStressObjectAllOf2AllOf2FinalsItemSharedName) UnmarshalJSON(data []b
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf2FinalsItemSharedName(value)
+
 	return nil
 }
 
-type RefStressObjectAllOf2AllOf2Metadata struct {
-}
+type RefStressObjectAllOf2AllOf2Metadata struct{}
 
 var _ json.Unmarshaler = (*RefStressObjectAllOf2AllOf2Metadata)(nil)
 
@@ -7992,6 +9229,7 @@ func (o *RefStressObjectAllOf2AllOf2Metadata) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -8005,6 +9243,7 @@ func (o *RefStressObjectAllOf2AllOf2Metadata) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -8013,15 +9252,18 @@ func (o *RefStressObjectAllOf2AllOf2Metadata) UnmarshalJSON(data []byte) error {
 		switch name {
 		default:
 			var additionalProperty RefStressObjectAllOf2AllOf2MetadataAdditionalProperty
+
 			err = json.Unmarshal(value, &additionalProperty)
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -8039,11 +9281,14 @@ func (s *RefStressObjectAllOf2AllOf2MetadataAdditionalProperty) UnmarshalJSON(da
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf2MetadataAdditionalProperty(value)
+
 	return nil
 }
 
@@ -8057,11 +9302,14 @@ func (b *RefStressObjectAllOf2AllOf2RootFlag) UnmarshalJSON(data []byte) error {
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectAllOf2AllOf2RootFlag(value)
+
 	return nil
 }
 
@@ -8075,11 +9323,14 @@ func (s *RefStressObjectAllOf2AllOf2SharedName) UnmarshalJSON(data []byte) error
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf2AllOf2SharedName(value)
+
 	return nil
 }
 
@@ -8108,19 +9359,23 @@ func (o *RefStressObjectAllOf3) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasCount bool
-	var hasFinal bool
-	var hasFinalCode bool
-	var hasFinals bool
-	var hasMetadata bool
-	var hasMiddleFlag bool
-	var hasNested bool
-	var hasNullableRequired bool
-	var hasRootFlag bool
-	var hasSharedName bool
+
+	var (
+		hasCount            bool
+		hasFinal            bool
+		hasFinalCode        bool
+		hasFinals           bool
+		hasMetadata         bool
+		hasMiddleFlag       bool
+		hasNested           bool
+		hasNullableRequired bool
+		hasRootFlag         bool
+		hasSharedName       bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -8131,6 +9386,7 @@ func (o *RefStressObjectAllOf3) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -8141,145 +9397,179 @@ func (o *RefStressObjectAllOf3) UnmarshalJSON(data []byte) error {
 			hasCount = true
 
 			var count RefStressObjectAllOf3Count
+
 			err = json.Unmarshal(value, &count)
 			if err != nil {
 				return err
 			}
+
 			o.Count = count
 		case "final":
 			hasFinal = true
 
 			var final RefStressObjectAllOf3Final
+
 			err = json.Unmarshal(value, &final)
 			if err != nil {
 				return err
 			}
+
 			o.Final = final
 		case "finalCode":
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf3FinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "finals":
 			hasFinals = true
 
 			var finals RefStressObjectAllOf3Finals
+
 			err = json.Unmarshal(value, &finals)
 			if err != nil {
 				return err
 			}
+
 			o.Finals = finals
 		case "metadata":
 			hasMetadata = true
 
 			var metadata RefStressObjectAllOf3Metadata
+
 			err = json.Unmarshal(value, &metadata)
 			if err != nil {
 				return err
 			}
+
 			o.Metadata = metadata
 		case "middleFlag":
 			hasMiddleFlag = true
 
 			var middleFlag RefStressObjectAllOf3MiddleFlag
+
 			err = json.Unmarshal(value, &middleFlag)
 			if err != nil {
 				return err
 			}
+
 			o.MiddleFlag = middleFlag
 		case "nested":
 			hasNested = true
 
 			var nested RefStressObjectAllOf3Nested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = nested
 		case "nullableRequired":
 			hasNullableRequired = true
 
 			var nullableRequired RefStressObjectAllOf3NullableRequired
+
 			err = json.Unmarshal(value, &nullableRequired)
 			if err != nil {
 				return err
 			}
+
 			o.NullableRequired = nullableRequired
 		case "optionalCode":
-
 			var optionalCode RefStressObjectAllOf3OptionalCode
+
 			err = json.Unmarshal(value, &optionalCode)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalCode = &optionalCode
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf3OptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "rootFlag":
 			hasRootFlag = true
 
 			var rootFlag RefStressObjectAllOf3RootFlag
+
 			err = json.Unmarshal(value, &rootFlag)
 			if err != nil {
 				return err
 			}
+
 			o.RootFlag = rootFlag
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf3SharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasCount {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "count")
 	}
+
 	if !hasFinal {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "final")
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasFinals {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finals")
 	}
+
 	if !hasMetadata {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "metadata")
 	}
+
 	if !hasMiddleFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "middleFlag")
 	}
+
 	if !hasNested {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nested")
 	}
+
 	if !hasNullableRequired {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "nullableRequired")
 	}
+
 	if !hasRootFlag {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "rootFlag")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -8302,11 +9592,14 @@ func (n *RefStressObjectAllOf3Count) UnmarshalJSON(data []byte) error {
 	}
 
 	var value json.Number
+
 	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
 		return NonNumberForNumberSchemaError
 	}
+
 	*n = RefStressObjectAllOf3Count(value)
+
 	return nil
 }
 
@@ -8327,11 +9620,15 @@ func (o *RefStressObjectAllOf3Final) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -8342,6 +9639,7 @@ func (o *RefStressObjectAllOf3Final) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -8352,49 +9650,59 @@ func (o *RefStressObjectAllOf3Final) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf3FinalFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectAllOf3FinalNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf3FinalOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf3FinalSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -8412,11 +9720,14 @@ func (s *RefStressObjectAllOf3FinalFinalCode) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3FinalFinalCode(value)
+
 	return nil
 }
 
@@ -8431,6 +9742,7 @@ func (o *RefStressObjectAllOf3FinalNested) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -8438,9 +9750,11 @@ func (o *RefStressObjectAllOf3FinalNested) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -8452,6 +9766,7 @@ func (o *RefStressObjectAllOf3FinalNested) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -8459,32 +9774,38 @@ func (o *RefStressObjectAllOf3FinalNested) UnmarshalJSON(data []byte) error {
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf3FinalNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf3FinalNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -8502,11 +9823,14 @@ func (s *RefStressObjectAllOf3FinalNestedLeaf) UnmarshalJSON(data []byte) error 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3FinalNestedLeaf(value)
+
 	return nil
 }
 
@@ -8519,15 +9843,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf3FinalNestedSameName)
 func (s *RefStressObjectAllOf3FinalNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -8540,15 +9868,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf3FinalOptionalShared)
 func (s *RefStressObjectAllOf3FinalOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -8562,11 +9894,14 @@ func (s *RefStressObjectAllOf3FinalSharedName) UnmarshalJSON(data []byte) error 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3FinalSharedName(value)
+
 	return nil
 }
 
@@ -8580,11 +9915,14 @@ func (s *RefStressObjectAllOf3FinalCode) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3FinalCode(value)
+
 	return nil
 }
 
@@ -8598,11 +9936,14 @@ func (a *RefStressObjectAllOf3Finals) UnmarshalJSON(data []byte) error {
 	}
 
 	var value []RefStressObjectAllOf3FinalsItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	*a = RefStressObjectAllOf3Finals(value)
+
 	return nil
 }
 
@@ -8623,11 +9964,15 @@ func (o *RefStressObjectAllOf3FinalsItem) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasFinalCode bool
-	var hasSharedName bool
+
+	var (
+		hasFinalCode  bool
+		hasSharedName bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -8638,6 +9983,7 @@ func (o *RefStressObjectAllOf3FinalsItem) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -8648,49 +9994,59 @@ func (o *RefStressObjectAllOf3FinalsItem) UnmarshalJSON(data []byte) error {
 			hasFinalCode = true
 
 			var finalCode RefStressObjectAllOf3FinalsItemFinalCode
+
 			err = json.Unmarshal(value, &finalCode)
 			if err != nil {
 				return err
 			}
+
 			o.FinalCode = finalCode
 		case "nested":
-
 			var nested RefStressObjectAllOf3FinalsItemNested
+
 			err = json.Unmarshal(value, &nested)
 			if err != nil {
 				return err
 			}
+
 			o.Nested = &nested
 		case "optionalShared":
-
 			var optionalShared RefStressObjectAllOf3FinalsItemOptionalShared
+
 			err = json.Unmarshal(value, &optionalShared)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalShared = &optionalShared
 		case "sharedName":
 			hasSharedName = true
 
 			var sharedName RefStressObjectAllOf3FinalsItemSharedName
+
 			err = json.Unmarshal(value, &sharedName)
 			if err != nil {
 				return err
 			}
+
 			o.SharedName = sharedName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFinalCode {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "finalCode")
 	}
+
 	if !hasSharedName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sharedName")
 	}
@@ -8708,11 +10064,14 @@ func (s *RefStressObjectAllOf3FinalsItemFinalCode) UnmarshalJSON(data []byte) er
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3FinalsItemFinalCode(value)
+
 	return nil
 }
 
@@ -8727,6 +10086,7 @@ func (o *RefStressObjectAllOf3FinalsItemNested) UnmarshalJSON(data []byte) error
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -8734,9 +10094,11 @@ func (o *RefStressObjectAllOf3FinalsItemNested) UnmarshalJSON(data []byte) error
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -8748,6 +10110,7 @@ func (o *RefStressObjectAllOf3FinalsItemNested) UnmarshalJSON(data []byte) error
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -8755,32 +10118,38 @@ func (o *RefStressObjectAllOf3FinalsItemNested) UnmarshalJSON(data []byte) error
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf3FinalsItemNestedLeaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf3FinalsItemNestedSameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -8798,11 +10167,14 @@ func (s *RefStressObjectAllOf3FinalsItemNestedLeaf) UnmarshalJSON(data []byte) e
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3FinalsItemNestedLeaf(value)
+
 	return nil
 }
 
@@ -8815,15 +10187,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf3FinalsItemNestedSameName)
 func (s *RefStressObjectAllOf3FinalsItemNestedSameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -8836,15 +10212,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf3FinalsItemOptionalShared)
 func (s *RefStressObjectAllOf3FinalsItemOptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -8858,16 +10238,18 @@ func (s *RefStressObjectAllOf3FinalsItemSharedName) UnmarshalJSON(data []byte) e
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3FinalsItemSharedName(value)
+
 	return nil
 }
 
-type RefStressObjectAllOf3Metadata struct {
-}
+type RefStressObjectAllOf3Metadata struct{}
 
 var _ json.Unmarshaler = (*RefStressObjectAllOf3Metadata)(nil)
 
@@ -8879,6 +10261,7 @@ func (o *RefStressObjectAllOf3Metadata) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -8892,6 +10275,7 @@ func (o *RefStressObjectAllOf3Metadata) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -8900,15 +10284,18 @@ func (o *RefStressObjectAllOf3Metadata) UnmarshalJSON(data []byte) error {
 		switch name {
 		default:
 			var additionalProperty RefStressObjectAllOf3MetadataAdditionalProperty
+
 			err = json.Unmarshal(value, &additionalProperty)
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -8926,11 +10313,14 @@ func (s *RefStressObjectAllOf3MetadataAdditionalProperty) UnmarshalJSON(data []b
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3MetadataAdditionalProperty(value)
+
 	return nil
 }
 
@@ -8944,11 +10334,14 @@ func (b *RefStressObjectAllOf3MiddleFlag) UnmarshalJSON(data []byte) error {
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectAllOf3MiddleFlag(value)
+
 	return nil
 }
 
@@ -8965,9 +10358,11 @@ func (a *RefStressObjectAllOf3Nested) UnmarshalJSON(data []byte) error {
 	if err := a.RefStressObjectAllOf3NestedAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf3NestedAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.RefStressObjectAllOf3NestedAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -8986,6 +10381,7 @@ func (o *RefStressObjectAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -8993,9 +10389,11 @@ func (o *RefStressObjectAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -9007,6 +10405,7 @@ func (o *RefStressObjectAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -9014,32 +10413,38 @@ func (o *RefStressObjectAllOf3NestedAllOf1) UnmarshalJSON(data []byte) error {
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf3NestedAllOf1Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf3NestedAllOf1SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -9057,11 +10462,14 @@ func (s *RefStressObjectAllOf3NestedAllOf1Leaf) UnmarshalJSON(data []byte) error
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3NestedAllOf1Leaf(value)
+
 	return nil
 }
 
@@ -9074,15 +10482,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf3NestedAllOf1SameName)
 func (s *RefStressObjectAllOf3NestedAllOf1SameName) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -9101,9 +10513,11 @@ func (o *RefStressObjectAllOf3NestedAllOf2) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSameName bool
 
 	for d.More() {
@@ -9115,6 +10529,7 @@ func (o *RefStressObjectAllOf3NestedAllOf2) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -9122,32 +10537,38 @@ func (o *RefStressObjectAllOf3NestedAllOf2) UnmarshalJSON(data []byte) error {
 
 		switch name {
 		case "leaf":
-
 			var leaf RefStressObjectAllOf3NestedAllOf2Leaf
+
 			err = json.Unmarshal(value, &leaf)
 			if err != nil {
 				return err
 			}
+
 			o.Leaf = &leaf
 		case "sameName":
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf3NestedAllOf2SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
@@ -9165,11 +10586,14 @@ func (s *RefStressObjectAllOf3NestedAllOf2Leaf) UnmarshalJSON(data []byte) error
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3NestedAllOf2Leaf(value)
+
 	return nil
 }
 
@@ -9183,11 +10607,14 @@ func (s *RefStressObjectAllOf3NestedAllOf2SameName) UnmarshalJSON(data []byte) e
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3NestedAllOf2SameName(value)
+
 	return nil
 }
 
@@ -9206,11 +10633,15 @@ func (o *RefStressObjectAllOf3NestedAllOf3) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasSameName bool
-	var hasSealed bool
+
+	var (
+		hasSameName bool
+		hasSealed   bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -9221,6 +10652,7 @@ func (o *RefStressObjectAllOf3NestedAllOf3) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -9231,33 +10663,41 @@ func (o *RefStressObjectAllOf3NestedAllOf3) UnmarshalJSON(data []byte) error {
 			hasSameName = true
 
 			var sameName RefStressObjectAllOf3NestedAllOf3SameName
+
 			err = json.Unmarshal(value, &sameName)
 			if err != nil {
 				return err
 			}
+
 			o.SameName = sameName
 		case "sealed":
 			hasSealed = true
 
 			var sealed RefStressObjectAllOf3NestedAllOf3Sealed
+
 			err = json.Unmarshal(value, &sealed)
 			if err != nil {
 				return err
 			}
+
 			o.Sealed = sealed
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSameName {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sameName")
 	}
+
 	if !hasSealed {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "sealed")
 	}
@@ -9275,11 +10715,14 @@ func (s *RefStressObjectAllOf3NestedAllOf3SameName) UnmarshalJSON(data []byte) e
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3NestedAllOf3SameName(value)
+
 	return nil
 }
 
@@ -9297,9 +10740,11 @@ func (o *RefStressObjectAllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byte) err
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasLocked bool
 
 	for d.More() {
@@ -9311,6 +10756,7 @@ func (o *RefStressObjectAllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byte) err
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -9321,21 +10767,26 @@ func (o *RefStressObjectAllOf3NestedAllOf3Sealed) UnmarshalJSON(data []byte) err
 			hasLocked = true
 
 			var locked RefStressObjectAllOf3NestedAllOf3SealedLocked
+
 			err = json.Unmarshal(value, &locked)
 			if err != nil {
 				return err
 			}
+
 			o.Locked = locked
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasLocked {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "locked")
 	}
@@ -9353,11 +10804,14 @@ func (b *RefStressObjectAllOf3NestedAllOf3SealedLocked) UnmarshalJSON(data []byt
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectAllOf3NestedAllOf3SealedLocked(value)
+
 	return nil
 }
 
@@ -9370,15 +10824,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf3NullableRequired)
 func (s *RefStressObjectAllOf3NullableRequired) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -9392,11 +10850,14 @@ func (s *RefStressObjectAllOf3OptionalCode) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3OptionalCode(value)
+
 	return nil
 }
 
@@ -9409,15 +10870,19 @@ var _ json.Unmarshaler = new(RefStressObjectAllOf3OptionalShared)
 func (s *RefStressObjectAllOf3OptionalShared) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -9431,11 +10896,14 @@ func (b *RefStressObjectAllOf3RootFlag) UnmarshalJSON(data []byte) error {
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = RefStressObjectAllOf3RootFlag(value)
+
 	return nil
 }
 
@@ -9449,11 +10917,14 @@ func (s *RefStressObjectAllOf3SharedName) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefStressObjectAllOf3SharedName(value)
+
 	return nil
 }
 
@@ -9472,9 +10943,11 @@ func (o *RefObject) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasRefRequiredString bool
 
 	for d.More() {
@@ -9486,6 +10959,7 @@ func (o *RefObject) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -9493,32 +10967,38 @@ func (o *RefObject) UnmarshalJSON(data []byte) error {
 
 		switch name {
 		case "refOptionalBool":
-
 			var refOptionalBool RefObjectRefOptionalBool
+
 			err = json.Unmarshal(value, &refOptionalBool)
 			if err != nil {
 				return err
 			}
+
 			o.RefOptionalBool = &refOptionalBool
 		case "refRequiredString":
 			hasRefRequiredString = true
 
 			var refRequiredString RefObjectRefRequiredString
+
 			err = json.Unmarshal(value, &refRequiredString)
 			if err != nil {
 				return err
 			}
+
 			o.RefRequiredString = refRequiredString
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasRefRequiredString {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "refRequiredString")
 	}
@@ -9535,15 +11015,19 @@ var _ json.Unmarshaler = new(RefObjectRefOptionalBool)
 func (b *RefObjectRefOptionalBool) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		b.Value = nil
+
 		return nil
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	b.Value = new(value)
+
 	return nil
 }
 
@@ -9557,11 +11041,14 @@ func (s *RefObjectRefRequiredString) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = RefObjectRefRequiredString(value)
+
 	return nil
 }
 
@@ -9575,17 +11062,22 @@ func (a *OptionalArrayNullable) UnmarshalJSON(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
+
 	if bytes.Equal(data, jsonNull) {
 		a.Value = nil
+
 		return nil
 	}
 
 	var value []OptionalArrayNullableItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	a.Value = value
+
 	return nil
 }
 
@@ -9599,11 +11091,14 @@ func (s *OptionalArrayNullableItem) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = OptionalArrayNullableItem(value)
+
 	return nil
 }
 
@@ -9624,11 +11119,15 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasRequiredNotNullableString bool
-	var hasRequiredNullableString bool
+
+	var (
+		hasRequiredNotNullableString bool
+		hasRequiredNullableString    bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -9639,6 +11138,7 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -9646,52 +11146,62 @@ func (o *ObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte) error {
 
 		switch name {
 		case "optionalNotNullableString":
-
 			var optionalNotNullableString ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString
+
 			err = json.Unmarshal(value, &optionalNotNullableString)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalNotNullableString = &optionalNotNullableString
 		case "optionalNullableString":
-
 			var optionalNullableString ObjectKeysAdditionalPropertiesFalseOptionalNullableString
+
 			err = json.Unmarshal(value, &optionalNullableString)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalNullableString = &optionalNullableString
 		case "requiredNotNullableString":
 			hasRequiredNotNullableString = true
 
 			var requiredNotNullableString ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString
+
 			err = json.Unmarshal(value, &requiredNotNullableString)
 			if err != nil {
 				return err
 			}
+
 			o.RequiredNotNullableString = requiredNotNullableString
 		case "requiredNullableString":
 			hasRequiredNullableString = true
 
 			var requiredNullableString ObjectKeysAdditionalPropertiesFalseRequiredNullableString
+
 			err = json.Unmarshal(value, &requiredNullableString)
 			if err != nil {
 				return err
 			}
+
 			o.RequiredNullableString = requiredNullableString
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasRequiredNotNullableString {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNotNullableString")
 	}
+
 	if !hasRequiredNullableString {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNullableString")
 	}
@@ -9709,11 +11219,14 @@ func (s *ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString) Unmarshal
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = ObjectKeysAdditionalPropertiesFalseOptionalNotNullableString(value)
+
 	return nil
 }
 
@@ -9726,15 +11239,19 @@ var _ json.Unmarshaler = new(ObjectKeysAdditionalPropertiesFalseOptionalNullable
 func (s *ObjectKeysAdditionalPropertiesFalseOptionalNullableString) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -9748,11 +11265,14 @@ func (s *ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString) Unmarshal
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = ObjectKeysAdditionalPropertiesFalseRequiredNotNullableString(value)
+
 	return nil
 }
 
@@ -9765,15 +11285,19 @@ var _ json.Unmarshaler = new(ObjectKeysAdditionalPropertiesFalseRequiredNullable
 func (s *ObjectKeysAdditionalPropertiesFalseRequiredNullableString) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -9790,6 +11314,7 @@ func (o *NullableObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte)
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 
@@ -9797,11 +11322,15 @@ func (o *NullableObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte)
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasRequiredNotNullableString bool
-	var hasRequiredNullableString bool
+
+	var (
+		hasRequiredNotNullableString bool
+		hasRequiredNullableString    bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -9812,6 +11341,7 @@ func (o *NullableObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte)
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -9819,52 +11349,62 @@ func (o *NullableObjectKeysAdditionalPropertiesFalse) UnmarshalJSON(data []byte)
 
 		switch name {
 		case "optionalNotNullableString":
-
 			var optionalNotNullableString NullableObjectKeysAdditionalPropertiesFalseOptionalNotNullableString
+
 			err = json.Unmarshal(value, &optionalNotNullableString)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalNotNullableString = &optionalNotNullableString
 		case "optionalNullableString":
-
 			var optionalNullableString NullableObjectKeysAdditionalPropertiesFalseOptionalNullableString
+
 			err = json.Unmarshal(value, &optionalNullableString)
 			if err != nil {
 				return err
 			}
+
 			o.OptionalNullableString = &optionalNullableString
 		case "requiredNotNullableString":
 			hasRequiredNotNullableString = true
 
 			var requiredNotNullableString NullableObjectKeysAdditionalPropertiesFalseRequiredNotNullableString
+
 			err = json.Unmarshal(value, &requiredNotNullableString)
 			if err != nil {
 				return err
 			}
+
 			o.RequiredNotNullableString = requiredNotNullableString
 		case "requiredNullableString":
 			hasRequiredNullableString = true
 
 			var requiredNullableString NullableObjectKeysAdditionalPropertiesFalseRequiredNullableString
+
 			err = json.Unmarshal(value, &requiredNullableString)
 			if err != nil {
 				return err
 			}
+
 			o.RequiredNullableString = requiredNullableString
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasRequiredNotNullableString {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNotNullableString")
 	}
+
 	if !hasRequiredNullableString {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "requiredNullableString")
 	}
@@ -9882,11 +11422,14 @@ func (s *NullableObjectKeysAdditionalPropertiesFalseOptionalNotNullableString) U
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = NullableObjectKeysAdditionalPropertiesFalseOptionalNotNullableString(value)
+
 	return nil
 }
 
@@ -9899,15 +11442,19 @@ var _ json.Unmarshaler = new(NullableObjectKeysAdditionalPropertiesFalseOptional
 func (s *NullableObjectKeysAdditionalPropertiesFalseOptionalNullableString) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -9921,11 +11468,14 @@ func (s *NullableObjectKeysAdditionalPropertiesFalseRequiredNotNullableString) U
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = NullableObjectKeysAdditionalPropertiesFalseRequiredNotNullableString(value)
+
 	return nil
 }
 
@@ -9938,15 +11488,19 @@ var _ json.Unmarshaler = new(NullableObjectKeysAdditionalPropertiesFalseRequired
 func (s *NullableObjectKeysAdditionalPropertiesFalseRequiredNullableString) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -9976,22 +11530,26 @@ func (o *CompositeObject) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
-	var hasArrayNotNullableItemsNotNullable bool
-	var hasArrayNotNullableItemsNullable bool
-	var hasArrayNullableItemsNotNullable bool
-	var hasArrayNullableItemsNullable bool
-	var hasBoolNotNullable bool
-	var hasBoolNullable bool
-	var hasNumberNotNullable bool
-	var hasNumberNullable bool
-	var hasObjectAdditionalPropertiesImplicit bool
-	var hasObjectAdditionalPropertiesSchema bool
-	var hasObjectAdditionalPropertiesTrue bool
-	var hasStringFormatNotNullable bool
-	var hasStringFormatNullable bool
+
+	var (
+		hasArrayNotNullableItemsNotNullable   bool
+		hasArrayNotNullableItemsNullable      bool
+		hasArrayNullableItemsNotNullable      bool
+		hasArrayNullableItemsNullable         bool
+		hasBoolNotNullable                    bool
+		hasBoolNullable                       bool
+		hasNumberNotNullable                  bool
+		hasNumberNullable                     bool
+		hasObjectAdditionalPropertiesImplicit bool
+		hasObjectAdditionalPropertiesSchema   bool
+		hasObjectAdditionalPropertiesTrue     bool
+		hasStringFormatNotNullable            bool
+		hasStringFormatNullable               bool
+	)
 
 	for d.More() {
 		nameTok, nameErr := d.Token()
@@ -10002,6 +11560,7 @@ func (o *CompositeObject) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -10012,165 +11571,206 @@ func (o *CompositeObject) UnmarshalJSON(data []byte) error {
 			hasArrayNotNullableItemsNotNullable = true
 
 			var arrayNotNullableItemsNotNullable CompositeObjectArrayNotNullableItemsNotNullable
+
 			err = json.Unmarshal(value, &arrayNotNullableItemsNotNullable)
 			if err != nil {
 				return err
 			}
+
 			o.ArrayNotNullableItemsNotNullable = arrayNotNullableItemsNotNullable
 		case "arrayNotNullableItemsNullable":
 			hasArrayNotNullableItemsNullable = true
 
 			var arrayNotNullableItemsNullable CompositeObjectArrayNotNullableItemsNullable
+
 			err = json.Unmarshal(value, &arrayNotNullableItemsNullable)
 			if err != nil {
 				return err
 			}
+
 			o.ArrayNotNullableItemsNullable = arrayNotNullableItemsNullable
 		case "arrayNullableItemsNotNullable":
 			hasArrayNullableItemsNotNullable = true
 
 			var arrayNullableItemsNotNullable CompositeObjectArrayNullableItemsNotNullable
+
 			err = json.Unmarshal(value, &arrayNullableItemsNotNullable)
 			if err != nil {
 				return err
 			}
+
 			o.ArrayNullableItemsNotNullable = arrayNullableItemsNotNullable
 		case "arrayNullableItemsNullable":
 			hasArrayNullableItemsNullable = true
 
 			var arrayNullableItemsNullable CompositeObjectArrayNullableItemsNullable
+
 			err = json.Unmarshal(value, &arrayNullableItemsNullable)
 			if err != nil {
 				return err
 			}
+
 			o.ArrayNullableItemsNullable = arrayNullableItemsNullable
 		case "boolNotNullable":
 			hasBoolNotNullable = true
 
 			var boolNotNullable CompositeObjectBoolNotNullable
+
 			err = json.Unmarshal(value, &boolNotNullable)
 			if err != nil {
 				return err
 			}
+
 			o.BoolNotNullable = boolNotNullable
 		case "boolNullable":
 			hasBoolNullable = true
 
 			var boolNullable CompositeObjectBoolNullable
+
 			err = json.Unmarshal(value, &boolNullable)
 			if err != nil {
 				return err
 			}
+
 			o.BoolNullable = boolNullable
 		case "numberNotNullable":
 			hasNumberNotNullable = true
 
 			var numberNotNullable CompositeObjectNumberNotNullable
+
 			err = json.Unmarshal(value, &numberNotNullable)
 			if err != nil {
 				return err
 			}
+
 			o.NumberNotNullable = numberNotNullable
 		case "numberNullable":
 			hasNumberNullable = true
 
 			var numberNullable CompositeObjectNumberNullable
+
 			err = json.Unmarshal(value, &numberNullable)
 			if err != nil {
 				return err
 			}
+
 			o.NumberNullable = numberNullable
 		case "objectAdditionalPropertiesImplicit":
 			hasObjectAdditionalPropertiesImplicit = true
 
 			var objectAdditionalPropertiesImplicit CompositeObjectObjectAdditionalPropertiesImplicit
+
 			err = json.Unmarshal(value, &objectAdditionalPropertiesImplicit)
 			if err != nil {
 				return err
 			}
+
 			o.ObjectAdditionalPropertiesImplicit = objectAdditionalPropertiesImplicit
 		case "objectAdditionalPropertiesSchema":
 			hasObjectAdditionalPropertiesSchema = true
 
 			var objectAdditionalPropertiesSchema CompositeObjectObjectAdditionalPropertiesSchema
+
 			err = json.Unmarshal(value, &objectAdditionalPropertiesSchema)
 			if err != nil {
 				return err
 			}
+
 			o.ObjectAdditionalPropertiesSchema = objectAdditionalPropertiesSchema
 		case "objectAdditionalPropertiesTrue":
 			hasObjectAdditionalPropertiesTrue = true
 
 			var objectAdditionalPropertiesTrue CompositeObjectObjectAdditionalPropertiesTrue
+
 			err = json.Unmarshal(value, &objectAdditionalPropertiesTrue)
 			if err != nil {
 				return err
 			}
+
 			o.ObjectAdditionalPropertiesTrue = objectAdditionalPropertiesTrue
 		case "stringFormatNotNullable":
 			hasStringFormatNotNullable = true
 
 			var stringFormatNotNullable CompositeObjectStringFormatNotNullable
+
 			err = json.Unmarshal(value, &stringFormatNotNullable)
 			if err != nil {
 				return err
 			}
+
 			o.StringFormatNotNullable = stringFormatNotNullable
 		case "stringFormatNullable":
 			hasStringFormatNullable = true
 
 			var stringFormatNullable CompositeObjectStringFormatNullable
+
 			err = json.Unmarshal(value, &stringFormatNullable)
 			if err != nil {
 				return err
 			}
+
 			o.StringFormatNullable = stringFormatNullable
 		default:
 			return fmt.Errorf("%w: %s", AdditionalPropertyError, name)
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasArrayNotNullableItemsNotNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "arrayNotNullableItemsNotNullable")
 	}
+
 	if !hasArrayNotNullableItemsNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "arrayNotNullableItemsNullable")
 	}
+
 	if !hasArrayNullableItemsNotNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "arrayNullableItemsNotNullable")
 	}
+
 	if !hasArrayNullableItemsNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "arrayNullableItemsNullable")
 	}
+
 	if !hasBoolNotNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "boolNotNullable")
 	}
+
 	if !hasBoolNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "boolNullable")
 	}
+
 	if !hasNumberNotNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "numberNotNullable")
 	}
+
 	if !hasNumberNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "numberNullable")
 	}
+
 	if !hasObjectAdditionalPropertiesImplicit {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "objectAdditionalPropertiesImplicit")
 	}
+
 	if !hasObjectAdditionalPropertiesSchema {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "objectAdditionalPropertiesSchema")
 	}
+
 	if !hasObjectAdditionalPropertiesTrue {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "objectAdditionalPropertiesTrue")
 	}
+
 	if !hasStringFormatNotNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "stringFormatNotNullable")
 	}
+
 	if !hasStringFormatNullable {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "stringFormatNullable")
 	}
@@ -10188,11 +11788,14 @@ func (a *CompositeObjectArrayNotNullableItemsNotNullable) UnmarshalJSON(data []b
 	}
 
 	var value []CompositeObjectArrayNotNullableItemsNotNullableItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	*a = CompositeObjectArrayNotNullableItemsNotNullable(value)
+
 	return nil
 }
 
@@ -10206,11 +11809,14 @@ func (s *CompositeObjectArrayNotNullableItemsNotNullableItem) UnmarshalJSON(data
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = CompositeObjectArrayNotNullableItemsNotNullableItem(value)
+
 	return nil
 }
 
@@ -10224,11 +11830,14 @@ func (a *CompositeObjectArrayNotNullableItemsNullable) UnmarshalJSON(data []byte
 	}
 
 	var value []CompositeObjectArrayNotNullableItemsNullableItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	*a = CompositeObjectArrayNotNullableItemsNullable(value)
+
 	return nil
 }
 
@@ -10241,15 +11850,19 @@ var _ json.Unmarshaler = new(CompositeObjectArrayNotNullableItemsNullableItem)
 func (s *CompositeObjectArrayNotNullableItemsNullableItem) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -10262,15 +11875,19 @@ var _ json.Unmarshaler = new(CompositeObjectArrayNullableItemsNotNullable)
 func (a *CompositeObjectArrayNullableItemsNotNullable) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		a.Value = nil
+
 		return nil
 	}
 
 	var value []CompositeObjectArrayNullableItemsNotNullableItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	a.Value = value
+
 	return nil
 }
 
@@ -10284,11 +11901,14 @@ func (s *CompositeObjectArrayNullableItemsNotNullableItem) UnmarshalJSON(data []
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = CompositeObjectArrayNullableItemsNotNullableItem(value)
+
 	return nil
 }
 
@@ -10301,15 +11921,19 @@ var _ json.Unmarshaler = new(CompositeObjectArrayNullableItemsNullable)
 func (a *CompositeObjectArrayNullableItemsNullable) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		a.Value = nil
+
 		return nil
 	}
 
 	var value []CompositeObjectArrayNullableItemsNullableItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	a.Value = value
+
 	return nil
 }
 
@@ -10322,15 +11946,19 @@ var _ json.Unmarshaler = new(CompositeObjectArrayNullableItemsNullableItem)
 func (s *CompositeObjectArrayNullableItemsNullableItem) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -10344,11 +11972,14 @@ func (b *CompositeObjectBoolNotNullable) UnmarshalJSON(data []byte) error {
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = CompositeObjectBoolNotNullable(value)
+
 	return nil
 }
 
@@ -10361,15 +11992,19 @@ var _ json.Unmarshaler = new(CompositeObjectBoolNullable)
 func (b *CompositeObjectBoolNullable) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		b.Value = nil
+
 		return nil
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	b.Value = new(value)
+
 	return nil
 }
 
@@ -10388,11 +12023,14 @@ func (n *CompositeObjectNumberNotNullable) UnmarshalJSON(data []byte) error {
 	}
 
 	var value json.Number
+
 	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
 		return NonNumberForNumberSchemaError
 	}
+
 	*n = CompositeObjectNumberNotNullable(value)
+
 	return nil
 }
 
@@ -10406,6 +12044,7 @@ func (n *CompositeObjectNumberNullable) UnmarshalJSON(data []byte) error {
 	trimmed := bytes.TrimSpace(data)
 	if bytes.Equal(trimmed, jsonNull) {
 		n.Value = nil
+
 		return nil
 	}
 
@@ -10414,11 +12053,14 @@ func (n *CompositeObjectNumberNullable) UnmarshalJSON(data []byte) error {
 	}
 
 	var value json.Number
+
 	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
 		return NonNumberForNumberSchemaError
 	}
+
 	n.Value = new(value)
+
 	return nil
 }
 
@@ -10436,6 +12078,7 @@ func (o *CompositeObjectObjectAdditionalPropertiesImplicit) UnmarshalJSON(data [
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -10449,6 +12092,7 @@ func (o *CompositeObjectObjectAdditionalPropertiesImplicit) UnmarshalJSON(data [
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -10456,20 +12100,23 @@ func (o *CompositeObjectObjectAdditionalPropertiesImplicit) UnmarshalJSON(data [
 
 		switch name {
 		case "known":
-
 			var known CompositeObjectObjectAdditionalPropertiesImplicitKnown
+
 			err = json.Unmarshal(value, &known)
 			if err != nil {
 				return err
 			}
+
 			o.Known = &known
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -10487,11 +12134,14 @@ func (s *CompositeObjectObjectAdditionalPropertiesImplicitKnown) UnmarshalJSON(d
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = CompositeObjectObjectAdditionalPropertiesImplicitKnown(value)
+
 	return nil
 }
 
@@ -10509,6 +12159,7 @@ func (o *CompositeObjectObjectAdditionalPropertiesSchema) UnmarshalJSON(data []b
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -10522,6 +12173,7 @@ func (o *CompositeObjectObjectAdditionalPropertiesSchema) UnmarshalJSON(data []b
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -10529,24 +12181,28 @@ func (o *CompositeObjectObjectAdditionalPropertiesSchema) UnmarshalJSON(data []b
 
 		switch name {
 		case "known":
-
 			var known CompositeObjectObjectAdditionalPropertiesSchemaKnown
+
 			err = json.Unmarshal(value, &known)
 			if err != nil {
 				return err
 			}
+
 			o.Known = &known
 		default:
 			var additionalProperty CompositeObjectObjectAdditionalPropertiesSchemaAdditionalProperty
+
 			err = json.Unmarshal(value, &additionalProperty)
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -10564,11 +12220,14 @@ func (s *CompositeObjectObjectAdditionalPropertiesSchemaKnown) UnmarshalJSON(dat
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = CompositeObjectObjectAdditionalPropertiesSchemaKnown(value)
+
 	return nil
 }
 
@@ -10582,11 +12241,14 @@ func (s *CompositeObjectObjectAdditionalPropertiesSchemaAdditionalProperty) Unma
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = CompositeObjectObjectAdditionalPropertiesSchemaAdditionalProperty(value)
+
 	return nil
 }
 
@@ -10604,6 +12266,7 @@ func (o *CompositeObjectObjectAdditionalPropertiesTrue) UnmarshalJSON(data []byt
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
@@ -10617,6 +12280,7 @@ func (o *CompositeObjectObjectAdditionalPropertiesTrue) UnmarshalJSON(data []byt
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -10624,20 +12288,23 @@ func (o *CompositeObjectObjectAdditionalPropertiesTrue) UnmarshalJSON(data []byt
 
 		switch name {
 		case "known":
-
 			var known CompositeObjectObjectAdditionalPropertiesTrueKnown
+
 			err = json.Unmarshal(value, &known)
 			if err != nil {
 				return err
 			}
+
 			o.Known = &known
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
@@ -10655,11 +12322,14 @@ func (s *CompositeObjectObjectAdditionalPropertiesTrueKnown) UnmarshalJSON(data 
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = CompositeObjectObjectAdditionalPropertiesTrueKnown(value)
+
 	return nil
 }
 
@@ -10673,15 +12343,19 @@ func (s *CompositeObjectStringFormatNotNullable) UnmarshalJSON(data []byte) erro
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	_, err = time.Parse(time.RFC3339, value)
 	if err != nil {
 		return err
 	}
+
 	*s = CompositeObjectStringFormatNotNullable(value)
+
 	return nil
 }
 
@@ -10694,19 +12368,24 @@ var _ json.Unmarshaler = new(CompositeObjectStringFormatNullable)
 func (s *CompositeObjectStringFormatNullable) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		s.Value = nil
+
 		return nil
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	_, err = time.Parse(time.RFC3339, value)
 	if err != nil {
 		return err
 	}
+
 	s.Value = new(value)
+
 	return nil
 }
 
@@ -10719,15 +12398,19 @@ var _ json.Unmarshaler = new(ArrayNullable)
 func (a *ArrayNullable) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		a.Value = nil
+
 		return nil
 	}
 
 	var value []ArrayNullableItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	a.Value = value
+
 	return nil
 }
 
@@ -10741,11 +12424,14 @@ func (s *ArrayNullableItem) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = ArrayNullableItem(value)
+
 	return nil
 }
 
@@ -10759,11 +12445,14 @@ func (a *ArrayNotNullable) UnmarshalJSON(data []byte) error {
 	}
 
 	var value []ArrayNotNullableItem
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return err
 	}
+
 	*a = ArrayNotNullable(value)
+
 	return nil
 }
 
@@ -10777,11 +12466,14 @@ func (s *ArrayNotNullableItem) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = ArrayNotNullableItem(value)
+
 	return nil
 }
 
@@ -10798,9 +12490,11 @@ func (a *AllOfObject) UnmarshalJSON(data []byte) error {
 	if err := a.AllOfObjectAllOf1.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.AllOfObjectAllOf2.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
+
 	if err := a.AllOfObjectAllOf3.UnmarshalJSON(data); err != nil {
 		errs = append(errs, err)
 	}
@@ -10822,9 +12516,11 @@ func (o *AllOfObjectAllOf1) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasFirst bool
 
 	for d.More() {
@@ -10836,6 +12532,7 @@ func (o *AllOfObjectAllOf1) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -10846,21 +12543,26 @@ func (o *AllOfObjectAllOf1) UnmarshalJSON(data []byte) error {
 			hasFirst = true
 
 			var first AllOfObjectAllOf1First
+
 			err = json.Unmarshal(value, &first)
 			if err != nil {
 				return err
 			}
+
 			o.First = first
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasFirst {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "first")
 	}
@@ -10878,11 +12580,14 @@ func (s *AllOfObjectAllOf1First) UnmarshalJSON(data []byte) error {
 	}
 
 	var value string
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonStringForStringSchemaError
 	}
+
 	*s = AllOfObjectAllOf1First(value)
+
 	return nil
 }
 
@@ -10900,9 +12605,11 @@ func (o *AllOfObjectAllOf2) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasSecond bool
 
 	for d.More() {
@@ -10914,6 +12621,7 @@ func (o *AllOfObjectAllOf2) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -10924,21 +12632,26 @@ func (o *AllOfObjectAllOf2) UnmarshalJSON(data []byte) error {
 			hasSecond = true
 
 			var second AllOfObjectAllOf2Second
+
 			err = json.Unmarshal(value, &second)
 			if err != nil {
 				return err
 			}
+
 			o.Second = second
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasSecond {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "second")
 	}
@@ -10956,11 +12669,14 @@ func (b *AllOfObjectAllOf2Second) UnmarshalJSON(data []byte) error {
 	}
 
 	var value bool
+
 	err := json.Unmarshal(data, &value)
 	if err != nil {
 		return NonBoolForBoolSchemaError
 	}
+
 	*b = AllOfObjectAllOf2Second(value)
+
 	return nil
 }
 
@@ -10978,9 +12694,11 @@ func (o *AllOfObjectAllOf3) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	if tok != json.Delim('{') {
 		return NotAnObjectError
 	}
+
 	var hasLast bool
 
 	for d.More() {
@@ -10992,6 +12710,7 @@ func (o *AllOfObjectAllOf3) UnmarshalJSON(data []byte) error {
 		name := nameTok.(string)
 
 		var value json.RawMessage
+
 		err = d.Decode(&value)
 		if err != nil {
 			return err
@@ -11002,21 +12721,26 @@ func (o *AllOfObjectAllOf3) UnmarshalJSON(data []byte) error {
 			hasLast = true
 
 			var last AllOfObjectAllOf3Last
+
 			err = json.Unmarshal(value, &last)
 			if err != nil {
 				return err
 			}
+
 			o.Last = last
 		default:
 			continue
 		}
 	}
+
 	if _, err := d.Token(); err != nil {
 		return err
 	}
+
 	if len(bytes.TrimSpace(data[d.InputOffset():])) != 0 {
 		return NotAnObjectError
 	}
+
 	if !hasLast {
 		return fmt.Errorf("%w: %s", MissingRequiredPropertyError, "last")
 	}
@@ -11039,10 +12763,13 @@ func (n *AllOfObjectAllOf3Last) UnmarshalJSON(data []byte) error {
 	}
 
 	var value json.Number
+
 	err := json.Unmarshal(trimmed, &value)
 	if err != nil {
 		return NonNumberForNumberSchemaError
 	}
+
 	*n = AllOfObjectAllOf3Last(value)
+
 	return nil
 }

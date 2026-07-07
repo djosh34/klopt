@@ -21,5 +21,6 @@ func toHashableNumberPtr(number *Number) *hashables.Number {
 	}
 
 	hashableNumber := hashables.Number(*number)
+
 	return &hashableNumber
 }

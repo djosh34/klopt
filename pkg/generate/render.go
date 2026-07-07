@@ -48,6 +48,7 @@ func renderModelsFile(schemas []Schema) ([]byte, error) {
 	}
 
 	var out bytes.Buffer
+
 	err = templates.ExecuteTemplate(&out, "file.go.tmpl", fileTemplateContext{
 		Schemas:     schemas,
 		UsesRFC3339: usesRFC3339(schemas),
@@ -91,6 +92,7 @@ func renderModelsTestFile(openAPI []byte, operations []JSONRequestBodyOperation,
 	}
 
 	var out bytes.Buffer
+
 	err = templates.ExecuteTemplate(&out, "models_test.go.tmpl", modelsTestTemplateContext{
 		OpenAPI:       string(openAPI),
 		Operations:    operations,
@@ -119,6 +121,7 @@ func objectSchemaTests(operations []JSONRequestBodyOperation, schemas []Schema) 
 		if err != nil {
 			return nil, err
 		}
+
 		tests = append(tests, modelObjectSchemaTest{
 			OperationID: operationID,
 			TypeName:    schema.SchemaTypeName(),
@@ -130,16 +133,19 @@ func objectSchemaTests(operations []JSONRequestBodyOperation, schemas []Schema) 
 
 func schemaOperationID(operations []JSONRequestBodyOperation, schemaTypeName string) (string, error) {
 	var match JSONRequestBodyOperation
+
 	for _, operation := range operations {
 		if schemaTypeName != operation.TypeName && !strings.HasPrefix(schemaTypeName, operation.TypeName) {
 			continue
 		}
+
 		if len(operation.TypeName) <= len(match.TypeName) {
 			continue
 		}
 
 		match = operation
 	}
+
 	if match.OperationID == "" {
 		return "", fmt.Errorf("object schema %q has no source operation", schemaTypeName)
 	}
@@ -154,6 +160,7 @@ func executeGoTemplate(name string, data any) (string, error) {
 	}
 
 	var out bytes.Buffer
+
 	err = templates.ExecuteTemplate(&out, name, data)
 	if err != nil {
 		return "", err
@@ -166,6 +173,7 @@ func parsedGenerateTemplates() (*template.Template, error) {
 	generateTemplatesOnce.Do(func() {
 		generateTemplates, generateTemplatesErr = template.ParseFS(templateFS, templatePattern)
 	})
+
 	if generateTemplatesErr != nil {
 		return nil, fmt.Errorf("parse generate templates: %w", generateTemplatesErr)
 	}

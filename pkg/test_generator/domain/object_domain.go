@@ -1,12 +1,13 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/hashables"
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+
+	"decode_and_validate_generator/pkg/test_generator/hashables"
+	"decode_and_validate_generator/pkg/test_generator/types"
 )
 
 type AdditionalPropertyKind int
@@ -29,11 +30,13 @@ func (p *Property) ToHashable() (hashables.PropertyHashable, error) {
 	}
 
 	var propertyHasher types.Hasher
+
 	if p.Domain != nil {
 		hasher, err := p.Domain.ToHasher()
 		if err != nil {
 			return hashables.PropertyHashable{}, err
 		}
+
 		propertyHasher = hasher
 	}
 
@@ -49,6 +52,7 @@ func (p *Property) ToHasher() (types.Hasher, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return &propertyHashable, nil
 }
 
@@ -70,30 +74,37 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	if o == nil {
 		return nil, errors.New("object domain cannot be nil")
 	}
+
 	if allOfDomain, ok := domain.(*AllOfDomain); ok {
 		mergedAllOf := &AllOfDomain{}
 		if _, err := mergedAllOf.AllOfMerge(o); err != nil {
 			return nil, err
 		}
+
 		return mergedAllOf.AllOfMerge(allOfDomain)
 	}
+
 	otherObject, ok := domain.(*ObjectDomain)
 	if !ok || otherObject == nil {
 		return nil, errors.New("domain is not ObjectDomain")
 	}
+
 	if o.AdditionalPropertyKind == AdditionalSchema && o.AdditionalPropertyDomain == nil {
 		return nil, errors.New("additional property schema domain cannot be nil")
 	}
+
 	if otherObject.AdditionalPropertyKind == AdditionalSchema && otherObject.AdditionalPropertyDomain == nil {
 		return nil, errors.New("additional property schema domain cannot be nil")
 	}
 
 	merged := *o
 	merged.Nullable = o.Nullable && otherObject.Nullable
+
 	enums, err := mergeEnums(o.Enum, otherObject.Enum)
 	if err != nil {
 		return nil, err
 	}
+
 	merged.Enum = enums
 	merged.MinProps = max(o.MinProps, otherObject.MinProps)
 	merged.MaxProps = tighterMaxProps(o.MaxProps, otherObject.MaxProps)
@@ -102,27 +113,32 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	for _, property := range o.Properties {
 		leftProperties[property.Key] = property
 	}
+
 	rightProperties := make(map[string]Property, len(otherObject.Properties))
 	for _, property := range otherObject.Properties {
 		rightProperties[property.Key] = property
 	}
 
 	propertiesByKey := make(map[string]Property, len(o.Properties)+len(otherObject.Properties))
+
 	for key, leftProperty := range leftProperties {
 		if rightProperty, ok := rightProperties[key]; ok {
 			property := Property{Key: key, Required: leftProperty.Required || rightProperty.Required}
 			if leftProperty.Domain != nil && rightProperty.Domain != nil {
-				domain, err := leftProperty.Domain.AllOfMerge(rightProperty.Domain)
+				domain, err := leftProperty.AllOfMerge(rightProperty.Domain)
 				if err != nil {
 					return nil, err
 				}
+
 				property.Domain = domain
 			} else if leftProperty.Domain != nil {
 				property.Domain = leftProperty.Domain
 			} else {
 				property.Domain = rightProperty.Domain
 			}
+
 			propertiesByKey[key] = property
+
 			continue
 		}
 
@@ -130,18 +146,22 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		if keep {
 			propertiesByKey[key] = property
 		}
 	}
+
 	for key, rightProperty := range rightProperties {
 		if _, exists := leftProperties[key]; exists {
 			continue
 		}
+
 		property, keep, err := mergePropertyWithAdditional(rightProperty, o)
 		if err != nil {
 			return nil, err
 		}
+
 		if keep {
 			propertiesByKey[key] = property
 		}
@@ -151,7 +171,9 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	for propertyKey := range propertiesByKey {
 		propertyKeys = append(propertyKeys, propertyKey)
 	}
+
 	sort.Strings(propertyKeys)
+
 	merged.Properties = nil
 	if len(propertyKeys) != 0 {
 		merged.Properties = make([]Property, 0, len(propertyKeys))
@@ -164,6 +186,7 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	merged.AdditionalPropertyKind = additionalKind
 	merged.AdditionalPropertyDomain = additionalDomain
 
@@ -174,9 +197,11 @@ func tighterMaxProps(first *int, second *int) *int {
 	if first == nil {
 		return second
 	}
+
 	if second == nil || *first <= *second {
 		return first
 	}
+
 	return second
 }
 
@@ -188,20 +213,26 @@ func mergePropertyWithAdditional(property Property, otherObject *ObjectDomain) (
 		if property.Required {
 			return Property{}, false, errors.New("required property is forbidden by additionalProperties false")
 		}
+
 		return Property{}, false, nil
 	case AdditionalSchema:
 		if otherObject.AdditionalPropertyDomain == nil {
 			return Property{}, false, errors.New("additional property schema domain cannot be nil")
 		}
+
 		if property.Domain == nil {
 			property.Domain = otherObject.AdditionalPropertyDomain
+
 			return property, true, nil
 		}
-		domain, err := property.Domain.AllOfMerge(otherObject.AdditionalPropertyDomain)
+
+		domain, err := property.AllOfMerge(otherObject.AdditionalPropertyDomain)
 		if err != nil {
 			return Property{}, false, err
 		}
+
 		property.Domain = domain
+
 		return property, true, nil
 	default:
 		return Property{}, false, errors.New("unknown additionalProperties kind")
@@ -212,19 +243,24 @@ func mergeAdditionalProperties(first *ObjectDomain, second *ObjectDomain) (Addit
 	if first.AdditionalPropertyKind == AdditionalFalse || second.AdditionalPropertyKind == AdditionalFalse {
 		return AdditionalFalse, nil, nil
 	}
+
 	if first.AdditionalPropertyKind == AdditionalSchema && second.AdditionalPropertyKind == AdditionalSchema {
 		domain, err := first.AdditionalPropertyDomain.AllOfMerge(second.AdditionalPropertyDomain)
 		if err != nil {
 			return AdditionalSchema, nil, err
 		}
+
 		return AdditionalSchema, domain, nil
 	}
+
 	if first.AdditionalPropertyKind == AdditionalSchema {
 		return AdditionalSchema, first.AdditionalPropertyDomain, nil
 	}
+
 	if second.AdditionalPropertyKind == AdditionalSchema {
 		return AdditionalSchema, second.AdditionalPropertyDomain, nil
 	}
+
 	return AdditionalTrue, nil, nil
 }
 
@@ -239,6 +275,7 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		propertyHashers = append(propertyHashers, propertyHashable)
 	}
 
@@ -247,11 +284,13 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 	}
 
 	var additionalPropertyHasher types.Hasher
+
 	if o.AdditionalPropertyDomain != nil {
 		hasher, err := o.AdditionalPropertyDomain.ToHasher()
 		if err != nil {
 			return nil, err
 		}
+
 		additionalPropertyHasher = hasher
 	}
 
@@ -297,6 +336,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 			dc.domainStore = originalStore
 		}
 	}()
+
 	jsonKV := make(JSONKV)
 
 	decodeKVErr := json.Unmarshal(*node, &jsonKV)
@@ -305,6 +345,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 	}
 
 	jsonObject := JSONObject{}
+
 	decodeErr := json.Unmarshal(*node, &jsonObject)
 	if decodeErr != nil {
 		return ObjectDomain{}, decodeErr
@@ -321,8 +362,10 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 	if err != nil {
 		return ObjectDomain{}, err
 	}
+
 	if hasEnums {
 		objectDomain.Enum = enums
+
 		return objectDomain, nil
 	}
 
@@ -333,22 +376,27 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 	// Parse Properties
 	if _, propertiesOk := jsonKV["properties"]; propertiesOk {
 		delete(jsonKV, "properties")
+
 		if jsonObject.Properties == nil {
 			return ObjectDomain{}, errors.New("properties must be an object")
 		}
 
 		for propertyKey, propertyValue := range jsonObject.Properties {
 			propertyJSONKV := make(JSONKV)
+
 			propertyJSONKVErr := json.Unmarshal(propertyValue, &propertyJSONKV)
 			if propertyJSONKVErr != nil {
 				return ObjectDomain{}, propertyJSONKVErr
 			}
+
 			if propertyJSONKV == nil {
 				return ObjectDomain{}, fmt.Errorf("property %q schema must be an object", propertyKey)
 			}
+
 			if _, readOnlyOk := propertyJSONKV["readOnly"]; readOnlyOk {
 				return ObjectDomain{}, errors.New("readOnly is not allowed in object properties")
 			}
+
 			if _, writeOnlyOk := propertyJSONKV["writeOnly"]; writeOnlyOk {
 				return ObjectDomain{}, errors.New("writeOnly is not allowed in object properties")
 			}
@@ -371,12 +419,12 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 
 			properties[propertyKey] = property
 		}
-
 	}
 
 	// Parse required
 	if _, requiredOk := jsonKV["required"]; requiredOk {
 		delete(jsonKV, "required")
+
 		if len(jsonObject.Required) == 0 {
 			return ObjectDomain{}, errors.New("required cannot be empty")
 		}
@@ -386,6 +434,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 			if _, requiredKeyOk := requiredKeys[requiredKey]; requiredKeyOk {
 				return ObjectDomain{}, fmt.Errorf("required property %q listed more than once", requiredKey)
 			}
+
 			requiredKeys[requiredKey] = struct{}{}
 
 			property, propertyOk := properties[requiredKey]
@@ -407,6 +456,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 	for propertyKey := range properties {
 		propertyKeys = append(propertyKeys, propertyKey)
 	}
+
 	sort.Strings(propertyKeys)
 
 	for _, propertyKey := range propertyKeys {
@@ -451,22 +501,29 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 	// Parse MinProps, MaxProps
 	if _, minPropertiesOk := jsonKV["minProperties"]; minPropertiesOk {
 		delete(jsonKV, "minProperties")
+
 		if jsonObject.MinProperties == nil {
 			return ObjectDomain{}, errors.New("minProperties cannot be null")
 		}
+
 		if *jsonObject.MinProperties < 0 {
 			return ObjectDomain{}, errors.New("minProperties cannot be negative")
 		}
+
 		objectDomain.MinProps = *jsonObject.MinProperties
 	}
+
 	if _, maxPropertiesOk := jsonKV["maxProperties"]; maxPropertiesOk {
 		delete(jsonKV, "maxProperties")
+
 		if jsonObject.MaxProperties == nil {
 			return ObjectDomain{}, errors.New("maxProperties cannot be null")
 		}
+
 		if *jsonObject.MaxProperties < 0 {
 			return ObjectDomain{}, errors.New("maxProperties cannot be negative")
 		}
+
 		objectDomain.MaxProps = jsonObject.MaxProperties
 	}
 
@@ -478,7 +535,9 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 		for key := range jsonKV {
 			keys = append(keys, key)
 		}
+
 		sort.Strings(keys)
+
 		return ObjectDomain{}, fmt.Errorf("unsupported object schema keys: %v", keys)
 	}
 

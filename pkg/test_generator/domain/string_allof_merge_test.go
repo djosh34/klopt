@@ -1,8 +1,9 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -13,10 +14,10 @@ func TestStringDomainAllOfMergeValidPlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"nullable false false":                      {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
+		"nullable false":                            {left: &StringDomain{}, right: &StringDomain{}, want: &StringDomain{}},
 		"nullable false true":                       {left: &StringDomain{}, right: &StringDomain{Nullable: true}, want: &StringDomain{}},
 		"nullable true false":                       {left: &StringDomain{Nullable: true}, right: &StringDomain{}, want: &StringDomain{}},
-		"nullable true true":                        {left: &StringDomain{Nullable: true}, right: &StringDomain{Nullable: true}, want: &StringDomain{Nullable: true}},
+		"nullable true":                             {left: &StringDomain{Nullable: true}, right: &StringDomain{Nullable: true}, want: &StringDomain{Nullable: true}},
 		"enum nil right":                            {left: &StringDomain{}, right: &StringDomain{Enum: []types.Enum{types.Enum("\"a\""), types.Enum("\"b\"")}}, want: &StringDomain{Enum: []types.Enum{types.Enum("\"a\""), types.Enum("\"b\"")}}},
 		"enum left nil":                             {left: &StringDomain{Enum: []types.Enum{types.Enum("\"a\""), types.Enum("\"b\"")}}, right: &StringDomain{}, want: &StringDomain{Enum: []types.Enum{types.Enum("\"a\""), types.Enum("\"b\"")}}},
 		"enum intersection":                         {left: &StringDomain{Enum: []types.Enum{types.Enum("\"a\""), types.Enum("\"b\""), types.Enum("\"c\"")}}, right: &StringDomain{Enum: []types.Enum{types.Enum("\"b\""), types.Enum("\"c\""), types.Enum("\"d\"")}}, want: &StringDomain{Enum: []types.Enum{types.Enum("\"b\""), types.Enum("\"c\"")}}},
@@ -63,8 +64,10 @@ func TestStringDomainAllOfMergeInvalidPlanCases(t *testing.T) {
 			require.Equal(t, before, *tt.left)
 		})
 	}
+
 	t.Run("nil receiver", func(t *testing.T) {
 		var left *StringDomain
+
 		got, err := left.AllOfMerge(&StringDomain{})
 		require.Error(t, err)
 		require.Nil(t, got)

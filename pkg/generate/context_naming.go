@@ -8,6 +8,7 @@ import (
 
 func namedSchemaDefinitions(schema Schema) ([]Schema, error) {
 	var definitions []Schema
+
 	err := nameSchema(schema, "", &definitions)
 	if err != nil {
 		return nil, err
@@ -25,11 +26,13 @@ func nameSchema(schema Schema, parentName string, definitions *[]Schema) error {
 	if base == nil {
 		return fmt.Errorf("schema %T has nil base", schema)
 	}
+
 	if base.Name == "" {
 		return fmt.Errorf("schema %T has no type name", schema)
 	}
 
 	base.Name = exportedName(parentName + base.Name)
+
 	*definitions = append(*definitions, schema)
 
 	for _, child := range schema.ChildSchemas() {
@@ -52,10 +55,13 @@ func unexportedName(name string) string {
 
 func identifierName(name string, exported bool) string {
 	var out strings.Builder
+
 	upperNext := exported
+
 	for _, r := range name {
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
 			upperNext = true
+
 			continue
 		}
 
@@ -65,7 +71,9 @@ func identifierName(name string, exported bool) string {
 
 		if upperNext {
 			out.WriteRune(unicode.ToUpper(r))
+
 			upperNext = false
+
 			continue
 		}
 
@@ -86,5 +94,6 @@ func identifierName(name string, exported bool) string {
 
 	runes := []rune(out.String())
 	runes[0] = unicode.ToLower(runes[0])
+
 	return string(runes)
 }

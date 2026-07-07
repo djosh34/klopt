@@ -1,10 +1,11 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -187,6 +188,7 @@ properties:
 				require.Less(t, parseCall, len(tt.parseDomains))
 				domain := tt.parseDomains[parseCall]
 				parseCall++
+
 				return domain, nil
 			}}
 
@@ -301,6 +303,7 @@ x-extra: true
 			if parseDomain == nil && testName != "parsed allOf item cannot be nil" {
 				parseDomain = &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}
 			}
+
 			dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
 				return parseDomain, nil
 			}}

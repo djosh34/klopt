@@ -59,26 +59,31 @@ func (b *BaseSchema) LocalName() string {
 
 type ObjectSchema struct {
 	BaseSchema
+
 	AdditionalProperties       bool
 	AdditionalPropertiesSchema Schema
 	Properties                 []ObjectFieldContext
 }
 
-var _ Schema = new(ObjectSchema)
-var _ Schema = new(StringSchema)
-var _ Schema = new(ArraySchema)
-var _ Schema = new(AllOfSchema)
-var _ Schema = new(BoolSchema)
-var _ Schema = new(NumberSchema)
+var (
+	_ Schema = new(ObjectSchema)
+	_ Schema = new(StringSchema)
+	_ Schema = new(ArraySchema)
+	_ Schema = new(AllOfSchema)
+	_ Schema = new(BoolSchema)
+	_ Schema = new(NumberSchema)
+)
 
 type ObjectFieldContext struct {
 	Schema
+
 	PropertyName string
 	Required     bool
 }
 
 type StringSchema struct {
 	BaseSchema
+
 	Format string
 }
 
@@ -92,11 +97,13 @@ type NumberSchema struct {
 
 type ArraySchema struct {
 	BaseSchema
+
 	Items Schema
 }
 
 type AllOfSchema struct {
 	BaseSchema
+
 	Schemas []Schema
 }
 
@@ -137,7 +144,7 @@ func (a *AllOfSchema) ChildSchemas() []Schema {
 	return a.Schemas
 }
 
-// TODO, put in tmpl
+// TODO, put in tmpl.
 func (p *ObjectFieldContext) FieldType() string {
 	if p.Required {
 		return p.SchemaTypeName()
@@ -146,7 +153,7 @@ func (p *ObjectFieldContext) FieldType() string {
 	return "*" + p.SchemaTypeName()
 }
 
-// TODO, put in tmpl
+// TODO, put in tmpl.
 func (p *ObjectFieldContext) JSONTag() string {
 	if p.Required {
 		return fmt.Sprintf("`json:%q`", p.PropertyName)
@@ -155,7 +162,7 @@ func (p *ObjectFieldContext) JSONTag() string {
 	return fmt.Sprintf("`json:%q`", p.PropertyName+",omitzero")
 }
 
-// TODO, we could decide to not care, and auto gen some valid var name
+// TODO, we could decide to not care, and auto gen some valid var name.
 func (p *ObjectFieldContext) LocalName() string {
 	return unexportedName(p.PropertyName)
 }
@@ -251,6 +258,7 @@ func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*ope
 	}
 
 	schemas := make(map[*openapi3.Operation]*openapi3.Schema)
+
 	for _, path := range c.Document.Paths.InMatchingOrder() {
 		pathItem := c.Document.Paths.Value(path)
 		if pathItem == nil {
@@ -276,6 +284,7 @@ func (c *GenerateContext) JSONRequestBodySchemas() (map[*openapi3.Operation]*ope
 
 func (c *GenerateContext) JSONRequestBodyModelSchemas() ([]Schema, error) {
 	var schemas []Schema
+
 	c.JSONRequestBodyOperations = nil
 
 	if c.Document == nil || c.Document.Paths == nil {
@@ -309,6 +318,7 @@ func (c *GenerateContext) JSONRequestBodyModelSchemas() ([]Schema, error) {
 			if name == "" {
 				name = operation.OperationID
 			}
+
 			if operation.OperationID == "" {
 				return nil, fmt.Errorf("json request body operation has no operationId")
 			}
@@ -352,6 +362,7 @@ func SchemaFromOpenAPISchema(schema *openapi3.Schema) (Schema, error) {
 		}
 
 		allOfSchema.BaseSchema = base
+
 		return allOfSchema, nil
 	}
 
@@ -368,6 +379,7 @@ func SchemaFromOpenAPISchema(schema *openapi3.Schema) (Schema, error) {
 		}
 
 		objectSchema.BaseSchema = base
+
 		return objectSchema, nil
 	case openapi3.TypeArray:
 		arraySchema, err := arraySchemaFromOpenAPISchema(schema)
@@ -376,6 +388,7 @@ func SchemaFromOpenAPISchema(schema *openapi3.Schema) (Schema, error) {
 		}
 
 		arraySchema.BaseSchema = base
+
 		return arraySchema, nil
 	case openapi3.TypeString:
 		return &StringSchema{
@@ -437,6 +450,7 @@ func objectSchemaFromOpenAPISchema(schema *openapi3.Schema) (*ObjectSchema, erro
 		if err != nil {
 			return nil, fmt.Errorf("additionalProperties schema: %w", err)
 		}
+
 		err = setSchemaTypeNameIfEmpty(additionalPropertiesObject, "AdditionalProperty")
 		if err != nil {
 			return nil, fmt.Errorf("additionalProperties schema name: %w", err)
@@ -453,10 +467,12 @@ func objectSchemaFromOpenAPISchema(schema *openapi3.Schema) (*ObjectSchema, erro
 
 	for _, propertyName := range slices.Sorted(maps.Keys(schema.Properties)) {
 		propertySchema := schema.Properties[propertyName]
+
 		propertyObject, err := schemaFromOpenAPISchemaRef(propertySchema)
 		if err != nil {
 			return nil, fmt.Errorf("property %q schema: %w", propertyName, err)
 		}
+
 		err = setSchemaTypeNameIfEmpty(propertyObject, propertyName)
 		if err != nil {
 			return nil, fmt.Errorf("property %q schema name: %w", propertyName, err)
@@ -482,6 +498,7 @@ func arraySchemaFromOpenAPISchema(schema *openapi3.Schema) (*ArraySchema, error)
 	if err != nil {
 		return nil, fmt.Errorf("array items schema: %w", err)
 	}
+
 	err = setSchemaTypeNameIfEmpty(items, "Item")
 	if err != nil {
 		return nil, fmt.Errorf("array items schema name: %w", err)
@@ -501,6 +518,7 @@ func setSchemaTypeNameIfEmpty(schema Schema, name string) error {
 	if base == nil {
 		return fmt.Errorf("schema %T has nil base", schema)
 	}
+
 	if base.Name == "" {
 		base.Name = exportedName(name)
 	}
@@ -508,7 +526,7 @@ func setSchemaTypeNameIfEmpty(schema Schema, name string) error {
 	return nil
 }
 
-// TODO, I have high concern for this function. But we would need first to get better testing than this. It looks to me that it doesn't try to find the reffed value at all
+// TODO, I have high concern for this function. But we would need first to get better testing than this. It looks to me that it doesn't try to find the reffed value at all.
 func schemaFromOpenAPISchemaRef(schemaRef *openapi3.SchemaRef) (Schema, error) {
 	if schemaRef == nil {
 		return nil, fmt.Errorf("openapi schema ref is nil")
@@ -527,13 +545,14 @@ func schemaFromOpenAPISchemaRef(schemaRef *openapi3.SchemaRef) (Schema, error) {
 
 // TODO, Concerned about this as well. Wouldn't we want a better inferring of type method
 // Perhaps just one traversal over the whole schema, and setting Type once. From then on you just read out the 'Type'
-// I thought that openapi3.Schema would already do that for us, but perhaps not
+// I thought that openapi3.Schema would already do that for us, but perhaps not.
 func schemaType(schema *openapi3.Schema) (string, error) {
 	if schema.Type == nil || schema.Type.IsEmpty() {
 		return inferredSchemaType(schema)
 	}
 
 	schemaTypes := schema.Type.Slice()
+
 	nonNullTypes := make([]string, 0, len(schemaTypes))
 	for _, schemaType := range schemaTypes {
 		if schemaType != openapi3.TypeNull {
@@ -548,7 +567,7 @@ func schemaType(schema *openapi3.Schema) (string, error) {
 	return nonNullTypes[0], nil
 }
 
-// TODO, validate if this is true. I thought that strings for instance could also be inferred
+// TODO, validate if this is true. I thought that strings for instance could also be inferred.
 func inferredSchemaType(schema *openapi3.Schema) (string, error) {
 	if len(schema.Properties) != 0 || len(schema.Required) != 0 || schema.AdditionalProperties.Has != nil || schema.AdditionalProperties.Schema != nil {
 		return openapi3.TypeObject, nil

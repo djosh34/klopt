@@ -172,6 +172,7 @@ func TestGenerateFunctionsParseSchemaAndDoNothing(t *testing.T) {
 			called := false
 			err := tt.generate([]byte(openAPIObjectSchemaSpec), "createThing", func(_ []byte) error {
 				called = true
+
 				return errors.New("unmarshal must not be called yet")
 			})
 			require.NoError(t, err)

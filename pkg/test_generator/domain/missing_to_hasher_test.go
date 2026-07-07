@@ -1,9 +1,10 @@
 package domain
 
 import (
+	"testing"
+
 	"decode_and_validate_generator/pkg/test_generator/hashables"
 	"decode_and_validate_generator/pkg/test_generator/types"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 )

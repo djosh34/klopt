@@ -1,11 +1,12 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/hashables"
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"decode_and_validate_generator/pkg/test_generator/hashables"
+	"decode_and_validate_generator/pkg/test_generator/types"
 )
 
 var _ types.AllOfMerger = new(AllOfDomain)
@@ -19,6 +20,7 @@ func (a *AllOfDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	if a == nil {
 		return nil, errors.New("allOf domain cannot be nil")
 	}
+
 	if domain == nil {
 		return nil, errors.New("domain cannot be nil")
 	}
@@ -32,6 +34,7 @@ func (a *AllOfDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 		if otherAllOf == nil {
 			return nil, errors.New("allOf domain cannot be nil")
 		}
+
 		if len(otherAllOf.Domains) == 0 && otherAllOf.MergedDomain != nil {
 			if err := mergedAllOf.mergeOne(otherAllOf.MergedDomain); err != nil {
 				return nil, err
@@ -48,6 +51,7 @@ func (a *AllOfDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	}
 
 	*a = *mergedAllOf
+
 	return a, nil
 }
 
@@ -55,16 +59,21 @@ func (a *AllOfDomain) mergeOne(domain types.Domain) error {
 	if domain == nil {
 		return errors.New("domain cannot be nil")
 	}
+
 	a.Domains = append(a.Domains, domain)
 	if a.MergedDomain == nil {
 		a.MergedDomain = domain
+
 		return nil
 	}
+
 	mergedDomain, err := a.MergedDomain.AllOfMerge(domain)
 	if err != nil {
 		return err
 	}
+
 	a.MergedDomain = mergedDomain
+
 	return nil
 }
 
@@ -76,22 +85,27 @@ func (a *AllOfDomain) ToHasher() (types.Hasher, error) {
 	domainHashers := make([]types.Hasher, 0, len(a.Domains))
 	for _, allOfDomain := range a.Domains {
 		var domainHasher types.Hasher
+
 		if allOfDomain != nil {
 			hasher, err := allOfDomain.ToHasher()
 			if err != nil {
 				return nil, err
 			}
+
 			domainHasher = hasher
 		}
+
 		domainHashers = append(domainHashers, domainHasher)
 	}
 
 	var mergedHasher types.Hasher
+
 	if a.MergedDomain != nil {
 		hasher, err := a.MergedDomain.ToHasher()
 		if err != nil {
 			return nil, err
 		}
+
 		mergedHasher = hasher
 	}
 
@@ -123,6 +137,7 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 	if err := json.Unmarshal(*node, &jsonKV); err != nil {
 		return AllOfDomain{}, err
 	}
+
 	if jsonKV == nil {
 		return AllOfDomain{}, errors.New("schema node must be object")
 	}
@@ -131,16 +146,19 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 	if !ok {
 		return AllOfDomain{}, errors.New("allOf is required")
 	}
+
 	for _, key := range []string{"oneOf", "anyOf", "not", "discriminator"} {
 		if _, ok := jsonKV[key]; ok {
 			return AllOfDomain{}, fmt.Errorf("%s is unsupported with allOf", key)
 		}
 	}
+
 	for key := range jsonKV {
 		if !isAllowedAllOfSiblingKey(key) {
 			return AllOfDomain{}, fmt.Errorf("unsupported allOf schema field %q", key)
 		}
 	}
+
 	if string(allOfRaw) == "null" {
 		return AllOfDomain{}, errors.New("allOf cannot be null")
 	}
@@ -149,6 +167,7 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 	if err := json.Unmarshal(allOfRaw, &allOfItems); err != nil {
 		return AllOfDomain{}, errors.New("allOf must be array")
 	}
+
 	if len(allOfItems) == 0 {
 		return AllOfDomain{}, errors.New("allOf cannot be empty")
 	}
@@ -157,21 +176,26 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 		if string(allOfItem) == "null" {
 			return AllOfDomain{}, errors.New("allOf item cannot be null")
 		}
+
 		itemKV := JSONKV{}
 		if err := json.Unmarshal(allOfItem, &itemKV); err != nil {
 			return AllOfDomain{}, errors.New("allOf item must be object")
 		}
+
 		if itemKV == nil {
 			return AllOfDomain{}, errors.New("allOf item must be object")
 		}
+
 		if len(itemKV) == 0 {
 			return AllOfDomain{}, errors.New("allOf item cannot be empty schema")
 		}
+
 		for _, key := range []string{"oneOf", "anyOf", "not", "discriminator"} {
 			if _, ok := itemKV[key]; ok {
 				return AllOfDomain{}, fmt.Errorf("allOf item %s is unsupported", key)
 			}
 		}
+
 		if _, ok := itemKV["$ref"]; ok && len(itemKV) != 1 {
 			return AllOfDomain{}, errors.New("$ref with siblings is unsupported")
 		}
@@ -180,9 +204,11 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 		if err != nil {
 			return AllOfDomain{}, err
 		}
+
 		if domain == nil {
 			return AllOfDomain{}, errors.New("parsed allOf item cannot be nil")
 		}
+
 		if _, err := allOfDomain.AllOfMerge(domain); err != nil {
 			return AllOfDomain{}, err
 		}
@@ -193,38 +219,49 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 		if key == "allOf" || key == "title" || key == "description" {
 			continue
 		}
+
 		siblingKV[key] = value
 	}
+
 	if len(siblingKV) == 1 {
 		if nullableRaw, ok := siblingKV["nullable"]; ok {
 			var nullable bool
 			if err := json.Unmarshal(nullableRaw, &nullable); err != nil {
 				return AllOfDomain{}, errors.New("nullable must be boolean")
 			}
+
 			nullableDomain, err := nullableOnlyDomain(allOfDomain.MergedDomain, nullable)
 			if err != nil {
 				return AllOfDomain{}, err
 			}
+
 			dc.AddDomain(nullableDomain)
+
 			if _, err := allOfDomain.AllOfMerge(nullableDomain); err != nil {
 				return AllOfDomain{}, err
 			}
+
 			return allOfDomain, nil
 		}
 	}
+
 	if len(siblingKV) != 0 {
 		siblingRaw, err := json.Marshal(siblingKV)
 		if err != nil {
 			return AllOfDomain{}, err
 		}
+
 		raw := json.RawMessage(siblingRaw)
+
 		domain, err := dc.Parse(&raw)
 		if err != nil {
 			return AllOfDomain{}, err
 		}
+
 		if domain == nil {
 			return AllOfDomain{}, errors.New("parsed allOf sibling cannot be nil")
 		}
+
 		if _, err := allOfDomain.AllOfMerge(domain); err != nil {
 			return AllOfDomain{}, err
 		}

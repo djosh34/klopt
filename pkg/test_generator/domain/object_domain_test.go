@@ -1,11 +1,12 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/hashables"
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/hashables"
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	testgenerator "decode_and_validate_generator/pkg/test_generator"
 
@@ -43,6 +44,7 @@ func rawObjectFromYAML(t *testing.T, yamlString string) *json.RawMessage {
 
 	node, err := testgenerator.YAMLBytesToJSONRawMessage([]byte(yamlString))
 	require.NoError(t, err)
+
 	return node
 }
 
@@ -253,24 +255,31 @@ maxProperties: 0
 				domainStore: domainStore{},
 				parse: func(node *json.RawMessage) (types.Domain, error) {
 					require.Less(t, parseCall, len(tt.parseDomains))
+
 					var propertyJSONKV JSONKV
 					require.NoError(t, json.Unmarshal(*node, &propertyJSONKV))
+
 					if len(tt.parseDomains) > 1 {
 						if propertyTypeJSON, ok := propertyJSONKV["type"]; ok {
 							var propertyType string
 							require.NoError(t, json.Unmarshal(propertyTypeJSON, &propertyType))
+
 							switch propertyType {
 							case "string":
 								parseCall++
+
 								return propertyNameDomain, nil
 							case "integer":
 								parseCall++
+
 								return propertyAgeDomain, nil
 							}
 						}
 					}
+
 					domain := tt.parseDomains[parseCall]
 					parseCall++
+
 					return domain, nil
 				},
 			}
@@ -365,6 +374,7 @@ properties:
 	dc := DomainContext{
 		parse: func(node *json.RawMessage) (types.Domain, error) {
 			require.Fail(t, "ParseObject should return before parsing properties")
+
 			return nil, nil
 		},
 	}
@@ -636,6 +646,7 @@ minProperties: -1
 `,
 			parse: func(parseCall int) (types.Domain, error) {
 				_ = parseCall
+
 				return propertyDomain, nil
 			},
 			wantParseCalls: 1,
@@ -650,6 +661,7 @@ notInTheSpecAtAll: true
 `,
 			parse: func(parseCall int) (types.Domain, error) {
 				_ = parseCall
+
 				return propertyDomain, nil
 			},
 			wantParseCalls: 1,
@@ -667,6 +679,7 @@ additionalProperties:
 				if parseCall == 0 {
 					return propertyDomain, nil
 				}
+
 				return nil, errors.New("parse failed")
 			},
 			wantParseCalls: 2,
@@ -681,6 +694,7 @@ additionalProperties:
 				_ = node
 				domain, err := tt.parse(parseCall)
 				parseCall++
+
 				return domain, err
 			}}
 

@@ -1,8 +1,9 @@
 package hashables
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )

@@ -1,13 +1,13 @@
 package domain
 
 import (
-	"bytes"
-	"decode_and_validate_generator/pkg/test_generator/hashables"
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+
+	"decode_and_validate_generator/pkg/test_generator/hashables"
+	"decode_and_validate_generator/pkg/test_generator/types"
 )
 
 type StringDomain struct {
@@ -29,13 +29,16 @@ func (domain *StringDomain) AllOfMerge(otherDomain types.Domain) (types.Domain, 
 	if domain == nil {
 		return nil, errors.New("string domain cannot be nil")
 	}
+
 	if allOfDomain, ok := otherDomain.(*AllOfDomain); ok {
 		mergedAllOf := &AllOfDomain{}
 		if _, err := mergedAllOf.AllOfMerge(domain); err != nil {
 			return nil, err
 		}
+
 		return mergedAllOf.AllOfMerge(allOfDomain)
 	}
+
 	otherString, ok := otherDomain.(*StringDomain)
 	if !ok || otherString == nil {
 		return nil, errors.New("domain is not StringDomain")
@@ -48,6 +51,7 @@ func (domain *StringDomain) AllOfMerge(otherDomain types.Domain) (types.Domain, 
 	if err != nil {
 		return nil, err
 	}
+
 	merged.Enum = enums
 
 	merged.Pattern = append(append(types.Pattern(nil), domain.Pattern...), otherString.Pattern...)
@@ -58,27 +62,33 @@ func (domain *StringDomain) AllOfMerge(otherDomain types.Domain) (types.Domain, 
 
 	if merged.Enum != nil && merged.XValidExamples != nil {
 		newEnums := make([]types.Enum, 0, len(merged.Enum))
+
 		newExamples := make([]string, 0, len(merged.XValidExamples))
 		for _, enumValue := range merged.Enum {
-			var rawValue any
-			if err := json.Unmarshal(enumValue, &rawValue); err != nil {
-				return nil, err
-			}
-			stringValue, ok := rawValue.(string)
-			if !ok {
+			trimmedEnumValue := strings.TrimSpace(string(enumValue))
+			if trimmedEnumValue == "" || trimmedEnumValue[0] != '"' {
 				continue
 			}
+
+			var stringValue string
+			if err := json.Unmarshal(enumValue, &stringValue); err != nil {
+				return nil, err
+			}
+
 			for _, example := range merged.XValidExamples {
 				if stringValue == example {
 					newEnums = append(newEnums, enumValue)
 					newExamples = append(newExamples, example)
+
 					break
 				}
 			}
 		}
+
 		if len(newEnums) == 0 {
 			return nil, errors.New("enum and valid examples intersection is empty")
 		}
+
 		merged.Enum = newEnums
 		merged.XValidExamples = newExamples
 	}
@@ -86,6 +96,7 @@ func (domain *StringDomain) AllOfMerge(otherDomain types.Domain) (types.Domain, 
 	if otherString.MinLength > merged.MinLength {
 		merged.MinLength = otherString.MinLength
 	}
+
 	if merged.MaxLength == nil || (otherString.MaxLength != nil && *otherString.MaxLength < *merged.MaxLength) {
 		merged.MaxLength = otherString.MaxLength
 	}
@@ -110,107 +121,143 @@ func (domain *StringDomain) ToHasher() (types.Hasher, error) {
 	}, nil
 }
 
+type stringSchema struct {
+	Type             *string  `json:"type"`
+	Nullable         *bool    `json:"nullable"`
+	MinLength        *int     `json:"minLength"`
+	MaxLength        *int     `json:"maxLength"`
+	Pattern          *string  `json:"pattern"`
+	Format           *string  `json:"format"`
+	XValidExamples   []string `json:"x-valid-examples"`
+	XInvalidExamples []string `json:"x-invalid-examples"`
+}
+
 func (dc *DomainContext) ParseString(node *json.RawMessage) (StringDomain, error) {
 	if node == nil {
 		return StringDomain{}, errors.New("schema node is nil")
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(*node))
-	decoder.UseNumber()
 	jsonKV := JSONKV{}
-	if err := decoder.Decode(&jsonKV); err != nil {
+	if err := json.Unmarshal(*node, &jsonKV); err != nil {
 		return StringDomain{}, err
 	}
 
-	var raw map[string]any
-	decoder = json.NewDecoder(bytes.NewReader(*node))
-	decoder.UseNumber()
-	if err := decoder.Decode(&raw); err != nil {
+	schema := stringSchema{}
+	if err := json.Unmarshal(*node, &schema); err != nil {
 		return StringDomain{}, err
 	}
 
-	schemaType, err := requiredString(raw, "type")
+	schemaType, err := requiredSchemaType(jsonKV, schema.Type)
 	if err != nil {
 		return StringDomain{}, err
 	}
+
 	if schemaType != "string" {
 		return StringDomain{}, fmt.Errorf("string domain type must be string, got %q", schemaType)
 	}
 
 	domain := StringDomain{}
-	if value, ok := raw["nullable"]; ok {
-		nullable, ok := value.(bool)
-		if !ok {
+
+	if _, ok := jsonKV["nullable"]; ok {
+		if schema.Nullable == nil {
 			return StringDomain{}, errors.New("nullable must be boolean")
 		}
-		domain.Nullable = nullable
+
+		domain.Nullable = *schema.Nullable
 	}
 
 	enums, _, err := parseEnums(jsonKV)
 	if err != nil {
 		return StringDomain{}, err
 	}
+
 	domain.Enum = enums
 
-	if value, ok := raw["minLength"]; ok {
-		minLength, err := parseNonNegativeInteger(value, "minLength")
-		if err != nil {
-			return StringDomain{}, err
+	if _, ok := jsonKV["minLength"]; ok {
+		if schema.MinLength == nil {
+			return StringDomain{}, errors.New("minLength cannot be null")
 		}
-		domain.MinLength = minLength
-	}
-	if value, ok := raw["maxLength"]; ok {
-		maxLength, err := parseNonNegativeInteger(value, "maxLength")
-		if err != nil {
-			return StringDomain{}, err
+
+		if *schema.MinLength < 0 {
+			return StringDomain{}, errors.New("minLength cannot be negative")
 		}
-		domain.MaxLength = &maxLength
+
+		domain.MinLength = *schema.MinLength
 	}
+
+	if _, ok := jsonKV["maxLength"]; ok {
+		if schema.MaxLength == nil {
+			return StringDomain{}, errors.New("maxLength cannot be null")
+		}
+
+		if *schema.MaxLength < 0 {
+			return StringDomain{}, errors.New("maxLength cannot be negative")
+		}
+
+		domain.MaxLength = schema.MaxLength
+	}
+
 	if domain.MaxLength != nil && domain.MinLength > *domain.MaxLength {
 		return StringDomain{}, errors.New("minLength cannot exceed maxLength")
 	}
 
-	if value, ok := raw["pattern"]; ok {
-		pattern, ok := value.(string)
-		if !ok {
+	if _, ok := jsonKV["pattern"]; ok {
+		if schema.Pattern == nil {
 			return StringDomain{}, errors.New("pattern must be string")
 		}
-		domain.Pattern = types.Pattern{pattern}
-	}
-	if value, ok := raw["format"]; ok {
-		format, ok := value.(string)
-		if !ok {
-			return StringDomain{}, errors.New("format must be string")
-		}
-		domain.Format = types.Format{format}
+
+		domain.Pattern = types.Pattern{*schema.Pattern}
 	}
 
-	if value, ok := raw["x-valid-examples"]; ok {
-		examples, err := parseStringExamples(value, "x-valid-examples")
+	if _, ok := jsonKV["format"]; ok {
+		if schema.Format == nil {
+			return StringDomain{}, errors.New("format must be string")
+		}
+
+		domain.Format = types.Format{*schema.Format}
+	}
+
+	if _, ok := jsonKV["x-valid-examples"]; ok {
+		if schema.XValidExamples == nil {
+			return StringDomain{}, errors.New("x-valid-examples must be array")
+		}
+
+		examples, err := parseStringExamples(schema.XValidExamples, "x-valid-examples")
 		if err != nil {
 			return StringDomain{}, err
 		}
+
 		domain.XValidExamples = examples
 	}
-	if value, ok := raw["x-invalid-examples"]; ok {
-		examples, err := parseStringExamples(value, "x-invalid-examples")
+
+	if _, ok := jsonKV["x-invalid-examples"]; ok {
+		if schema.XInvalidExamples == nil {
+			return StringDomain{}, errors.New("x-invalid-examples must be array")
+		}
+
+		examples, err := parseStringExamples(schema.XInvalidExamples, "x-invalid-examples")
 		if err != nil {
 			return StringDomain{}, err
 		}
+
 		domain.XInvalidExamples = examples
 	}
+
 	usesExamples := len(domain.Pattern) != 0 || len(domain.Format) != 0
 	if usesExamples && (len(domain.XValidExamples) == 0 || len(domain.XInvalidExamples) == 0) {
 		return StringDomain{}, errors.New("pattern and format require x-valid-examples and x-invalid-examples")
 	}
+
 	if !usesExamples && (len(domain.XValidExamples) != 0 || len(domain.XInvalidExamples) != 0) {
 		return StringDomain{}, errors.New("x-valid-examples and x-invalid-examples require pattern or format")
 	}
 
 	deleteAllowableKeys(jsonKV)
+
 	for _, key := range []string{"enum", "minLength", "maxLength", "pattern", "format", "x-valid-examples", "x-invalid-examples"} {
 		delete(jsonKV, key)
 	}
+
 	if len(jsonKV) != 0 {
 		for key := range jsonKV {
 			return StringDomain{}, fmt.Errorf("unsupported string schema field %q", key)
@@ -224,9 +271,11 @@ func mergeStringIntersections(left []string, right []string) []string {
 	if left == nil && right == nil {
 		return nil
 	}
+
 	if left == nil {
 		return append([]string(nil), right...)
 	}
+
 	if right == nil {
 		return append([]string(nil), left...)
 	}
@@ -236,10 +285,12 @@ func mergeStringIntersections(left []string, right []string) []string {
 		for _, rightValue := range right {
 			if leftValue == rightValue {
 				merged = append(merged, leftValue)
+
 				break
 			}
 		}
 	}
+
 	return merged
 }
 
@@ -247,55 +298,32 @@ func mergeStringUnion(left []string, right []string) []string {
 	if left == nil && right == nil {
 		return nil
 	}
+
 	merged := append([]string(nil), left...)
+
 	for _, rightValue := range right {
 		found := false
+
 		for _, leftValue := range merged {
 			if leftValue == rightValue {
 				found = true
+
 				break
 			}
 		}
+
 		if !found {
 			merged = append(merged, rightValue)
 		}
 	}
+
 	return merged
 }
 
-func parseStringExamples(value any, field string) ([]string, error) {
-	values, ok := value.([]any)
-	if !ok || values == nil {
-		return nil, fmt.Errorf("%s must be array", field)
-	}
+func parseStringExamples(values []string, field string) ([]string, error) {
 	if len(values) == 0 {
 		return nil, fmt.Errorf("%s cannot be empty", field)
 	}
-	examples := make([]string, 0, len(values))
-	for _, item := range values {
-		stringValue, ok := item.(string)
-		if !ok {
-			return nil, fmt.Errorf("%s values must be strings", field)
-		}
-		examples = append(examples, stringValue)
-	}
-	return examples, nil
-}
 
-func parseNonNegativeInteger(value any, field string) (int, error) {
-	number, ok := value.(json.Number)
-	if !ok {
-		return 0, fmt.Errorf("%s must be an integer", field)
-	}
-	if strings.ContainsAny(number.String(), ".eE") {
-		return 0, fmt.Errorf("%s must be an integer", field)
-	}
-	integer, err := number.Int64()
-	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer: %w", field, err)
-	}
-	if integer < 0 {
-		return 0, fmt.Errorf("%s cannot be negative", field)
-	}
-	return int(integer), nil
+	return append([]string(nil), values...), nil
 }

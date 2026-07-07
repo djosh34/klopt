@@ -35,12 +35,14 @@ type openAPIMediaType struct {
 
 func OpenAPIRequestBodySchemaNode(openAPIJSONSpec *json.RawMessage, operationID string) (*json.RawMessage, error) {
 	var document openAPIDocument
+
 	err := json.Unmarshal(*openAPIJSONSpec, &document)
 	if err != nil {
 		return nil, fmt.Errorf("parse openapi json spec: %w", err)
 	}
 
 	var matches []*openAPIOperation
+
 	for _, pathItem := range document.Paths {
 		for _, operation := range []*openAPIOperation{
 			pathItem.Get,
@@ -55,6 +57,7 @@ func OpenAPIRequestBodySchemaNode(openAPIJSONSpec *json.RawMessage, operationID 
 			if operation == nil {
 				continue
 			}
+
 			if operation.OperationID == operationID {
 				matches = append(matches, operation)
 			}
@@ -78,6 +81,7 @@ func OpenAPIRequestBodySchemaNode(openAPIJSONSpec *json.RawMessage, operationID 
 	if !ok {
 		return nil, fmt.Errorf("operationId %q request body content type is not json", operationID)
 	}
+
 	if mediaType.Schema == nil || len(*mediaType.Schema) == 0 || string(*mediaType.Schema) == "null" {
 		return nil, fmt.Errorf("operationId %q application/json schema does not exist", operationID)
 	}

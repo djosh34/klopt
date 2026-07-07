@@ -38,7 +38,6 @@ func exampleOpenAPIPath(t *testing.T) string {
 }
 
 func TestGenerateExample(t *testing.T) {
-
 	openapiExamplePath := exampleOpenAPIPath(t)
 	generateContext, err := LoadOpenapi(t.Context(), openapiExamplePath)
 	require.NoError(t, err)
@@ -47,7 +46,6 @@ func TestGenerateExample(t *testing.T) {
 
 	err = GenerateWithPathError(t, generateContext, generateOutputDir)
 	require.NoError(t, err)
-
 }
 
 func SharedGenerateExampleMatchesFixture(t *testing.T, regen bool) {
@@ -73,7 +71,6 @@ func SharedGenerateExampleMatchesFixture(t *testing.T, regen bool) {
 		"decode.go",
 		"decode_tests",
 	}, regen)
-
 }
 
 func TestGenerateExampleMatchesFixture_NoRegen(t *testing.T) {
@@ -91,6 +88,7 @@ func TestGenerateExampleMatchesFixture_Regen(t *testing.T) {
 	lastArg := os.Args[len(os.Args)-1]
 
 	var allowedLastArgs []string
+
 	allowedLastArgs = append(allowedLastArgs, fmt.Sprintf("^\\Q%s\\E$", name))
 	allowedLastArgs = append(allowedLastArgs, fmt.Sprintf("-test.run=^\\Q%s\\E$", name))
 
@@ -98,6 +96,7 @@ func TestGenerateExampleMatchesFixture_Regen(t *testing.T) {
 		if arg == lastArg {
 			t.Log("Running Regen.....")
 			SharedGenerateExampleMatchesFixture(t, true)
+
 			return
 		}
 	}

@@ -1,11 +1,12 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/hashables"
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/hashables"
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -126,6 +127,7 @@ func TestStringDomainMarshalJSONAllCombinations(t *testing.T) {
 										require.NoError(t, err)
 
 										var fields map[string]json.RawMessage
+
 										err = json.Unmarshal(jsonBytes, &fields)
 										require.NoError(t, err)
 

@@ -1,14 +1,14 @@
 package domain
 
 import (
-	"bytes"
-	"decode_and_validate_generator/pkg/test_generator/hashables"
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
 	"strings"
+
+	"decode_and_validate_generator/pkg/test_generator/hashables"
+	"decode_and_validate_generator/pkg/test_generator/types"
 )
 
 type NumberDomain struct {
@@ -28,17 +28,21 @@ func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	if n == nil {
 		return nil, errors.New("number domain cannot be nil")
 	}
+
 	if allOfDomain, ok := domain.(*AllOfDomain); ok {
 		mergedAllOf := &AllOfDomain{}
 		if _, err := mergedAllOf.AllOfMerge(n); err != nil {
 			return nil, err
 		}
+
 		return mergedAllOf.AllOfMerge(allOfDomain)
 	}
+
 	otherNumber, ok := domain.(*NumberDomain)
 	if !ok || otherNumber == nil {
 		return nil, errors.New("domain is not NumberDomain")
 	}
+
 	if (n.Type != "number" && n.Type != "integer") || (otherNumber.Type != "number" && otherNumber.Type != "integer") {
 		return nil, errors.New("number domain type must be number or integer")
 	}
@@ -49,12 +53,14 @@ func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	} else {
 		merged.Type = "number"
 	}
+
 	merged.Nullable = n.Nullable && otherNumber.Nullable
 
 	enums, err := mergeEnums(n.Enum, otherNumber.Enum)
 	if err != nil {
 		return nil, err
 	}
+
 	merged.Enum = enums
 
 	if n.Minimum == nil {
@@ -63,12 +69,14 @@ func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 				return nil, err
 			}
 		}
+
 		merged.Minimum = otherNumber.Minimum
 		merged.ExclusiveMinimum = otherNumber.Minimum != nil && otherNumber.ExclusiveMinimum
 	} else if otherNumber.Minimum == nil {
 		if _, err := compareNumbers(*n.Minimum, *n.Minimum); err != nil {
 			return nil, err
 		}
+
 		merged.Minimum = n.Minimum
 		merged.ExclusiveMinimum = n.ExclusiveMinimum
 	} else {
@@ -76,6 +84,7 @@ func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		if comparison < 0 {
 			merged.Minimum = otherNumber.Minimum
 			merged.ExclusiveMinimum = otherNumber.ExclusiveMinimum
@@ -94,12 +103,14 @@ func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 				return nil, err
 			}
 		}
+
 		merged.Maximum = otherNumber.Maximum
 		merged.ExclusiveMaximum = otherNumber.Maximum != nil && otherNumber.ExclusiveMaximum
 	} else if otherNumber.Maximum == nil {
 		if _, err := compareNumbers(*n.Maximum, *n.Maximum); err != nil {
 			return nil, err
 		}
+
 		merged.Maximum = n.Maximum
 		merged.ExclusiveMaximum = n.ExclusiveMaximum
 	} else {
@@ -107,6 +118,7 @@ func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		if comparison > 0 {
 			merged.Maximum = otherNumber.Maximum
 			merged.ExclusiveMaximum = otherNumber.ExclusiveMaximum
@@ -125,25 +137,30 @@ func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 			if err != nil {
 				return nil, err
 			}
+
 			if comparison <= 0 {
 				return nil, errors.New("multipleOf must be positive")
 			}
 		}
+
 		merged.MultipleOf = otherNumber.MultipleOf
 	} else if otherNumber.MultipleOf == nil {
 		comparison, err := compareNumbers(*n.MultipleOf, Number("0"))
 		if err != nil {
 			return nil, err
 		}
+
 		if comparison <= 0 {
 			return nil, errors.New("multipleOf must be positive")
 		}
+
 		merged.MultipleOf = n.MultipleOf
 	} else {
 		multipleOf, err := mergeMultipleOf(*n.MultipleOf, *otherNumber.MultipleOf)
 		if err != nil {
 			return nil, err
 		}
+
 		merged.MultipleOf = &multipleOf
 	}
 
@@ -156,6 +173,7 @@ func (n *NumberDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	} else {
 		merged.Format = n.Format
 	}
+
 	if merged.Type == "integer" && merged.Format != nil && (*merged.Format == "float" || *merged.Format == "double") {
 		return nil, errors.New("integer cannot use number format")
 	}
@@ -181,120 +199,158 @@ func (n *NumberDomain) ToHasher() (types.Hasher, error) {
 	}, nil
 }
 
+type numberSchema struct {
+	Type             *string      `json:"type"`
+	Nullable         *bool        `json:"nullable"`
+	Minimum          *json.Number `json:"minimum"`
+	Maximum          *json.Number `json:"maximum"`
+	ExclusiveMinimum *bool        `json:"exclusiveMinimum"`
+	ExclusiveMaximum *bool        `json:"exclusiveMaximum"`
+	MultipleOf       *json.Number `json:"multipleOf"`
+	Format           *string      `json:"format"`
+}
+
 func (dc *DomainContext) ParseNumber(node *json.RawMessage) (NumberDomain, error) {
 	if node == nil {
 		return NumberDomain{}, errors.New("schema node is nil")
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(*node))
-	decoder.UseNumber()
 	jsonKV := JSONKV{}
-	if err := decoder.Decode(&jsonKV); err != nil {
+	if err := json.Unmarshal(*node, &jsonKV); err != nil {
 		return NumberDomain{}, err
 	}
 
-	var raw map[string]any
-	decoder = json.NewDecoder(bytes.NewReader(*node))
-	decoder.UseNumber()
-	if err := decoder.Decode(&raw); err != nil {
+	schema := numberSchema{}
+	if err := json.Unmarshal(*node, &schema); err != nil {
 		return NumberDomain{}, err
 	}
 
 	domain := NumberDomain{}
-	schemaType, err := requiredString(raw, "type")
+
+	schemaType, err := requiredSchemaType(jsonKV, schema.Type)
 	if err != nil {
 		return NumberDomain{}, err
 	}
+
 	if schemaType != "number" && schemaType != "integer" {
 		return NumberDomain{}, fmt.Errorf("number domain type must be number or integer, got %q", schemaType)
 	}
+
 	domain.Type = schemaType
 
-	if value, ok := raw["nullable"]; ok {
-		nullable, ok := value.(bool)
-		if !ok {
+	if _, ok := jsonKV["nullable"]; ok {
+		if schema.Nullable == nil {
 			return NumberDomain{}, errors.New("nullable must be boolean")
 		}
-		domain.Nullable = nullable
+
+		domain.Nullable = *schema.Nullable
 	}
 
 	enums, _, err := parseEnums(jsonKV)
 	if err != nil {
 		return NumberDomain{}, err
 	}
+
 	domain.Enum = enums
 
-	if value, ok := raw["minimum"]; ok {
-		number, err := parseSchemaNumber(value, schemaType, "minimum")
+	if _, ok := jsonKV["minimum"]; ok {
+		if schema.Minimum == nil {
+			return NumberDomain{}, errors.New("minimum cannot be null")
+		}
+
+		number, err := parseSchemaNumber(*schema.Minimum, schemaType, "minimum")
 		if err != nil {
 			return NumberDomain{}, err
 		}
+
 		domain.Minimum = &number
 	}
-	if value, ok := raw["maximum"]; ok {
-		number, err := parseSchemaNumber(value, schemaType, "maximum")
+
+	if _, ok := jsonKV["maximum"]; ok {
+		if schema.Maximum == nil {
+			return NumberDomain{}, errors.New("maximum cannot be null")
+		}
+
+		number, err := parseSchemaNumber(*schema.Maximum, schemaType, "maximum")
 		if err != nil {
 			return NumberDomain{}, err
 		}
+
 		domain.Maximum = &number
 	}
-	if value, ok := raw["exclusiveMinimum"]; ok {
-		boolValue, ok := value.(bool)
-		if !ok {
+
+	if _, ok := jsonKV["exclusiveMinimum"]; ok {
+		if schema.ExclusiveMinimum == nil {
 			return NumberDomain{}, errors.New("exclusiveMinimum must be boolean")
 		}
-		domain.ExclusiveMinimum = boolValue
+
+		domain.ExclusiveMinimum = *schema.ExclusiveMinimum
 	}
-	if value, ok := raw["exclusiveMaximum"]; ok {
-		boolValue, ok := value.(bool)
-		if !ok {
+
+	if _, ok := jsonKV["exclusiveMaximum"]; ok {
+		if schema.ExclusiveMaximum == nil {
 			return NumberDomain{}, errors.New("exclusiveMaximum must be boolean")
 		}
-		domain.ExclusiveMaximum = boolValue
+
+		domain.ExclusiveMaximum = *schema.ExclusiveMaximum
 	}
+
 	if domain.Minimum != nil && domain.Maximum != nil {
 		comparison, err := compareNumbers(*domain.Minimum, *domain.Maximum)
 		if err != nil {
 			return NumberDomain{}, err
 		}
+
 		if comparison > 0 || (comparison == 0 && (domain.ExclusiveMinimum || domain.ExclusiveMaximum)) {
 			return NumberDomain{}, errors.New("minimum and maximum produce impossible range")
 		}
 	}
 
-	if value, ok := raw["multipleOf"]; ok {
-		number, err := parseSchemaNumber(value, schemaType, "multipleOf")
+	if _, ok := jsonKV["multipleOf"]; ok {
+		if schema.MultipleOf == nil {
+			return NumberDomain{}, errors.New("multipleOf cannot be null")
+		}
+
+		number, err := parseSchemaNumber(*schema.MultipleOf, schemaType, "multipleOf")
 		if err != nil {
 			return NumberDomain{}, err
 		}
+
 		comparison, err := compareNumbers(number, Number("0"))
 		if err != nil {
 			return NumberDomain{}, err
 		}
+
 		if comparison <= 0 {
 			return NumberDomain{}, errors.New("multipleOf must be positive")
 		}
+
 		domain.MultipleOf = &number
 	}
 
-	if value, ok := raw["format"]; ok {
-		format, ok := value.(string)
-		if !ok {
+	if _, ok := jsonKV["format"]; ok {
+		if schema.Format == nil {
 			return NumberDomain{}, errors.New("format must be string")
 		}
+
+		format := *schema.Format
 		if schemaType == "number" && format != "float" && format != "double" {
 			return NumberDomain{}, fmt.Errorf("unsupported number format %q", format)
 		}
+
 		if schemaType == "integer" && format != "int32" && format != "int64" {
 			return NumberDomain{}, fmt.Errorf("unsupported integer format %q", format)
 		}
+
 		domain.Format = &format
 	}
 
 	deleteAllowableKeys(jsonKV)
+
 	for _, key := range []string{"enum", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "format"} {
 		delete(jsonKV, key)
 	}
+
 	if len(jsonKV) != 0 {
 		for key := range jsonKV {
 			return NumberDomain{}, fmt.Errorf("unsupported number schema field %q", key)
@@ -304,30 +360,16 @@ func (dc *DomainContext) ParseNumber(node *json.RawMessage) (NumberDomain, error
 	return domain, nil
 }
 
-func requiredString(raw map[string]any, key string) (string, error) {
-	value, ok := raw[key]
-	if !ok {
-		return "", fmt.Errorf("%s is required", key)
-	}
-	stringValue, ok := value.(string)
-	if !ok {
-		return "", fmt.Errorf("%s must be string", key)
-	}
-	return stringValue, nil
-}
-
-func parseSchemaNumber(value any, schemaType string, field string) (Number, error) {
-	jsonNumber, ok := value.(json.Number)
-	if !ok {
-		return nil, fmt.Errorf("%s must be a number", field)
-	}
-	lexeme := jsonNumber.String()
+func parseSchemaNumber(value json.Number, schemaType string, field string) (Number, error) {
+	lexeme := value.String()
 	if schemaType == "integer" && strings.ContainsAny(lexeme, ".eE") {
 		return nil, fmt.Errorf("%s must be an integer", field)
 	}
+
 	if _, ok := new(big.Rat).SetString(lexeme); !ok {
 		return nil, fmt.Errorf("%s must be a number", field)
 	}
+
 	return Number(lexeme), nil
 }
 
@@ -336,10 +378,12 @@ func compareNumbers(a Number, b Number) (int, error) {
 	if !ok {
 		return 0, fmt.Errorf("invalid number %q", string(a))
 	}
+
 	bRat, ok := new(big.Rat).SetString(string(b))
 	if !ok {
 		return 0, fmt.Errorf("invalid number %q", string(b))
 	}
+
 	return aRat.Cmp(bRat), nil
 }
 
@@ -348,10 +392,12 @@ func mergeMultipleOf(left Number, right Number) (Number, error) {
 	if !ok {
 		return nil, fmt.Errorf("invalid number %q", string(left))
 	}
+
 	rightRat, ok := new(big.Rat).SetString(string(right))
 	if !ok {
 		return nil, fmt.Errorf("invalid number %q", string(right))
 	}
+
 	if leftRat.Sign() <= 0 || rightRat.Sign() <= 0 {
 		return nil, errors.New("multipleOf must be positive")
 	}
@@ -366,11 +412,13 @@ func mergeMultipleOf(left Number, right Number) (Number, error) {
 	gcdDen := new(big.Int).GCD(nil, nil, leftDen, rightDen)
 
 	mergedRat := new(big.Rat).SetFrac(lcmNum, gcdDen)
+
 	return Number(formatRatDecimal(mergedRat)), nil
 }
 
 func formatRatDecimal(rat *big.Rat) string {
 	num := new(big.Int).Set(rat.Num())
+
 	den := new(big.Int).Set(rat.Denom())
 	if den.Cmp(big.NewInt(1)) == 0 {
 		return num.String()
@@ -379,14 +427,19 @@ func formatRatDecimal(rat *big.Rat) string {
 	two := big.NewInt(2)
 	five := big.NewInt(5)
 	scale := 0
+
 	for new(big.Int).Mod(den, two).Sign() == 0 {
 		den.Div(den, two)
+
 		scale++
 	}
+
 	for new(big.Int).Mod(den, five).Sign() == 0 {
 		den.Div(den, five)
+
 		scale++
 	}
+
 	if den.Cmp(big.NewInt(1)) != 0 {
 		return rat.RatString()
 	}
@@ -394,13 +447,17 @@ func formatRatDecimal(rat *big.Rat) string {
 	pow10 := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil)
 	scaled := new(big.Int).Mul(num, pow10)
 	scaled.Div(scaled, rat.Denom())
+
 	digits := scaled.String()
 	if scale == 0 {
 		return digits
 	}
+
 	if len(digits) <= scale {
 		digits = strings.Repeat("0", scale-len(digits)+1) + digits
 	}
+
 	point := len(digits) - scale
+
 	return strings.TrimRight(digits[:point]+"."+digits[point:], "0")
 }

@@ -1,8 +1,9 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -13,7 +14,7 @@ func TestObjectDomainAllOfMergeValidPlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"nullable true true":                         {left: &ObjectDomain{Nullable: true}, right: &ObjectDomain{Nullable: true}, want: &ObjectDomain{Nullable: true}},
+		"nullable true":                              {left: &ObjectDomain{Nullable: true}, right: &ObjectDomain{Nullable: true}, want: &ObjectDomain{Nullable: true}},
 		"enum nil right":                             {left: &ObjectDomain{}, right: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"a":1}`), types.Enum(`{"b":2}`)}}, want: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"a":1}`), types.Enum(`{"b":2}`)}}},
 		"enum intersection":                          {left: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"a":1}`), types.Enum(`{"b":2}`), types.Enum(`{"c":3}`)}}, right: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"b":2}`), types.Enum(`{"c":3}`), types.Enum(`{"d":4}`)}}, want: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"b":2}`), types.Enum(`{"c":3}`)}}},
 		"enum preserves order":                       {left: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"b":2}`), types.Enum(`{"a":1}`)}}, right: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"a":1}`), types.Enum(`{"b":2}`)}}, want: &ObjectDomain{Enum: []types.Enum{types.Enum(`{"b":2}`), types.Enum(`{"a":1}`)}}},
@@ -27,7 +28,7 @@ func TestObjectDomainAllOfMergeValidPlanCases(t *testing.T) {
 		"prop merged with additional schema":         {left: &ObjectDomain{Properties: []Property{{Key: "a", Domain: &StringDomain{MinLength: 1}}}}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, want: &ObjectDomain{Properties: []Property{{Key: "a", Domain: &StringDomain{MinLength: 1, MaxLength: new(5)}}}, AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}},
 		"additional true false":                      {left: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}},
 		"additional true schema":                     {left: &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}},
-		"additional schema schema":                   {left: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MinLength: 1}}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MinLength: 1, MaxLength: new(5)}}},
+		"additional schema":                          {left: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MinLength: 1}}, right: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MaxLength: new(5)}}, want: &ObjectDomain{AdditionalPropertyKind: AdditionalSchema, AdditionalPropertyDomain: &StringDomain{MinLength: 1, MaxLength: new(5)}}},
 		"min max no satisfiability check":            {left: &ObjectDomain{MinProps: 10}, right: &ObjectDomain{MaxProps: new(5)}, want: &ObjectDomain{MinProps: 10, MaxProps: new(5)}},
 		"required count not checked":                 {left: &ObjectDomain{Properties: []Property{{Key: "a", Required: true}, {Key: "b", Required: true}}}, right: &ObjectDomain{MaxProps: new(1)}, want: &ObjectDomain{Properties: []Property{{Key: "a", Required: true}, {Key: "b", Required: true}}, MaxProps: new(1)}},
 	}
@@ -66,8 +67,10 @@ func TestObjectDomainAllOfMergeInvalidPlanCases(t *testing.T) {
 			require.Equal(t, before, *tt.left)
 		})
 	}
+
 	t.Run("nil receiver", func(t *testing.T) {
 		var left *ObjectDomain
+
 		got, err := left.AllOfMerge(&ObjectDomain{})
 		require.Error(t, err)
 		require.Nil(t, got)

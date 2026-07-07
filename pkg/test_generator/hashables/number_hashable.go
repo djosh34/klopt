@@ -2,9 +2,10 @@ package hashables
 
 import (
 	"crypto/sha256"
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 )
 
 type Number []byte

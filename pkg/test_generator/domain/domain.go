@@ -1,10 +1,11 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 )
 
 type JSONKV map[string]json.RawMessage
@@ -22,18 +23,33 @@ func deleteAllowableKeys(jsonKV JSONKV) {
 	}
 }
 
-type domainStore = map[types.Domain]struct{}
-type DomainContext struct {
-	// Each Domain that is created, must be added here
-	domainStore domainStore
-	// Exists only for testing, to 'mock'/'inject' wanted parse outputs
-	parse func(node *json.RawMessage) (types.Domain, error)
+func requiredSchemaType(jsonKV JSONKV, schemaType *string) (string, error) {
+	if _, ok := jsonKV["type"]; !ok {
+		return "", errors.New("type is required")
+	}
+
+	if schemaType == nil {
+		return "", errors.New("type must be string")
+	}
+
+	return *schemaType, nil
 }
+
+type (
+	domainStore   = map[types.Domain]struct{}
+	DomainContext struct {
+		// Each Domain that is created, must be added here
+		domainStore domainStore
+		// Exists only for testing, to 'mock'/'inject' wanted parse outputs
+		parse func(node *json.RawMessage) (types.Domain, error)
+	}
+)
 
 func (dc *DomainContext) AddDomain(domain types.Domain) {
 	if dc.domainStore == nil {
 		dc.domainStore = make(map[types.Domain]struct{})
 	}
+
 	dc.domainStore[domain] = struct{}{}
 }
 
@@ -43,6 +59,7 @@ func (dc *DomainContext) Parse(node *json.RawMessage) (types.Domain, error) {
 	}
 
 	parse := dc.parse
+
 	if node != nil {
 		jsonKV := JSONKV{}
 		if err := json.Unmarshal(*node, &jsonKV); err == nil && jsonKV != nil {
@@ -75,7 +92,9 @@ func (dc *DomainContext) parseDefault(node *json.RawMessage) (types.Domain, erro
 	type someSchema struct {
 		Type string `json:"type"`
 	}
+
 	schemaItem := someSchema{}
+
 	err := json.Unmarshal(*node, &schemaItem)
 	if err != nil {
 		return nil, errors.New("Schema does not specify type")
@@ -87,12 +106,14 @@ func (dc *DomainContext) parseDefault(node *json.RawMessage) (types.Domain, erro
 		if err := json.Unmarshal(*node, &jsonKV); err != nil {
 			return nil, err
 		}
+
 		for _, key := range []string{"required", "properties", "additionalProperties", "minProperties", "maxProperties"} {
 			if _, ok := jsonKV[key]; ok {
 				objectDomain, err := dc.ParseObject(node)
 				if err != nil {
 					return nil, err
 				}
+
 				return &objectDomain, nil
 			}
 		}
@@ -104,30 +125,35 @@ func (dc *DomainContext) parseDefault(node *json.RawMessage) (types.Domain, erro
 		if err != nil {
 			return nil, err
 		}
+
 		return &objectDomain, nil
 	case "array":
 		arrayDomain, err := dc.ParseArray(node)
 		if err != nil {
 			return nil, err
 		}
+
 		return &arrayDomain, nil
 	case "string":
 		stringDomain, err := dc.ParseString(node)
 		if err != nil {
 			return nil, err
 		}
+
 		return &stringDomain, nil
 	case "number", "integer":
 		numberDomain, err := dc.ParseNumber(node)
 		if err != nil {
 			return nil, err
 		}
+
 		return &numberDomain, nil
 	case "boolean":
 		boolDomain, err := dc.ParseBool(node)
 		if err != nil {
 			return nil, err
 		}
+
 		return &boolDomain, nil
 	default:
 		return nil, fmt.Errorf("unsupported schema object type %q", schemaType)

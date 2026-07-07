@@ -10,7 +10,7 @@ type ToHasher interface {
 
 type Domain interface {
 	ToHasher
-	//Hasher
+	// Hasher
 	AllOfMerger
 }
 

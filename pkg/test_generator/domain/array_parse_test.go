@@ -1,10 +1,11 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -101,6 +102,7 @@ items: {}
 			parseCall := 0
 			dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
 				parseCall++
+
 				return tt.parseDomain, nil
 			}}
 

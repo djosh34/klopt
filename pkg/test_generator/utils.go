@@ -14,5 +14,6 @@ func YAMLBytesToJSONRawMessage(yamlBytes []byte) (*json.RawMessage, error) {
 	}
 
 	rawMessage := json.RawMessage(jsonBytes)
+
 	return &rawMessage, nil
 }

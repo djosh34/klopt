@@ -23,7 +23,8 @@ type ObjectNode struct {
 
 type ArrayNode struct {
 	noPath `json:"-"`
-	Items  []Node
+
+	Items []Node
 }
 
 type LeafNode struct {
@@ -33,7 +34,8 @@ type LeafNode struct {
 
 type RefNode struct {
 	noPath `json:"-"`
-	Ref    string
+
+	Ref string
 }
 
 func Replace(raw *json.RawMessage) (*json.RawMessage, error) {
@@ -57,6 +59,7 @@ func Replace(raw *json.RawMessage) (*json.RawMessage, error) {
 	}
 
 	resolvedRaw := json.RawMessage(resolvedBytes)
+
 	return &resolvedRaw, nil
 }
 
@@ -78,6 +81,7 @@ func unmarshalNode(data []byte) (Node, error) {
 			if err := json.Unmarshal(data, node); err != nil {
 				return nil, err
 			}
+
 			return node, nil
 		}
 
@@ -85,18 +89,21 @@ func unmarshalNode(data []byte) (Node, error) {
 		if err := json.Unmarshal(data, node); err != nil {
 			return nil, err
 		}
+
 		return node, nil
 	case '[':
 		node := new(ArrayNode)
 		if err := json.Unmarshal(data, node); err != nil {
 			return nil, err
 		}
+
 		return node, nil
 	default:
 		node := new(LeafNode)
 		if err := json.Unmarshal(data, node); err != nil {
 			return nil, err
 		}
+
 		return node, nil
 	}
 }
@@ -113,6 +120,7 @@ func (n *ObjectNode) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return fmt.Errorf("unmarshal object key %q: %w", key, err)
 		}
+
 		n.Map[key] = child
 	}
 
@@ -128,6 +136,7 @@ func (n *ObjectNode) GetPathPart(p string) (Node, error) {
 	if !ok {
 		return nil, fmt.Errorf("path part %q not found", p)
 	}
+
 	return child, nil
 }
 
@@ -137,6 +146,7 @@ func (n *ObjectNode) resolve(root Node, stack []string) (Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve object key %q: %w", key, err)
 		}
+
 		n.Map[key] = resolved
 	}
 
@@ -155,6 +165,7 @@ func (n *ArrayNode) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return fmt.Errorf("unmarshal array index %d: %w", i, err)
 		}
+
 		n.Items[i] = child
 	}
 
@@ -171,6 +182,7 @@ func (n *ArrayNode) resolve(root Node, stack []string) (Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve array index %d: %w", i, err)
 		}
+
 		n.Items[i] = resolved
 	}
 
@@ -220,6 +232,7 @@ func (n *RefNode) resolve(root Node, stack []string) (Node, error) {
 	}
 
 	node := root
+
 	for _, rawPart := range strings.Split(parsed.Fragment[1:], "/") {
 		part, err := unescapePathPart(rawPart)
 		if err != nil {
@@ -230,6 +243,7 @@ func (n *RefNode) resolve(root Node, stack []string) (Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("get $ref %q path part %q: %w", n.Ref, part, err)
 		}
+
 		if node == nil {
 			return nil, fmt.Errorf("get $ref %q path part %q: node is nil", n.Ref, part)
 		}
@@ -248,6 +262,7 @@ func unescapePathPart(part string) (string, error) {
 	for i := 0; i < len(part); i++ {
 		if part[i] != '~' {
 			unescaped = append(unescaped, part[i])
+
 			continue
 		}
 
@@ -263,6 +278,7 @@ func unescapePathPart(part string) (string, error) {
 		default:
 			return "", fmt.Errorf("~%c is invalid", part[i+1])
 		}
+
 		i++
 	}
 

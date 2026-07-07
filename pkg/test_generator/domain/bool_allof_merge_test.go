@@ -1,8 +1,9 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -13,11 +14,11 @@ func TestBoolDomainAllOfMergeValidPlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"nullable false false":      {left: &BoolDomain{}, right: &BoolDomain{}, want: &BoolDomain{}},
+		"nullable false":            {left: &BoolDomain{}, right: &BoolDomain{}, want: &BoolDomain{}},
 		"nullable false true":       {left: &BoolDomain{}, right: &BoolDomain{Nullable: true}, want: &BoolDomain{}},
 		"nullable true false":       {left: &BoolDomain{Nullable: true}, right: &BoolDomain{}, want: &BoolDomain{}},
-		"nullable true true":        {left: &BoolDomain{Nullable: true}, right: &BoolDomain{Nullable: true}, want: &BoolDomain{Nullable: true}},
-		"enum nil nil":              {left: &BoolDomain{}, right: &BoolDomain{}, want: &BoolDomain{}},
+		"nullable true":             {left: &BoolDomain{Nullable: true}, right: &BoolDomain{Nullable: true}, want: &BoolDomain{Nullable: true}},
+		"enum nil":                  {left: &BoolDomain{}, right: &BoolDomain{}, want: &BoolDomain{}},
 		"enum nil right":            {left: &BoolDomain{}, right: &BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}, want: &BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}},
 		"enum left nil":             {left: &BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}, right: &BoolDomain{}, want: &BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}},
 		"enum intersection":         {left: &BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}, right: &BoolDomain{Enum: []types.Enum{types.Enum("false")}}, want: &BoolDomain{Enum: []types.Enum{types.Enum("false")}}},
@@ -60,6 +61,7 @@ func TestBoolDomainAllOfMergeInvalidPlanCases(t *testing.T) {
 
 	t.Run("nil receiver", func(t *testing.T) {
 		var left *BoolDomain
+
 		got, err := left.AllOfMerge(&BoolDomain{})
 		require.Error(t, err)
 		require.Nil(t, got)

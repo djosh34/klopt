@@ -1,8 +1,9 @@
 package domain
 
 import (
-	"decode_and_validate_generator/pkg/test_generator/types"
 	"testing"
+
+	"decode_and_validate_generator/pkg/test_generator/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -13,11 +14,11 @@ func TestNumberDomainAllOfMergeValidPlanCases(t *testing.T) {
 		right types.Domain
 		want  types.Domain
 	}{
-		"number number":                   {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
-		"integer integer":                 {left: &NumberDomain{Type: "integer"}, right: &NumberDomain{Type: "integer"}, want: &NumberDomain{Type: "integer"}},
+		"number":                          {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "number"}},
+		"integer":                         {left: &NumberDomain{Type: "integer"}, right: &NumberDomain{Type: "integer"}, want: &NumberDomain{Type: "integer"}},
 		"number integer":                  {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "integer"}, want: &NumberDomain{Type: "integer"}},
 		"integer number":                  {left: &NumberDomain{Type: "integer"}, right: &NumberDomain{Type: "number"}, want: &NumberDomain{Type: "integer"}},
-		"nullable true true":              {left: &NumberDomain{Type: "number", Nullable: true}, right: &NumberDomain{Type: "number", Nullable: true}, want: &NumberDomain{Type: "number", Nullable: true}},
+		"nullable true":                   {left: &NumberDomain{Type: "number", Nullable: true}, right: &NumberDomain{Type: "number", Nullable: true}, want: &NumberDomain{Type: "number", Nullable: true}},
 		"enum nil right":                  {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("1"), types.Enum("2")}}, want: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("1"), types.Enum("2")}}},
 		"enum exact lexeme intersection":  {left: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("1"), types.Enum("2"), types.Enum("1.0")}}, right: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("2"), types.Enum("1.0"), types.Enum("3")}}, want: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("2"), types.Enum("1.0")}}},
 		"enum raw null":                   {left: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("1"), types.Enum("null")}}, right: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("null"), types.Enum("2")}}, want: &NumberDomain{Type: "number", Enum: []types.Enum{types.Enum("null")}}},
@@ -68,8 +69,10 @@ func TestNumberDomainAllOfMergeInvalidPlanCases(t *testing.T) {
 			require.Equal(t, before, *tt.left)
 		})
 	}
+
 	t.Run("nil receiver", func(t *testing.T) {
 		var left *NumberDomain
+
 		got, err := left.AllOfMerge(&NumberDomain{Type: "number"})
 		require.Error(t, err)
 		require.Nil(t, got)

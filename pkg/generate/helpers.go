@@ -17,6 +17,7 @@ func LoadOpenapi(ctx context.Context, path string) (*GenerateContext, error) {
 	}
 
 	loader := &openapi3.Loader{Context: ctx, IsExternalRefsAllowed: false}
+
 	doc, err := loader.LoadFromFile(path)
 	if err != nil {
 		return nil, err
@@ -60,6 +61,7 @@ func (c *GenerateContext) FilterOperations(operation ...string) error {
 
 			if _, ok := required[openapiOperation.OperationID]; ok {
 				delete(required, openapiOperation.OperationID)
+
 				continue
 			}
 
