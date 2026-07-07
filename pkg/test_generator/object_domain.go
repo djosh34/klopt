@@ -47,6 +47,7 @@ func (o *ObjectDomain) GenerateHash() (Hash, error) {
 type JSONKV map[string]json.RawMessage
 type JSONObject struct {
 	Type                 string            `json:"type"`
+	Nullable             bool              `json:"nullable"`
 	Required             []string          `json:"required"`
 	Properties           JSONKV            `json:"properties"`
 	AdditionalProperties *json.RawMessage  `json:"additionalProperties"`

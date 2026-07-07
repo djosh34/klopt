@@ -10,7 +10,7 @@ import (
 type fakeObjectTestDomain struct{}
 
 func (f fakeObjectTestDomain) GenerateHash() (Hash, error) {
-	return Hash{255}, nil
+	return Hash{}, nil
 }
 
 func rawObjectFromYAML(t *testing.T, yamlString string) *json.RawMessage {
@@ -44,6 +44,25 @@ func TestParseObjectParsesValidObjectSchemas(t *testing.T) {
 		"empty object schema defaults additionalProperties to true": {
 			yamlString: `
 type: object
+`,
+			expected: ObjectDomain{
+				AdditionalPropertyKind: AdditionalTrue,
+			},
+		},
+		"title and description are allowed documentation fields": {
+			yamlString: `
+type: object
+title: Person
+description: A person object.
+`,
+			expected: ObjectDomain{
+				AdditionalPropertyKind: AdditionalTrue,
+			},
+		},
+		"nullable is allowed": {
+			yamlString: `
+type: object
+nullable: true
 `,
 			expected: ObjectDomain{
 				AdditionalPropertyKind: AdditionalTrue,
@@ -180,10 +199,6 @@ func TestParseObjectRejectsInvalidObjectSchemas(t *testing.T) {
 type: object
 notInTheSpecAtAll: true
 `},
-		"title is a schema field but not part of ObjectDomain": {yamlString: `
-type: object
-title: Person
-`},
 		"multipleOf is not part of ObjectDomain": {yamlString: `
 type: object
 multipleOf: 2
@@ -250,10 +265,6 @@ type: object
 items:
   type: string
 `},
-		"description is not part of ObjectDomain": {yamlString: `
-type: object
-description: nope
-`},
 		"format is not part of ObjectDomain": {yamlString: `
 type: object
 format: uuid
@@ -261,10 +272,6 @@ format: uuid
 		"default is not part of ObjectDomain": {yamlString: `
 type: object
 default: {}
-`},
-		"nullable is not part of ObjectDomain": {yamlString: `
-type: object
-nullable: true
 `},
 		"discriminator is not part of ObjectDomain": {yamlString: `
 type: object
