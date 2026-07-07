@@ -7,13 +7,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDomainContextParseUsesDefaultParser(t *testing.T) {
+func TestDomainContextParseRejectsUnknownType(t *testing.T) {
 	node := json.RawMessage(`{"type":"unknown"}`)
 	dc := DomainContext{}
 
 	domain, err := dc.Parse(&node)
-	require.NoError(t, err)
+	require.Error(t, err)
 	require.Nil(t, domain)
-	require.NotNil(t, dc.domainStore)
-	require.Contains(t, dc.domainStore, domain)
+	require.Empty(t, dc.domainStore)
+}
+
+func TestDomainContextParseRejectsMixedTypeArray(t *testing.T) {
+	node := json.RawMessage(`{"type":["string","integer"]}`)
+	dc := DomainContext{}
+
+	domain, err := dc.Parse(&node)
+	require.Error(t, err)
+	require.Nil(t, domain)
+	require.Empty(t, dc.domainStore)
 }

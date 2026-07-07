@@ -14,6 +14,9 @@ type StringDomain struct {
 	Pattern *string `json:"pattern"`
 	Format  *string `json:"format"`
 
+	XValidExamples   []string `json:"x-valid-examples"`
+	XInvalidExamples []string `json:"x-invalid-examples"`
+
 	MinLength int  `json:"minLength"`
 	MaxLength *int `json:"maxLength"`
 }
@@ -24,11 +27,13 @@ func (domain *StringDomain) ToHasher() (types.Hasher, error) {
 	}
 
 	return &hashables.StringHashable{
-		Nullable:  domain.Nullable,
-		Enum:      domain.Enum,
-		Pattern:   domain.Pattern,
-		Format:    domain.Format,
-		MinLength: domain.MinLength,
-		MaxLength: domain.MaxLength,
+		Nullable:         domain.Nullable,
+		Enum:             domain.Enum,
+		Pattern:          domain.Pattern,
+		Format:           domain.Format,
+		XValidExamples:   domain.XValidExamples,
+		XInvalidExamples: domain.XInvalidExamples,
+		MinLength:        domain.MinLength,
+		MaxLength:        domain.MaxLength,
 	}, nil
 }

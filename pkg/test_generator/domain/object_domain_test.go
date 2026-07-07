@@ -53,11 +53,16 @@ func TestParseObjectParsesValidObjectSchemas(t *testing.T) {
 	propertyNameHash := types.Hash{1}
 	propertyAgeHash := types.Hash{2}
 	additionalPropertyHash := types.Hash{3}
+	refPropertyHash := types.Hash{4}
+	refAdditionalPropertyHash := types.Hash{5}
 	propertyNameDomain := fakeObjectTestDomain{hash: propertyNameHash}
 	propertyAgeDomain := fakeObjectTestDomain{hash: propertyAgeHash}
 	additionalPropertyDomain := fakeObjectTestDomain{hash: additionalPropertyHash}
+	refPropertyDomain := fakeObjectTestDomain{hash: refPropertyHash}
+	refAdditionalPropertyDomain := fakeObjectTestDomain{hash: refAdditionalPropertyHash}
 	ageProperty := &Property{Key: "age", Domain: propertyAgeDomain}
 	nameProperty := &Property{Key: "name", Domain: propertyNameDomain}
+	refProperty := &Property{Key: "thing", Domain: refPropertyDomain}
 	requiredNameProperty := &Property{Key: "name", Domain: propertyNameDomain, Required: true}
 	requiredAgeOnlyProperty := &Property{Key: "age", Required: true}
 	requiredNameOnlyProperty := &Property{Key: "name", Required: true}
@@ -127,6 +132,20 @@ properties:
 				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
+		"property ref is parsed as resolved target domain": {
+			yamlString: `
+type: object
+properties:
+  thing:
+    $ref: '#/components/schemas/Thing'
+`,
+			parseDomains:  []types.Domain{refPropertyDomain},
+			expectedStore: []types.Domain{refPropertyDomain, refProperty},
+			expected: ObjectDomain{
+				Properties:             []types.Domain{refProperty},
+				AdditionalPropertyKind: AdditionalTrue,
+			},
+		},
 		"required properties without schemas are parsed and sorted by key": {
 			yamlString: `
 type: object
@@ -181,6 +200,19 @@ additionalProperties: {}
 			expected: ObjectDomain{
 				AdditionalPropertyKind:   AdditionalSchema,
 				AdditionalPropertyDomain: additionalPropertyDomain,
+			},
+		},
+		"additionalProperties ref is parsed as resolved target domain": {
+			yamlString: `
+type: object
+additionalProperties:
+  $ref: '#/components/schemas/ThingValue'
+`,
+			parseDomains:  []types.Domain{refAdditionalPropertyDomain},
+			expectedStore: []types.Domain{refAdditionalPropertyDomain},
+			expected: ObjectDomain{
+				AdditionalPropertyKind:   AdditionalSchema,
+				AdditionalPropertyDomain: refAdditionalPropertyDomain,
 			},
 		},
 		"minProperties and maxProperties": {

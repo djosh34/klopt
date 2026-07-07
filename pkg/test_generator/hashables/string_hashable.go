@@ -15,6 +15,9 @@ type StringHashable struct {
 	Pattern *string `json:"pattern"`
 	Format  *string `json:"format"`
 
+	XValidExamples   []string `json:"x-valid-examples"`
+	XInvalidExamples []string `json:"x-invalid-examples"`
+
 	MinLength int  `json:"minLength"`
 	MaxLength *int `json:"maxLength"`
 }
