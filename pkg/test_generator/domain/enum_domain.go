@@ -20,6 +20,6 @@ func (e *EnumDomain) ToHasher() (types.Hasher, error) {
 	return &hashables.EnumHashable{RawMessage: e.RawMessage}, nil
 }
 
-func NewEnumFromJSON(node *json.RawMessage) (EnumDomain, error) {
-	return EnumDomain{node}, nil
+func NewEnumFromJSON(node *json.RawMessage) EnumDomain {
+	return EnumDomain{node}
 }

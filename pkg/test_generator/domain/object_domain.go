@@ -146,15 +146,8 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 	// Parse Enums early, and if it exists, return early (we will not check that enum is valid, and only populate enum field of ObjectDomain)
 	if _, enumOk := jsonKV["enum"]; enumOk {
 		for _, enumValue := range jsonObject.Enum {
-			enumDomain, enumErr := NewEnumFromJSON(&enumValue)
-			if enumErr != nil {
-				return ObjectDomain{}, enumErr
-			}
-
-			domainErr := dc.AddDomain(&enumDomain)
-			if domainErr != nil {
-				return ObjectDomain{}, domainErr
-			}
+			enumDomain := NewEnumFromJSON(&enumValue)
+			dc.AddDomain(&enumDomain)
 
 			objectDomain.Enum = append(objectDomain.Enum, &enumDomain)
 		}
@@ -247,10 +240,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 
 	for _, propertyKey := range propertyKeys {
 		property := properties[propertyKey]
-		domainErr := dc.AddDomain(&property)
-		if domainErr != nil {
-			return ObjectDomain{}, domainErr
-		}
+		dc.AddDomain(&property)
 
 		objectDomain.Properties = append(objectDomain.Properties, &property)
 	}

@@ -13,12 +13,11 @@ type DomainContext struct {
 	parse func(node *json.RawMessage) (types.Domain, error)
 }
 
-func (dc *DomainContext) AddDomain(domain types.Domain) error {
+func (dc *DomainContext) AddDomain(domain types.Domain) {
 	if dc.domainStore == nil {
 		dc.domainStore = make(map[types.Domain]struct{})
 	}
 	dc.domainStore[domain] = struct{}{}
-	return nil
 }
 
 func (dc *DomainContext) Parse(node *json.RawMessage) (types.Domain, error) {
@@ -31,10 +30,7 @@ func (dc *DomainContext) Parse(node *json.RawMessage) (types.Domain, error) {
 		return nil, domainErr
 	}
 
-	domainErr = dc.AddDomain(domain)
-	if domainErr != nil {
-		return nil, domainErr
-	}
+	dc.AddDomain(domain)
 
 	return domain, nil
 }
