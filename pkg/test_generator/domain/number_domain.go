@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"decode_and_validate_generator/pkg/test_generator/hashables"
 	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
@@ -23,7 +24,16 @@ func (n *NumberDomain) ToHasher() (types.Hasher, error) {
 		return nil, errors.New("domain of number cannot be nil")
 	}
 
-	return nil, errors.New("NOT IMPLEMENTED")
+	return &hashables.NumberHashable{
+		Nullable:         n.Nullable,
+		Enum:             toHashableNumbers(n.Enum),
+		Minimum:          toHashableNumberPtr(n.Minimum),
+		Maximum:          toHashableNumberPtr(n.Maximum),
+		ExclusiveMinimum: n.ExclusiveMinimum,
+		ExclusiveMaximum: n.ExclusiveMaximum,
+		MultipleOf:       toHashableNumberPtr(n.MultipleOf),
+		Format:           n.Format,
+	}, nil
 }
 
 func (dc *DomainContext) ParseNumber(node *json.RawMessage) (NumberDomain, error) {

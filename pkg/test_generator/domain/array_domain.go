@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"decode_and_validate_generator/pkg/test_generator/hashables"
 	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
@@ -20,7 +21,21 @@ func (a *ArrayDomain) ToHasher() (types.Hasher, error) {
 		return nil, errors.New("domain of array cannot be nil")
 	}
 
-	return nil, errors.New("NOT IMPLEMENTED")
+	var itemsHasher types.Hasher
+	if a.Items != nil {
+		hasher, err := a.Items.ToHasher()
+		if err != nil {
+			return nil, err
+		}
+		itemsHasher = hasher
+	}
+
+	return &hashables.ArrayHashable{
+		Nullable: a.Nullable,
+		Items:    itemsHasher,
+		MinItems: a.MinItems,
+		MaxItems: a.MaxItems,
+	}, nil
 }
 
 func (dc *DomainContext) ParseArray(node *json.RawMessage) (ArrayDomain, error) {

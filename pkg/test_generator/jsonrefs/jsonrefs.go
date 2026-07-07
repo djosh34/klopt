@@ -12,22 +12,28 @@ import (
 type Node interface {
 	json.Marshaler
 	GetPathPart(p string) (Node, error)
+	resolve(root Node, stack []string) (Node, error)
 }
+
+type noPath struct{}
 
 type ObjectNode struct {
 	Map map[string]Node
 }
 
 type ArrayNode struct {
-	Items []Node
+	noPath `json:"-"`
+	Items  []Node
 }
 
 type LeafNode struct {
-	Raw json.RawMessage
+	noPath `json:"-"`
+	json.RawMessage
 }
 
 type RefNode struct {
-	Ref string
+	noPath `json:"-"`
+	Ref    string
 }
 
 func Replace(raw *json.RawMessage) (*json.RawMessage, error) {
@@ -40,7 +46,7 @@ func Replace(raw *json.RawMessage) (*json.RawMessage, error) {
 		return nil, fmt.Errorf("unmarshal json as node: %w", err)
 	}
 
-	resolved, err := resolveNode(root, root, nil)
+	resolved, err := root.resolve(root, nil)
 	if err != nil {
 		return nil, fmt.Errorf("replace json refs: %w", err)
 	}
@@ -54,71 +60,45 @@ func Replace(raw *json.RawMessage) (*json.RawMessage, error) {
 	return &resolvedRaw, nil
 }
 
-func unmarshalNode(raw json.RawMessage) (Node, error) {
-	var node nodeJSON
-	if err := json.Unmarshal(raw, &node); err != nil {
-		return nil, err
-	}
-	if node.Node == nil {
-		return nil, errors.New("node is nil")
-	}
-	return node.Node, nil
-}
-
-type nodeJSON struct {
-	Node Node
-}
-
-func (n *nodeJSON) UnmarshalJSON(data []byte) error {
+func unmarshalNode(data []byte) (Node, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
-		return errors.New("empty json")
+		return nil, errors.New("empty json")
 	}
 
 	switch trimmed[0] {
 	case '{':
 		var rawMap map[string]json.RawMessage
 		if err := json.Unmarshal(data, &rawMap); err != nil {
-			return fmt.Errorf("unmarshal object: %w", err)
+			return nil, fmt.Errorf("unmarshal object: %w", err)
 		}
 
 		if _, ok := rawMap["$ref"]; ok {
-			var ref RefNode
-			if err := json.Unmarshal(data, &ref); err != nil {
-				return err
+			node := new(RefNode)
+			if err := json.Unmarshal(data, node); err != nil {
+				return nil, err
 			}
-			n.Node = &ref
-			return nil
+			return node, nil
 		}
 
-		var object ObjectNode
-		if err := json.Unmarshal(data, &object); err != nil {
-			return err
+		node := new(ObjectNode)
+		if err := json.Unmarshal(data, node); err != nil {
+			return nil, err
 		}
-		n.Node = &object
-		return nil
+		return node, nil
 	case '[':
-		var array ArrayNode
-		if err := json.Unmarshal(data, &array); err != nil {
-			return err
+		node := new(ArrayNode)
+		if err := json.Unmarshal(data, node); err != nil {
+			return nil, err
 		}
-		n.Node = &array
-		return nil
+		return node, nil
 	default:
-		var leaf LeafNode
-		if err := json.Unmarshal(data, &leaf); err != nil {
-			return err
+		node := new(LeafNode)
+		if err := json.Unmarshal(data, node); err != nil {
+			return nil, err
 		}
-		n.Node = &leaf
-		return nil
+		return node, nil
 	}
-}
-
-func (n nodeJSON) MarshalJSON() ([]byte, error) {
-	if n.Node == nil {
-		return nil, errors.New("node is nil")
-	}
-	return json.Marshal(n.Node)
 }
 
 func (n *ObjectNode) UnmarshalJSON(data []byte) error {
@@ -139,29 +119,28 @@ func (n *ObjectNode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (n ObjectNode) MarshalJSON() ([]byte, error) {
-	rawMap := make(map[string]json.RawMessage, len(n.Map))
-	for key, child := range n.Map {
-		if child == nil {
-			return nil, fmt.Errorf("marshal object key %q: node is nil", key)
-		}
-
-		rawValue, err := json.Marshal(child)
-		if err != nil {
-			return nil, fmt.Errorf("marshal object key %q: %w", key, err)
-		}
-		rawMap[key] = rawValue
-	}
-
-	return json.Marshal(rawMap)
+func (n *ObjectNode) MarshalJSON() ([]byte, error) {
+	return json.Marshal(n.Map)
 }
 
-func (n ObjectNode) GetPathPart(p string) (Node, error) {
+func (n *ObjectNode) GetPathPart(p string) (Node, error) {
 	child, ok := n.Map[p]
 	if !ok {
 		return nil, fmt.Errorf("path part %q not found", p)
 	}
 	return child, nil
+}
+
+func (n *ObjectNode) resolve(root Node, stack []string) (Node, error) {
+	for key, child := range n.Map {
+		resolved, err := child.resolve(root, stack)
+		if err != nil {
+			return nil, fmt.Errorf("resolve object key %q: %w", key, err)
+		}
+		n.Map[key] = resolved
+	}
+
+	return n, nil
 }
 
 func (n *ArrayNode) UnmarshalJSON(data []byte) error {
@@ -182,41 +161,24 @@ func (n *ArrayNode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (n ArrayNode) MarshalJSON() ([]byte, error) {
-	rawItems := make([]json.RawMessage, len(n.Items))
+func (n *ArrayNode) MarshalJSON() ([]byte, error) {
+	return json.Marshal(n.Items)
+}
+
+func (n *ArrayNode) resolve(root Node, stack []string) (Node, error) {
 	for i, child := range n.Items {
-		if child == nil {
-			return nil, fmt.Errorf("marshal array index %d: node is nil", i)
-		}
-
-		rawItem, err := json.Marshal(child)
+		resolved, err := child.resolve(root, stack)
 		if err != nil {
-			return nil, fmt.Errorf("marshal array index %d: %w", i, err)
+			return nil, fmt.Errorf("resolve array index %d: %w", i, err)
 		}
-		rawItems[i] = rawItem
+		n.Items[i] = resolved
 	}
 
-	return json.Marshal(rawItems)
+	return n, nil
 }
 
-func (n ArrayNode) GetPathPart(p string) (Node, error) {
-	return nil, fmt.Errorf("cannot get path part %q from array", p)
-}
-
-func (n *LeafNode) UnmarshalJSON(data []byte) error {
-	n.Raw = append(json.RawMessage(nil), data...)
-	return nil
-}
-
-func (n LeafNode) MarshalJSON() ([]byte, error) {
-	if len(n.Raw) == 0 {
-		return []byte("null"), nil
-	}
-	return append([]byte(nil), n.Raw...), nil
-}
-
-func (n LeafNode) GetPathPart(p string) (Node, error) {
-	return nil, fmt.Errorf("cannot get path part %q from leaf", p)
+func (n *LeafNode) resolve(root Node, stack []string) (Node, error) {
+	return n, nil
 }
 
 func (n *RefNode) UnmarshalJSON(data []byte) error {
@@ -237,106 +199,47 @@ func (n *RefNode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (n RefNode) MarshalJSON() ([]byte, error) {
+func (n *RefNode) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]string{"$ref": n.Ref})
 }
 
-func (n RefNode) GetPathPart(p string) (Node, error) {
-	return nil, fmt.Errorf("cannot get path part %q from ref %q", p, n.Ref)
-}
-
-func resolveNode(root Node, node Node, stack []string) (Node, error) {
-	switch n := node.(type) {
-	case *RefNode:
-		return resolveRef(root, n.Ref, stack)
-	case RefNode:
-		return resolveRef(root, n.Ref, stack)
-	case *ObjectNode:
-		for key, child := range n.Map {
-			resolved, err := resolveNode(root, child, stack)
-			if err != nil {
-				return nil, fmt.Errorf("resolve object key %q: %w", key, err)
-			}
-			n.Map[key] = resolved
-		}
-		return n, nil
-	case ObjectNode:
-		for key, child := range n.Map {
-			resolved, err := resolveNode(root, child, stack)
-			if err != nil {
-				return nil, fmt.Errorf("resolve object key %q: %w", key, err)
-			}
-			n.Map[key] = resolved
-		}
-		return n, nil
-	case *ArrayNode:
-		for i, child := range n.Items {
-			resolved, err := resolveNode(root, child, stack)
-			if err != nil {
-				return nil, fmt.Errorf("resolve array index %d: %w", i, err)
-			}
-			n.Items[i] = resolved
-		}
-		return n, nil
-	case ArrayNode:
-		for i, child := range n.Items {
-			resolved, err := resolveNode(root, child, stack)
-			if err != nil {
-				return nil, fmt.Errorf("resolve array index %d: %w", i, err)
-			}
-			n.Items[i] = resolved
-		}
-		return n, nil
-	case *LeafNode, LeafNode:
-		return n, nil
-	default:
-		return nil, fmt.Errorf("unknown node type %T", node)
-	}
-}
-
-func resolveRef(root Node, ref string, stack []string) (Node, error) {
+func (n *RefNode) resolve(root Node, stack []string) (Node, error) {
 	for _, seen := range stack {
-		if seen == ref {
-			return nil, fmt.Errorf("reference cycle for %q", ref)
+		if seen == n.Ref {
+			return nil, fmt.Errorf("reference cycle for %q", n.Ref)
 		}
 	}
 
-	target, err := refTarget(root, ref)
+	if !strings.HasPrefix(n.Ref, "#/") {
+		return nil, fmt.Errorf("$ref %q is invalid: must start with #/", n.Ref)
+	}
+
+	parsed, err := url.Parse(n.Ref)
 	if err != nil {
-		return nil, err
-	}
-
-	return resolveNode(root, target, append(stack, ref))
-}
-
-func refTarget(root Node, ref string) (Node, error) {
-	if !strings.HasPrefix(ref, "#/") {
-		return nil, fmt.Errorf("$ref %q is invalid: must start with #/", ref)
-	}
-
-	parsed, err := url.Parse(ref)
-	if err != nil {
-		return nil, fmt.Errorf("parse $ref %q: %w", ref, err)
-	}
-
-	if !strings.HasPrefix(parsed.Fragment, "/") {
-		return nil, fmt.Errorf("$ref %q is invalid: fragment must start with /", ref)
+		return nil, fmt.Errorf("parse $ref %q: %w", n.Ref, err)
 	}
 
 	node := root
 	for _, rawPart := range strings.Split(parsed.Fragment[1:], "/") {
 		part, err := unescapePathPart(rawPart)
 		if err != nil {
-			return nil, fmt.Errorf("unescape $ref %q path part %q: %w", ref, rawPart, err)
+			return nil, fmt.Errorf("unescape $ref %q path part %q: %w", n.Ref, rawPart, err)
 		}
 
 		node, err = node.GetPathPart(part)
 		if err != nil {
-			return nil, fmt.Errorf("get $ref %q path part %q: %w", ref, part, err)
+			return nil, fmt.Errorf("get $ref %q path part %q: %w", n.Ref, part, err)
+		}
+		if node == nil {
+			return nil, fmt.Errorf("get $ref %q path part %q: node is nil", n.Ref, part)
 		}
 	}
 
-	return node, nil
+	return node.resolve(root, append(stack, n.Ref))
+}
+
+func (noPath) GetPathPart(p string) (Node, error) {
+	return nil, fmt.Errorf("cannot get path part %q from non-object", p)
 }
 
 func unescapePathPart(part string) (string, error) {

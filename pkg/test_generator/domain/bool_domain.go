@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"decode_and_validate_generator/pkg/test_generator/hashables"
 	"decode_and_validate_generator/pkg/test_generator/types"
 	"encoding/json"
 	"errors"
@@ -16,7 +17,10 @@ func (b *BoolDomain) ToHasher() (types.Hasher, error) {
 		return nil, errors.New("domain of bool cannot be nil")
 	}
 
-	return nil, errors.New("NOT IMPLEMENTED")
+	return &hashables.BoolHashable{
+		Nullable: b.Nullable,
+		Enum:     b.Enum,
+	}, nil
 }
 
 func (dc *DomainContext) ParseBool(node *json.RawMessage) (BoolDomain, error) {

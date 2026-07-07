@@ -32,19 +32,19 @@ func TestUnmarshalNodeBuildsNodeTypesAndDropsRefSiblings(t *testing.T) {
 
 	number, ok := object.Map["number"].(*LeafNode)
 	require.True(t, ok)
-	require.JSONEq(t, `1`, string(number.Raw))
+	require.JSONEq(t, `1`, string(number.RawMessage))
 
 	stringNode, ok := object.Map["string"].(*LeafNode)
 	require.True(t, ok)
-	require.JSONEq(t, `"value"`, string(stringNode.Raw))
+	require.JSONEq(t, `"value"`, string(stringNode.RawMessage))
 
 	boolNode, ok := object.Map["bool"].(*LeafNode)
 	require.True(t, ok)
-	require.JSONEq(t, `true`, string(boolNode.Raw))
+	require.JSONEq(t, `true`, string(boolNode.RawMessage))
 
 	nullNode, ok := object.Map["null"].(*LeafNode)
 	require.True(t, ok)
-	require.JSONEq(t, `null`, string(nullNode.Raw))
+	require.JSONEq(t, `null`, string(nullNode.RawMessage))
 
 	array, ok := root.Map["array"].(*ArrayNode)
 	require.True(t, ok)
@@ -66,12 +66,12 @@ func TestUnmarshalNodeBuildsNodeTypesAndDropsRefSiblings(t *testing.T) {
 func TestMarshalNodeIsReverseOfUnmarshalNode(t *testing.T) {
 	node := &ObjectNode{Map: map[string]Node{
 		"object": &ObjectNode{Map: map[string]Node{
-			"bool": &LeafNode{Raw: json.RawMessage(`true`)},
-			"null": &LeafNode{Raw: json.RawMessage(`null`)},
+			"bool": &LeafNode{noPath{}, json.RawMessage(`true`)},
+			"null": &LeafNode{noPath{}, json.RawMessage(`null`)},
 		}},
 		"array": &ArrayNode{Items: []Node{
-			&LeafNode{Raw: json.RawMessage(`1`)},
-			&ObjectNode{Map: map[string]Node{"string": &LeafNode{Raw: json.RawMessage(`"value"`)}}},
+			&LeafNode{noPath{}, json.RawMessage(`1`)},
+			&ObjectNode{Map: map[string]Node{"string": &LeafNode{noPath{}, json.RawMessage(`"value"`)}}},
 		}},
 	}}
 
@@ -84,7 +84,7 @@ func TestMarshalNodeIsReverseOfUnmarshalNode(t *testing.T) {
 }
 
 func TestObjectNodeGetPathPart(t *testing.T) {
-	child := &LeafNode{Raw: json.RawMessage(`true`)}
+	child := &LeafNode{noPath{}, json.RawMessage(`true`)}
 	node := ObjectNode{Map: map[string]Node{"child": child}}
 
 	got, err := node.GetPathPart("child")
@@ -99,7 +99,7 @@ func TestObjectNodeGetPathPart(t *testing.T) {
 func TestArrayLeafAndRefNodesGetPathPartErrors(t *testing.T) {
 	tests := map[string]Node{
 		"array": &ArrayNode{},
-		"leaf":  &LeafNode{Raw: json.RawMessage(`true`)},
+		"leaf":  &LeafNode{noPath{}, json.RawMessage(`true`)},
 		"ref":   &RefNode{Ref: "#/anything"},
 	}
 
@@ -345,11 +345,11 @@ func TestReplaceErrors(t *testing.T) {
 		},
 		"path tries to traverse leaf": {
 			input:     `{"defs":{"User":true},"schema":{"$ref":"#/defs/User/type"}}`,
-			wantError: "from leaf",
+			wantError: "non-object",
 		},
 		"path tries to traverse array": {
 			input:     `{"defs":[{"type":"string"}],"schema":{"$ref":"#/defs/0"}}`,
-			wantError: "from array",
+			wantError: "non-object",
 		},
 		"bad pointer escape at end": {
 			input:     `{"schema":{"$ref":"#/bad~"}}`,
