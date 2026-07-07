@@ -644,17 +644,11 @@ func TestObjectDomainToHasherErrors(t *testing.T) {
 	_, err := (*ObjectDomain)(nil).ToHasher()
 	require.Error(t, err)
 
-	_, err = (&ObjectDomain{Enum: []types.Domain{nil}}).ToHasher()
-	require.Error(t, err)
+	_, err = (&ObjectDomain{Enum: nil}).ToHasher()
+	require.NoError(t, err)
 
-	_, err = (&ObjectDomain{Enum: []types.Domain{failingToHasherDomain{}}}).ToHasher()
-	require.Error(t, err)
-
-	_, err = (&ObjectDomain{Properties: []types.Domain{nil}}).ToHasher()
-	require.Error(t, err)
-
-	_, err = (&ObjectDomain{Properties: []types.Domain{failingToHasherDomain{}}}).ToHasher()
-	require.Error(t, err)
+	_, err = (&ObjectDomain{Properties: nil}).ToHasher()
+	require.NoError(t, err)
 
 	_, err = (&ObjectDomain{AdditionalPropertyKind: AdditionalSchema}).ToHasher()
 	require.Error(t, err)

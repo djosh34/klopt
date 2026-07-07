@@ -64,12 +64,14 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 	}
 
 	enumHashers := make([]types.Hasher, 0, len(o.Enum))
-	for _, enumDomain := range o.Enum {
-		hasher, err := enumDomain.ToHasher()
-		if err != nil {
-			return nil, err
+	if o.Enum != nil {
+		for _, enumDomain := range o.Enum {
+			hasher, err := enumDomain.ToHasher()
+			if err != nil {
+				return nil, err
+			}
+			enumHashers = append(enumHashers, hasher)
 		}
-		enumHashers = append(enumHashers, hasher)
 	}
 
 	propertyHashers := make([]types.Hasher, 0, len(o.Properties))
