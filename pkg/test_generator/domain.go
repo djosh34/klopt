@@ -8,9 +8,9 @@ type Hasher interface {
 	Hash() (Hash, error)
 }
 
-type AllOfMerger interface {
-	MergeAllOf(domain Domain) Domain
-}
+//type AllOfMerger interface {
+//	MergeAllOf(domain Domain) Domain
+//}
 
 type YamlParser interface {
 	Parse(node yaml.Node) error
@@ -18,11 +18,15 @@ type YamlParser interface {
 
 type Domain interface {
 	Hasher
-	AllOfMerger
+	//AllOfMerger
 	YamlParser
 }
 
-func Parse(node yaml.Node) error {
+type DomainContext struct {
+	domainStore map[Hash]Domain
+}
 
-	return nil
+func (dc *DomainContext) Parse(node yaml.Node) (*Hash, error) {
+
+	return nil, nil
 }
