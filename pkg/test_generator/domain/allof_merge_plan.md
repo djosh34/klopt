@@ -9,6 +9,8 @@ Spec basis checked against `resources/OpenAPI Specification v3.0.3.mhtml` only:
 
 Pragmatic implementation rules:
 
+- Hard requirement: keep merging stupid simple for as long as that still satisfies these requirements.
+- Do not add helper functions unless there is an immediate requirement. In particular, implement each domain merge directly in its respective domain file where `NOT IMPLEMENTED` exists now.
 - Do exact intersections only. Do not run a JSON Schema solver.
 - Do not validate enum values against patterns, formats, length, items, min/max, properties, or additionalProperties during merge.
 - Do not filter enum values by any non-enum field during merge.
@@ -17,6 +19,8 @@ Pragmatic implementation rules:
 - Typed enum fields must still be able to carry a raw `null` enum member somehow, because `[]string`, `[]Number`, and `[]bool` cannot store it directly.
 - Do not add extra satisfiability checks that the generator will naturally handle by producing no cases.
 - Error when the merge is unrepresentable, types conflict, enum exact-set intersection is empty, or property/additional-property schemas cannot be merged.
+- All enum fields in every domain must merge the same way: if both sides have enum arrays, take the intersection of the two arrays; if only one side has an enum array, keep that array as-is.
+- Reuse the same enum-array intersection function for all enum merging so behavior stays identical across string, number, bool, array, and object domains.
 - Merges should be transactional: if an error is returned, do not mutate the receiver.
 - Keep deterministic output ordering. For exact-set intersections, preserve the left side order of values that also exist on the right.
 
