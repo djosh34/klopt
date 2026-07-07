@@ -53,43 +53,58 @@ func (dc *DomainContext) Parse(node *json.RawMessage) (types.Domain, error) {
 }
 
 func (dc *DomainContext) parseDefault(node *json.RawMessage) (types.Domain, error) {
-	parseErrors := make([]error, 0, 6)
+	if node == nil {
+		return nil, errors.New("schema node is nil")
+	}
 
 	allOfDomain, allOfErr := dc.ParseAllOf(node)
 	if allOfErr == nil {
 		return &allOfDomain, nil
 	}
-	parseErrors = append(parseErrors, allOfErr)
 
-	objectDomain, objectErr := dc.ParseObject(node)
-	if objectErr == nil {
+	type someSchema struct {
+		Type string `json:"type"`
+	}
+	schemaItem := someSchema{}
+	err := json.Unmarshal(*node, &schemaItem)
+	if err != nil {
+		return nil, errors.New("Schema does not specify type")
+	}
+
+	schemaType := schemaItem.Type
+
+	switch schemaType {
+	case "object":
+		objectDomain, err := dc.ParseObject(node)
+		if err != nil {
+			return nil, err
+		}
 		return &objectDomain, nil
-	}
-	parseErrors = append(parseErrors, objectErr)
-
-	arrayDomain, arrayErr := dc.ParseArray(node)
-	if arrayErr == nil {
+	case "array":
+		arrayDomain, err := dc.ParseArray(node)
+		if err != nil {
+			return nil, err
+		}
 		return &arrayDomain, nil
-	}
-	parseErrors = append(parseErrors, arrayErr)
-
-	stringDomain, stringErr := dc.ParseString(node)
-	if stringErr == nil {
+	case "string":
+		stringDomain, err := dc.ParseString(node)
+		if err != nil {
+			return nil, err
+		}
 		return &stringDomain, nil
-	}
-	parseErrors = append(parseErrors, stringErr)
-
-	numberDomain, numberErr := dc.ParseNumber(node)
-	if numberErr == nil {
+	case "number", "integer":
+		numberDomain, err := dc.ParseNumber(node)
+		if err != nil {
+			return nil, err
+		}
 		return &numberDomain, nil
-	}
-	parseErrors = append(parseErrors, numberErr)
-
-	boolDomain, boolErr := dc.ParseBool(node)
-	if boolErr == nil {
+	case "boolean":
+		boolDomain, err := dc.ParseBool(node)
+		if err != nil {
+			return nil, err
+		}
 		return &boolDomain, nil
+	default:
+		return nil, fmt.Errorf("unsupported schema object type %q", schemaType)
 	}
-	parseErrors = append(parseErrors, boolErr)
-
-	return nil, fmt.Errorf("unsupported node type: %w", errors.Join(parseErrors...))
 }

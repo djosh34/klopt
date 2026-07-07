@@ -15,7 +15,7 @@ func TestParseNumberParsesValidNumberSchemas(t *testing.T) {
 			yamlString: `
 type: number
 `,
-			expected: NumberDomain{},
+			expected: NumberDomain{Type: "number"},
 		},
 		"title and description are allowed documentation fields": {
 			yamlString: `
@@ -23,21 +23,21 @@ type: number
 title: Amount
 description: A decimal amount.
 `,
-			expected: NumberDomain{},
+			expected: NumberDomain{Type: "number"},
 		},
 		"nullable true": {
 			yamlString: `
 type: number
 nullable: true
 `,
-			expected: NumberDomain{Nullable: true},
+			expected: NumberDomain{Type: "number", Nullable: true},
 		},
 		"nullable false": {
 			yamlString: `
 type: number
 nullable: false
 `,
-			expected: NumberDomain{},
+			expected: NumberDomain{Type: "number"},
 		},
 		"enum numbers": {
 			yamlString: `
@@ -46,7 +46,7 @@ enum:
   - 1
   - 2.5
 `,
-			expected: NumberDomain{Enum: []Number{Number("1"), Number("2.5")}},
+			expected: NumberDomain{Type: "number", Enum: []Number{Number("1"), Number("2.5")}},
 		},
 		"minimum maximum and exclusive bounds": {
 			yamlString: `
@@ -56,28 +56,47 @@ exclusiveMinimum: true
 maximum: 9.5
 exclusiveMaximum: true
 `,
-			expected: NumberDomain{Minimum: new(Number("1.5")), Maximum: new(Number("9.5")), ExclusiveMinimum: true, ExclusiveMaximum: true},
+			expected: NumberDomain{Type: "number", Minimum: new(Number("1.5")), Maximum: new(Number("9.5")), ExclusiveMinimum: true, ExclusiveMaximum: true},
 		},
 		"multipleOf": {
 			yamlString: `
 type: number
 multipleOf: 2.5
 `,
-			expected: NumberDomain{MultipleOf: new(Number("2.5"))},
+			expected: NumberDomain{Type: "number", MultipleOf: new(Number("2.5"))},
 		},
 		"format float": {
 			yamlString: `
 type: number
 format: float
 `,
-			expected: NumberDomain{Format: new("float")},
+			expected: NumberDomain{Type: "number", Format: new("float")},
 		},
 		"format double": {
 			yamlString: `
 type: number
 format: double
 `,
-			expected: NumberDomain{Format: new("double")},
+			expected: NumberDomain{Type: "number", Format: new("double")},
+		},
+		"integer int32": {
+			yamlString: `
+type: integer
+format: int32
+enum:
+  - 1
+minimum: -10
+maximum: 10
+multipleOf: 2
+`,
+			expected: NumberDomain{Type: "integer", Enum: []Number{Number("1")}, Minimum: new(Number("-10")), Maximum: new(Number("10")), MultipleOf: new(Number("2")), Format: new("int32")},
+		},
+		"integer int64": {
+			yamlString: `
+type: integer
+format: int64
+`,
+			expected: NumberDomain{Type: "integer", Format: new("int64")},
 		},
 		"all supported fields together": {
 			yamlString: `
@@ -92,7 +111,7 @@ exclusiveMaximum: false
 multipleOf: 2.5
 format: double
 `,
-			expected: NumberDomain{Nullable: true, Enum: []Number{Number("2.5")}, Minimum: new(Number("0.5")), Maximum: new(Number("10.5")), ExclusiveMinimum: true, MultipleOf: new(Number("2.5")), Format: new("double")},
+			expected: NumberDomain{Type: "number", Nullable: true, Enum: []Number{Number("2.5")}, Minimum: new(Number("0.5")), Maximum: new(Number("10.5")), ExclusiveMinimum: true, MultipleOf: new(Number("2.5")), Format: new("double")},
 		},
 	}
 
@@ -113,7 +132,7 @@ func TestParseNumberRejectsInvalidNumberSchemas(t *testing.T) {
 nullable: false
 `,
 		"wrong type": `
-type: integer
+type: string
 `,
 		"mixed type array": `
 type:
@@ -212,6 +231,27 @@ format: decimal
 		"integer format is not number format": `
 type: number
 format: int32
+`,
+		"number format is not integer format": `
+type: integer
+format: float
+`,
+		"integer enum value must be integer": `
+type: integer
+enum:
+  - 1.5
+`,
+		"integer minimum must be integer": `
+type: integer
+minimum: 1.5
+`,
+		"integer multipleOf must be positive": `
+type: integer
+multipleOf: -1
+`,
+		"integer multipleOf cannot be zero": `
+type: integer
+multipleOf: 0
 `,
 		"minLength is not part of NumberDomain": `
 type: number
