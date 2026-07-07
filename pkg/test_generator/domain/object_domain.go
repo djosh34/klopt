@@ -45,6 +45,8 @@ func (p *Property) ToHasher() (types.Hasher, error) {
 }
 
 type ObjectDomain struct {
+	Nullable bool
+
 	Enum []types.Domain
 
 	Properties []types.Domain
@@ -79,6 +81,10 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 		propertyHashers = append(propertyHashers, hasher)
 	}
 
+	if o.AdditionalPropertyKind == AdditionalSchema && o.AdditionalPropertyDomain == nil {
+		return nil, errors.New("additional property schema domain cannot be nil")
+	}
+
 	var additionalPropertyHasher types.Hasher
 	if o.AdditionalPropertyDomain != nil {
 		hasher, err := o.AdditionalPropertyDomain.ToHasher()
@@ -89,6 +95,7 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 	}
 
 	return &hashables.ObjectHashable{
+		Nullable:                 o.Nullable,
 		Enum:                     enumHashers,
 		Properties:               propertyHashers,
 		AdditionalPropertyKind:   hashables.AdditionalPropertyKind(o.AdditionalPropertyKind),
@@ -153,17 +160,25 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 		return objectDomain, nil
 	}
 
+	objectDomain.Nullable = jsonObject.Nullable
+
 	properties := make(map[string]Property, len(jsonObject.Properties))
 
 	// Parse Properties
 	if _, propertiesOk := jsonKV["properties"]; propertiesOk {
 		delete(jsonKV, "properties")
+		if jsonObject.Properties == nil {
+			return ObjectDomain{}, errors.New("properties must be an object")
+		}
 
 		for propertyKey, propertyValue := range jsonObject.Properties {
 			propertyJSONKV := make(JSONKV)
 			propertyJSONKVErr := json.Unmarshal(propertyValue, &propertyJSONKV)
 			if propertyJSONKVErr != nil {
 				return ObjectDomain{}, propertyJSONKVErr
+			}
+			if propertyJSONKV == nil {
+				return ObjectDomain{}, fmt.Errorf("property %q schema must be an object", propertyKey)
 			}
 			if _, readOnlyOk := propertyJSONKV["readOnly"]; readOnlyOk {
 				return ObjectDomain{}, errors.New("readOnly is not allowed in object properties")
@@ -173,7 +188,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 			}
 
 			if _, propertyOk := properties[propertyKey]; propertyOk {
-				return objectDomain, &PropertyAlreadyExistsError{
+				return ObjectDomain{}, &PropertyAlreadyExistsError{
 					Key: propertyKey,
 				}
 			}
@@ -200,7 +215,13 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 			return ObjectDomain{}, errors.New("required cannot be empty")
 		}
 
+		requiredKeys := make(map[string]struct{}, len(jsonObject.Required))
 		for _, requiredKey := range jsonObject.Required {
+			if _, requiredKeyOk := requiredKeys[requiredKey]; requiredKeyOk {
+				return ObjectDomain{}, fmt.Errorf("required property %q listed more than once", requiredKey)
+			}
+			requiredKeys[requiredKey] = struct{}{}
+
 			property, propertyOk := properties[requiredKey]
 			if !propertyOk {
 				property = Property{
@@ -262,12 +283,22 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 	// Parse MinProps, MaxProps
 	if _, minPropertiesOk := jsonKV["minProperties"]; minPropertiesOk {
 		delete(jsonKV, "minProperties")
-		if jsonObject.MinProperties != nil {
-			objectDomain.MinProps = *jsonObject.MinProperties
+		if jsonObject.MinProperties == nil {
+			return ObjectDomain{}, errors.New("minProperties cannot be null")
 		}
+		if *jsonObject.MinProperties < 0 {
+			return ObjectDomain{}, errors.New("minProperties cannot be negative")
+		}
+		objectDomain.MinProps = *jsonObject.MinProperties
 	}
 	if _, maxPropertiesOk := jsonKV["maxProperties"]; maxPropertiesOk {
 		delete(jsonKV, "maxProperties")
+		if jsonObject.MaxProperties == nil {
+			return ObjectDomain{}, errors.New("maxProperties cannot be null")
+		}
+		if *jsonObject.MaxProperties < 0 {
+			return ObjectDomain{}, errors.New("maxProperties cannot be negative")
+		}
 		objectDomain.MaxProps = jsonObject.MaxProperties
 	}
 
