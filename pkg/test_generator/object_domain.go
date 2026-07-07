@@ -97,8 +97,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 			}
 
 			dc.domainStore[enumHash] = &enumDomain
-			hash := enumHash
-			objectDomain.Enum = append(objectDomain.Enum, &hash)
+			objectDomain.Enum = append(objectDomain.Enum, &enumHash)
 		}
 
 		return objectDomain, nil
@@ -150,6 +149,8 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (ObjectDomain, error
 			properties[requiredKey] = property
 		}
 	}
+
+	// Convert properties map to array (sorted by key), and add their hashes to dc
 
 	// Parse AdditionalProperties
 

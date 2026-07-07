@@ -9,3 +9,6 @@ Never 'prepare' for future stuff
 Do not create extra fields/functions without reason that you need it
 
 Never ignore errors.
+
+
+Always use resources/OpenAPI%20Specification%20v3.0.3.mhtml as sole reference on openapi 3.0.3
