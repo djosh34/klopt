@@ -40,7 +40,7 @@ func TestMissingDomainsToHasher(t *testing.T) {
 		"allOf": {
 			domain: &AllOfDomain{Domains: []types.Domain{&StringDomain{}}, MergedDomain: &ObjectDomain{}},
 			expected: &hashables.AllOfHashable{Domains: []types.Hasher{&hashables.StringHashable{}}, MergedDomain: &hashables.ObjectHashable{
-				Properties: []types.Hasher{},
+				Properties: []hashables.PropertyHashable{},
 			}},
 		},
 		"allOf with nil domain": {

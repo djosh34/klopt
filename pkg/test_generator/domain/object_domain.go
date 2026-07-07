@@ -23,25 +23,33 @@ type Property struct {
 	Required bool
 }
 
-func (p *Property) ToHasher() (types.Hasher, error) {
+func (p *Property) ToHashable() (hashables.PropertyHashable, error) {
 	if p == nil {
-		return nil, errors.New("property cannot be nil")
+		return hashables.PropertyHashable{}, errors.New("property cannot be nil")
 	}
 
 	var propertyHasher types.Hasher
 	if p.Domain != nil {
 		hasher, err := p.Domain.ToHasher()
 		if err != nil {
-			return nil, err
+			return hashables.PropertyHashable{}, err
 		}
 		propertyHasher = hasher
 	}
 
-	return &hashables.PropertyHashable{
+	return hashables.PropertyHashable{
 		Key:      p.Key,
 		Hasher:   propertyHasher,
 		Required: p.Required,
 	}, nil
+}
+
+func (p *Property) ToHasher() (types.Hasher, error) {
+	propertyHashable, err := p.ToHashable()
+	if err != nil {
+		return nil, err
+	}
+	return &propertyHashable, nil
 }
 
 type ObjectDomain struct {
@@ -49,7 +57,7 @@ type ObjectDomain struct {
 
 	Enum []types.Enum
 
-	Properties []types.Domain
+	Properties []Property
 
 	AdditionalPropertyKind
 	AdditionalPropertyDomain types.Domain
@@ -78,23 +86,15 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	merged.MinProps = max(o.MinProps, otherObject.MinProps)
 	merged.MaxProps = tighterMaxProps(o.MaxProps, otherObject.MaxProps)
 
-	propertiesByKey := make(map[string]types.Domain, len(o.Properties)+len(otherObject.Properties))
-	for _, propertyDomain := range o.Properties {
-		property, ok := propertyDomain.(*Property)
-		if !ok {
-			return nil, errors.New("object property domain is not Property")
-		}
-		propertiesByKey[property.Key] = propertyDomain
+	propertiesByKey := make(map[string]Property, len(o.Properties)+len(otherObject.Properties))
+	for _, property := range o.Properties {
+		propertiesByKey[property.Key] = property
 	}
-	for _, propertyDomain := range otherObject.Properties {
-		property, ok := propertyDomain.(*Property)
-		if !ok {
-			return nil, errors.New("object property domain is not Property")
-		}
+	for _, property := range otherObject.Properties {
 		if _, exists := propertiesByKey[property.Key]; exists {
 			return nil, &PropertyAlreadyExistsError{Key: property.Key}
 		}
-		propertiesByKey[property.Key] = propertyDomain
+		propertiesByKey[property.Key] = property
 	}
 
 	propertyKeys := make([]string, 0, len(propertiesByKey))
@@ -102,7 +102,7 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 		propertyKeys = append(propertyKeys, propertyKey)
 	}
 	sort.Strings(propertyKeys)
-	merged.Properties = make([]types.Domain, 0, len(propertyKeys))
+	merged.Properties = make([]Property, 0, len(propertyKeys))
 	for _, propertyKey := range propertyKeys {
 		merged.Properties = append(merged.Properties, propertiesByKey[propertyKey])
 	}
@@ -151,13 +151,13 @@ func (o *ObjectDomain) ToHasher() (types.Hasher, error) {
 		return nil, errors.New("object domain cannot be nil")
 	}
 
-	propertyHashers := make([]types.Hasher, 0, len(o.Properties))
-	for _, propertyDomain := range o.Properties {
-		hasher, err := propertyDomain.ToHasher()
+	propertyHashers := make([]hashables.PropertyHashable, 0, len(o.Properties))
+	for _, property := range o.Properties {
+		propertyHashable, err := property.ToHashable()
 		if err != nil {
 			return nil, err
 		}
-		propertyHashers = append(propertyHashers, hasher)
+		propertyHashers = append(propertyHashers, propertyHashable)
 	}
 
 	if o.AdditionalPropertyKind == AdditionalSchema && o.AdditionalPropertyDomain == nil {
@@ -331,7 +331,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 		property := properties[propertyKey]
 		dc.AddDomain(&property)
 
-		objectDomain.Properties = append(objectDomain.Properties, &property)
+		objectDomain.Properties = append(objectDomain.Properties, property)
 	}
 
 	// Parse AdditionalProperties

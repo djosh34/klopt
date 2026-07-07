@@ -46,7 +46,7 @@ type ObjectHashable struct {
 
 	Enum []types.Enum
 
-	Properties []types.Hasher
+	Properties []PropertyHashable
 
 	AdditionalPropertyKind
 	AdditionalPropertyDomain types.Hasher

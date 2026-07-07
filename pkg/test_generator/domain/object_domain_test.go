@@ -120,7 +120,7 @@ properties:
 			parseDomains:  []types.Domain{propertyNameDomain, propertyAgeDomain},
 			expectedStore: []types.Domain{propertyNameDomain, propertyAgeDomain, ageProperty, nameProperty},
 			expected: ObjectDomain{
-				Properties:             []types.Domain{ageProperty, nameProperty},
+				Properties:             []Property{*ageProperty, *nameProperty},
 				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
@@ -136,7 +136,7 @@ properties:
 			parseDomains:  []types.Domain{propertyNameDomain},
 			expectedStore: []types.Domain{propertyNameDomain, requiredNameProperty},
 			expected: ObjectDomain{
-				Properties:             []types.Domain{requiredNameProperty},
+				Properties:             []Property{*requiredNameProperty},
 				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
@@ -150,7 +150,7 @@ properties:
 			parseDomains:  []types.Domain{refPropertyDomain},
 			expectedStore: []types.Domain{refPropertyDomain, refProperty},
 			expected: ObjectDomain{
-				Properties:             []types.Domain{refProperty},
+				Properties:             []Property{*refProperty},
 				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
@@ -163,7 +163,7 @@ required:
 `,
 			expectedStore: []types.Domain{requiredAgeOnlyProperty, requiredNameOnlyProperty},
 			expected: ObjectDomain{
-				Properties:             []types.Domain{requiredAgeOnlyProperty, requiredNameOnlyProperty},
+				Properties:             []Property{*requiredAgeOnlyProperty, *requiredNameOnlyProperty},
 				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
@@ -305,22 +305,22 @@ properties:
 	objectDomain, err := (&DomainContext{}).ParseObject(node)
 	require.NoError(t, err)
 	require.Len(t, objectDomain.Properties, 2)
-	require.Equal(t, "contact_info", objectDomain.Properties[0].(*Property).Key)
-	require.True(t, objectDomain.Properties[0].(*Property).Required)
-	require.IsType(t, new(ObjectDomain), objectDomain.Properties[0].(*Property).Domain)
-	require.Equal(t, "id", objectDomain.Properties[1].(*Property).Key)
+	require.Equal(t, "contact_info", objectDomain.Properties[0].Key)
+	require.True(t, objectDomain.Properties[0].Required)
+	require.IsType(t, new(ObjectDomain), objectDomain.Properties[0].Domain)
+	require.Equal(t, "id", objectDomain.Properties[1].Key)
 }
 
 func TestObjectDomainAllOfMerge(t *testing.T) {
 	first := &ObjectDomain{
-		Properties:             []types.Domain{&Property{Key: "id", Required: true}},
+		Properties:             []Property{{Key: "id", Required: true}},
 		AdditionalPropertyKind: AdditionalTrue,
 		MinProps:               1,
 		MaxProps:               new(5),
 	}
 	second := &ObjectDomain{
 		Nullable:               true,
-		Properties:             []types.Domain{&Property{Key: "name"}},
+		Properties:             []Property{{Key: "name"}},
 		AdditionalPropertyKind: AdditionalFalse,
 		MinProps:               2,
 		MaxProps:               new(3),
@@ -330,7 +330,7 @@ func TestObjectDomainAllOfMerge(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, &ObjectDomain{
 		Nullable:               true,
-		Properties:             []types.Domain{&Property{Key: "id", Required: true}, &Property{Key: "name"}},
+		Properties:             []Property{{Key: "id", Required: true}, {Key: "name"}},
 		AdditionalPropertyKind: AdditionalFalse,
 		MinProps:               2,
 		MaxProps:               new(3),
@@ -344,7 +344,7 @@ func TestObjectDomainAllOfMergeErrors(t *testing.T) {
 	_, err = (&ObjectDomain{}).AllOfMerge(&StringDomain{})
 	require.ErrorContains(t, err, "domain is not ObjectDomain")
 
-	_, err = (&ObjectDomain{Properties: []types.Domain{&Property{Key: "id"}}}).AllOfMerge(&ObjectDomain{Properties: []types.Domain{&Property{Key: "id"}}})
+	_, err = (&ObjectDomain{Properties: []Property{{Key: "id"}}}).AllOfMerge(&ObjectDomain{Properties: []Property{{Key: "id"}}})
 	require.ErrorAs(t, err, new(*PropertyAlreadyExistsError))
 }
 
@@ -717,7 +717,7 @@ func TestObjectDomainToHasher(t *testing.T) {
 	object := ObjectDomain{
 		Nullable:                 true,
 		Enum:                     []types.Enum{{}},
-		Properties:               []types.Domain{&Property{Key: "name", Domain: &StringDomain{}, Required: true}},
+		Properties:               []Property{{Key: "name", Domain: &StringDomain{}, Required: true}},
 		AdditionalPropertyKind:   AdditionalSchema,
 		AdditionalPropertyDomain: &StringDomain{},
 		MinProps:                 1,
@@ -729,7 +729,7 @@ func TestObjectDomainToHasher(t *testing.T) {
 	require.Equal(t, &hashables.ObjectHashable{
 		Nullable:                 true,
 		Enum:                     []types.Enum{{}},
-		Properties:               []types.Hasher{&hashables.PropertyHashable{Key: "name", Hasher: &hashables.StringHashable{}, Required: true}},
+		Properties:               []hashables.PropertyHashable{{Key: "name", Hasher: &hashables.StringHashable{}, Required: true}},
 		AdditionalPropertyKind:   hashables.AdditionalSchema,
 		AdditionalPropertyDomain: &hashables.StringHashable{},
 		MinProps:                 1,
@@ -865,6 +865,6 @@ required:
 
 	objectDomain, err := dc.ParseObject(node)
 	require.NoError(t, err)
-	require.Equal(t, ObjectDomain{Properties: []types.Domain{expectedProperty}, AdditionalPropertyKind: AdditionalTrue}, objectDomain)
+	require.Equal(t, ObjectDomain{Properties: []Property{*expectedProperty}, AdditionalPropertyKind: AdditionalTrue}, objectDomain)
 	requireDomainStoreDomains(t, &dc, expectedProperty)
 }

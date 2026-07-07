@@ -13,7 +13,7 @@ func TestParseAllOfParsesValidObjectCompositionWithoutMerging(t *testing.T) {
 	firstDomain := &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}
 	secondDomain := &ObjectDomain{Nullable: true, AdditionalPropertyKind: AdditionalTrue}
 	objectShapedNoTypeDomain := &ObjectDomain{MinProps: 1, AdditionalPropertyKind: AdditionalTrue}
-	refTargetDomain := &ObjectDomain{Properties: []types.Domain{&Property{Key: "id", Required: true}}, AdditionalPropertyKind: AdditionalFalse}
+	refTargetDomain := &ObjectDomain{Properties: []Property{{Key: "id", Required: true}}, AdditionalPropertyKind: AdditionalFalse}
 
 	tests := map[string]struct {
 		yamlString    string
