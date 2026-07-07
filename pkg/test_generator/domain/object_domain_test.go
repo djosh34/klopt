@@ -59,6 +59,8 @@ func TestParseObjectParsesValidObjectSchemas(t *testing.T) {
 	ageProperty := &Property{Key: "age", Domain: propertyAgeDomain}
 	nameProperty := &Property{Key: "name", Domain: propertyNameDomain}
 	requiredNameProperty := &Property{Key: "name", Domain: propertyNameDomain, Required: true}
+	requiredAgeOnlyProperty := &Property{Key: "age", Required: true}
+	requiredNameOnlyProperty := &Property{Key: "name", Required: true}
 	tests := map[string]struct {
 		yamlString    string
 		parseDomains  []types.Domain
@@ -83,12 +85,13 @@ description: A person object.
 				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
-		"nullable is allowed": {
+		"nullable is parsed": {
 			yamlString: `
 type: object
 nullable: true
 `,
 			expected: ObjectDomain{
+				Nullable:               true,
 				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
@@ -124,6 +127,19 @@ properties:
 				AdditionalPropertyKind: AdditionalTrue,
 			},
 		},
+		"required properties without schemas are parsed and sorted by key": {
+			yamlString: `
+type: object
+required:
+  - name
+  - age
+`,
+			expectedStore: []types.Domain{requiredAgeOnlyProperty, requiredNameOnlyProperty},
+			expected: ObjectDomain{
+				Properties:             []types.Domain{requiredAgeOnlyProperty, requiredNameOnlyProperty},
+				AdditionalPropertyKind: AdditionalTrue,
+			},
+		},
 		"additionalProperties true": {
 			yamlString: `
 type: object
@@ -155,6 +171,18 @@ additionalProperties:
 				AdditionalPropertyDomain: additionalPropertyDomain,
 			},
 		},
+		"additionalProperties empty schema object": {
+			yamlString: `
+type: object
+additionalProperties: {}
+`,
+			parseDomains:  []types.Domain{additionalPropertyDomain},
+			expectedStore: []types.Domain{additionalPropertyDomain},
+			expected: ObjectDomain{
+				AdditionalPropertyKind:   AdditionalSchema,
+				AdditionalPropertyDomain: additionalPropertyDomain,
+			},
+		},
 		"minProperties and maxProperties": {
 			yamlString: `
 type: object
@@ -165,6 +193,17 @@ maxProperties: 3
 				AdditionalPropertyKind: AdditionalTrue,
 				MinProps:               1,
 				MaxProps:               new(3),
+			},
+		},
+		"minProperties and maxProperties allow zero": {
+			yamlString: `
+type: object
+minProperties: 0
+maxProperties: 0
+`,
+			expected: ObjectDomain{
+				AdditionalPropertyKind: AdditionalTrue,
+				MaxProps:               new(0),
 			},
 		},
 	}
@@ -356,23 +395,117 @@ deprecated: true
 type: object
 x-extension: true
 `},
+		"nullable must be boolean": {yamlString: `
+type: object
+nullable: nope
+`},
+		"top-level readOnly false is still not part of ObjectDomain": {yamlString: `
+type: object
+readOnly: false
+`},
+		"top-level writeOnly false is still not part of ObjectDomain": {yamlString: `
+type: object
+writeOnly: false
+`},
+		"properties cannot be null": {yamlString: `
+type: object
+properties: null
+`},
+		"properties must be an object": {yamlString: `
+type: object
+properties: []
+`},
+		"property schema cannot be null": {yamlString: `
+type: object
+properties:
+  name: null
+`},
 		"required empty array is invalid": {yamlString: `
 type: object
 required: []
 `},
-		"readOnly is not allowed in property schemas": {yamlString: `
+		"required null is invalid": {yamlString: `
+type: object
+required: null
+`},
+		"required must be an array": {yamlString: `
+type: object
+required: name
+`},
+		"required values must be strings": {yamlString: `
+type: object
+required:
+  - 1
+`},
+		"required entries must be unique": {yamlString: `
+type: object
+required:
+  - name
+  - name
+`},
+		"additionalProperties string is invalid": {yamlString: `
+type: object
+additionalProperties: nope
+`},
+		"additionalProperties number is invalid": {yamlString: `
+type: object
+additionalProperties: 123
+`},
+		"additionalProperties array is invalid": {yamlString: `
+type: object
+additionalProperties: []
+`},
+		"minProperties cannot be null": {yamlString: `
+type: object
+minProperties: null
+`},
+		"minProperties cannot be negative": {yamlString: `
+type: object
+minProperties: -1
+`},
+		"minProperties must be an integer": {yamlString: `
+type: object
+minProperties: 1.5
+`},
+		"maxProperties cannot be null": {yamlString: `
+type: object
+maxProperties: null
+`},
+		"maxProperties cannot be negative": {yamlString: `
+type: object
+maxProperties: -1
+`},
+		"maxProperties must be an integer": {yamlString: `
+type: object
+maxProperties: 1.5
+`},
+		"readOnly true is not allowed in property schemas": {yamlString: `
 type: object
 properties:
   name:
     type: string
     readOnly: true
 `},
-		"writeOnly is not allowed in property schemas": {yamlString: `
+		"readOnly false is not allowed in property schemas": {yamlString: `
+type: object
+properties:
+  name:
+    type: string
+    readOnly: false
+`},
+		"writeOnly true is not allowed in property schemas": {yamlString: `
 type: object
 properties:
   name:
     type: string
     writeOnly: true
+`},
+		"writeOnly false is not allowed in property schemas": {yamlString: `
+type: object
+properties:
+  name:
+    type: string
+    writeOnly: false
 `},
 	}
 
@@ -389,12 +522,89 @@ properties:
 	}
 }
 
+func TestParseObjectDoesNotCommitDomainsWhenReturningError(t *testing.T) {
+	propertyDomain := fakeObjectTestDomain{hash: types.Hash{1}}
+	tests := map[string]struct {
+		yamlString     string
+		parse          func(parseCall int) (types.Domain, error)
+		wantParseCalls int
+	}{
+		"validation error after property parse": {
+			yamlString: `
+type: object
+properties:
+  name:
+    type: string
+minProperties: -1
+`,
+			parse: func(parseCall int) (types.Domain, error) {
+				_ = parseCall
+				return propertyDomain, nil
+			},
+			wantParseCalls: 1,
+		},
+		"unsupported key after property parse": {
+			yamlString: `
+type: object
+properties:
+  name:
+    type: string
+notInTheSpecAtAll: true
+`,
+			parse: func(parseCall int) (types.Domain, error) {
+				_ = parseCall
+				return propertyDomain, nil
+			},
+			wantParseCalls: 1,
+		},
+		"additionalProperties parse error after property parse": {
+			yamlString: `
+type: object
+properties:
+  name:
+    type: string
+additionalProperties: {}
+`,
+			parse: func(parseCall int) (types.Domain, error) {
+				if parseCall == 0 {
+					return propertyDomain, nil
+				}
+				return nil, errors.New("parse failed")
+			},
+			wantParseCalls: 2,
+		},
+	}
+
+	for testName, tt := range tests {
+		t.Run(testName, func(t *testing.T) {
+			node := rawObjectFromYAML(t, tt.yamlString)
+			parseCall := 0
+			dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) {
+				_ = node
+				domain, err := tt.parse(parseCall)
+				parseCall++
+				return domain, err
+			}}
+
+			objectDomain, err := dc.ParseObject(node)
+			require.Error(t, err)
+			require.Empty(t, objectDomain)
+			require.Equal(t, tt.wantParseCalls, parseCall)
+			require.Empty(t, dc.domainStore)
+		})
+	}
+}
+
 func TestPropertyToHasher(t *testing.T) {
 	property := Property{Key: "name", Domain: &StringDomain{}, Required: true}
 
 	hasher, err := property.ToHasher()
 	require.NoError(t, err)
 	require.Equal(t, &hashables.PropertyHashable{Key: "name", Hasher: &hashables.StringHashable{}, Required: true}, hasher)
+
+	hasher, err = (&Property{Key: "nickname", Required: true}).ToHasher()
+	require.NoError(t, err)
+	require.Equal(t, &hashables.PropertyHashable{Key: "nickname", Required: true}, hasher)
 }
 
 func TestPropertyToHasherErrors(t *testing.T) {
@@ -408,6 +618,7 @@ func TestPropertyToHasherErrors(t *testing.T) {
 func TestObjectDomainToHasher(t *testing.T) {
 	maxProps := new(3)
 	object := ObjectDomain{
+		Nullable:                 true,
 		Enum:                     []types.Domain{&EnumDomain{}},
 		Properties:               []types.Domain{&Property{Key: "name", Domain: &StringDomain{}, Required: true}},
 		AdditionalPropertyKind:   AdditionalSchema,
@@ -419,6 +630,7 @@ func TestObjectDomainToHasher(t *testing.T) {
 	hasher, err := object.ToHasher()
 	require.NoError(t, err)
 	require.Equal(t, &hashables.ObjectHashable{
+		Nullable:                 true,
 		Enum:                     []types.Hasher{&hashables.EnumHashable{}},
 		Properties:               []types.Hasher{&hashables.PropertyHashable{Key: "name", Hasher: &hashables.StringHashable{}, Required: true}},
 		AdditionalPropertyKind:   hashables.AdditionalSchema,
@@ -432,10 +644,19 @@ func TestObjectDomainToHasherErrors(t *testing.T) {
 	_, err := (*ObjectDomain)(nil).ToHasher()
 	require.Error(t, err)
 
+	_, err = (&ObjectDomain{Enum: []types.Domain{nil}}).ToHasher()
+	require.Error(t, err)
+
 	_, err = (&ObjectDomain{Enum: []types.Domain{failingToHasherDomain{}}}).ToHasher()
 	require.Error(t, err)
 
+	_, err = (&ObjectDomain{Properties: []types.Domain{nil}}).ToHasher()
+	require.Error(t, err)
+
 	_, err = (&ObjectDomain{Properties: []types.Domain{failingToHasherDomain{}}}).ToHasher()
+	require.Error(t, err)
+
+	_, err = (&ObjectDomain{AdditionalPropertyKind: AdditionalSchema}).ToHasher()
 	require.Error(t, err)
 
 	_, err = (&ObjectDomain{AdditionalPropertyDomain: failingToHasherDomain{}}).ToHasher()
@@ -548,7 +769,11 @@ type: object
 required:
   - name
 `)
-	objectDomain, err := (&DomainContext{}).ParseObject(node)
+	dc := DomainContext{}
+	expectedProperty := &Property{Key: "name", Required: true}
+
+	objectDomain, err := dc.ParseObject(node)
 	require.NoError(t, err)
-	require.Len(t, objectDomain.Properties, 1)
+	require.Equal(t, ObjectDomain{Properties: []types.Domain{expectedProperty}, AdditionalPropertyKind: AdditionalTrue}, objectDomain)
+	requireDomainStoreDomains(t, &dc, expectedProperty)
 }
