@@ -15,10 +15,11 @@ func TestParseArrayParsesValidArraySchemas(t *testing.T) {
 	refTargetDomain := &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}
 
 	tests := map[string]struct {
-		yamlString    string
-		parseDomain   types.Domain
-		expected      ArrayDomain
-		expectedStore []types.Domain
+		yamlString         string
+		parseDomain        types.Domain
+		expected           ArrayDomain
+		expectedStore      []types.Domain
+		expectedParseCalls int
 	}{
 		"minimal array": {
 			yamlString: `
@@ -86,6 +87,13 @@ items:
 			expected:      ArrayDomain{Items: refTargetDomain},
 			expectedStore: []types.Domain{refTargetDomain},
 		},
+		"items empty object is arbitrary item schema": {
+			yamlString: `
+type: array
+items: {}
+`,
+			expected: ArrayDomain{},
+		},
 	}
 
 	for testName, tt := range tests {
@@ -96,10 +104,15 @@ items:
 				return tt.parseDomain, nil
 			}}
 
+			expectedParseCalls := tt.expectedParseCalls
+			if tt.parseDomain != nil {
+				expectedParseCalls = 1
+			}
+
 			node := rawObjectFromYAML(t, tt.yamlString)
 			arrayDomain, err := dc.ParseArray(node)
 			require.NoError(t, err)
-			require.Equal(t, 1, parseCall)
+			require.Equal(t, expectedParseCalls, parseCall)
 			require.Equal(t, tt.expected, arrayDomain)
 			requireDomainStoreDomains(t, &dc, tt.expectedStore...)
 		})
