@@ -18,8 +18,8 @@ const (
 )
 
 type Property struct {
-	Key string
 	types.Domain
+	Key      string
 	Required bool
 }
 
@@ -53,13 +53,14 @@ func (p *Property) GenerateHash() (types.Hash, error) {
 }
 
 type ObjectDomain struct {
+	AdditionalPropertyKind
+
 	Nullable bool
 
 	Enum []types.Enum
 
 	Properties []Property
 
-	AdditionalPropertyKind
 	AdditionalPropertyDomain types.Domain
 
 	MinProps int
@@ -100,79 +101,11 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 
 	merged.Enum = enums
 	merged.MinProps = max(o.MinProps, otherObject.MinProps)
-	merged.MaxProps = tighterMaxProps(o.MaxProps, otherObject.MaxProps)
+	merged.MaxProps = tighterMax(o.MaxProps, otherObject.MaxProps)
 
-	leftProperties := make(map[string]Property, len(o.Properties))
-	for _, property := range o.Properties {
-		leftProperties[property.Key] = property
-	}
-
-	rightProperties := make(map[string]Property, len(otherObject.Properties))
-	for _, property := range otherObject.Properties {
-		rightProperties[property.Key] = property
-	}
-
-	propertiesByKey := make(map[string]Property, len(o.Properties)+len(otherObject.Properties))
-
-	for key, leftProperty := range leftProperties {
-		if rightProperty, ok := rightProperties[key]; ok {
-			property := Property{Key: key, Required: leftProperty.Required || rightProperty.Required}
-			if leftProperty.Domain != nil && rightProperty.Domain != nil {
-				domain, err := leftProperty.AllOfMerge(rightProperty.Domain)
-				if err != nil {
-					return nil, err
-				}
-
-				property.Domain = domain
-			} else if leftProperty.Domain != nil {
-				property.Domain = leftProperty.Domain
-			} else {
-				property.Domain = rightProperty.Domain
-			}
-
-			propertiesByKey[key] = property
-
-			continue
-		}
-
-		property, keep, err := mergePropertyWithAdditional(leftProperty, otherObject)
-		if err != nil {
-			return nil, err
-		}
-
-		if keep {
-			propertiesByKey[key] = property
-		}
-	}
-
-	for key, rightProperty := range rightProperties {
-		if _, exists := leftProperties[key]; exists {
-			continue
-		}
-
-		property, keep, err := mergePropertyWithAdditional(rightProperty, o)
-		if err != nil {
-			return nil, err
-		}
-
-		if keep {
-			propertiesByKey[key] = property
-		}
-	}
-
-	propertyKeys := make([]string, 0, len(propertiesByKey))
-	for propertyKey := range propertiesByKey {
-		propertyKeys = append(propertyKeys, propertyKey)
-	}
-
-	sort.Strings(propertyKeys)
-
-	merged.Properties = nil
-	if len(propertyKeys) != 0 {
-		merged.Properties = make([]Property, 0, len(propertyKeys))
-		for _, propertyKey := range propertyKeys {
-			merged.Properties = append(merged.Properties, propertiesByKey[propertyKey])
-		}
+	merged.Properties, err = mergeObjectProperties(o, otherObject)
+	if err != nil {
+		return nil, err
 	}
 
 	additionalKind, additionalDomain, err := mergeAdditionalProperties(o, otherObject)
@@ -186,7 +119,7 @@ func (o *ObjectDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	return &merged, nil
 }
 
-func tighterMaxProps(first *int, second *int) *int {
+func tighterMax(first *int, second *int) *int {
 	if first == nil {
 		return second
 	}
@@ -196,6 +129,101 @@ func tighterMaxProps(first *int, second *int) *int {
 	}
 
 	return second
+}
+
+func mergeObjectProperties(leftObject *ObjectDomain, rightObject *ObjectDomain) ([]Property, error) {
+	leftProperties := propertiesByKey(leftObject.Properties)
+	rightProperties := propertiesByKey(rightObject.Properties)
+	mergedProperties := make(map[string]Property, len(leftObject.Properties)+len(rightObject.Properties))
+
+	for key, leftProperty := range leftProperties {
+		if rightProperty, ok := rightProperties[key]; ok {
+			property, mergeErr := mergeMatchedProperty(key, leftProperty, rightProperty)
+			if mergeErr != nil {
+				return nil, mergeErr
+			}
+
+			mergedProperties[key] = property
+
+			continue
+		}
+
+		if mergeErr := mergeUnmatchedProperty(key, leftProperty, rightObject, mergedProperties); mergeErr != nil {
+			return nil, mergeErr
+		}
+	}
+
+	for key, rightProperty := range rightProperties {
+		if _, exists := leftProperties[key]; exists {
+			continue
+		}
+
+		if mergeErr := mergeUnmatchedProperty(key, rightProperty, leftObject, mergedProperties); mergeErr != nil {
+			return nil, mergeErr
+		}
+	}
+
+	return sortedProperties(mergedProperties), nil
+}
+
+func propertiesByKey(properties []Property) map[string]Property {
+	mappedProperties := make(map[string]Property, len(properties))
+	for _, property := range properties {
+		mappedProperties[property.Key] = property
+	}
+
+	return mappedProperties
+}
+
+func mergeMatchedProperty(key string, leftProperty Property, rightProperty Property) (Property, error) {
+	property := Property{Key: key, Required: leftProperty.Required || rightProperty.Required}
+	if leftProperty.Domain != nil && rightProperty.Domain != nil {
+		domain, mergeErr := leftProperty.AllOfMerge(rightProperty.Domain)
+		if mergeErr != nil {
+			return Property{}, mergeErr
+		}
+
+		property.Domain = domain
+	} else if leftProperty.Domain != nil {
+		property.Domain = leftProperty.Domain
+	} else {
+		property.Domain = rightProperty.Domain
+	}
+
+	return property, nil
+}
+
+func mergeUnmatchedProperty(key string, property Property, otherObject *ObjectDomain, propertiesByKey map[string]Property) error {
+	mergedProperty, keep, mergeErr := mergePropertyWithAdditional(property, otherObject)
+	if mergeErr != nil {
+		return mergeErr
+	}
+
+	if keep {
+		propertiesByKey[key] = mergedProperty
+	}
+
+	return nil
+}
+
+func sortedProperties(propertiesByKey map[string]Property) []Property {
+	propertyKeys := make([]string, 0, len(propertiesByKey))
+	for propertyKey := range propertiesByKey {
+		propertyKeys = append(propertyKeys, propertyKey)
+	}
+
+	sort.Strings(propertyKeys)
+
+	if len(propertyKeys) == 0 {
+		return nil
+	}
+
+	properties := make([]Property, 0, len(propertyKeys))
+	for _, propertyKey := range propertyKeys {
+		properties = append(properties, propertiesByKey[propertyKey])
+	}
+
+	return properties
 }
 
 func mergePropertyWithAdditional(property Property, otherObject *ObjectDomain) (Property, bool, error) {
@@ -219,9 +247,9 @@ func mergePropertyWithAdditional(property Property, otherObject *ObjectDomain) (
 			return property, true, nil
 		}
 
-		domain, err := property.AllOfMerge(otherObject.AdditionalPropertyDomain)
-		if err != nil {
-			return Property{}, false, err
+		domain, mergeErr := property.AllOfMerge(otherObject.AdditionalPropertyDomain)
+		if mergeErr != nil {
+			return Property{}, false, mergeErr
 		}
 
 		property.Domain = domain
@@ -238,9 +266,9 @@ func mergeAdditionalProperties(first *ObjectDomain, second *ObjectDomain) (Addit
 	}
 
 	if first.AdditionalPropertyKind == AdditionalSchema && second.AdditionalPropertyKind == AdditionalSchema {
-		domain, err := first.AdditionalPropertyDomain.AllOfMerge(second.AdditionalPropertyDomain)
-		if err != nil {
-			return AdditionalSchema, nil, err
+		domain, mergeErr := first.AdditionalPropertyDomain.AllOfMerge(second.AdditionalPropertyDomain)
+		if mergeErr != nil {
+			return AdditionalSchema, nil, mergeErr
 		}
 
 		return AdditionalSchema, domain, nil
@@ -258,13 +286,14 @@ func mergeAdditionalProperties(first *ObjectDomain, second *ObjectDomain) (Addit
 }
 
 type objectHashValue struct {
+	AdditionalPropertyKind
+
 	Nullable bool
 
 	Enum []types.Enum
 
 	Properties []*types.Hash
 
-	AdditionalPropertyKind
 	AdditionalPropertyDomain *types.Hash
 
 	MinProps int
@@ -358,7 +387,7 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 		return ObjectDomain{}, decodeErr
 	}
 
-	if _, typeOk := jsonKV["type"]; typeOk && jsonObject.Type != "object" {
+	if jsonObject.Type != "object" {
 		return ObjectDomain{}, fmt.Errorf("object schema type must be object, got %q", jsonObject.Type)
 	}
 
@@ -526,6 +555,10 @@ func (dc *DomainContext) ParseObject(node *json.RawMessage) (objectDomain Object
 		}
 
 		objectDomain.MaxProps = jsonObject.MaxProperties
+	}
+
+	if objectDomain.MaxProps != nil && objectDomain.MinProps > *objectDomain.MaxProps {
+		return ObjectDomain{}, errors.New("minProperties cannot be greater than maxProperties")
 	}
 
 	deleteAllowableKeys(jsonKV)

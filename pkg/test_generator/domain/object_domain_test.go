@@ -384,6 +384,9 @@ func TestParseObjectRejectsInvalidObjectSchemas(t *testing.T) {
 	tests := map[string]struct {
 		yamlString string
 	}{
+		"missing type object is invalid": {yamlString: `
+properties: {}
+`},
 		"random key outside OpenAPI schema object": {yamlString: `
 type: object
 notInTheSpecAtAll: true
@@ -580,6 +583,11 @@ maxProperties: -1
 		"maxProperties must be an integer": {yamlString: `
 type: object
 maxProperties: 1.5
+`},
+		"minProperties cannot be greater than maxProperties": {yamlString: `
+type: object
+minProperties: 2
+maxProperties: 1
 `},
 		"readOnly true is not allowed in property schemas": {yamlString: `
 type: object

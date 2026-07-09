@@ -66,7 +66,10 @@ func (domain *StringDomain) AllOfMerge(otherDomain types.Domain) (types.Domain, 
 				continue
 			}
 
-			stringValue := mustUnmarshalJSONString(enumValue)
+			stringValue, err := mustUnmarshalJSONString(enumValue)
+			if err != nil {
+				return nil, err
+			}
 
 			for _, example := range merged.XValidExamples {
 				if stringValue == example {
@@ -97,13 +100,13 @@ func (domain *StringDomain) AllOfMerge(otherDomain types.Domain) (types.Domain, 
 	return &merged, nil
 }
 
-func mustUnmarshalJSONString(value types.Enum) string {
+func mustUnmarshalJSONString(value types.Enum) (string, error) {
 	var stringValue string
 	if err := json.Unmarshal(value, &stringValue); err != nil {
-		panic(err)
+		return "", err
 	}
 
-	return stringValue
+	return stringValue, nil
 }
 
 func (domain *StringDomain) GenerateHash() (types.Hash, error) {

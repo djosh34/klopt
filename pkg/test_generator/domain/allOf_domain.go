@@ -142,76 +142,13 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 		return AllOfDomain{}, err
 	}
 
-	if jsonKV == nil {
-		return AllOfDomain{}, errors.New("schema node must be object")
+	allOfRaw, err := validateAllOfSchema(jsonKV)
+	if err != nil {
+		return AllOfDomain{}, err
 	}
 
-	allOfRaw, ok := jsonKV["allOf"]
-	if !ok {
-		return AllOfDomain{}, errors.New("allOf is required")
-	}
-
-	for _, key := range []string{"oneOf", "anyOf", "not", "discriminator"} {
-		if _, ok := jsonKV[key]; ok {
-			return AllOfDomain{}, fmt.Errorf("%s is unsupported with allOf", key)
-		}
-	}
-
-	for key := range jsonKV {
-		if !isAllowedAllOfSiblingKey(key) {
-			return AllOfDomain{}, fmt.Errorf("unsupported allOf schema field %q", key)
-		}
-	}
-
-	if string(allOfRaw) == "null" {
-		return AllOfDomain{}, errors.New("allOf cannot be null")
-	}
-
-	var allOfItems []json.RawMessage
-	if err := json.Unmarshal(allOfRaw, &allOfItems); err != nil {
-		return AllOfDomain{}, errors.New("allOf must be array")
-	}
-
-	if len(allOfItems) == 0 {
-		return AllOfDomain{}, errors.New("allOf cannot be empty")
-	}
-
-	for _, allOfItem := range allOfItems {
-		if string(allOfItem) == "null" {
-			return AllOfDomain{}, errors.New("allOf item cannot be null")
-		}
-
-		itemKV := JSONKV{}
-		if err := json.Unmarshal(allOfItem, &itemKV); err != nil {
-			return AllOfDomain{}, errors.New("allOf item must be object")
-		}
-
-		if len(itemKV) == 0 {
-			return AllOfDomain{}, errors.New("allOf item cannot be empty schema")
-		}
-
-		for _, key := range []string{"oneOf", "anyOf", "not", "discriminator"} {
-			if _, ok := itemKV[key]; ok {
-				return AllOfDomain{}, fmt.Errorf("allOf item %s is unsupported", key)
-			}
-		}
-
-		if _, ok := itemKV["$ref"]; ok && len(itemKV) != 1 {
-			return AllOfDomain{}, errors.New("$ref with siblings is unsupported")
-		}
-
-		domain, err := dc.Parse(&allOfItem)
-		if err != nil {
-			return AllOfDomain{}, err
-		}
-
-		if domain == nil {
-			return AllOfDomain{}, errors.New("parsed allOf item cannot be nil")
-		}
-
-		if _, err := allOfDomain.AllOfMerge(domain); err != nil {
-			return AllOfDomain{}, err
-		}
+	if err := dc.parseAllOfItems(allOfRaw, &allOfDomain); err != nil {
+		return AllOfDomain{}, err
 	}
 
 	siblingKV := make(JSONKV, len(jsonKV))
@@ -223,51 +160,165 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 		siblingKV[key] = value
 	}
 
-	if len(siblingKV) == 1 {
-		if nullableRaw, ok := siblingKV["nullable"]; ok {
-			var nullable bool
-			if err := json.Unmarshal(nullableRaw, &nullable); err != nil {
-				return AllOfDomain{}, errors.New("nullable must be boolean")
-			}
-
-			nullableDomain, err := nullableOnlyDomain(allOfDomain.MergedDomain, nullable)
-			if err != nil {
-				return AllOfDomain{}, err
-			}
-
-			dc.AddDomain(nullableDomain)
-
-			if _, err := allOfDomain.AllOfMerge(nullableDomain); err != nil {
-				return AllOfDomain{}, err
-			}
-
-			return allOfDomain, nil
-		}
+	parsedNullable, err := dc.parseNullableSibling(siblingKV, &allOfDomain)
+	if err != nil {
+		return AllOfDomain{}, err
 	}
 
-	if len(siblingKV) != 0 {
-		siblingRaw, err := json.Marshal(siblingKV)
-		if err != nil {
-			return AllOfDomain{}, err
-		}
+	if parsedNullable {
+		return allOfDomain, nil
+	}
 
-		raw := json.RawMessage(siblingRaw)
-
-		domain, err := dc.Parse(&raw)
-		if err != nil {
-			return AllOfDomain{}, err
-		}
-
-		if domain == nil {
-			return AllOfDomain{}, errors.New("parsed allOf sibling cannot be nil")
-		}
-
-		if _, err := allOfDomain.AllOfMerge(domain); err != nil {
-			return AllOfDomain{}, err
-		}
+	if err := dc.parseGeneralSibling(siblingKV, &allOfDomain); err != nil {
+		return AllOfDomain{}, err
 	}
 
 	return allOfDomain, nil
+}
+
+func validateAllOfSchema(jsonKV JSONKV) (json.RawMessage, error) {
+	if jsonKV == nil {
+		return nil, errors.New("schema node must be object")
+	}
+
+	allOfRaw, ok := jsonKV["allOf"]
+	if !ok {
+		return nil, errors.New("allOf is required")
+	}
+
+	for _, key := range []string{"oneOf", "anyOf", "not", "discriminator"} {
+		if _, ok := jsonKV[key]; ok {
+			return nil, fmt.Errorf("%s is unsupported with allOf", key)
+		}
+	}
+
+	for key := range jsonKV {
+		if !isAllowedAllOfSiblingKey(key) {
+			return nil, fmt.Errorf("unsupported allOf schema field %q", key)
+		}
+	}
+
+	return allOfRaw, nil
+}
+
+func (dc *DomainContext) parseAllOfItems(allOfRaw json.RawMessage, allOfDomain *AllOfDomain) error {
+	if string(allOfRaw) == "null" {
+		return errors.New("allOf cannot be null")
+	}
+
+	var allOfItems []json.RawMessage
+	if err := json.Unmarshal(allOfRaw, &allOfItems); err != nil {
+		return errors.New("allOf must be array")
+	}
+
+	if len(allOfItems) == 0 {
+		return errors.New("allOf cannot be empty")
+	}
+
+	for _, allOfItem := range allOfItems {
+		if err := validateAllOfItem(allOfItem); err != nil {
+			return err
+		}
+
+		domain, err := dc.Parse(&allOfItem)
+		if err != nil {
+			return err
+		}
+
+		if domain == nil {
+			return errors.New("parsed allOf item cannot be nil")
+		}
+
+		if _, err := allOfDomain.AllOfMerge(domain); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateAllOfItem(allOfItem json.RawMessage) error {
+	if string(allOfItem) == "null" {
+		return errors.New("allOf item cannot be null")
+	}
+
+	itemKV := JSONKV{}
+	if err := json.Unmarshal(allOfItem, &itemKV); err != nil {
+		return errors.New("allOf item must be object")
+	}
+
+	if len(itemKV) == 0 {
+		return errors.New("allOf item cannot be empty schema")
+	}
+
+	for _, key := range []string{"oneOf", "anyOf", "not", "discriminator"} {
+		if _, ok := itemKV[key]; ok {
+			return fmt.Errorf("allOf item %s is unsupported", key)
+		}
+	}
+
+	if _, ok := itemKV["$ref"]; ok && len(itemKV) != 1 {
+		return errors.New("$ref with siblings is unsupported")
+	}
+
+	return nil
+}
+
+func (dc *DomainContext) parseNullableSibling(siblingKV JSONKV, allOfDomain *AllOfDomain) (bool, error) {
+	if len(siblingKV) != 1 {
+		return false, nil
+	}
+
+	nullableRaw, ok := siblingKV["nullable"]
+	if !ok {
+		return false, nil
+	}
+
+	var nullable bool
+	if err := json.Unmarshal(nullableRaw, &nullable); err != nil {
+		return false, errors.New("nullable must be boolean")
+	}
+
+	nullableDomain, err := nullableOnlyDomain(allOfDomain.MergedDomain, nullable)
+	if err != nil {
+		return false, err
+	}
+
+	dc.AddDomain(nullableDomain)
+
+	if _, err := allOfDomain.AllOfMerge(nullableDomain); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (dc *DomainContext) parseGeneralSibling(siblingKV JSONKV, allOfDomain *AllOfDomain) error {
+	if len(siblingKV) == 0 {
+		return nil
+	}
+
+	siblingRaw, err := json.Marshal(siblingKV)
+	if err != nil {
+		return err
+	}
+
+	raw := json.RawMessage(siblingRaw)
+
+	domain, err := dc.Parse(&raw)
+	if err != nil {
+		return err
+	}
+
+	if domain == nil {
+		return errors.New("parsed allOf sibling cannot be nil")
+	}
+
+	if _, err := allOfDomain.AllOfMerge(domain); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func isAllowedAllOfSiblingKey(key string) bool {

@@ -1,3 +1,4 @@
+// Package jsonrefs provides utilities for resolving JSON references.
 package jsonrefs
 
 import (
@@ -71,26 +72,7 @@ func unmarshalNode(data []byte) (Node, error) {
 
 	switch trimmed[0] {
 	case '{':
-		var rawMap map[string]json.RawMessage
-		if err := json.Unmarshal(data, &rawMap); err != nil {
-			return nil, fmt.Errorf("unmarshal object: %w", err)
-		}
-
-		if _, ok := rawMap["$ref"]; ok {
-			node := new(RefNode)
-			if err := json.Unmarshal(data, node); err != nil {
-				return nil, err
-			}
-
-			return node, nil
-		}
-
-		node := new(ObjectNode)
-		if err := json.Unmarshal(data, node); err != nil {
-			return nil, err
-		}
-
-		return node, nil
+		return unmarshalObjectNode(data)
 	case '[':
 		node := new(ArrayNode)
 		if err := json.Unmarshal(data, node); err != nil {
@@ -106,6 +88,29 @@ func unmarshalNode(data []byte) (Node, error) {
 
 		return node, nil
 	}
+}
+
+func unmarshalObjectNode(data []byte) (Node, error) {
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		return nil, fmt.Errorf("unmarshal object: %w", err)
+	}
+
+	if _, ok := rawMap["$ref"]; ok {
+		node := new(RefNode)
+		if err := json.Unmarshal(data, node); err != nil {
+			return nil, err
+		}
+
+		return node, nil
+	}
+
+	node := new(ObjectNode)
+	if err := json.Unmarshal(data, node); err != nil {
+		return nil, err
+	}
+
+	return node, nil
 }
 
 func (n *ObjectNode) UnmarshalJSON(data []byte) error {

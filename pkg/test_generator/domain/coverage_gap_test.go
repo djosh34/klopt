@@ -260,11 +260,11 @@ func TestDomainContextParseDefaultRemainingBranches(t *testing.T) {
 		require.Nil(t, domain)
 	})
 
-	t.Run("object-shaped schema without type", func(t *testing.T) {
+	t.Run("object-shaped schema without type is rejected", func(t *testing.T) {
 		raw := json.RawMessage(`{"properties":{"name":{"type":"string"}}}`)
 		domain, err := (&DomainContext{}).Parse(&raw)
-		require.NoError(t, err)
-		require.IsType(t, new(ObjectDomain), domain)
+		require.Error(t, err)
+		require.Nil(t, domain)
 	})
 
 	t.Run("object-shaped schema parse error", func(t *testing.T) {
@@ -363,5 +363,7 @@ func TestStringRemainingBranches(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, got)
 
-	require.Panics(t, func() { mustUnmarshalJSONString(types.Enum(`"bad`)) })
+	stringValue, err := mustUnmarshalJSONString(types.Enum(`"bad`))
+	require.Error(t, err)
+	require.Empty(t, stringValue)
 }

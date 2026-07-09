@@ -181,7 +181,7 @@ func TestGenerateFunctionsParseSchemaAndDoNothing(t *testing.T) {
 	}
 }
 
-func TestGenerateFunctionsWrapOpenAPIParseErrors(t *testing.T) {
+func TestGenerateFunctionsWrapOpenAPISchemaLookupErrors(t *testing.T) {
 	tests := map[string]struct {
 		generate func([]byte, string, func([]byte) error) error
 	}{
@@ -193,7 +193,7 @@ func TestGenerateFunctionsWrapOpenAPIParseErrors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			err := tt.generate([]byte(openAPIObjectSchemaSpec), "missingThing", func(_ []byte) error { return nil })
 			require.Error(t, err)
-			require.ErrorContains(t, err, "openapi yaml spec parse failed")
+			require.ErrorContains(t, err, "openapi request body schema lookup failed")
 			require.ErrorContains(t, err, `operationId "missingThing" not found`)
 		})
 	}

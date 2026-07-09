@@ -59,13 +59,8 @@ func (a *ArrayDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 		merged.Items = items
 	}
 
-	if otherArray.MinItems > merged.MinItems {
-		merged.MinItems = otherArray.MinItems
-	}
-
-	if merged.MaxItems == nil || (otherArray.MaxItems != nil && *otherArray.MaxItems < *merged.MaxItems) {
-		merged.MaxItems = otherArray.MaxItems
-	}
+	merged.MinItems = max(a.MinItems, otherArray.MinItems)
+	merged.MaxItems = tighterMax(a.MaxItems, otherArray.MaxItems)
 
 	return &merged, nil
 }

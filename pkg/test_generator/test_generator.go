@@ -35,7 +35,7 @@ func parseOpenAPIRequestBodySchemaNode(openAPIYAMLSpec []byte, operationID strin
 
 	schemaNode, err := OpenAPIRequestBodySchemaNode(openAPIJSONSpec, operationID)
 	if err != nil {
-		return nil, fmt.Errorf("openapi yaml spec parse failed: %w", err)
+		return nil, fmt.Errorf("openapi request body schema lookup failed: %w", err)
 	}
 
 	return schemaNode, nil
