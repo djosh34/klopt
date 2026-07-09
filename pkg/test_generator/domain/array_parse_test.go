@@ -1,4 +1,3 @@
-//nolint:depguard,godoclint,paralleltest,revive // Existing test_generator lint debt.
 package domain
 
 import (
@@ -6,12 +5,15 @@ import (
 	"errors"
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/types"
+	"decode_and_validate_generator/pkg/test_generator/types" //nolint:depguard // Internal domain contract.
 
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseArrayParsesValidArraySchemas covers supported array constraints.
 func TestParseArrayParsesValidArraySchemas(t *testing.T) {
+	t.Parallel()
+
 	stringItemsDomain := &StringDomain{}
 	numberItemsDomain := &NumberDomain{}
 	refTargetDomain := &ObjectDomain{AdditionalPropertyKind: AdditionalFalse}
@@ -38,6 +40,18 @@ items:
 type: array
 title: Tags
 description: A list of tags.
+items:
+  type: string
+`,
+			parseDomain:   stringItemsDomain,
+			expected:      ArrayDomain{Items: stringItemsDomain},
+			expectedStore: []types.Domain{stringItemsDomain},
+		},
+		"specification extensions are ignored": {
+			yamlString: `
+type: array
+x-internal-metadata:
+  enabled: true
 items:
   type: string
 `,
@@ -79,6 +93,56 @@ maxItems: 3
 			expected:      ArrayDomain{Items: numberItemsDomain, MinItems: 1, MaxItems: new(3)},
 			expectedStore: []types.Domain{numberItemsDomain},
 		},
+		"enum is filtered by item-count bounds": {
+			yamlString: `
+type: array
+items:
+  type: string
+enum:
+  - []
+  - [alpha]
+  - [alpha, beta]
+  - [alpha, beta, gamma]
+minItems: 1
+maxItems: 2
+`,
+			parseDomain: stringItemsDomain,
+			expected: ArrayDomain{
+				Enum:     []types.Enum{types.Enum(`["alpha","beta"]`), types.Enum(`["alpha"]`)},
+				Items:    stringItemsDomain,
+				MinItems: 1,
+				MaxItems: new(2),
+			},
+			expectedStore: []types.Domain{stringItemsDomain},
+		},
+		"nullable permits contradictory item-count bounds": {
+			yamlString: `
+type: array
+nullable: true
+items: {}
+minItems: 3
+maxItems: 2
+`,
+			expected: ArrayDomain{Nullable: true, MinItems: 3, MaxItems: new(2)},
+		},
+		"nullable enum null permits contradictory item-count bounds": {
+			yamlString: `
+type: array
+nullable: true
+items: {}
+enum:
+  - [alpha]
+  - null
+minItems: 2
+maxItems: 1
+`,
+			expected: ArrayDomain{
+				Nullable: true,
+				Enum:     []types.Enum{types.Enum(`null`)},
+				MinItems: 2,
+				MaxItems: new(1),
+			},
+		},
 		"items ref is parsed as resolved target domain": {
 			yamlString: `
 type: array
@@ -100,8 +164,10 @@ items: {}
 
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			parseCall := 0
-			dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
+			dc := Context{domainStore: domainStore{}, parse: func(_ *json.RawMessage) (types.Domain, error) {
 				parseCall++
 
 				return tt.parseDomain, nil
@@ -122,27 +188,36 @@ items: {}
 	}
 }
 
+// TestParseArrayParsesEnum checks canonical array enum parsing.
 func TestParseArrayParsesEnum(t *testing.T) {
+	t.Parallel()
+
 	node := rawObjectFromYAML(t, `
 type: array
 items:
   type: string
 enum:
-  - [alpha]
   - [beta]
+  - null
+  - {alpha: beta}
+  - [alpha]
+  - [alpha]
 `)
 
-	dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
+	dc := Context{domainStore: domainStore{}, parse: func(_ *json.RawMessage) (types.Domain, error) {
 		return &StringDomain{}, nil
 	}}
 
 	arrayDomain, err := dc.ParseArray(node)
 	require.NoError(t, err)
-	require.Len(t, arrayDomain.Enum, 2)
+	require.Equal(t, []types.Enum{types.Enum(`["alpha"]`), types.Enum(`["beta"]`)}, arrayDomain.Enum)
 	require.Len(t, dc.domainStore, 1)
 }
 
+// TestParseArrayRejectsInvalidArraySchemas covers malformed and unsupported fields.
 func TestParseArrayRejectsInvalidArraySchemas(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]string{
 		"missing type": `
 items:
@@ -165,6 +240,15 @@ type: array
 nullable: nope
 items:
   type: string
+`,
+		"enum must contain a compatible value": `
+type: array
+items:
+  type: string
+enum:
+  - null
+  - {alpha: beta}
+  - string
 `,
 		"items is required": `
 type: array
@@ -250,6 +334,24 @@ items:
   type: string
 minItems: 3
 maxItems: 2
+`,
+		"enum must satisfy item-count bounds": `
+type: array
+items:
+  type: string
+enum:
+  - []
+minItems: 1
+`,
+		"nullable enum without null cannot rescue contradictory bounds": `
+type: array
+nullable: true
+items:
+  type: string
+enum:
+  - [alpha]
+minItems: 2
+maxItems: 1
 `,
 		"minimum is not part of ArrayDomain": `
 type: array
@@ -362,17 +464,13 @@ items:
   type: string
 deprecated: true
 `,
-		"spec extension is unsupported": `
-type: array
-items:
-  type: string
-x-extra: true
-`,
 	}
 
 	for testName, yamlString := range tests {
 		t.Run(testName, func(t *testing.T) {
-			dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
+			t.Parallel()
+
+			dc := Context{domainStore: domainStore{}, parse: func(_ *json.RawMessage) (types.Domain, error) {
 				return &StringDomain{}, nil
 			}}
 
@@ -384,8 +482,26 @@ x-extra: true
 	}
 }
 
+// TestParseArrayUnsupportedFieldErrorIsDeterministic checks lexical unsupported-key selection.
+func TestParseArrayUnsupportedFieldErrorIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	node := rawObjectFromYAML(t, `
+type: array
+items: {}
+z-unsupported: true
+a-unsupported: true
+`)
+
+	_, err := (&Context{domainStore: domainStore{}}).ParseArray(node)
+	require.EqualError(t, err, `unsupported array schema field "a-unsupported"`)
+}
+
+// TestParseArrayReturnsItemParseErrors propagates nested item failures.
 func TestParseArrayReturnsItemParseErrors(t *testing.T) {
-	dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
+	t.Parallel()
+
+	dc := Context{domainStore: domainStore{}, parse: func(_ *json.RawMessage) (types.Domain, error) {
 		return nil, errors.New("item parse failed")
 	}}
 

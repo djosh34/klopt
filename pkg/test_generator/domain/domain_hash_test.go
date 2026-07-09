@@ -1,15 +1,17 @@
-//nolint:depguard,godoclint,lll,paralleltest // Existing test_generator lint debt.
 package domain
 
 import (
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/types"
+	"decode_and_validate_generator/pkg/test_generator/types" //nolint:depguard // Tests assert the shared domain contract.
 
 	"github.com/stretchr/testify/require"
 )
 
+// TestDomainsGenerateHash verifies the deterministic hash input for every domain implementation.
 func TestDomainsGenerateHash(t *testing.T) {
+	t.Parallel()
+
 	minimum := Number("1")
 	maximum := Number("10")
 	multipleOf := Number("2")
@@ -26,9 +28,21 @@ func TestDomainsGenerateHash(t *testing.T) {
 		value    any
 	}{
 		"array": {
-			domain:   &ArrayDomain{Nullable: true, Enum: []types.Enum{types.Enum(`[]`)}, Items: &StringDomain{}, MinItems: 1, MaxItems: new(3)},
+			domain: &ArrayDomain{
+				Nullable: true,
+				Enum:     []types.Enum{types.Enum(`["item"]`)},
+				Items:    &StringDomain{},
+				MinItems: 1,
+				MaxItems: new(3),
+			},
 			hashType: "array",
-			value:    arrayHashValue{Nullable: true, Enum: []types.Enum{types.Enum(`[]`)}, Items: &stringHash, MinItems: 1, MaxItems: new(3)},
+			value: arrayHashValue{
+				Nullable: true,
+				Enum:     []types.Enum{types.Enum(`["item"]`)},
+				Items:    &stringHash,
+				MinItems: 1,
+				MaxItems: new(3),
+			},
 		},
 		"array with nil items": {
 			domain:   &ArrayDomain{Nullable: true},
@@ -41,17 +55,52 @@ func TestDomainsGenerateHash(t *testing.T) {
 			value:    BoolDomain{Nullable: true, Enum: []types.Enum{types.Enum("true")}},
 		},
 		"number": {
-			domain:   &NumberDomain{Type: "number", Nullable: true, Enum: []types.Enum{types.Enum("1")}, Minimum: &minimum, Maximum: &maximum, ExclusiveMinimum: true, ExclusiveMaximum: true, MultipleOf: &multipleOf, Format: new("double")},
+			domain: &NumberDomain{
+				Type:             "number",
+				Nullable:         true,
+				Enum:             []types.Enum{types.Enum("2")},
+				Minimum:          &minimum,
+				Maximum:          &maximum,
+				ExclusiveMinimum: true,
+				ExclusiveMaximum: true,
+				MultipleOf:       &multipleOf,
+				Format:           new("double"),
+			},
 			hashType: "number",
-			value:    NumberDomain{Type: "number", Nullable: true, Enum: []types.Enum{types.Enum("1")}, Minimum: &minimum, Maximum: &maximum, ExclusiveMinimum: true, ExclusiveMaximum: true, MultipleOf: &multipleOf, Format: new("double")},
+			value: NumberDomain{
+				Type:             "number",
+				Nullable:         true,
+				Enum:             []types.Enum{types.Enum("2")},
+				Minimum:          &minimum,
+				Maximum:          &maximum,
+				ExclusiveMinimum: true,
+				ExclusiveMaximum: true,
+				MultipleOf:       &multipleOf,
+				Format:           new("double"),
+			},
 		},
 		"integer": {
-			domain:   &NumberDomain{Type: "integer", Nullable: true, Enum: []types.Enum{types.Enum("1")}, Minimum: &minimum, Format: new("int32")},
+			domain: &NumberDomain{
+				Type:     "integer",
+				Nullable: true,
+				Enum:     []types.Enum{types.Enum("1")},
+				Minimum:  &minimum,
+				Format:   new("int32"),
+			},
 			hashType: "integer",
-			value:    NumberDomain{Type: "integer", Nullable: true, Enum: []types.Enum{types.Enum("1")}, Minimum: &minimum, Format: new("int32")},
+			value: NumberDomain{
+				Type:     "integer",
+				Nullable: true,
+				Enum:     []types.Enum{types.Enum("1")},
+				Minimum:  &minimum,
+				Format:   new("int32"),
+			},
 		},
 		"allOf": {
-			domain:   &AllOfDomain{Domains: []types.Domain{&StringDomain{}}, MergedDomain: &ObjectDomain{}},
+			domain: &AllOfDomain{
+				Domains:      []types.Domain{&StringDomain{}},
+				MergedDomain: &ObjectDomain{},
+			},
 			hashType: "allOf",
 			value: allOfHashValue{
 				Domains:      []*types.Hash{&stringHash},
@@ -67,6 +116,8 @@ func TestDomainsGenerateHash(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := tt.domain.GenerateHash()
 			require.NoError(t, err)
 			require.Equal(t, requireGeneratedHash(t, tt.hashType, tt.value), got)
@@ -74,7 +125,10 @@ func TestDomainsGenerateHash(t *testing.T) {
 	}
 }
 
+// TestDomainsGenerateHashNil verifies that typed nil receivers return errors instead of panicking.
 func TestDomainsGenerateHashNil(t *testing.T) {
+	t.Parallel()
+
 	_, err := (*ArrayDomain)(nil).GenerateHash()
 	require.Error(t, err)
 	_, err = (*BoolDomain)(nil).GenerateHash()

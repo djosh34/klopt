@@ -1,4 +1,3 @@
-//nolint:godoclint,revive // Existing test_generator lint debt.
 package testgenerator
 
 import (
@@ -8,6 +7,7 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
+// YAMLBytesToJSONRawMessage converts a YAML document to JSON.
 func YAMLBytesToJSONRawMessage(yamlBytes []byte) (*json.RawMessage, error) {
 	jsonBytes, err := yaml.YAMLToJSON(yamlBytes)
 	if err != nil {

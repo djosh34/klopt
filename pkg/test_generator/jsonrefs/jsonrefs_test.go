@@ -1,4 +1,3 @@
-//nolint:godoclint,paralleltest // Existing test_generator lint debt.
 package jsonrefs
 
 import (
@@ -8,7 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestUnmarshalNodeBuildsNodeTypesAndDropsRefSiblings verifies node decoding.
 func TestUnmarshalNodeBuildsNodeTypesAndDropsRefSiblings(t *testing.T) {
+	t.Parallel()
+
 	input := json.RawMessage(`{
 		"object": {
 			"number": 1,
@@ -64,7 +66,10 @@ func TestUnmarshalNodeBuildsNodeTypesAndDropsRefSiblings(t *testing.T) {
 	require.JSONEq(t, `{"$ref":"#/object"}`, string(refBytes))
 }
 
+// TestMarshalNodeIsReverseOfUnmarshalNode verifies node encoding.
 func TestMarshalNodeIsReverseOfUnmarshalNode(t *testing.T) {
+	t.Parallel()
+
 	node := &ObjectNode{Map: map[string]Node{
 		"object": &ObjectNode{Map: map[string]Node{
 			"bool": &LeafNode{noPath{}, json.RawMessage(`true`)},
@@ -84,7 +89,10 @@ func TestMarshalNodeIsReverseOfUnmarshalNode(t *testing.T) {
 	}`, string(bytes))
 }
 
+// TestObjectNodeGetPathPart verifies object member traversal.
 func TestObjectNodeGetPathPart(t *testing.T) {
+	t.Parallel()
+
 	child := &LeafNode{noPath{}, json.RawMessage(`true`)}
 	node := ObjectNode{Map: map[string]Node{"child": child}}
 
@@ -97,22 +105,64 @@ func TestObjectNodeGetPathPart(t *testing.T) {
 	require.ErrorContains(t, err, `path part "missing" not found`)
 }
 
-func TestArrayLeafAndRefNodesGetPathPartErrors(t *testing.T) {
+// TestArrayNodeGetPathPart verifies array index traversal and validation.
+func TestArrayNodeGetPathPart(t *testing.T) {
+	t.Parallel()
+
+	first := &LeafNode{noPath{}, json.RawMessage(`true`)}
+	second := &LeafNode{noPath{}, json.RawMessage(`false`)}
+	node := &ArrayNode{Items: []Node{first, second}}
+
+	got, err := node.GetPathPart("0")
+	require.NoError(t, err)
+	require.Same(t, first, got)
+
+	got, err = node.GetPathPart("1")
+	require.NoError(t, err)
+	require.Same(t, second, got)
+
+	tests := map[string]string{
+		"empty":         "",
+		"leading zero":  "01",
+		"negative":      "-1",
+		"not a number":  "one",
+		"out of bounds": "2",
+		"overflow":      "18446744073709551616",
+	}
+
+	for name, index := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := node.GetPathPart(index)
+			require.Error(t, err)
+		})
+	}
+}
+
+// TestLeafAndRefNodesGetPathPartErrors verifies scalar traversal errors.
+func TestLeafAndRefNodesGetPathPartErrors(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]Node{
-		"array": &ArrayNode{},
-		"leaf":  &LeafNode{noPath{}, json.RawMessage(`true`)},
-		"ref":   &RefNode{Ref: "#/anything"},
+		"leaf": &LeafNode{noPath{}, json.RawMessage(`true`)},
+		"ref":  &RefNode{Ref: "#/anything"},
 	}
 
 	for name, node := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			_, err := node.GetPathPart("part")
 			require.Error(t, err)
 		})
 	}
 }
 
+// TestReplaceResolvesRefsEverywhere verifies nested object resolution.
 func TestReplaceResolvesRefsEverywhere(t *testing.T) {
+	t.Parallel()
+
 	input := json.RawMessage(`{
 		"components": {
 			"schemas": {
@@ -159,7 +209,10 @@ func TestReplaceResolvesRefsEverywhere(t *testing.T) {
 	}`, string(*got))
 }
 
+// TestReplaceResolvesRefsInArrays verifies references stored in arrays.
 func TestReplaceResolvesRefsInArrays(t *testing.T) {
+	t.Parallel()
+
 	input := json.RawMessage(`{
 		"defs": {
 			"string": {"type": "string"},
@@ -185,7 +238,33 @@ func TestReplaceResolvesRefsInArrays(t *testing.T) {
 	}`, string(*got))
 }
 
+// TestReplaceResolvesRefsThroughArrayIndexes verifies array JSON Pointer traversal.
+func TestReplaceResolvesRefsThroughArrayIndexes(t *testing.T) {
+	t.Parallel()
+
+	input := json.RawMessage(`{
+		"defs": [
+			{"type": "string"},
+			{"type": "integer"}
+		],
+		"schema": {"$ref": "#/defs/1"}
+	}`)
+
+	got, err := Replace(&input)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"defs": [
+			{"type": "string"},
+			{"type": "integer"}
+		],
+		"schema": {"type": "integer"}
+	}`, string(*got))
+}
+
+// TestReplaceResolvesRefChains verifies chained reference resolution.
 func TestReplaceResolvesRefChains(t *testing.T) {
+	t.Parallel()
+
 	input := json.RawMessage(`{
 		"defs": {
 			"Actual": {"type": "string"},
@@ -207,7 +286,10 @@ func TestReplaceResolvesRefChains(t *testing.T) {
 	}`, string(*got))
 }
 
+// TestReplaceDropsRefSiblings verifies Reference Object sibling handling.
 func TestReplaceDropsRefSiblings(t *testing.T) {
+	t.Parallel()
+
 	input := json.RawMessage(`{
 		"defs": {
 			"Date": {"type": "string", "format": "date"},
@@ -235,7 +317,10 @@ func TestReplaceDropsRefSiblings(t *testing.T) {
 	}`, string(*got))
 }
 
+// TestReplaceUnescapesRefPathParts verifies URI and JSON Pointer unescaping.
 func TestReplaceUnescapesRefPathParts(t *testing.T) {
+	t.Parallel()
+
 	input := json.RawMessage(`{
 		"paths": {
 			"/blogs/{blog_id}/new~posts": {"path": true},
@@ -245,6 +330,7 @@ func TestReplaceUnescapesRefPathParts(t *testing.T) {
 		},
 		"pathRef": {"$ref": "#/paths/~1blogs~1{blog_id}~1new~0posts"},
 		"spaceRef": {"$ref": "#/paths/a%20b"},
+		"encodedSlashRef": {"$ref": "#%2Fpaths%2Fa%20b"},
 		"emptyRef": {"$ref": "#/paths/"},
 		"tildeOneRef": {"$ref": "#/paths/~01"}
 	}`)
@@ -260,12 +346,16 @@ func TestReplaceUnescapesRefPathParts(t *testing.T) {
 		},
 		"pathRef": {"path": true},
 		"spaceRef": {"space": true},
+		"encodedSlashRef": {"space": true},
 		"emptyRef": {"empty": true},
 		"tildeOneRef": {"tildeOne": true}
 	}`, string(*got))
 }
 
+// TestReplaceCanResolveToLeafNodes verifies scalar reference targets.
 func TestReplaceCanResolveToLeafNodes(t *testing.T) {
+	t.Parallel()
+
 	input := json.RawMessage(`{
 		"defs": {
 			"number": 123,
@@ -295,7 +385,10 @@ func TestReplaceCanResolveToLeafNodes(t *testing.T) {
 	}`, string(*got))
 }
 
+// TestReplaceLeavesJSONWithoutRefsAlone verifies reference-free documents.
 func TestReplaceLeavesJSONWithoutRefsAlone(t *testing.T) {
+	t.Parallel()
+
 	input := json.RawMessage(`{
 		"object": {"type": "object"},
 		"array": [1, true, null],
@@ -307,7 +400,10 @@ func TestReplaceLeavesJSONWithoutRefsAlone(t *testing.T) {
 	require.JSONEq(t, string(input), string(*got))
 }
 
+// TestReplaceErrors verifies invalid reference documents are rejected.
 func TestReplaceErrors(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]struct {
 		input     string
 		wantError string
@@ -322,19 +418,15 @@ func TestReplaceErrors(t *testing.T) {
 		},
 		"empty ref": {
 			input:     `{"schema":{"$ref":""}}`,
-			wantError: "must start with #/",
-		},
-		"fragment without slash": {
-			input:     `{"schema":{"$ref":"#"}}`,
-			wantError: "must start with #/",
+			wantError: "in-document JSON Pointer",
 		},
 		"remote ref": {
 			input:     `{"schema":{"$ref":"document.json#/defs/User"}}`,
-			wantError: "must start with #/",
+			wantError: "in-document JSON Pointer",
 		},
 		"url ref": {
 			input:     `{"schema":{"$ref":"http://example.com/document.json#/defs/User"}}`,
-			wantError: "must start with #/",
+			wantError: "in-document JSON Pointer",
 		},
 		"invalid uri escape": {
 			input:     `{"schema":{"$ref":"#/%zz"}}`,
@@ -348,9 +440,17 @@ func TestReplaceErrors(t *testing.T) {
 			input:     `{"defs":{"User":true},"schema":{"$ref":"#/defs/User/type"}}`,
 			wantError: "non-object",
 		},
-		"path tries to traverse array": {
-			input:     `{"defs":[{"type":"string"}],"schema":{"$ref":"#/defs/0"}}`,
-			wantError: "non-object",
+		"invalid array index": {
+			input:     `{"defs":[{"type":"string"}],"schema":{"$ref":"#/defs/-"}}`,
+			wantError: "not a non-negative integer",
+		},
+		"array index out of bounds": {
+			input:     `{"defs":[{"type":"string"}],"schema":{"$ref":"#/defs/1"}}`,
+			wantError: "out of bounds",
+		},
+		"array index with leading zero": {
+			input:     `{"defs":[{"type":"string"}],"schema":{"$ref":"#/defs/00"}}`,
+			wantError: "leading zero",
 		},
 		"bad pointer escape at end": {
 			input:     `{"schema":{"$ref":"#/bad~"}}`,
@@ -364,6 +464,8 @@ func TestReplaceErrors(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			input := json.RawMessage(tt.input)
 			_, err := Replace(&input)
 			require.Error(t, err)
@@ -372,13 +474,34 @@ func TestReplaceErrors(t *testing.T) {
 	}
 }
 
+// TestReplaceReportsTheFirstObjectErrorByKey verifies deterministic reference failures.
+func TestReplaceReportsTheFirstObjectErrorByKey(t *testing.T) {
+	t.Parallel()
+
+	input := json.RawMessage(`{
+		"z": {"$ref": "#/missing-z"},
+		"a": {"$ref": "#/missing-a"}
+	}`)
+
+	resolved, err := Replace(&input)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `resolve object key "a"`)
+	require.Nil(t, resolved)
+}
+
+// TestReplaceErrorsForNilRawMessage verifies nil input handling.
 func TestReplaceErrorsForNilRawMessage(t *testing.T) {
+	t.Parallel()
+
 	_, err := Replace(nil)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "json raw message is nil")
 }
 
+// TestReplaceErrorsForReferenceCycles verifies cycle detection.
 func TestReplaceErrorsForReferenceCycles(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]string{
 		"ref chain cycle": `{
 			"defs": {
@@ -401,10 +524,132 @@ func TestReplaceErrorsForReferenceCycles(t *testing.T) {
 
 	for name, inputString := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			input := json.RawMessage(inputString)
 			_, err := Replace(&input)
 			require.Error(t, err)
 			require.ErrorContains(t, err, "reference cycle")
+		})
+	}
+}
+
+// TestResolveReferenceFollowsOnlyTheSelectedReferenceChain verifies lazy resolution.
+func TestResolveReferenceFollowsOnlyTheSelectedReferenceChain(t *testing.T) {
+	t.Parallel()
+
+	root := json.RawMessage(`{
+		"defs": {
+			"Schema": {"type": "object"},
+			"Body": {
+				"content": {
+					"application/json": {
+						"schema": {"$ref": "#/defs/Schema"}
+					}
+				}
+			},
+			"Alias": {"$ref": "#/defs/Body"}
+		}
+	}`)
+	reference := json.RawMessage(`{"$ref":"#/defs/Alias","description":"ignored"}`)
+
+	got, err := ResolveReference(&root, &reference)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"content": {
+			"application/json": {
+				"schema": {"$ref": "#/defs/Schema"}
+			}
+		}
+	}`, string(*got))
+}
+
+// TestResolveReferenceSupportsTheEmptyJSONPointer verifies whole-document references.
+func TestResolveReferenceSupportsTheEmptyJSONPointer(t *testing.T) {
+	t.Parallel()
+
+	root := json.RawMessage(`{"openapi":"3.0.3","paths":{}}`)
+	reference := json.RawMessage(`{"$ref":"#"}`)
+
+	got, err := ResolveReference(&root, &reference)
+	require.NoError(t, err)
+	require.JSONEq(t, string(root), string(*got))
+}
+
+// TestResolveReferencePreservesNestedRefLikeValues verifies free-form JSON is not treated as a reference.
+func TestResolveReferencePreservesNestedRefLikeValues(t *testing.T) {
+	t.Parallel()
+
+	root := json.RawMessage(`{
+		"defs": {
+			"Body": {
+				"schema": {
+					"type": "object",
+					"example": {"$ref": "literal value", "sibling": true}
+				}
+			}
+		},
+		"x-unrelated": {"$ref": 123, "sibling": true}
+	}`)
+	reference := json.RawMessage(`{"$ref":"#/defs/Body"}`)
+
+	got, err := ResolveReference(&root, &reference)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"schema": {
+			"type": "object",
+			"example": {"$ref": "literal value", "sibling": true}
+		}
+	}`, string(*got))
+}
+
+// TestResolveReferenceReturnsInlineValuesUnchanged verifies the inline fast path.
+func TestResolveReferenceReturnsInlineValuesUnchanged(t *testing.T) {
+	t.Parallel()
+
+	root := json.RawMessage(`{"unused":true}`)
+	inline := json.RawMessage("  {\"value\": true, \"example\": {\"$ref\": 123}}  ")
+
+	got, err := ResolveReference(&root, &inline)
+	require.NoError(t, err)
+	require.Equal(t, inline, *got)
+
+	(*got)[2] = '['
+
+	require.Equal(t, byte('{'), inline[2])
+}
+
+// TestResolveReferenceErrors verifies selected-reference failures.
+func TestResolveReferenceErrors(t *testing.T) {
+	t.Parallel()
+
+	validRoot := json.RawMessage(`{"defs":{}}`)
+	validReference := json.RawMessage(`{"$ref":"#/defs/Missing"}`)
+	cycleRoot := json.RawMessage(`{"defs":{"A":{"$ref":"#/defs/B"},"B":{"$ref":"#/defs/A"}}}`)
+	cycleReference := json.RawMessage(`{"$ref":"#/defs/A"}`)
+	invalidRoot := json.RawMessage(`{`)
+	invalidReference := json.RawMessage(`{"$ref":123}`)
+
+	tests := map[string]struct {
+		root      *json.RawMessage
+		reference *json.RawMessage
+		wantError string
+	}{
+		"nil root":          {root: nil, reference: &validReference, wantError: "json root message is nil"},
+		"nil reference":     {root: &validRoot, reference: nil, wantError: "json reference message is nil"},
+		"invalid reference": {root: &validRoot, reference: &invalidReference, wantError: "unmarshal $ref string"},
+		"invalid root":      {root: &invalidRoot, reference: &validReference, wantError: "unmarshal json root"},
+		"missing target":    {root: &validRoot, reference: &validReference, wantError: "not found"},
+		"reference cycle":   {root: &cycleRoot, reference: &cycleReference, wantError: "reference cycle"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := ResolveReference(tt.root, tt.reference)
+			require.Error(t, err)
+			require.ErrorContains(t, err, tt.wantError)
 		})
 	}
 }

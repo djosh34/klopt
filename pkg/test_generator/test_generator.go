@@ -1,4 +1,4 @@
-//nolint:godoclint,revive // Existing test_generator lint debt.
+// Package testgenerator parses OpenAPI request schemas for generated decoder tests.
 package testgenerator
 
 import (
@@ -6,9 +6,9 @@ import (
 	"fmt"
 )
 
-func GenerateValid(openAPIYAMLSpec []byte, operationID string, unmarshal func([]byte) error) error {
-	_ = unmarshal
-
+// GenerateValid validates that operationID has a request schema.
+// Payload generation and decoder invocation are not implemented yet.
+func GenerateValid(openAPIYAMLSpec []byte, operationID string, _ func([]byte) error) error {
 	_, err := parseOpenAPIRequestBodySchemaNode(openAPIYAMLSpec, operationID)
 	if err != nil {
 		return err
@@ -17,9 +17,9 @@ func GenerateValid(openAPIYAMLSpec []byte, operationID string, unmarshal func([]
 	return nil
 }
 
-func GenerateInvalid(openAPIYAMLSpec []byte, operationID string, unmarshal func([]byte) error) error {
-	_ = unmarshal
-
+// GenerateInvalid validates that operationID has a request schema.
+// Payload generation and decoder invocation are not implemented yet.
+func GenerateInvalid(openAPIYAMLSpec []byte, operationID string, _ func([]byte) error) error {
 	_, err := parseOpenAPIRequestBodySchemaNode(openAPIYAMLSpec, operationID)
 	if err != nil {
 		return err
@@ -28,6 +28,7 @@ func GenerateInvalid(openAPIYAMLSpec []byte, operationID string, unmarshal func(
 	return nil
 }
 
+// parseOpenAPIRequestBodySchemaNode converts the document to JSON and finds its request schema.
 func parseOpenAPIRequestBodySchemaNode(openAPIYAMLSpec []byte, operationID string) (*json.RawMessage, error) {
 	openAPIJSONSpec, err := YAMLBytesToJSONRawMessage(openAPIYAMLSpec)
 	if err != nil {

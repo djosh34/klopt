@@ -1,4 +1,3 @@
-//nolint:depguard,godoclint,lll,paralleltest,revive // Existing test_generator lint debt.
 package domain
 
 import (
@@ -6,18 +5,34 @@ import (
 	"errors"
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/types"
+	"decode_and_validate_generator/pkg/test_generator/types" //nolint:depguard // Internal domain contract.
 
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseAllOfParsesAndMergesValidCompositionSchemas covers supported allOf schemas.
 func TestParseAllOfParsesAndMergesValidCompositionSchemas(t *testing.T) {
-	firstObjectDomain := &ObjectDomain{Properties: []Property{{Key: "first", Required: true}}, AdditionalPropertyKind: AdditionalTrue}
-	secondObjectDomain := &ObjectDomain{Nullable: true, Properties: []Property{{Key: "second", Required: true}}, AdditionalPropertyKind: AdditionalTrue}
+	t.Parallel()
+
+	firstObjectDomain := &ObjectDomain{
+		Properties:             []Property{{Key: "first", Required: true}},
+		AdditionalPropertyKind: AdditionalTrue,
+	}
+	secondObjectDomain := &ObjectDomain{
+		Nullable:               true,
+		Properties:             []Property{{Key: "second", Required: true}},
+		AdditionalPropertyKind: AdditionalTrue,
+	}
 	objectShapedNoTypeDomain := &ObjectDomain{MinProps: 1, AdditionalPropertyKind: AdditionalTrue}
-	refTargetDomain := &ObjectDomain{Properties: []Property{{Key: "id", Required: true}}, AdditionalPropertyKind: AdditionalFalse}
+	refTargetDomain := &ObjectDomain{
+		Properties:             []Property{{Key: "id", Required: true}},
+		AdditionalPropertyKind: AdditionalFalse,
+	}
 	refCompanionDomain := &ObjectDomain{Properties: []Property{{Key: "name"}}, AdditionalPropertyKind: AdditionalTrue}
-	siblingObjectDomain := &ObjectDomain{Properties: []Property{{Key: "name", Domain: &StringDomain{}}}, AdditionalPropertyKind: AdditionalTrue}
+	siblingObjectDomain := &ObjectDomain{
+		Properties:             []Property{{Key: "name", Domain: &StringDomain{}}},
+		AdditionalPropertyKind: AdditionalTrue,
+	}
 
 	tests := map[string]struct {
 		yamlString    string
@@ -85,12 +100,21 @@ allOf:
     enum:
       - false
 `,
-			parseDomains: []types.Domain{&BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}, &BoolDomain{Enum: []types.Enum{types.Enum("false")}}},
+			parseDomains: []types.Domain{
+				&BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}},
+				&BoolDomain{Enum: []types.Enum{types.Enum("false")}},
+			},
 			expected: AllOfDomain{
-				Domains:      []types.Domain{&BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}, &BoolDomain{Enum: []types.Enum{types.Enum("false")}}},
+				Domains: []types.Domain{
+					&BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}},
+					&BoolDomain{Enum: []types.Enum{types.Enum("false")}},
+				},
 				MergedDomain: &BoolDomain{Enum: []types.Enum{types.Enum("false")}},
 			},
-			expectedStore: []types.Domain{&BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}}, &BoolDomain{Enum: []types.Enum{types.Enum("false")}}},
+			expectedStore: []types.Domain{
+				&BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}},
+				&BoolDomain{Enum: []types.Enum{types.Enum("false")}},
+			},
 		},
 		"array allOf items are accepted": {
 			yamlString: `
@@ -159,6 +183,19 @@ allOf:
 			},
 			expectedStore: []types.Domain{firstObjectDomain},
 		},
+		"specification extension is ignored": {
+			yamlString: `
+allOf:
+  - type: object
+x-extra: true
+`,
+			parseDomains: []types.Domain{firstObjectDomain},
+			expected: AllOfDomain{
+				Domains:      []types.Domain{firstObjectDomain},
+				MergedDomain: firstObjectDomain,
+			},
+			expectedStore: []types.Domain{firstObjectDomain},
+		},
 		"sibling object constraints are merged after allOf children": {
 			yamlString: `
 type: object
@@ -174,7 +211,10 @@ properties:
 			expected: AllOfDomain{
 				Domains: []types.Domain{firstObjectDomain, siblingObjectDomain},
 				MergedDomain: &ObjectDomain{
-					Properties:             []Property{{Key: "first", Required: true}, {Key: "name", Domain: &StringDomain{}}},
+					Properties: []Property{
+						{Key: "first", Required: true},
+						{Key: "name", Domain: &StringDomain{}},
+					},
 					AdditionalPropertyKind: AdditionalTrue,
 				},
 			},
@@ -184,8 +224,10 @@ properties:
 
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			parseCall := 0
-			dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
+			dc := Context{domainStore: domainStore{}, parse: func(_ *json.RawMessage) (types.Domain, error) {
 				require.Less(t, parseCall, len(tt.parseDomains))
 				domain := tt.parseDomains[parseCall]
 				parseCall++
@@ -203,7 +245,10 @@ properties:
 	}
 }
 
+// TestParseAllOfRejectsInvalidCompositionSchemas covers invalid allOf schemas.
 func TestParseAllOfRejectsInvalidCompositionSchemas(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]struct {
 		yamlString  string
 		parseDomain types.Domain
@@ -291,21 +336,33 @@ allOf:
   - $ref: '#/components/schemas/BaseThing'
     description: ignored by Reference Object
 `},
-		"spec extension is unsupported": {yamlString: `
+		"title must be string": {yamlString: `
 allOf:
   - type: object
-x-extra: true
+title: 1
+`},
+		"description must be string": {yamlString: `
+allOf:
+  - type: object
+description: false
+`},
+		"nullable must be boolean": {yamlString: `
+allOf:
+  - type: object
+nullable: null
 `},
 	}
 
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			parseDomain := tt.parseDomain
 			if parseDomain == nil && testName != "parsed allOf item cannot be nil" {
 				parseDomain = &ObjectDomain{AdditionalPropertyKind: AdditionalTrue}
 			}
 
-			dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
+			dc := Context{domainStore: domainStore{}, parse: func(_ *json.RawMessage) (types.Domain, error) {
 				return parseDomain, nil
 			}}
 
@@ -317,8 +374,11 @@ x-extra: true
 	}
 }
 
+// TestParseAllOfReturnsChildParseErrors checks child parser error propagation.
 func TestParseAllOfReturnsChildParseErrors(t *testing.T) {
-	dc := DomainContext{domainStore: domainStore{}, parse: func(node *json.RawMessage) (types.Domain, error) {
+	t.Parallel()
+
+	dc := Context{domainStore: domainStore{}, parse: func(_ *json.RawMessage) (types.Domain, error) {
 		return nil, errors.New("allOf child parse failed")
 	}}
 

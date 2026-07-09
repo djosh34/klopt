@@ -1,15 +1,17 @@
-//nolint:depguard,godoclint,lll,paralleltest // Existing test_generator lint debt.
 package domain
 
 import (
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/types"
+	"decode_and_validate_generator/pkg/test_generator/types" //nolint:depguard // Internal domain contract.
 
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseStringParsesValidStringSchemas covers supported string constraints.
 func TestParseStringParsesValidStringSchemas(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]struct {
 		yamlString string
 		expected   StringDomain
@@ -25,6 +27,14 @@ type: string
 type: string
 title: Display name
 description: A display name.
+`,
+			expected: StringDomain{},
+		},
+		"specification extensions are ignored": {
+			yamlString: `
+type: string
+x-internal-metadata:
+  enabled: true
 `,
 			expected: StringDomain{},
 		},
@@ -51,6 +61,28 @@ enum:
 `,
 			expected: StringDomain{Enum: []types.Enum{types.Enum("\"alpha\""), types.Enum("\"beta\"")}},
 		},
+		"enum filters incompatible values and duplicates": {
+			yamlString: `
+type: string
+enum:
+  - beta
+  - null
+  - 1
+  - alpha
+  - alpha
+`,
+			expected: StringDomain{Enum: []types.Enum{types.Enum("\"alpha\""), types.Enum("\"beta\"")}},
+		},
+		"nullable enum retains null": {
+			yamlString: `
+type: string
+nullable: true
+enum:
+  - alpha
+  - null
+`,
+			expected: StringDomain{Nullable: true, Enum: []types.Enum{types.Enum("\"alpha\""), types.Enum("null")}},
+		},
 		"minLength and maxLength": {
 			yamlString: `
 type: string
@@ -58,6 +90,49 @@ minLength: 1
 maxLength: 5
 `,
 			expected: StringDomain{MinLength: 1, MaxLength: new(5)},
+		},
+		"enum length counts Unicode characters": {
+			yamlString: `
+type: string
+enum:
+  - ""
+  - "\u00e9"
+  - "\U0001f600"
+  - "e\u0301"
+minLength: 1
+maxLength: 1
+`,
+			expected: StringDomain{
+				Enum:      []types.Enum{types.Enum("\"\u00e9\""), types.Enum("\"\U0001f600\"")},
+				MinLength: 1,
+				MaxLength: new(1),
+			},
+		},
+		"nullable permits contradictory length bounds": {
+			yamlString: `
+type: string
+nullable: true
+minLength: 3
+maxLength: 2
+`,
+			expected: StringDomain{Nullable: true, MinLength: 3, MaxLength: new(2)},
+		},
+		"nullable enum null permits contradictory length bounds": {
+			yamlString: `
+type: string
+nullable: true
+enum:
+  - a
+  - null
+minLength: 2
+maxLength: 1
+`,
+			expected: StringDomain{
+				Nullable:  true,
+				Enum:      []types.Enum{types.Enum(`null`)},
+				MinLength: 2,
+				MaxLength: new(1),
+			},
 		},
 		"pattern with required examples": {
 			yamlString: `
@@ -70,7 +145,31 @@ x-invalid-examples:
   - ABC
   - '123'
 `,
-			expected: StringDomain{Pattern: types.Pattern{"^[a-z]+$"}, XValidExamples: []string{"alpha", "beta"}, XInvalidExamples: []string{"ABC", "123"}},
+			expected: StringDomain{
+				Pattern:          types.Pattern{"^[a-z]+$"},
+				XValidExamples:   []string{"alpha", "beta"},
+				XInvalidExamples: []string{"ABC", "123"},
+			},
+		},
+		"enum is intersected with valid examples": {
+			yamlString: `
+type: string
+enum:
+  - alpha
+  - beta
+pattern: '^[a-z]+$'
+x-valid-examples:
+  - beta
+  - gamma
+x-invalid-examples:
+  - '123'
+`,
+			expected: StringDomain{
+				Pattern:          types.Pattern{"^[a-z]+$"},
+				Enum:             []types.Enum{types.Enum(`"beta"`)},
+				XValidExamples:   []string{"beta"},
+				XInvalidExamples: []string{"123"},
+			},
 		},
 		"invalid regex pattern is accepted when examples are provided": {
 			yamlString: `
@@ -92,7 +191,11 @@ x-valid-examples:
 x-invalid-examples:
   - a
 `,
-			expected: StringDomain{Pattern: types.Pattern{"^a$"}, XValidExamples: []string{"does-not-match-pattern"}, XInvalidExamples: []string{"a"}},
+			expected: StringDomain{
+				Pattern:          types.Pattern{"^a$"},
+				XValidExamples:   []string{"does-not-match-pattern"},
+				XInvalidExamples: []string{"a"},
+			},
 		},
 		"format with required examples": {
 			yamlString: `
@@ -103,7 +206,11 @@ x-valid-examples:
 x-invalid-examples:
   - not-an-email
 `,
-			expected: StringDomain{Format: types.Format{"email"}, XValidExamples: []string{"a@example.com"}, XInvalidExamples: []string{"not-an-email"}},
+			expected: StringDomain{
+				Format:           types.Format{"email"},
+				XValidExamples:   []string{"a@example.com"},
+				XInvalidExamples: []string{"not-an-email"},
+			},
 		},
 		"unknown format is accepted when examples are provided": {
 			yamlString: `
@@ -114,7 +221,11 @@ x-valid-examples:
 x-invalid-examples:
   - made-up-invalid
 `,
-			expected: StringDomain{Format: types.Format{"made-up-format"}, XValidExamples: []string{"made-up-valid"}, XInvalidExamples: []string{"made-up-invalid"}},
+			expected: StringDomain{
+				Format:           types.Format{"made-up-format"},
+				XValidExamples:   []string{"made-up-valid"},
+				XInvalidExamples: []string{"made-up-invalid"},
+			},
 		},
 		"format examples are trusted verbatim without validation": {
 			yamlString: `
@@ -125,7 +236,11 @@ x-valid-examples:
 x-invalid-examples:
   - a@example.com
 `,
-			expected: StringDomain{Format: types.Format{"email"}, XValidExamples: []string{"not-an-email-but-trusted"}, XInvalidExamples: []string{"a@example.com"}},
+			expected: StringDomain{
+				Format:           types.Format{"email"},
+				XValidExamples:   []string{"not-an-email-but-trusted"},
+				XInvalidExamples: []string{"a@example.com"},
+			},
 		},
 		"pattern and format share required examples": {
 			yamlString: `
@@ -137,7 +252,12 @@ x-valid-examples:
 x-invalid-examples:
   - nope
 `,
-			expected: StringDomain{Pattern: types.Pattern{"^ID-[0-9]+$"}, Format: types.Format{"internal-id"}, XValidExamples: []string{"ID-123"}, XInvalidExamples: []string{"nope"}},
+			expected: StringDomain{
+				Pattern:          types.Pattern{"^ID-[0-9]+$"},
+				Format:           types.Format{"internal-id"},
+				XValidExamples:   []string{"ID-123"},
+				XInvalidExamples: []string{"nope"},
+			},
 		},
 		"all supported fields together": {
 			yamlString: `
@@ -154,14 +274,25 @@ x-invalid-examples:
 minLength: 2
 maxLength: 10
 `,
-			expected: StringDomain{Nullable: true, Enum: []types.Enum{types.Enum("\"ID-123\"")}, Pattern: types.Pattern{"^ID-[0-9]+$"}, Format: types.Format{"internal-id"}, XValidExamples: []string{"ID-123"}, XInvalidExamples: []string{"nope"}, MinLength: 2, MaxLength: new(10)},
+			expected: StringDomain{
+				Pattern:          types.Pattern{"^ID-[0-9]+$"},
+				Format:           types.Format{"internal-id"},
+				Nullable:         true,
+				Enum:             []types.Enum{types.Enum("\"ID-123\"")},
+				XValidExamples:   []string{"ID-123"},
+				XInvalidExamples: []string{"nope"},
+				MinLength:        2,
+				MaxLength:        new(10),
+			},
 		},
 	}
 
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			node := rawObjectFromYAML(t, tt.yamlString)
-			dc := DomainContext{domainStore: domainStore{}}
+			dc := Context{domainStore: domainStore{}}
 			stringDomain, err := dc.ParseString(node)
 			require.NoError(t, err)
 			require.Equal(t, tt.expected, stringDomain)
@@ -169,7 +300,10 @@ maxLength: 10
 	}
 }
 
+// TestParseStringRejectsInvalidStringSchemas covers malformed and unsupported fields.
 func TestParseStringRejectsInvalidStringSchemas(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]string{
 		"missing type": `
 nullable: false
@@ -197,6 +331,13 @@ enum: null
 		"enum must be array": `
 type: string
 enum: alpha
+`,
+		"enum must contain a compatible value": `
+type: string
+enum:
+  - null
+  - 1
+  - true
 `,
 		"minLength cannot be null": `
 type: string
@@ -226,6 +367,30 @@ maxLength: 1.5
 type: string
 minLength: 5
 maxLength: 4
+`,
+		"enum must satisfy length bounds": `
+type: string
+enum:
+  - a
+minLength: 2
+`,
+		"nullable enum without null cannot rescue contradictory bounds": `
+type: string
+nullable: true
+enum:
+  - a
+minLength: 2
+maxLength: 1
+`,
+		"enum and valid examples must intersect": `
+type: string
+enum:
+  - alpha
+pattern: '^[a-z]+$'
+x-valid-examples:
+  - beta
+x-invalid-examples:
+  - '123'
 `,
 		"pattern must be string": `
 type: string
@@ -368,16 +533,14 @@ example: abc
 type: string
 deprecated: true
 `,
-		"spec extension is unsupported": `
-type: string
-x-extra: abc
-`,
 	}
 
 	for testName, yamlString := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			node := rawObjectFromYAML(t, yamlString)
-			dc := DomainContext{domainStore: domainStore{}}
+			dc := Context{domainStore: domainStore{}}
 			stringDomain, err := dc.ParseString(node)
 			require.Error(t, err)
 			require.Empty(t, stringDomain)
@@ -385,7 +548,24 @@ x-extra: abc
 	}
 }
 
+// TestParseStringUnsupportedFieldErrorIsDeterministic checks lexical unsupported-key selection.
+func TestParseStringUnsupportedFieldErrorIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	node := rawObjectFromYAML(t, `
+type: string
+z-unsupported: true
+a-unsupported: true
+`)
+
+	_, err := (&Context{domainStore: domainStore{}}).ParseString(node)
+	require.EqualError(t, err, `unsupported string schema field "a-unsupported"`)
+}
+
+// TestParseStringRejectsPatternFormatWithoutBothExampleLists checks required examples.
 func TestParseStringRejectsPatternFormatWithoutBothExampleLists(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]string{
 		"pattern without examples": `
 type: string
@@ -442,8 +622,10 @@ x-invalid-examples:
 
 	for testName, yamlString := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			node := rawObjectFromYAML(t, yamlString)
-			dc := DomainContext{domainStore: domainStore{}}
+			dc := Context{domainStore: domainStore{}}
 			_, err := dc.ParseString(node)
 			require.Error(t, err)
 		})

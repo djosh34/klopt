@@ -1,4 +1,3 @@
-//nolint:cyclop,depguard,funcorder,godoclint,govet,nestif,revive // Existing test_generator lint debt.
 package domain
 
 import (
@@ -6,16 +5,18 @@ import (
 	"errors"
 	"fmt"
 
-	"decode_and_validate_generator/pkg/test_generator/types"
+	"decode_and_validate_generator/pkg/test_generator/types" //nolint:depguard // Internal domain contract.
 )
 
 var _ types.AllOfMerger = new(AllOfDomain)
 
+// AllOfDomain holds the source domains and their merged intersection.
 type AllOfDomain struct {
 	Domains      []types.Domain
 	MergedDomain types.Domain
 }
 
+// AllOfMerge returns the intersection of this allOf domain and domain.
 func (a *AllOfDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 	if a == nil {
 		return nil, errors.New("allOf domain cannot be nil")
@@ -30,58 +31,20 @@ func (a *AllOfDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
 		MergedDomain: a.MergedDomain,
 	}
 
-	if otherAllOf, ok := domain.(*AllOfDomain); ok {
-		if otherAllOf == nil {
-			return nil, errors.New("allOf domain cannot be nil")
-		}
-
-		if len(otherAllOf.Domains) == 0 && otherAllOf.MergedDomain != nil {
-			if err := mergedAllOf.mergeOne(otherAllOf.MergedDomain); err != nil {
-				return nil, err
-			}
-		} else {
-			for _, childDomain := range otherAllOf.Domains {
-				if err := mergedAllOf.mergeOne(childDomain); err != nil {
-					return nil, err
-				}
-			}
-		}
-	} else if err := mergedAllOf.mergeOne(domain); err != nil {
+	if err := mergedAllOf.mergeDomain(domain); err != nil {
 		return nil, err
 	}
 
-	*a = *mergedAllOf
-
-	return a, nil
+	return mergedAllOf, nil
 }
 
-func (a *AllOfDomain) mergeOne(domain types.Domain) error {
-	if domain == nil {
-		return errors.New("domain cannot be nil")
-	}
-
-	a.Domains = append(a.Domains, domain)
-	if a.MergedDomain == nil {
-		a.MergedDomain = domain
-
-		return nil
-	}
-
-	mergedDomain, err := a.MergedDomain.AllOfMerge(domain)
-	if err != nil {
-		return err
-	}
-
-	a.MergedDomain = mergedDomain
-
-	return nil
-}
-
+// allOfHashValue is the stable hash representation of an allOf domain.
 type allOfHashValue struct {
 	Domains      []*types.Hash
 	MergedDomain *types.Hash
 }
 
+// GenerateHash returns a hash of the source and merged domains.
 func (a *AllOfDomain) GenerateHash() (types.Hash, error) {
 	if a == nil {
 		return types.Hash{}, errors.New("domain of allOf cannot be nil")
@@ -120,20 +83,51 @@ func (a *AllOfDomain) GenerateHash() (types.Hash, error) {
 	})
 }
 
-func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDomain, err error) {
-	originalStore := dc.domainStore
-	if originalStore != nil {
-		originalStore = make(domainStore, len(dc.domainStore))
-		for domain := range dc.domainStore {
-			originalStore[domain] = struct{}{}
+// ParseAllOf parses an allOf Schema Object.
+func (dc *Context) ParseAllOf(node *json.RawMessage) (AllOfDomain, error) {
+	originalStore := cloneDomainStore(dc.domainStore)
+
+	allOfDomain, err := dc.parseAllOf(node)
+	if err != nil {
+		dc.domainStore = originalStore
+
+		return AllOfDomain{}, err
+	}
+
+	return allOfDomain, nil
+}
+
+// mergeDomain merges either one domain or the children of another allOf.
+func (a *AllOfDomain) mergeDomain(domain types.Domain) error {
+	otherAllOf, ok := domain.(*AllOfDomain)
+	if !ok {
+		return a.mergeOne(domain)
+	}
+
+	return a.mergeAllOf(otherAllOf)
+}
+
+// mergeAllOf flattens another allOf into this accumulator.
+func (a *AllOfDomain) mergeAllOf(otherAllOf *AllOfDomain) error {
+	if otherAllOf == nil {
+		return errors.New("allOf domain cannot be nil")
+	}
+
+	if len(otherAllOf.Domains) == 0 && otherAllOf.MergedDomain != nil {
+		return a.mergeOne(otherAllOf.MergedDomain)
+	}
+
+	for _, childDomain := range otherAllOf.Domains {
+		if err := a.mergeOne(childDomain); err != nil {
+			return err
 		}
 	}
-	defer func() {
-		if err != nil {
-			dc.domainStore = originalStore
-		}
-	}()
 
+	return nil
+}
+
+// parseAllOf parses an allOf schema without managing store rollback.
+func (dc *Context) parseAllOf(node *json.RawMessage) (AllOfDomain, error) {
 	if node == nil {
 		return AllOfDomain{}, errors.New("schema node is nil")
 	}
@@ -148,38 +142,92 @@ func (dc *DomainContext) ParseAllOf(node *json.RawMessage) (allOfDomain AllOfDom
 		return AllOfDomain{}, err
 	}
 
+	allOfDomain := AllOfDomain{}
 	if err := dc.parseAllOfItems(allOfRaw, &allOfDomain); err != nil {
 		return AllOfDomain{}, err
 	}
 
-	siblingKV := make(JSONKV, len(jsonKV))
-	for key, value := range jsonKV {
-		if key == "allOf" || key == "title" || key == "description" {
-			continue
-		}
-
-		siblingKV[key] = value
-	}
-
-	parsedNullable, err := dc.parseNullableSibling(siblingKV, &allOfDomain)
-	if err != nil {
-		return AllOfDomain{}, err
-	}
-
-	if parsedNullable {
-		return allOfDomain, nil
-	}
-
-	if err := dc.parseGeneralSibling(siblingKV, &allOfDomain); err != nil {
+	if err := dc.parseAllOfSiblings(allOfSiblingFields(jsonKV), &allOfDomain); err != nil {
 		return AllOfDomain{}, err
 	}
 
 	return allOfDomain, nil
 }
 
+// cloneDomainStore copies a domain store for parser rollback.
+func cloneDomainStore(store domainStore) domainStore {
+	if store == nil {
+		return nil
+	}
+
+	cloned := make(domainStore, len(store))
+	for domain := range store {
+		cloned[domain] = struct{}{}
+	}
+
+	return cloned
+}
+
+// allOfSiblingFields returns non-documentation fields beside allOf.
+func allOfSiblingFields(jsonKV JSONKV) JSONKV {
+	siblingKV := make(JSONKV, len(jsonKV))
+	for key, value := range jsonKV {
+		if key == "allOf" || key == "title" || key == "description" ||
+			isSpecificationExtension(key) && !isGeneratorSchemaExtension(key) {
+			continue
+		}
+
+		siblingKV[key] = value
+	}
+
+	return siblingKV
+}
+
+// parseAllOfSiblings applies supported sibling constraints.
+func (dc *Context) parseAllOfSiblings(siblingKV JSONKV, allOfDomain *AllOfDomain) error {
+	parsedNullable, err := parseNullableSibling(siblingKV)
+	if err != nil {
+		return err
+	}
+
+	if parsedNullable {
+		return nil
+	}
+
+	return dc.parseGeneralSibling(siblingKV, allOfDomain)
+}
+
+// mergeOne adds one domain to an allOf accumulator.
+func (a *AllOfDomain) mergeOne(domain types.Domain) error {
+	if domain == nil {
+		return errors.New("domain cannot be nil")
+	}
+
+	a.Domains = append(a.Domains, domain)
+	if a.MergedDomain == nil {
+		a.MergedDomain = domain
+
+		return nil
+	}
+
+	mergedDomain, err := a.MergedDomain.AllOfMerge(domain)
+	if err != nil {
+		return err
+	}
+
+	a.MergedDomain = mergedDomain
+
+	return nil
+}
+
+// validateAllOfSchema validates the allOf container and returns its raw items.
 func validateAllOfSchema(jsonKV JSONKV) (json.RawMessage, error) {
 	if jsonKV == nil {
 		return nil, errors.New("schema node must be object")
+	}
+
+	if err := validateSchemaDocumentation(jsonKV); err != nil {
+		return nil, err
 	}
 
 	allOfRaw, ok := jsonKV["allOf"]
@@ -193,7 +241,7 @@ func validateAllOfSchema(jsonKV JSONKV) (json.RawMessage, error) {
 		}
 	}
 
-	for key := range jsonKV {
+	for _, key := range sortedJSONKeys(jsonKV) {
 		if !isAllowedAllOfSiblingKey(key) {
 			return nil, fmt.Errorf("unsupported allOf schema field %q", key)
 		}
@@ -202,7 +250,8 @@ func validateAllOfSchema(jsonKV JSONKV) (json.RawMessage, error) {
 	return allOfRaw, nil
 }
 
-func (dc *DomainContext) parseAllOfItems(allOfRaw json.RawMessage, allOfDomain *AllOfDomain) error {
+// parseAllOfItems parses and merges each allOf item into allOfDomain.
+func (dc *Context) parseAllOfItems(allOfRaw json.RawMessage, allOfDomain *AllOfDomain) error {
 	if string(allOfRaw) == "null" {
 		return errors.New("allOf cannot be null")
 	}
@@ -230,7 +279,7 @@ func (dc *DomainContext) parseAllOfItems(allOfRaw json.RawMessage, allOfDomain *
 			return errors.New("parsed allOf item cannot be nil")
 		}
 
-		if _, err := allOfDomain.AllOfMerge(domain); err != nil {
+		if err := mergeIntoAllOf(allOfDomain, domain); err != nil {
 			return err
 		}
 	}
@@ -238,6 +287,7 @@ func (dc *DomainContext) parseAllOfItems(allOfRaw json.RawMessage, allOfDomain *
 	return nil
 }
 
+// validateAllOfItem validates one raw allOf item.
 func validateAllOfItem(allOfItem json.RawMessage) error {
 	if string(allOfItem) == "null" {
 		return errors.New("allOf item cannot be null")
@@ -265,7 +315,8 @@ func validateAllOfItem(allOfItem json.RawMessage) error {
 	return nil
 }
 
-func (dc *DomainContext) parseNullableSibling(siblingKV JSONKV, allOfDomain *AllOfDomain) (bool, error) {
+// parseNullableSibling validates a nullable-only sibling Schema Object.
+func parseNullableSibling(siblingKV JSONKV) (bool, error) {
 	if len(siblingKV) != 1 {
 		return false, nil
 	}
@@ -275,26 +326,20 @@ func (dc *DomainContext) parseNullableSibling(siblingKV JSONKV, allOfDomain *All
 		return false, nil
 	}
 
-	var nullable bool
+	var nullable *bool
 	if err := json.Unmarshal(nullableRaw, &nullable); err != nil {
 		return false, errors.New("nullable must be boolean")
 	}
 
-	nullableDomain, err := nullableOnlyDomain(allOfDomain.MergedDomain, nullable)
-	if err != nil {
-		return false, err
-	}
-
-	dc.AddDomain(nullableDomain)
-
-	if _, err := allOfDomain.AllOfMerge(nullableDomain); err != nil {
-		return false, err
+	if nullable == nil {
+		return false, errors.New("nullable must be boolean")
 	}
 
 	return true, nil
 }
 
-func (dc *DomainContext) parseGeneralSibling(siblingKV JSONKV, allOfDomain *AllOfDomain) error {
+// parseGeneralSibling parses and merges non-documentation allOf siblings.
+func (dc *Context) parseGeneralSibling(siblingKV JSONKV, allOfDomain *AllOfDomain) error {
 	if len(siblingKV) == 0 {
 		return nil
 	}
@@ -315,13 +360,27 @@ func (dc *DomainContext) parseGeneralSibling(siblingKV JSONKV, allOfDomain *AllO
 		return errors.New("parsed allOf sibling cannot be nil")
 	}
 
-	if _, err := allOfDomain.AllOfMerge(domain); err != nil {
+	return mergeIntoAllOf(allOfDomain, domain)
+}
+
+// mergeIntoAllOf assigns the non-mutating merge result to a parser accumulator.
+func mergeIntoAllOf(allOfDomain *AllOfDomain, domain types.Domain) error {
+	mergedDomain, err := allOfDomain.AllOfMerge(domain)
+	if err != nil {
 		return err
 	}
+
+	mergedAllOf, ok := mergedDomain.(*AllOfDomain)
+	if !ok {
+		return errors.New("allOf merge returned unexpected domain type")
+	}
+
+	*allOfDomain = *mergedAllOf
 
 	return nil
 }
 
+// isAllowedAllOfSiblingKey reports whether key is supported beside allOf.
 func isAllowedAllOfSiblingKey(key string) bool {
 	switch key {
 	case "allOf", "type", "nullable", "title", "description",
@@ -331,23 +390,6 @@ func isAllowedAllOfSiblingKey(key string) bool {
 		"required", "properties", "additionalProperties", "minProperties", "maxProperties":
 		return true
 	default:
-		return false
-	}
-}
-
-func nullableOnlyDomain(domain types.Domain, nullable bool) (types.Domain, error) {
-	switch typedDomain := domain.(type) {
-	case *StringDomain:
-		return &StringDomain{Nullable: nullable}, nil
-	case *NumberDomain:
-		return &NumberDomain{Type: typedDomain.Type, Nullable: nullable}, nil
-	case *BoolDomain:
-		return &BoolDomain{Nullable: nullable}, nil
-	case *ArrayDomain:
-		return &ArrayDomain{Nullable: nullable}, nil
-	case *ObjectDomain:
-		return &ObjectDomain{Nullable: nullable}, nil
-	default:
-		return nil, errors.New("cannot apply nullable to merged allOf domain")
+		return isSpecificationExtension(key)
 	}
 }

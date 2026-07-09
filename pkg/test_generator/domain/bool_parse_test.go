@@ -1,15 +1,17 @@
-//nolint:depguard,godoclint,paralleltest // Existing test_generator lint debt.
 package domain
 
 import (
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/types"
+	"decode_and_validate_generator/pkg/test_generator/types" //nolint:depguard // Internal domain contract.
 
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseBoolParsesValidBooleanSchemas covers supported boolean constraints.
 func TestParseBoolParsesValidBooleanSchemas(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]struct {
 		yamlString string
 		expected   BoolDomain
@@ -25,6 +27,13 @@ type: boolean
 type: boolean
 title: Enabled
 description: Whether it is enabled.
+`,
+			expected: BoolDomain{},
+		},
+		"specification extension is ignored": {
+			yamlString: `
+type: boolean
+x-extra: true
 `,
 			expected: BoolDomain{},
 		},
@@ -49,14 +58,38 @@ enum:
   - true
   - false
 `,
-			expected: BoolDomain{Enum: []types.Enum{types.Enum("true"), types.Enum("false")}},
+			expected: BoolDomain{Enum: []types.Enum{types.Enum("false"), types.Enum("true")}},
+		},
+		"enum filters incompatible values and duplicates": {
+			yamlString: `
+type: boolean
+enum:
+  - true
+  - "true"
+  - null
+  - true
+  - 1
+`,
+			expected: BoolDomain{Enum: []types.Enum{types.Enum("true")}},
+		},
+		"nullable enum retains null": {
+			yamlString: `
+type: boolean
+nullable: true
+enum:
+  - true
+  - null
+`,
+			expected: BoolDomain{Nullable: true, Enum: []types.Enum{types.Enum("null"), types.Enum("true")}},
 		},
 	}
 
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			node := rawObjectFromYAML(t, tt.yamlString)
-			dc := DomainContext{domainStore: domainStore{}}
+			dc := Context{domainStore: domainStore{}}
 			boolDomain, err := dc.ParseBool(node)
 			require.NoError(t, err)
 			require.Equal(t, tt.expected, boolDomain)
@@ -64,7 +97,10 @@ enum:
 	}
 }
 
+// TestParseBoolRejectsInvalidBooleanSchemas covers malformed and unsupported fields.
 func TestParseBoolRejectsInvalidBooleanSchemas(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]string{
 		"missing type": `
 nullable: false
@@ -81,6 +117,10 @@ type:
 type: boolean
 nullable: nope
 `,
+		"title must be string": `
+type: boolean
+title: 123
+`,
 		"enum cannot be empty": `
 type: boolean
 enum: []
@@ -92,6 +132,13 @@ enum: null
 		"enum must be array": `
 type: boolean
 enum: true
+`,
+		"enum must contain a compatible value": `
+type: boolean
+enum:
+  - null
+  - "true"
+  - 1
 `,
 		"minimum is not part of BoolDomain": `
 type: boolean
@@ -174,16 +221,14 @@ example: true
 type: boolean
 deprecated: true
 `,
-		"spec extension is unsupported": `
-type: boolean
-x-extra: true
-`,
 	}
 
 	for testName, yamlString := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			node := rawObjectFromYAML(t, yamlString)
-			dc := DomainContext{domainStore: domainStore{}}
+			dc := Context{domainStore: domainStore{}}
 			boolDomain, err := dc.ParseBool(node)
 			require.Error(t, err)
 			require.Empty(t, boolDomain)

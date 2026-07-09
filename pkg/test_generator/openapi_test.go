@@ -1,4 +1,3 @@
-//nolint:godoclint,paralleltest // Existing test_generator lint debt.
 package testgenerator
 
 import (
@@ -8,12 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// openAPIObjectSchemaSpec is the shared inline-object request schema fixture.
 const openAPIObjectSchemaSpec = `
 openapi: 3.0.3
 info:
   title: test
   version: 1.0.0
 paths:
+  x-test-extension: any value is allowed
   /things:
     post:
       operationId: createThing
@@ -29,7 +30,10 @@ paths:
                   type: string
 `
 
+// TestOpenAPIRequestBodySchemaNodeReturnsObjectSchemaNode verifies inline schema lookup.
 func TestOpenAPIRequestBodySchemaNodeReturnsObjectSchemaNode(t *testing.T) {
+	t.Parallel()
+
 	openAPIJSONSpec, err := YAMLBytesToJSONRawMessage([]byte(openAPIObjectSchemaSpec))
 	require.NoError(t, err)
 
@@ -39,7 +43,10 @@ func TestOpenAPIRequestBodySchemaNodeReturnsObjectSchemaNode(t *testing.T) {
 	require.JSONEq(t, `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`, string(*schemaNode))
 }
 
+// TestOpenAPIRequestBodySchemaNodeReturnsRefSchemaNode verifies schema references stay unresolved.
 func TestOpenAPIRequestBodySchemaNodeReturnsRefSchemaNode(t *testing.T) {
+	t.Parallel()
+
 	openAPISpec := []byte(`
 openapi: 3.0.3
 info:
@@ -69,7 +76,58 @@ components:
 	require.JSONEq(t, `{"$ref":"#/components/schemas/Thing"}`, string(*schemaNode))
 }
 
+// TestOpenAPIRequestBodySchemaNodeResolvesPathItemAndRequestBodyRefs verifies lazy reference lookup.
+func TestOpenAPIRequestBodySchemaNodeResolvesPathItemAndRequestBodyRefs(t *testing.T) {
+	t.Parallel()
+
+	openAPISpec := []byte(`
+openapi: 3.0.3
+info:
+  title: test
+  version: 1.0.0
+paths:
+  /things:
+    $ref: '#/x-path-items/ThingAlias'
+x-path-items:
+  ThingAlias:
+    $ref: '#/x-path-items/Thing'
+  Thing:
+    post:
+      operationId: createThing
+      requestBody:
+        $ref: '#/components/requestBodies/ThingAlias'
+components:
+  requestBodies:
+    ThingAlias:
+      $ref: '#/components/requestBodies/Thing'
+    Thing:
+      content:
+        application/json:
+          schema:
+            type: object
+            example:
+              $ref: literal value
+              sibling: true
+x-unrelated:
+  $ref: 123
+  sibling: true
+`)
+
+	openAPIJSONSpec, err := YAMLBytesToJSONRawMessage(openAPISpec)
+	require.NoError(t, err)
+
+	schemaNode, err := OpenAPIRequestBodySchemaNode(openAPIJSONSpec, "createThing")
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"type": "object",
+		"example": {"$ref": "literal value", "sibling": true}
+	}`, string(*schemaNode))
+}
+
+// TestOpenAPIRequestBodySchemaNodeErrors verifies invalid lookups are rejected.
 func TestOpenAPIRequestBodySchemaNodeErrors(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]struct {
 		openAPISpec string
 		operationID string
@@ -146,10 +204,72 @@ paths:
 			operationID: "createThing",
 			wantError:   `operationId "createThing" application/json schema does not exist`,
 		},
+		"path item ref target does not exist": {
+			openAPISpec: `
+openapi: 3.0.3
+paths:
+  /things:
+    $ref: '#/x-path-items/Missing'
+x-path-items: {}
+`,
+			operationID: "createThing",
+			wantError:   `resolve openapi path item "/things"`,
+		},
+		"path item ref cycle": {
+			openAPISpec: `
+openapi: 3.0.3
+paths:
+  /things:
+    $ref: '#/x-path-items/First'
+x-path-items:
+  First:
+    $ref: '#/x-path-items/Second'
+  Second:
+    $ref: '#/x-path-items/First'
+`,
+			operationID: "createThing",
+			wantError:   "reference cycle",
+		},
+		"request body ref target does not exist": {
+			openAPISpec: `
+openapi: 3.0.3
+paths:
+  /things:
+    post:
+      operationId: createThing
+      requestBody:
+        $ref: '#/components/requestBodies/Missing'
+components:
+  requestBodies: {}
+`,
+			operationID: "createThing",
+			wantError:   `resolve operationId "createThing" request body`,
+		},
+		"request body ref cycle": {
+			openAPISpec: `
+openapi: 3.0.3
+paths:
+  /things:
+    post:
+      operationId: createThing
+      requestBody:
+        $ref: '#/components/requestBodies/First'
+components:
+  requestBodies:
+    First:
+      $ref: '#/components/requestBodies/Second'
+    Second:
+      $ref: '#/components/requestBodies/First'
+`,
+			operationID: "createThing",
+			wantError:   "reference cycle",
+		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			openAPIJSONSpec, err := YAMLBytesToJSONRawMessage([]byte(tt.openAPISpec))
 			require.NoError(t, err)
 
@@ -160,7 +280,26 @@ paths:
 	}
 }
 
+// TestOpenAPIRequestBodySchemaNodeRejectsInvalidInputs verifies public input guards.
+func TestOpenAPIRequestBodySchemaNodeRejectsInvalidInputs(t *testing.T) {
+	t.Parallel()
+
+	_, err := OpenAPIRequestBodySchemaNode(nil, "createThing")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "openapi json spec is nil")
+
+	openAPIJSONSpec, err := YAMLBytesToJSONRawMessage([]byte(openAPIObjectSchemaSpec))
+	require.NoError(t, err)
+
+	_, err = OpenAPIRequestBodySchemaNode(openAPIJSONSpec, "")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "operationId must not be empty")
+}
+
+// TestGenerateFunctionsParseSchemaAndDoNothing documents the current no-generation behavior.
 func TestGenerateFunctionsParseSchemaAndDoNothing(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]struct {
 		generate func([]byte, string, func([]byte) error) error
 	}{
@@ -170,6 +309,8 @@ func TestGenerateFunctionsParseSchemaAndDoNothing(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			called := false
 			err := tt.generate([]byte(openAPIObjectSchemaSpec), "createThing", func(_ []byte) error {
 				called = true
@@ -182,7 +323,10 @@ func TestGenerateFunctionsParseSchemaAndDoNothing(t *testing.T) {
 	}
 }
 
+// TestGenerateFunctionsWrapOpenAPISchemaLookupErrors verifies entry-point error context.
 func TestGenerateFunctionsWrapOpenAPISchemaLookupErrors(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]struct {
 		generate func([]byte, string, func([]byte) error) error
 	}{
@@ -192,6 +336,8 @@ func TestGenerateFunctionsWrapOpenAPISchemaLookupErrors(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			err := tt.generate([]byte(openAPIObjectSchemaSpec), "missingThing", func(_ []byte) error { return nil })
 			require.Error(t, err)
 			require.ErrorContains(t, err, "openapi request body schema lookup failed")

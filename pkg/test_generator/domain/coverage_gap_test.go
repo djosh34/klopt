@@ -1,19 +1,22 @@
-//nolint:depguard,godoclint,lll,paralleltest,revive // Existing test_generator lint debt.
 package domain
 
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/types"
+	"decode_and_validate_generator/pkg/test_generator/types" //nolint:depguard // Tests exercise shared domain contracts.
 
 	"github.com/stretchr/testify/require"
 )
 
+// TestAllOfDomainRemainingBranches exercises error paths shared by allOf merging and hashing.
 func TestAllOfDomainRemainingBranches(t *testing.T) {
 	t.Run("typed nil allOf", func(t *testing.T) {
+		t.Parallel()
+
 		var other *AllOfDomain
 
 		got, err := (&AllOfDomain{}).AllOfMerge(other)
@@ -22,6 +25,8 @@ func TestAllOfDomainRemainingBranches(t *testing.T) {
 	})
 
 	t.Run("merged-only allOf right", func(t *testing.T) {
+		t.Parallel()
+
 		left := &AllOfDomain{MergedDomain: &StringDomain{MinLength: 1}}
 		right := &AllOfDomain{MergedDomain: &StringDomain{MaxLength: new(5)}}
 
@@ -34,6 +39,8 @@ func TestAllOfDomainRemainingBranches(t *testing.T) {
 	})
 
 	t.Run("merged-only allOf right merge error", func(t *testing.T) {
+		t.Parallel()
+
 		left := &AllOfDomain{MergedDomain: &StringDomain{}}
 		right := &AllOfDomain{MergedDomain: &BoolDomain{}}
 
@@ -43,73 +50,56 @@ func TestAllOfDomainRemainingBranches(t *testing.T) {
 	})
 
 	t.Run("nil child domain", func(t *testing.T) {
+		t.Parallel()
+
 		got, err := (&AllOfDomain{}).AllOfMerge(&AllOfDomain{Domains: []types.Domain{nil}})
 		require.Error(t, err)
 		require.Nil(t, got)
 	})
 
 	t.Run("domain generate hash error", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := (&AllOfDomain{Domains: []types.Domain{failingGenerateHashDomain{}}}).GenerateHash()
 		require.Error(t, err)
 	})
 
 	t.Run("merged domain generate hash error", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := (&AllOfDomain{MergedDomain: failingGenerateHashDomain{}}).GenerateHash()
 		require.Error(t, err)
 	})
 }
 
+// TestParseAllOfRemainingBranches exercises allOf parser validation and rollback paths.
 func TestParseAllOfRemainingBranches(t *testing.T) {
 	t.Run("nil node", func(t *testing.T) {
-		allOfDomain, err := (&DomainContext{}).ParseAllOf(nil)
+		t.Parallel()
+
+		allOfDomain, err := (&Context{}).ParseAllOf(nil)
 		require.Error(t, err)
 		require.Empty(t, allOfDomain)
 	})
 
 	t.Run("node must be object", func(t *testing.T) {
+		t.Parallel()
+
 		raw := json.RawMessage(`null`)
-		allOfDomain, err := (&DomainContext{}).ParseAllOf(&raw)
+		allOfDomain, err := (&Context{}).ParseAllOf(&raw)
 		require.Error(t, err)
 		require.Empty(t, allOfDomain)
 	})
 
 	t.Run("nullable must be boolean", func(t *testing.T) {
+		t.Parallel()
+
 		node := rawObjectFromYAML(t, `
 nullable: nope
 allOf:
   - type: string
 `)
-		allOfDomain, err := (&DomainContext{}).ParseAllOf(node)
-		require.Error(t, err)
-		require.Empty(t, allOfDomain)
-	})
-
-	t.Run("nullable unsupported merged domain", func(t *testing.T) {
-		node := rawObjectFromYAML(t, `
-nullable: true
-allOf:
-  - type: string
-`)
-		dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) {
-			return fakeObjectTestDomain{}, nil
-		}}
-
-		allOfDomain, err := dc.ParseAllOf(node)
-		require.Error(t, err)
-		require.Empty(t, allOfDomain)
-	})
-
-	t.Run("nullable merge error", func(t *testing.T) {
-		node := rawObjectFromYAML(t, `
-nullable: true
-allOf:
-  - type: number
-`)
-		dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) {
-			return &NumberDomain{Type: "bad"}, nil
-		}}
-
-		allOfDomain, err := dc.ParseAllOf(node)
+		allOfDomain, err := (&Context{}).ParseAllOf(node)
 		require.Error(t, err)
 		require.Empty(t, allOfDomain)
 	})
@@ -121,8 +111,10 @@ allOf:
 		"object":  `{"nullable":true,"allOf":[{"type":"object"}]}`,
 	} {
 		t.Run("nullable sibling for "+name, func(t *testing.T) {
+			t.Parallel()
+
 			rawMessage := json.RawMessage(raw)
-			domain, err := (&DomainContext{}).Parse(&rawMessage)
+			domain, err := (&Context{}).Parse(&rawMessage)
 			require.NoError(t, err)
 			require.IsType(t, new(AllOfDomain), domain)
 		})
@@ -137,8 +129,10 @@ allOf:
 		"sibling merge error": {secondDomain: &BoolDomain{}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			parseCall := 0
-			dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) {
+			dc := Context{parse: func(_ *json.RawMessage) (types.Domain, error) {
 				parseCall++
 				if parseCall == 1 {
 					return &StringDomain{}, nil
@@ -160,41 +154,48 @@ maxLength: 5
 	}
 }
 
+// TestParseDomainKindsRemainingBranches covers validation shared by primitive domain parsers.
 func TestParseDomainKindsRemainingBranches(t *testing.T) {
 	t.Run("required type null", func(t *testing.T) {
+		t.Parallel()
+
 		raw := json.RawMessage(`{"type":null}`)
-		_, err := (&DomainContext{}).ParseString(&raw)
+		_, err := (&Context{}).ParseString(&raw)
 		require.Error(t, err)
 	})
 
 	for name, parse := range map[string]func(*json.RawMessage) error{
 		"array": func(node *json.RawMessage) error {
-			_, err := (&DomainContext{}).ParseArray(node)
+			_, err := (&Context{}).ParseArray(node)
 
 			return err
 		},
 		"bool": func(node *json.RawMessage) error {
-			_, err := (&DomainContext{}).ParseBool(node)
+			_, err := (&Context{}).ParseBool(node)
 
 			return err
 		},
 		"number": func(node *json.RawMessage) error {
-			_, err := (&DomainContext{}).ParseNumber(node)
+			_, err := (&Context{}).ParseNumber(node)
 
 			return err
 		},
 		"string": func(node *json.RawMessage) error {
-			_, err := (&DomainContext{}).ParseString(node)
+			_, err := (&Context{}).ParseString(node)
 
 			return err
 		},
 	} {
 		t.Run(name+" nil node", func(t *testing.T) {
+			t.Parallel()
+
 			err := parse(nil)
 			require.Error(t, err)
 		})
 
 		t.Run(name+" invalid json", func(t *testing.T) {
+			t.Parallel()
+
 			raw := json.RawMessage(`{`)
 			err := parse(&raw)
 			require.Error(t, err)
@@ -208,31 +209,35 @@ func TestParseDomainKindsRemainingBranches(t *testing.T) {
 		"string nullable null": `{"type":"string","nullable":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			rawMessage := json.RawMessage(raw)
-			domain, err := (&DomainContext{}).Parse(&rawMessage)
+			domain, err := (&Context{}).Parse(&rawMessage)
 			require.Error(t, err)
 			require.Nil(t, domain)
 		})
 	}
 
 	t.Run("array items must be object", func(t *testing.T) {
+		t.Parallel()
+
 		raw := json.RawMessage(`{"type":"array","items":"nope"}`)
-		_, err := (&DomainContext{}).ParseArray(&raw)
+		_, err := (&Context{}).ParseArray(&raw)
 		require.Error(t, err)
 	})
 
 	for name, raw := range map[string]string{
-		"number maximum must be integer":    `{"type":"integer","maximum":1.5}`,
-		"number multipleOf must be integer": `{"type":"integer","multipleOf":1.5}`,
-		"exclusiveMinimum null":             `{"type":"number","exclusiveMinimum":null}`,
-		"exclusiveMaximum null":             `{"type":"number","exclusiveMaximum":null}`,
-		"format null":                       `{"type":"number","format":null}`,
-		"maximum huge exponent":             `{"type":"number","maximum":1e999999999}`,
-		"multipleOf huge exponent":          `{"type":"number","multipleOf":1e999999999}`,
+		"exclusiveMinimum null":    `{"type":"number","exclusiveMinimum":null}`,
+		"exclusiveMaximum null":    `{"type":"number","exclusiveMaximum":null}`,
+		"format null":              `{"type":"number","format":null}`,
+		"maximum huge exponent":    `{"type":"number","maximum":1e999999999}`,
+		"multipleOf huge exponent": `{"type":"number","multipleOf":1e999999999}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			rawMessage := json.RawMessage(raw)
-			_, err := (&DomainContext{}).ParseNumber(&rawMessage)
+			_, err := (&Context{}).ParseNumber(&rawMessage)
 			require.Error(t, err)
 		})
 	}
@@ -244,38 +249,61 @@ func TestParseDomainKindsRemainingBranches(t *testing.T) {
 		"x-invalid-examples null": `{"type":"string","pattern":"x","x-valid-examples":["x"],"x-invalid-examples":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			rawMessage := json.RawMessage(raw)
-			_, err := (&DomainContext{}).ParseString(&rawMessage)
+			_, err := (&Context{}).ParseString(&rawMessage)
 			require.Error(t, err)
 		})
 	}
+
+	for _, key := range []string{"title", "description"} {
+		for name, value := range map[string]string{"number": "1", "null": "null"} {
+			t.Run(key+" rejects "+name, func(t *testing.T) {
+				t.Parallel()
+
+				raw := json.RawMessage(fmt.Sprintf(`{"type":"string",%q:%s}`, key, value))
+				_, err := (&Context{}).ParseString(&raw)
+				require.ErrorContains(t, err, key+" must be string")
+			})
+		}
+	}
 }
 
-func TestDomainContextParseDefaultRemainingBranches(t *testing.T) {
+// TestContextParseDefaultRemainingBranches exercises dispatcher errors and typed parser propagation.
+func TestContextParseDefaultRemainingBranches(t *testing.T) {
 	t.Run("nil node", func(t *testing.T) {
-		domain, err := (&DomainContext{}).Parse(nil)
+		t.Parallel()
+
+		domain, err := (&Context{}).Parse(nil)
 		require.Error(t, err)
 		require.Nil(t, domain)
 	})
 
 	t.Run("malformed json", func(t *testing.T) {
+		t.Parallel()
+
 		raw := json.RawMessage(`{`)
-		domain, err := (&DomainContext{}).Parse(&raw)
-		require.Error(t, err)
+		domain, err := (&Context{}).Parse(&raw)
+		require.ErrorContains(t, err, "decode schema JSON")
 		require.Nil(t, domain)
 	})
 
 	t.Run("object-shaped schema without type is rejected", func(t *testing.T) {
+		t.Parallel()
+
 		raw := json.RawMessage(`{"properties":{"name":{"type":"string"}}}`)
-		domain, err := (&DomainContext{}).Parse(&raw)
+		domain, err := (&Context{}).Parse(&raw)
 		require.Error(t, err)
 		require.Nil(t, domain)
 	})
 
-	t.Run("object-shaped schema parse error", func(t *testing.T) {
-		raw := json.RawMessage(`{"properties":null}`)
-		domain, err := (&DomainContext{}).Parse(&raw)
-		require.Error(t, err)
+	t.Run("null schema", func(t *testing.T) {
+		t.Parallel()
+
+		raw := json.RawMessage(`null`)
+		domain, err := (&Context{}).Parse(&raw)
+		require.ErrorContains(t, err, "schema node must be object")
 		require.Nil(t, domain)
 	})
 
@@ -287,15 +315,20 @@ func TestDomainContextParseDefaultRemainingBranches(t *testing.T) {
 		"bool error":   `{"type":"boolean","enum":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			rawMessage := json.RawMessage(raw)
-			domain, err := (&DomainContext{}).Parse(&rawMessage)
+			domain, err := (&Context{}).Parse(&rawMessage)
 			require.Error(t, err)
 			require.Nil(t, domain)
 		})
 	}
 }
 
+// TestEnumRemainingBranches verifies invalid raw enum values are rejected.
 func TestEnumRemainingBranches(t *testing.T) {
+	t.Parallel()
+
 	_, err := mergeEnums([]types.Enum{types.Enum(`"ok"`)}, []types.Enum{nil})
 	require.Error(t, err)
 
@@ -303,21 +336,50 @@ func TestEnumRemainingBranches(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestNumberRemainingBranches exercises invalid programmatic number domains and rational formatting.
 func TestNumberRemainingBranches(t *testing.T) {
+	t.Parallel()
+
 	for name, tt := range map[string]struct {
 		left  *NumberDomain
 		right *NumberDomain
 	}{
-		"right minimum invalid":       {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number", Minimum: new(Number("bad"))}},
-		"left minimum invalid":        {left: &NumberDomain{Type: "number", Minimum: new(Number("bad"))}, right: &NumberDomain{Type: "number"}},
-		"right maximum invalid":       {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number", Maximum: new(Number("bad"))}},
-		"left maximum invalid":        {left: &NumberDomain{Type: "number", Maximum: new(Number("bad"))}, right: &NumberDomain{Type: "number"}},
-		"right multiple invalid":      {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number", MultipleOf: new(Number("bad"))}},
-		"right multiple not positive": {left: &NumberDomain{Type: "number"}, right: &NumberDomain{Type: "number", MultipleOf: new(Number("0"))}},
-		"left multiple invalid":       {left: &NumberDomain{Type: "number", MultipleOf: new(Number("bad"))}, right: &NumberDomain{Type: "number"}},
-		"left multiple not positive":  {left: &NumberDomain{Type: "number", MultipleOf: new(Number("0"))}, right: &NumberDomain{Type: "number"}},
+		"right minimum invalid": {
+			left:  &NumberDomain{Type: "number"},
+			right: &NumberDomain{Type: "number", Minimum: new(Number("bad"))},
+		},
+		"left minimum invalid": {
+			left:  &NumberDomain{Type: "number", Minimum: new(Number("bad"))},
+			right: &NumberDomain{Type: "number"},
+		},
+		"right maximum invalid": {
+			left:  &NumberDomain{Type: "number"},
+			right: &NumberDomain{Type: "number", Maximum: new(Number("bad"))},
+		},
+		"left maximum invalid": {
+			left:  &NumberDomain{Type: "number", Maximum: new(Number("bad"))},
+			right: &NumberDomain{Type: "number"},
+		},
+		"right multiple invalid": {
+			left:  &NumberDomain{Type: "number"},
+			right: &NumberDomain{Type: "number", MultipleOf: new(Number("bad"))},
+		},
+		"right multiple not positive": {
+			left:  &NumberDomain{Type: "number"},
+			right: &NumberDomain{Type: "number", MultipleOf: new(Number("0"))},
+		},
+		"left multiple invalid": {
+			left:  &NumberDomain{Type: "number", MultipleOf: new(Number("bad"))},
+			right: &NumberDomain{Type: "number"},
+		},
+		"left multiple not positive": {
+			left:  &NumberDomain{Type: "number", MultipleOf: new(Number("0"))},
+			right: &NumberDomain{Type: "number"},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := tt.left.AllOfMerge(tt.right)
 			require.Error(t, err)
 			require.Nil(t, got)
@@ -337,17 +399,29 @@ func TestNumberRemainingBranches(t *testing.T) {
 	require.Equal(t, "1/3", formatRatDecimal(big.NewRat(1, 3)))
 }
 
+// TestArrayRemainingBranches verifies that item hash errors propagate.
 func TestArrayRemainingBranches(t *testing.T) {
+	t.Parallel()
+
 	_, err := (&ArrayDomain{Items: failingGenerateHashDomain{}}).GenerateHash()
 	require.Error(t, err)
 }
 
+// TestObjectRemainingBranches exercises object merge, hash, and parser error paths.
 func TestObjectRemainingBranches(t *testing.T) {
-	_, keep, err := mergePropertyWithAdditional(Property{}, &ObjectDomain{AdditionalPropertyKind: AdditionalSchema})
+	t.Parallel()
+
+	_, keep, err := mergePropertyWithAdditional(
+		Property{},
+		&ObjectDomain{AdditionalPropertyKind: AdditionalSchema},
+	)
 	require.Error(t, err)
 	require.False(t, keep)
 
-	_, keep, err = mergePropertyWithAdditional(Property{}, &ObjectDomain{AdditionalPropertyKind: AdditionalPropertyKind(99)})
+	_, keep, err = mergePropertyWithAdditional(
+		Property{},
+		&ObjectDomain{AdditionalPropertyKind: AdditionalPropertyKind(99)},
+	)
 	require.Error(t, err)
 	require.False(t, keep)
 
@@ -355,20 +429,25 @@ func TestObjectRemainingBranches(t *testing.T) {
 	require.Error(t, err)
 
 	raw := json.RawMessage(`{"type":"string"}`)
-	_, err = (&DomainContext{}).ParseObject(&raw)
+	_, err = (&Context{}).ParseObject(&raw)
 	require.Error(t, err)
 
 	raw = json.RawMessage(`{"type":"object","enum":[]}`)
-	_, err = (&DomainContext{}).ParseObject(&raw)
+	_, err = (&Context{}).ParseObject(&raw)
 	require.Error(t, err)
 }
 
+// TestStringRemainingBranches exercises invalid enum examples and malformed JSON string values.
 func TestStringRemainingBranches(t *testing.T) {
-	got, err := (&StringDomain{Enum: []types.Enum{types.Enum(`null`), types.Enum(`123`)}}).AllOfMerge(&StringDomain{XValidExamples: []string{"123"}})
+	t.Parallel()
+
+	got, err := (&StringDomain{
+		Enum: []types.Enum{types.Enum(`null`), types.Enum(`123`)},
+	}).AllOfMerge(&StringDomain{XValidExamples: []string{"123"}})
 	require.Error(t, err)
 	require.Nil(t, got)
 
-	stringValue, err := mustUnmarshalJSONString(types.Enum(`"bad`))
+	stringValue, err := unmarshalJSONString(types.Enum(`"bad`))
 	require.Error(t, err)
 	require.Empty(t, stringValue)
 }

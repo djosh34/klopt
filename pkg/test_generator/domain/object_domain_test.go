@@ -1,4 +1,3 @@
-//nolint:depguard,godoclint,lll,nilnil,paralleltest,revive // Existing test_generator lint debt.
 package domain
 
 import (
@@ -6,35 +5,42 @@ import (
 	"errors"
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/types"
+	"decode_and_validate_generator/pkg/test_generator/types" //nolint:depguard // Internal domain contract.
 
-	testgenerator "decode_and_validate_generator/pkg/test_generator"
+	testgenerator "decode_and_validate_generator/pkg/test_generator" //nolint:depguard // Package under test.
 
 	"github.com/stretchr/testify/require"
 )
 
+// failingGenerateHashDomain returns a deterministic hashing failure.
 type failingGenerateHashDomain struct{}
 
-func (f failingGenerateHashDomain) GenerateHash() (types.Hash, error) {
+// GenerateHash returns the configured test failure.
+func (failingGenerateHashDomain) GenerateHash() (types.Hash, error) {
 	return types.Hash{}, errors.New("generate hash failed")
 }
 
-func (f failingGenerateHashDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
+// AllOfMerge is not implemented by this hashing test double.
+func (failingGenerateHashDomain) AllOfMerge(types.Domain) (types.Domain, error) {
 	return nil, errors.New("NOT IMPLEMENTED")
 }
 
+// fakeObjectTestDomain returns a configured hash.
 type fakeObjectTestDomain struct {
 	hash types.Hash
 }
 
+// GenerateHash returns the configured hash.
 func (f fakeObjectTestDomain) GenerateHash() (types.Hash, error) {
 	return f.hash, nil
 }
 
-func (f fakeObjectTestDomain) AllOfMerge(domain types.Domain) (types.Domain, error) {
+// AllOfMerge is not implemented by this parser test double.
+func (fakeObjectTestDomain) AllOfMerge(types.Domain) (types.Domain, error) {
 	return nil, errors.New("NOT IMPLEMENTED")
 }
 
+// rawObjectFromYAML converts a YAML test fixture to raw JSON.
 func rawObjectFromYAML(t *testing.T, yamlString string) *json.RawMessage {
 	t.Helper()
 
@@ -44,7 +50,8 @@ func rawObjectFromYAML(t *testing.T, yamlString string) *json.RawMessage {
 	return node
 }
 
-func requireDomainStoreDomains(t *testing.T, dc *DomainContext, expectedDomains ...types.Domain) {
+// requireDomainStoreDomains compares the domains committed by a parser.
+func requireDomainStoreDomains(t *testing.T, dc *Context, expectedDomains ...types.Domain) {
 	t.Helper()
 
 	storedDomains := make([]types.Domain, 0, len(dc.domainStore))
@@ -55,7 +62,10 @@ func requireDomainStoreDomains(t *testing.T, dc *DomainContext, expectedDomains 
 	require.ElementsMatch(t, expectedDomains, storedDomains)
 }
 
+// TestParseObjectParsesValidObjectSchemas covers supported object schemas.
 func TestParseObjectParsesValidObjectSchemas(t *testing.T) {
+	t.Parallel()
+
 	propertyNameHash := types.Hash{1}
 	propertyAgeHash := types.Hash{2}
 	additionalPropertyHash := types.Hash{3}
@@ -72,6 +82,11 @@ func TestParseObjectParsesValidObjectSchemas(t *testing.T) {
 	requiredNameProperty := &Property{Key: "name", Domain: propertyNameDomain, Required: true}
 	requiredAgeOnlyProperty := &Property{Key: "age", Required: true}
 	requiredNameOnlyProperty := &Property{Key: "name", Required: true}
+	requiredAdditionalProperty := &Property{
+		Key:      "label",
+		Domain:   additionalPropertyDomain,
+		Required: true,
+	}
 	tests := map[string]struct {
 		yamlString    string
 		parseDomains  []types.Domain
@@ -196,6 +211,25 @@ additionalProperties:
 				AdditionalPropertyDomain: additionalPropertyDomain,
 			},
 		},
+		"undeclared required property uses additionalProperties schema": {
+			yamlString: `
+type: object
+required:
+  - label
+additionalProperties:
+  type: string
+`,
+			parseDomains: []types.Domain{additionalPropertyDomain},
+			expectedStore: []types.Domain{
+				additionalPropertyDomain,
+				requiredAdditionalProperty,
+			},
+			expected: ObjectDomain{
+				Properties:               []Property{*requiredAdditionalProperty},
+				AdditionalPropertyKind:   AdditionalSchema,
+				AdditionalPropertyDomain: additionalPropertyDomain,
+			},
+		},
 		"additionalProperties empty schema object is free-form": {
 			yamlString: `
 type: object
@@ -245,9 +279,11 @@ maxProperties: 0
 
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			node := rawObjectFromYAML(t, tt.yamlString)
 			parseCall := 0
-			dc := DomainContext{
+			dc := Context{
 				domainStore: domainStore{},
 				parse: func(node *json.RawMessage) (types.Domain, error) {
 					require.Less(t, parseCall, len(tt.parseDomains))
@@ -289,7 +325,10 @@ maxProperties: 0
 	}
 }
 
+// TestParseObjectParsesNestedObjectWithDefaultParser covers nested objects.
 func TestParseObjectParsesNestedObjectWithDefaultParser(t *testing.T) {
+	t.Parallel()
+
 	const objectSchemaYAML = `
 type: object
 required:
@@ -307,7 +346,7 @@ properties:
 `
 
 	node := rawObjectFromYAML(t, objectSchemaYAML)
-	objectDomain, err := (&DomainContext{}).ParseObject(node)
+	objectDomain, err := (&Context{}).ParseObject(node)
 	require.NoError(t, err)
 	require.Len(t, objectDomain.Properties, 2)
 	require.Equal(t, "contact_info", objectDomain.Properties[0].Key)
@@ -316,7 +355,10 @@ properties:
 	require.Equal(t, "id", objectDomain.Properties[1].Key)
 }
 
+// TestObjectDomainAllOfMerge covers a representative object intersection.
 func TestObjectDomainAllOfMerge(t *testing.T) {
+	t.Parallel()
+
 	first := &ObjectDomain{
 		Nullable:               true,
 		Properties:             []Property{{Key: "id", Required: true}},
@@ -343,45 +385,90 @@ func TestObjectDomainAllOfMerge(t *testing.T) {
 	}, mergedDomain)
 }
 
+// TestObjectDomainAllOfMergeErrors covers invalid object intersections.
 func TestObjectDomainAllOfMergeErrors(t *testing.T) {
+	t.Parallel()
+
 	_, err := (*ObjectDomain)(nil).AllOfMerge(&ObjectDomain{})
 	require.ErrorContains(t, err, "object domain cannot be nil")
 
 	_, err = (&ObjectDomain{}).AllOfMerge(&StringDomain{})
 	require.ErrorContains(t, err, "domain is not ObjectDomain")
 
-	_, err = (&ObjectDomain{Properties: []Property{{Key: "id", Domain: &StringDomain{}}}}).AllOfMerge(&ObjectDomain{Properties: []Property{{Key: "id", Domain: &BoolDomain{}}}})
+	_, err = (&ObjectDomain{Properties: []Property{{Key: "id", Domain: &StringDomain{}}}}).AllOfMerge(
+		&ObjectDomain{Properties: []Property{{Key: "id", Domain: &BoolDomain{}}}},
+	)
 	require.Error(t, err)
 }
 
-func TestParseObjectParsesEnumAndReturnsEarly(t *testing.T) {
+// TestParseObjectParsesEnumAndOtherConstraints prevents enum short-circuiting.
+func TestParseObjectParsesEnumAndOtherConstraints(t *testing.T) {
+	t.Parallel()
+
 	const objectSchemaYAML = `
 type: object
 enum:
   - name: alpha
-  - name: beta
+  - {}
+  - name: alpha
+    extra: rejected
+  - wrong-type
+  - null
+required:
+  - name
 properties:
-  shouldNotParse:
+  name:
     type: string
+additionalProperties: false
+maxProperties: 1
+x-extension: true
 `
 
 	node := rawObjectFromYAML(t, objectSchemaYAML)
-
-	dc := DomainContext{
-		parse: func(node *json.RawMessage) (types.Domain, error) {
-			require.Fail(t, "ParseObject should return before parsing properties")
-
-			return nil, nil
-		},
-	}
+	dc := Context{}
 
 	objectDomain, err := dc.ParseObject(node)
 	require.NoError(t, err)
-	require.Len(t, objectDomain.Enum, 2)
-	require.Len(t, dc.domainStore, 0)
+	require.Equal(t, ObjectDomain{
+		AdditionalPropertyKind: AdditionalFalse,
+		Enum:                   []types.Enum{types.Enum(`{"name":"alpha"}`)},
+		Properties: []Property{{
+			Key:      "name",
+			Domain:   &StringDomain{},
+			Required: true,
+		}},
+		MaxProps: new(1),
+	}, objectDomain)
+	require.Len(t, dc.domainStore, 2)
 }
 
+// TestParseObjectRetainsNullWhenObjectEnumsViolateConstraints covers nullable enum rescue.
+func TestParseObjectRetainsNullWhenObjectEnumsViolateConstraints(t *testing.T) {
+	t.Parallel()
+
+	node := rawObjectFromYAML(t, `
+type: object
+nullable: true
+enum:
+  - null
+  - {}
+minProperties: 1
+`)
+
+	objectDomain, err := (&Context{}).ParseObject(node)
+	require.NoError(t, err)
+	require.Equal(t, ObjectDomain{
+		Nullable:               true,
+		Enum:                   []types.Enum{types.Enum(`null`)},
+		AdditionalPropertyKind: AdditionalTrue,
+		MinProps:               1,
+	}, objectDomain)
+}
+
+// TestParseObjectRejectsInvalidObjectSchemas covers invalid object schemas.
 func TestParseObjectRejectsInvalidObjectSchemas(t *testing.T) {
+	t.Parallel()
+
 	tests := map[string]struct {
 		yamlString string
 	}{
@@ -391,6 +478,43 @@ properties: {}
 		"random key outside OpenAPI schema object": {yamlString: `
 type: object
 notInTheSpecAtAll: true
+`},
+		"enum does not bypass unknown key validation": {yamlString: `
+type: object
+enum:
+  - {}
+notInTheSpecAtAll: true
+`},
+		"nonnullable object enum cannot contain only null": {yamlString: `
+type: object
+enum:
+  - null
+`},
+		"object enum must satisfy minProperties": {yamlString: `
+type: object
+enum:
+  - {}
+minProperties: 1
+`},
+		"object enum must satisfy maxProperties": {yamlString: `
+type: object
+enum:
+  - first: 1
+    second: 2
+maxProperties: 1
+`},
+		"object enum must contain required names": {yamlString: `
+type: object
+enum:
+  - {}
+required:
+  - name
+`},
+		"closed object enum cannot contain undeclared names": {yamlString: `
+type: object
+enum:
+  - forbidden: true
+additionalProperties: false
 `},
 		"multipleOf is not part of ObjectDomain": {yamlString: `
 type: object
@@ -497,13 +621,13 @@ example: {}
 type: object
 deprecated: true
 `},
-		"spec extension is not part of ObjectDomain": {yamlString: `
-type: object
-x-extension: true
-`},
 		"nullable must be boolean": {yamlString: `
 type: object
 nullable: nope
+`},
+		"nullable cannot be null": {yamlString: `
+type: object
+nullable: null
 `},
 		"top-level readOnly false is still not part of ObjectDomain": {yamlString: `
 type: object
@@ -561,6 +685,12 @@ additionalProperties: 123
 type: object
 additionalProperties: []
 `},
+		"undeclared required property is forbidden by additionalProperties false": {yamlString: `
+type: object
+required:
+  - name
+additionalProperties: false
+`},
 		"minProperties cannot be null": {yamlString: `
 type: object
 minProperties: null
@@ -589,6 +719,21 @@ maxProperties: 1.5
 type: object
 minProperties: 2
 maxProperties: 1
+`},
+		"required property count cannot exceed maxProperties": {yamlString: `
+type: object
+required:
+  - first
+  - second
+maxProperties: 1
+`},
+		"closed object cannot satisfy minProperties": {yamlString: `
+type: object
+properties:
+  only:
+    type: string
+additionalProperties: false
+minProperties: 2
 `},
 		"readOnly true is not allowed in property schemas": {yamlString: `
 type: object
@@ -622,8 +767,10 @@ properties:
 
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			node := rawObjectFromYAML(t, tt.yamlString)
-			dc := DomainContext{domainStore: domainStore{}}
+			dc := Context{domainStore: domainStore{}}
 
 			objectDomain, err := dc.ParseObject(node)
 			require.Error(t, err)
@@ -633,7 +780,36 @@ properties:
 	}
 }
 
+// TestParseObjectAdditionalPropertiesPropagatesDecodeErrors covers malformed raw tokens.
+func TestParseObjectAdditionalPropertiesPropagatesDecodeErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"empty token":      " ",
+		"malformed object": `{`,
+		"malformed true":   `tru`,
+		"malformed false":  `fals`,
+	}
+
+	for name, rawValue := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			raw := json.RawMessage(rawValue)
+			jsonKV := JSONKV{"additionalProperties": raw}
+			objectDomain := ObjectDomain{}
+
+			err := (&Context{}).parseObjectAdditionalProperties(jsonKV, &raw, &objectDomain)
+			require.Error(t, err)
+			require.Empty(t, objectDomain)
+		})
+	}
+}
+
+// TestParseObjectDoesNotCommitDomainsWhenReturningError checks parser rollback.
 func TestParseObjectDoesNotCommitDomainsWhenReturningError(t *testing.T) {
+	t.Parallel()
+
 	propertyDomain := fakeObjectTestDomain{hash: types.Hash{1}}
 	tests := map[string]struct {
 		yamlString     string
@@ -648,9 +824,7 @@ properties:
     type: string
 minProperties: -1
 `,
-			parse: func(parseCall int) (types.Domain, error) {
-				_ = parseCall
-
+			parse: func(_ int) (types.Domain, error) {
 				return propertyDomain, nil
 			},
 			wantParseCalls: 1,
@@ -663,9 +837,7 @@ properties:
     type: string
 notInTheSpecAtAll: true
 `,
-			parse: func(parseCall int) (types.Domain, error) {
-				_ = parseCall
-
+			parse: func(_ int) (types.Domain, error) {
 				return propertyDomain, nil
 			},
 			wantParseCalls: 1,
@@ -692,10 +864,11 @@ additionalProperties:
 
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			node := rawObjectFromYAML(t, tt.yamlString)
 			parseCall := 0
-			dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) {
-				_ = node
+			dc := Context{parse: func(_ *json.RawMessage) (types.Domain, error) {
 				domain, err := tt.parse(parseCall)
 				parseCall++
 
@@ -711,21 +884,31 @@ additionalProperties:
 	}
 }
 
+// TestPropertyGenerateHash covers property hashing.
 func TestPropertyGenerateHash(t *testing.T) {
+	t.Parallel()
+
 	property := Property{Key: "name", Domain: &StringDomain{}, Required: true}
 	stringHash, err := (&StringDomain{}).GenerateHash()
 	require.NoError(t, err)
 
 	got, err := property.GenerateHash()
 	require.NoError(t, err)
-	require.Equal(t, requireGeneratedHash(t, "property", propertyHashValue{Key: "name", Hasher: &stringHash, Required: true}), got)
+	require.Equal(
+		t,
+		requireGeneratedHash(t, "property", propertyHashValue{Key: "name", Hasher: &stringHash, Required: true}),
+		got,
+	)
 
 	got, err = (&Property{Key: "nickname", Required: true}).GenerateHash()
 	require.NoError(t, err)
 	require.Equal(t, requireGeneratedHash(t, "property", propertyHashValue{Key: "nickname", Required: true}), got)
 }
 
+// TestPropertyGenerateHashErrors covers property hashing failures.
 func TestPropertyGenerateHashErrors(t *testing.T) {
+	t.Parallel()
+
 	_, err := (*Property)(nil).GenerateHash()
 	require.Error(t, err)
 
@@ -733,11 +916,14 @@ func TestPropertyGenerateHashErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestObjectDomainGenerateHash covers object hashing.
 func TestObjectDomainGenerateHash(t *testing.T) {
+	t.Parallel()
+
 	maxProps := new(3)
 	object := ObjectDomain{
 		Nullable:                 true,
-		Enum:                     []types.Enum{types.Enum(`{}`)},
+		Enum:                     []types.Enum{types.Enum(`{"name":"alpha"}`)},
 		Properties:               []Property{{Key: "name", Domain: &StringDomain{}, Required: true}},
 		AdditionalPropertyKind:   AdditionalSchema,
 		AdditionalPropertyDomain: &StringDomain{},
@@ -754,7 +940,7 @@ func TestObjectDomainGenerateHash(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, requireGeneratedHash(t, "object", objectHashValue{
 		Nullable:                 true,
-		Enum:                     []types.Enum{types.Enum(`{}`)},
+		Enum:                     []types.Enum{types.Enum(`{"name":"alpha"}`)},
 		Properties:               []*types.Hash{&propertyHash},
 		AdditionalPropertyKind:   AdditionalSchema,
 		AdditionalPropertyDomain: &additionalPropertyHash,
@@ -763,7 +949,121 @@ func TestObjectDomainGenerateHash(t *testing.T) {
 	}), got)
 }
 
+// TestObjectDomainGenerateHashCanonicalizesPropertyOrder verifies semantic property hashing.
+func TestObjectDomainGenerateHashCanonicalizesPropertyOrder(t *testing.T) {
+	t.Parallel()
+
+	ordered := ObjectDomain{Properties: []Property{{Key: "a"}, {Key: "b"}}}
+	reversed := ObjectDomain{Properties: []Property{{Key: "b"}, {Key: "a"}}}
+	before := append([]Property(nil), reversed.Properties...)
+
+	orderedHash, err := ordered.GenerateHash()
+	require.NoError(t, err)
+	reversedHash, err := reversed.GenerateHash()
+	require.NoError(t, err)
+	require.Equal(t, orderedHash, reversedHash)
+	require.Equal(t, before, reversed.Properties)
+}
+
+// TestObjectDomainGenerateHashFiltersStructuralEnums covers hashing a programmatic domain.
+func TestObjectDomainGenerateHashFiltersStructuralEnums(t *testing.T) {
+	t.Parallel()
+
+	maxProps := new(1)
+	object := ObjectDomain{
+		Enum: []types.Enum{
+			types.Enum(`{"extra":1}`),
+			types.Enum(`{"a":1}`),
+			types.Enum(`{}`),
+		},
+		Properties:             []Property{{Key: "a", Required: true}},
+		AdditionalPropertyKind: AdditionalFalse,
+		MinProps:               1,
+		MaxProps:               maxProps,
+	}
+	before := object
+	before.Enum = append([]types.Enum(nil), object.Enum...)
+
+	propertyHash, err := (&Property{Key: "a", Required: true}).GenerateHash()
+	require.NoError(t, err)
+
+	got, err := object.GenerateHash()
+	require.NoError(t, err)
+	require.Equal(t, before, object)
+	require.Equal(t, requireGeneratedHash(t, "object", objectHashValue{
+		Enum:                   []types.Enum{types.Enum(`{"a":1}`)},
+		Properties:             []*types.Hash{&propertyHash},
+		AdditionalPropertyKind: AdditionalFalse,
+		MinProps:               1,
+		MaxProps:               maxProps,
+	}), got)
+}
+
+// TestObjectDomainGenerateHashPreservesAllowedNull covers null-only enum rescue.
+func TestObjectDomainGenerateHashPreservesAllowedNull(t *testing.T) {
+	t.Parallel()
+
+	object := ObjectDomain{
+		Nullable: true,
+		Enum: []types.Enum{
+			types.Enum(`null`),
+			types.Enum(`{"extra":1}`),
+		},
+		AdditionalPropertyKind: AdditionalFalse,
+		MinProps:               1,
+	}
+	before := object
+	before.Enum = append([]types.Enum(nil), object.Enum...)
+
+	got, err := object.GenerateHash()
+	require.NoError(t, err)
+	require.Equal(t, before, object)
+	require.Equal(t, requireGeneratedHash(t, "object", objectHashValue{
+		Nullable:               true,
+		Enum:                   []types.Enum{types.Enum(`null`)},
+		Properties:             []*types.Hash{},
+		AdditionalPropertyKind: AdditionalFalse,
+		MinProps:               1,
+	}), got)
+}
+
+// TestObjectDomainGenerateHashRejectsStructurallyEmptyEnums covers finite enum failures.
+func TestObjectDomainGenerateHashRejectsStructurallyEmptyEnums(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]*ObjectDomain{
+		"minimum property count": {
+			Enum:     []types.Enum{types.Enum(`{}`)},
+			MinProps: 1,
+		},
+		"maximum property count": {
+			Enum:     []types.Enum{types.Enum(`{"a":1,"b":2}`)},
+			MaxProps: new(1),
+		},
+		"required name": {
+			Enum:       []types.Enum{types.Enum(`{}`)},
+			Properties: []Property{{Key: "a", Required: true}},
+		},
+		"closed property set": {
+			Enum:                   []types.Enum{types.Enum(`{"extra":1}`)},
+			AdditionalPropertyKind: AdditionalFalse,
+		},
+	}
+
+	for name, objectDomain := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := objectDomain.GenerateHash()
+			require.Error(t, err)
+		})
+	}
+}
+
+// TestObjectDomainGenerateHashErrors covers object hashing failures.
 func TestObjectDomainGenerateHashErrors(t *testing.T) {
+	t.Parallel()
+
 	_, err := (*ObjectDomain)(nil).GenerateHash()
 	require.Error(t, err)
 
@@ -776,38 +1076,69 @@ func TestObjectDomainGenerateHashErrors(t *testing.T) {
 	_, err = (&ObjectDomain{AdditionalPropertyKind: AdditionalSchema}).GenerateHash()
 	require.Error(t, err)
 
+	_, err = (&ObjectDomain{AdditionalPropertyKind: AdditionalPropertyKind(99)}).GenerateHash()
+	require.Error(t, err)
+
+	_, err = (&ObjectDomain{Properties: []Property{{Key: "duplicate"}, {Key: "duplicate"}}}).GenerateHash()
+	require.Error(t, err)
+
+	_, err = (&ObjectDomain{MinProps: -1}).GenerateHash()
+	require.Error(t, err)
+
+	_, err = (&ObjectDomain{MaxProps: new(-1)}).GenerateHash()
+	require.Error(t, err)
+
 	_, err = (&ObjectDomain{AdditionalPropertyDomain: failingGenerateHashDomain{}}).GenerateHash()
 	require.Error(t, err)
 }
 
+// TestObjectDomainHashAndPropertyErrors covers remaining object hash branches.
 func TestObjectDomainHashAndPropertyErrors(t *testing.T) {
+	t.Parallel()
+
 	_, err := (&ObjectDomain{}).GenerateHash()
 	require.NoError(t, err)
 
 	require.EqualError(t, (&PropertyAlreadyExistsError{Key: "name"}), `property "name" already exists in object`)
 }
 
+// TestParseObjectErrorBranches covers parser error propagation.
 func TestParseObjectErrorBranches(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil node", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := (&Context{}).ParseObject(nil)
+		require.Error(t, err)
+	})
+
 	t.Run("invalid json", func(t *testing.T) {
+		t.Parallel()
+
 		node := json.RawMessage(`{`)
-		_, err := (&DomainContext{}).ParseObject(&node)
+		_, err := (&Context{}).ParseObject(&node)
 		require.Error(t, err)
 	})
 
 	t.Run("object struct decode error", func(t *testing.T) {
+		t.Parallel()
+
 		node := json.RawMessage(`{"type":{}}`)
-		_, err := (&DomainContext{}).ParseObject(&node)
+		_, err := (&Context{}).ParseObject(&node)
 		require.Error(t, err)
 	})
 
 	t.Run("property parse error", func(t *testing.T) {
+		t.Parallel()
+
 		node := rawObjectFromYAML(t, `
 type: object
 properties:
   name:
     type: string
 `)
-		dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) {
+		dc := Context{parse: func(_ *json.RawMessage) (types.Domain, error) {
 			return nil, errors.New("parse failed")
 		}}
 		_, err := dc.ParseObject(node)
@@ -815,31 +1146,37 @@ properties:
 	})
 
 	t.Run("invalid property schema", func(t *testing.T) {
+		t.Parallel()
+
 		node := rawObjectFromYAML(t, `
 type: object
 properties:
   name: bad
 `)
-		_, err := (&DomainContext{}).ParseObject(node)
+		_, err := (&Context{}).ParseObject(node)
 		require.Error(t, err)
 	})
 
 	t.Run("additionalProperties null", func(t *testing.T) {
+		t.Parallel()
+
 		node := rawObjectFromYAML(t, `
 type: object
 additionalProperties: null
 `)
-		_, err := (&DomainContext{}).ParseObject(node)
+		_, err := (&Context{}).ParseObject(node)
 		require.Error(t, err)
 	})
 
 	t.Run("additionalProperties parse error", func(t *testing.T) {
+		t.Parallel()
+
 		node := rawObjectFromYAML(t, `
 type: object
 additionalProperties:
   type: string
 `)
-		dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) {
+		dc := Context{parse: func(_ *json.RawMessage) (types.Domain, error) {
 			return nil, errors.New("parse failed")
 		}}
 		_, err := dc.ParseObject(node)
@@ -847,8 +1184,13 @@ additionalProperties:
 	})
 }
 
+// TestParseObjectInitializesNilDomainStoreForPropertiesAndAdditionalProperties checks lazy storage.
 func TestParseObjectInitializesNilDomainStoreForPropertiesAndAdditionalProperties(t *testing.T) {
+	t.Parallel()
+
 	t.Run("properties", func(t *testing.T) {
+		t.Parallel()
+
 		node := rawObjectFromYAML(t, `
 type: object
 properties:
@@ -856,7 +1198,9 @@ properties:
     type: string
 `)
 		hash := types.Hash{1}
-		dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) { return fakeObjectTestDomain{hash: hash}, nil }}
+		dc := Context{
+			parse: func(_ *json.RawMessage) (types.Domain, error) { return fakeObjectTestDomain{hash: hash}, nil },
+		}
 		objectDomain, err := dc.ParseObject(node)
 		require.NoError(t, err)
 		require.Len(t, objectDomain.Properties, 1)
@@ -864,13 +1208,17 @@ properties:
 	})
 
 	t.Run("additionalProperties", func(t *testing.T) {
+		t.Parallel()
+
 		node := rawObjectFromYAML(t, `
 type: object
 additionalProperties:
   type: string
 `)
 		hash := types.Hash{1}
-		dc := DomainContext{parse: func(node *json.RawMessage) (types.Domain, error) { return fakeObjectTestDomain{hash: hash}, nil }}
+		dc := Context{
+			parse: func(_ *json.RawMessage) (types.Domain, error) { return fakeObjectTestDomain{hash: hash}, nil },
+		}
 		objectDomain, err := dc.ParseObject(node)
 		require.NoError(t, err)
 		require.Equal(t, AdditionalSchema, objectDomain.AdditionalPropertyKind)
@@ -878,17 +1226,24 @@ additionalProperties:
 	})
 }
 
+// TestParseObjectRequiredWithoutPropertySchema covers unconstrained required names.
 func TestParseObjectRequiredWithoutPropertySchema(t *testing.T) {
+	t.Parallel()
+
 	node := rawObjectFromYAML(t, `
 type: object
 required:
   - name
 `)
-	dc := DomainContext{}
+	dc := Context{}
 	expectedProperty := &Property{Key: "name", Required: true}
 
 	objectDomain, err := dc.ParseObject(node)
 	require.NoError(t, err)
-	require.Equal(t, ObjectDomain{Properties: []Property{*expectedProperty}, AdditionalPropertyKind: AdditionalTrue}, objectDomain)
+	require.Equal(
+		t,
+		ObjectDomain{Properties: []Property{*expectedProperty}, AdditionalPropertyKind: AdditionalTrue},
+		objectDomain,
+	)
 	requireDomainStoreDomains(t, &dc, expectedProperty)
 }
