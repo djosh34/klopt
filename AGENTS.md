@@ -10,5 +10,7 @@ Do not create extra fields/functions without reason that you need it
 
 Never ignore errors.
 
-
-Always use resources/OpenAPI%20Specification%20v3.0.3.mhtml as sole reference on openapi 3.0.3
+Please use online references to validate openapi logic/spec, including but not limited to:
+Official JSONSchema for openapi 3.0.3: https://spec.openapis.org/oas/3.0/schema/2024-10-18.html 
+SchemaObject spec openapi 3.0.3: https://spec.openapis.org/oas/v3.0.3.html#schema-object
+JsonSchema of which openapi 3.0.3 is a superset: https://datatracker.ietf.org/doc/html/draft-wright-json-schema-00#section-4.2
