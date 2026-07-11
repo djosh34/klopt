@@ -372,5 +372,8 @@ paths:
           application/json:
             schema:
 %s
+      responses:
+        '204':
+          description: accepted
 `, strings.Join(lines, "\n"))
 }
