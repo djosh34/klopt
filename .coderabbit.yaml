@@ -1,6 +1,6 @@
 reviews:
   path_filters:
-    - "go.sum"
+    - "**"
     - "!vendor/**"
     - "!**/vendor/**"
     - "!dist/**"
