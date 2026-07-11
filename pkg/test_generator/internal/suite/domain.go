@@ -128,7 +128,62 @@ type EnumSet struct {
 	Values []jsonvalue.Value
 }
 
-// DomainPair is an unordered pair reserved for the step-4 intersection cache.
+// ExpectedResult is the validator result expected for a CasePlan.
+type ExpectedResult uint8
+
+const (
+	// ExpectAccepted means every value in the CasePlan Domain must be accepted.
+	ExpectAccepted ExpectedResult = iota
+	// ExpectRejected means every value in the CasePlan Domain must be rejected.
+	ExpectRejected
+)
+
+// ObligationOutcome explains why a planned constraint failure has no CasePlan.
+type ObligationOutcome uint8
+
+const (
+	// ObligationPlanned means at least one isolated failure CasePlan was built.
+	ObligationPlanned ObligationOutcome = iota
+	// ObligationDominated means the failure space is empty after the other rules pass.
+	ObligationDominated
+	// ObligationUnconstructible means the rule is understood but has no constructive failure Domain.
+	ObligationUnconstructible
+)
+
+// ConstraintPlan stores constructive passing and failing Domains for one source rule.
+type ConstraintPlan struct {
+	Source  ConstraintSource
+	Pass    DomainID
+	Fail    []DomainID
+	Outcome ObligationOutcome
+	Reason  string
+}
+
+// CasePlan names one semantic partition without materializing a JSON case.
+type CasePlan struct {
+	Name   string
+	Expect ExpectedResult
+	Values DomainID
+	Source ConstraintSource
+}
+
+// CasePlanner builds canonical semantic partitions from a compiled Domain graph.
+type CasePlanner struct {
+	Domains      *DomainRegistry
+	LocalDomains map[string]DomainID
+	Constraints  []ConstraintPlan
+}
+
+// CompiledSuite is the step-5 compilation result. Rapid generators are linked later.
+type CompiledSuite struct {
+	Root        DomainID
+	Domains     *DomainRegistry
+	SchemaUses  []SchemaUse
+	Constraints []ConstraintPlan
+	Cases       []CasePlan
+}
+
+// DomainPair is an unordered pair used by the intersection cache.
 type DomainPair struct {
 	First  DomainID
 	Second DomainID

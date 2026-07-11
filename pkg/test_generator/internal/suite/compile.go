@@ -21,19 +21,21 @@ const exactDecimalRadix = 10
 
 // Compiler compiles located Schema Objects into canonical DomainIDs.
 type Compiler struct {
-	Source          oas.Source
-	Domains         *DomainRegistry
-	DomainByPointer map[string]DomainID
-	SchemaUses      []SchemaUse
+	Source               oas.Source
+	Domains              *DomainRegistry
+	DomainByPointer      map[string]DomainID
+	LocalDomainByPointer map[string]DomainID
+	SchemaUses           []SchemaUse
 }
 
 // NewCompiler creates a Compiler for one located OpenAPI source.
 func NewCompiler(source oas.Source) *Compiler {
 	return &Compiler{
-		Source:          source,
-		Domains:         NewDomainRegistry(),
-		DomainByPointer: make(map[string]DomainID),
-		SchemaUses:      make([]SchemaUse, 0),
+		Source:               source,
+		Domains:              NewDomainRegistry(),
+		DomainByPointer:      make(map[string]DomainID),
+		LocalDomainByPointer: make(map[string]DomainID),
+		SchemaUses:           make([]SchemaUse, 0),
 	}
 }
 
@@ -77,6 +79,7 @@ func (compiler *Compiler) compileSchema(
 // recordResolvedUse records an occurrence that reused a resolved schema Domain.
 func (compiler *Compiler) recordResolvedUse(occurrencePointer string, resolvedPointer string, id DomainID) {
 	compiler.DomainByPointer[occurrencePointer] = id
+	compiler.LocalDomainByPointer[occurrencePointer] = compiler.LocalDomainByPointer[resolvedPointer]
 	constraints, examples := compiler.metadataForPointer(resolvedPointer)
 	compiler.addSchemaUse(occurrencePointer, id, constraints, examples)
 }
@@ -120,6 +123,8 @@ func (compiler *Compiler) compileResolvedSchema(
 	}
 
 	id := compiler.Domains.FindOrAddEquivalentDomain(domain)
+	compiler.LocalDomainByPointer[resolved.Pointer] = id
+	compiler.LocalDomainByPointer[occurrence.Pointer] = id
 
 	id, constraints, examples, err = compiler.compileAllOf(resolved, members, active, id, constraints, examples)
 	if err != nil {
