@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"testing"
 
+	//nolint:depguard // OpenAPI source lookup is internal to test_generator.
+	"decode_and_validate_generator/pkg/test_generator/internal/oas"
 	"pgregory.net/rapid"
 )
 
@@ -139,17 +141,17 @@ func runCasePlans(t *testing.T, plans []casePlan, validate func([]byte) error) {
 	}
 }
 
-// parseOpenAPIRequestBodySchemaNode converts the document to JSON and finds its request schema.
+// parseOpenAPIRequestBodySchemaNode parses the document once and resolves its request Schema Object.
 func parseOpenAPIRequestBodySchemaNode(openAPIYAMLSpec []byte, operationID string) (*json.RawMessage, error) {
-	openAPIJSONSpec, err := YAMLBytesToJSONRawMessage(openAPIYAMLSpec)
-	if err != nil {
-		return nil, fmt.Errorf("openapi yaml spec parse failed: %w", err)
-	}
-
-	schemaNode, err := OpenAPIRequestBodySchemaNode(openAPIJSONSpec, operationID)
+	source, err := oas.Parse(openAPIYAMLSpec, operationID)
 	if err != nil {
 		return nil, fmt.Errorf("openapi request body schema lookup failed: %w", err)
 	}
 
-	return schemaNode, nil
+	schema, err := source.Resolve(source.RequestSchema)
+	if err != nil {
+		return nil, fmt.Errorf("openapi request body schema reference failed: %w", err)
+	}
+
+	return new(schema.Raw), nil
 }
