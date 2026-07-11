@@ -1,4 +1,3 @@
-//nolint:godoclint,paralleltest,wsl_v5 // Generated CasePlans share one immutable compiled suite.
 package suite
 
 import (
@@ -12,6 +11,7 @@ import (
 	"pgregory.net/rapid"
 )
 
+// TestRapidGeneratorBuilderMemoizesDomains verifies that each Domain generator is built once.
 func TestRapidGeneratorBuilderMemoizesDomains(t *testing.T) {
 	t.Parallel()
 
@@ -30,10 +30,11 @@ items: {type: boolean}`, "", "create"))
 	require.Same(t, first, second)
 }
 
+// TestCompileSuiteGeneratorsConstructEveryPlannedDomain verifies every planned generator against its Domain.
 func TestCompileSuiteGeneratorsConstructEveryPlannedDomain(t *testing.T) {
 	t.Parallel()
 
-	compiler := NewCompiler(parseSchemaSource(t, `type: object
+	schema := `type: object
 minProperties: 3
 maxProperties: 5
 required: [name, score, flags]
@@ -57,19 +58,28 @@ properties:
     type: string
     minLength: 1
 additionalProperties:
-  type: integer`, "", "create"))
+  type: integer`
+	compiler := NewCompiler(parseSchemaSource(t, schema, "", "create"))
 	compiled, err := compiler.CompileSuite()
 	require.NoError(t, err)
 	require.NotEmpty(t, compiled.Cases)
 
-	for index, plannedCase := range compiled.Cases {
+	for index := range compiled.Cases {
 		t.Run(strconv.Itoa(index), func(t *testing.T) {
-			domain := mustDomain(t, compiled.Domains, plannedCase.Values)
+			t.Parallel()
+
+			caseCompiler := NewCompiler(parseSchemaSource(t, schema, "", "create"))
+			caseSuite, caseErr := caseCompiler.CompileSuite()
+			require.NoError(t, caseErr)
+
+			plannedCase := caseSuite.Cases[index]
+			domain := mustDomain(t, caseSuite.Domains, plannedCase.Values)
 			domain.String.Patterns = nil
 			domain.String.Formats = nil
+
 			rapid.Check(t, func(rt *rapid.T) {
 				value := plannedCase.Generator.Draw(rt, "value")
-				matches, fitErr := compiler.valueFitsDomain(value, domain)
+				matches, fitErr := caseCompiler.valueFitsDomain(value, domain)
 				require.NoError(rt, fitErr)
 				require.True(rt, matches)
 
@@ -81,6 +91,7 @@ additionalProperties:
 	}
 }
 
+// TestNumberGeneratorIncludesExactFractionalValues verifies bounded number coverage beyond integers.
 func TestNumberGeneratorIncludesExactFractionalValues(t *testing.T) {
 	t.Parallel()
 
@@ -97,14 +108,17 @@ func TestNumberGeneratorIncludesExactFractionalValues(t *testing.T) {
 	require.NoError(t, err)
 
 	fractional := false
+
 	for _, value := range values {
 		if !value.Number.Rational.IsInt() {
 			fractional = true
 		}
 	}
+
 	require.True(t, fractional)
 }
 
+// TestCompileSuiteRequiresTrustedPatternAndFormatExamples verifies constrained strings need trusted examples.
 func TestCompileSuiteRequiresTrustedPatternAndFormatExamples(t *testing.T) {
 	t.Parallel()
 

@@ -1,4 +1,3 @@
-//nolint:godoclint,nlreturn,wsl_v5 // Focused planner tests favor compact table assertions.
 package suite
 
 import (
@@ -8,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestCasePlannerBuildsCanonicalSemanticPartitions verifies distinct accepted and rejected partitions.
 func TestCasePlannerBuildsCanonicalSemanticPartitions(t *testing.T) {
 	t.Parallel()
 
@@ -22,6 +22,7 @@ maxLength: 4`, "", "create"))
 	seen := make(map[string]struct{})
 	accepted := 0
 	rejected := 0
+
 	for _, plannedCase := range compiled.Cases {
 		_, ok := compiled.Domains.Domain(plannedCase.Values)
 		require.True(t, ok)
@@ -41,6 +42,7 @@ maxLength: 4`, "", "create"))
 			rejected++
 		}
 	}
+
 	require.Greater(t, accepted, 1)
 	require.Greater(t, rejected, 1)
 	require.Contains(t, caseNames(compiled.Cases), "valid aggregate")
@@ -48,6 +50,7 @@ maxLength: 4`, "", "create"))
 	require.Contains(t, caseNames(compiled.Cases), "valid string maximum length")
 }
 
+// TestCasePlannerRecordsAllOfDominanceAndSourceProvenance verifies allOf obligation provenance.
 func TestCasePlannerRecordsAllOfDominanceAndSourceProvenance(t *testing.T) {
 	t.Parallel()
 
@@ -70,15 +73,19 @@ allOf:
 	require.Equal(t, ObligationPlanned, stronger.Outcome)
 
 	foundStrongFailure := false
+
 	for _, plannedCase := range compiled.Cases {
 		if plannedCase.Expect == ExpectRejected && plannedCase.Source == stronger.Source {
 			foundStrongFailure = true
+
 			require.Contains(t, plannedCase.Name, root+"/allOf/1")
 		}
 	}
+
 	require.True(t, foundStrongFailure)
 }
 
+// TestCasePlannerIsolatesBoundedIntegerMultipleAndEnumFailures verifies bounded dynamic failures.
 func TestCasePlannerIsolatesBoundedIntegerMultipleAndEnumFailures(t *testing.T) {
 	t.Parallel()
 
@@ -93,15 +100,18 @@ func TestCasePlannerIsolatesBoundedIntegerMultipleAndEnumFailures(t *testing.T) 
 		require.NoError(t, err)
 
 		found := false
+
 		for _, plannedCase := range compiled.Cases {
 			if plannedCase.Expect == ExpectRejected && plannedCase.Source.Keyword == keyword {
 				found = true
 			}
 		}
+
 		require.True(t, found, keyword)
 	}
 }
 
+// TestCasePlannerNestedAllOfUsesEachLocalConstraint verifies nested allOf source selection.
 func TestCasePlannerNestedAllOfUsesEachLocalConstraint(t *testing.T) {
 	t.Parallel()
 
@@ -124,6 +134,7 @@ allOf:
 	require.Equal(t, ObligationPlanned, inner.Outcome)
 }
 
+// TestCasePlannerAdditionalFailureKeepsDeclaredRequiredProperties verifies additional failures retain requirements.
 func TestCasePlannerAdditionalFailureKeepsDeclaredRequiredProperties(t *testing.T) {
 	t.Parallel()
 
@@ -136,19 +147,23 @@ additionalProperties: false`, "", "create"))
 	require.NoError(t, err)
 
 	found := false
+
 	for _, plannedCase := range compiled.Cases {
 		if plannedCase.Expect != ExpectRejected || plannedCase.Source.Keyword != "additionalProperties" {
 			continue
 		}
+
 		found = true
 		domain := mustDomain(t, compiled.Domains, plannedCase.Values)
 		properties := propertiesByName(domain.Object.Properties)
 		require.True(t, properties["id"].Required)
 		require.True(t, properties["additional"].Required)
 	}
+
 	require.True(t, found)
 }
 
+// TestCasePlannerLiftsChildPartitionsAdditivelyByDomainReference verifies independent property lifting.
 func TestCasePlannerLiftsChildPartitionsAdditivelyByDomainReference(t *testing.T) {
 	t.Parallel()
 
@@ -173,15 +188,18 @@ additionalProperties: false`, "", "create"))
 
 	oneLifted := liftedPropertyCaseCount(one.Cases)
 	twoLifted := liftedPropertyCaseCount(two.Cases)
+
 	require.Greater(t, oneLifted, 0)
 	require.Equal(t, oneLifted*2, twoLifted)
 
 	root := mustDomain(t, two.Domains, two.Root)
 	rootProperties := propertiesByName(root.Object.Properties)
+
 	for _, plannedCase := range two.Cases {
 		if !strings.Contains(plannedCase.Name, "property left /") {
 			continue
 		}
+
 		partition := mustDomain(t, two.Domains, plannedCase.Values)
 		properties := propertiesByName(partition.Object.Properties)
 		require.Equal(t, rootProperties["right"].Values, properties["right"].Values)
@@ -189,6 +207,7 @@ additionalProperties: false`, "", "create"))
 	}
 }
 
+// TestCasePlannerLiftsArrayValidAndInvalidChildPartitions verifies array child partition lifting.
 func TestCasePlannerLiftsArrayValidAndInvalidChildPartitions(t *testing.T) {
 	t.Parallel()
 
@@ -203,45 +222,57 @@ items:
 
 	valid := false
 	invalid := false
+
 	for _, plannedCase := range compiled.Cases {
 		if strings.Contains(plannedCase.Name, "valid array item /") {
 			valid = true
 		}
+
 		if strings.Contains(plannedCase.Name, "invalid array item /") {
 			invalid = true
 			partition := mustDomain(t, compiled.Domains, plannedCase.Values)
 			require.NotEqual(t, mustDomain(t, compiled.Domains, compiled.Root).Array.Items, partition.Array.Items)
 		}
 	}
+
 	require.True(t, valid)
 	require.True(t, invalid)
 }
 
+// caseNames joins the names of cases.
 func caseNames(cases []CasePlan) string {
 	names := make([]string, 0, len(cases))
 	for _, plannedCase := range cases {
 		names = append(names, plannedCase.Name)
 	}
+
 	return strings.Join(names, "\n")
 }
 
+// constraintPlanAt returns the plan matching source.
 func constraintPlanAt(t *testing.T, plans []ConstraintPlan, source ConstraintSource) ConstraintPlan {
 	t.Helper()
+
 	for _, plan := range plans {
 		if plan.Source == source {
 			return plan
 		}
 	}
+
 	require.FailNow(t, "ConstraintPlan not found", source)
+
 	return ConstraintPlan{}
 }
 
+// liftedPropertyCaseCount returns the number of lifted left and right property cases.
 func liftedPropertyCaseCount(cases []CasePlan) int {
 	count := 0
+
 	for _, plannedCase := range cases {
 		if strings.Contains(plannedCase.Name, "property left /") || strings.Contains(plannedCase.Name, "property right /") {
 			count++
 		}
 	}
+
 	return count
 }

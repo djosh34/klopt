@@ -54,37 +54,22 @@ func canonicalDomainPair(left DomainID, right DomainID) DomainPair {
 }
 
 // intersectDomains combines every productive kind after handling status identities.
-//
-//nolint:cyclop // The operation deliberately handles every Domain status and JSON kind in one seam.
 func (registry *DomainRegistry) intersectDomains(
 	leftID DomainID,
 	left Domain,
 	rightID DomainID,
 	right Domain,
 ) (DomainID, error) {
-	if leftID == EmptyDomainID || rightID == EmptyDomainID ||
-		left.Status == DomainEmpty || right.Status == DomainEmpty {
+	if domainIntersectionIsEmpty(leftID, left, rightID, right) {
 		return EmptyDomainID, nil
 	}
 
-	if leftID == rightID {
-		return leftID, nil
+	if identity, ok := intersectDomainIdentity(leftID, rightID); ok {
+		return identity, nil
 	}
 
-	if leftID == AnyJSONDomainID {
-		return rightID, nil
-	}
-
-	if rightID == AnyJSONDomainID {
-		return leftID, nil
-	}
-
-	if left.Status == DomainUnsupported || right.Status == DomainUnsupported {
-		return registry.FindOrAddEquivalentDomain(Domain{Status: DomainUnsupported}), nil
-	}
-
-	if left.Status == DomainUnconstructible || right.Status == DomainUnconstructible {
-		return registry.FindOrAddEquivalentDomain(Domain{Status: DomainUnconstructible}), nil
+	if status, ok := registry.intersectExceptionalDomainStatuses(left, right); ok {
+		return status, nil
 	}
 
 	result := Domain{
@@ -125,6 +110,42 @@ func (registry *DomainRegistry) intersectDomains(
 	}
 
 	return registry.FindOrAddEquivalentDomain(result), nil
+}
+
+// domainIntersectionIsEmpty reports whether either side has Empty Domain semantics.
+func domainIntersectionIsEmpty(leftID DomainID, left Domain, rightID DomainID, right Domain) bool {
+	return leftID == EmptyDomainID || rightID == EmptyDomainID ||
+		left.Status == DomainEmpty || right.Status == DomainEmpty
+}
+
+// intersectDomainIdentity applies the equal and Any JSON intersection identities.
+func intersectDomainIdentity(leftID DomainID, rightID DomainID) (DomainID, bool) {
+	if leftID == rightID {
+		return leftID, true
+	}
+
+	if leftID == AnyJSONDomainID {
+		return rightID, true
+	}
+
+	if rightID == AnyJSONDomainID {
+		return leftID, true
+	}
+
+	return NoDomain, false
+}
+
+// intersectExceptionalDomainStatuses propagates unsupported and unconstructible statuses.
+func (registry *DomainRegistry) intersectExceptionalDomainStatuses(left Domain, right Domain) (DomainID, bool) {
+	if left.Status == DomainUnsupported || right.Status == DomainUnsupported {
+		return registry.FindOrAddEquivalentDomain(Domain{Status: DomainUnsupported}), true
+	}
+
+	if left.Status == DomainUnconstructible || right.Status == DomainUnconstructible {
+		return registry.FindOrAddEquivalentDomain(Domain{Status: DomainUnconstructible}), true
+	}
+
+	return NoDomain, false
 }
 
 // intersectKindState intersects one unconstrained scalar kind.
@@ -354,18 +375,10 @@ func numberFormatRank(format string) int {
 }
 
 // numberConstraintsAreProductive solves exact bound and lattice feasibility.
-//
-//nolint:cyclop // Exact open/closed lattice feasibility requires each bound case.
 func numberConstraintsAreProductive(number NumberConstraints) (bool, error) {
-	if number.Minimum != nil && number.Maximum != nil {
-		comparison, ok := compareExactNumbers(number.Minimum.Value, number.Maximum.Value)
-		if !ok {
-			return false, fmt.Errorf("%w: numeric bounds cannot be compared exactly", errUnconstructible)
-		}
-
-		if comparison > 0 || comparison == 0 && (number.Minimum.Exclusive || number.Maximum.Exclusive) {
-			return false, nil
-		}
+	boundsAreProductive, err := numberBoundsAreProductive(number.Minimum, number.Maximum)
+	if err != nil || !boundsAreProductive {
+		return boundsAreProductive, err
 	}
 
 	if !number.IntegersOnly && number.MultipleOf == nil {
@@ -376,9 +389,45 @@ func numberConstraintsAreProductive(number NumberConstraints) (bool, error) {
 		return true, nil
 	}
 
+	return boundedNumberLatticeIsProductive(number)
+}
+
+// numberBoundsAreProductive checks whether exact lower and upper bounds overlap.
+func numberBoundsAreProductive(minimum *NumberBound, maximum *NumberBound) (bool, error) {
+	if minimum == nil || maximum == nil {
+		return true, nil
+	}
+
+	comparison, ok := compareExactNumbers(minimum.Value, maximum.Value)
+	if !ok {
+		return false, fmt.Errorf("%w: numeric bounds cannot be compared exactly", errUnconstructible)
+	}
+
+	if comparison > 0 || comparison == 0 && (minimum.Exclusive || maximum.Exclusive) {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// boundedNumberLatticeIsProductive checks for a permitted lattice point within both bounds.
+func boundedNumberLatticeIsProductive(number NumberConstraints) (bool, error) {
+	step, err := numberLatticeStep(number)
+	if err != nil {
+		return false, err
+	}
+
+	minimumFactor := minimumNumberLatticeFactor(number.Minimum, step)
+	maximumFactor := maximumNumberLatticeFactor(number.Maximum, step)
+
+	return minimumFactor.Cmp(maximumFactor) <= 0, nil
+}
+
+// numberLatticeStep returns the exact step satisfying integer and multiple constraints.
+func numberLatticeStep(number NumberConstraints) (*big.Rat, error) {
 	if number.Minimum.Value.Rational == nil || number.Maximum.Value.Rational == nil ||
 		number.MultipleOf != nil && number.MultipleOf.Rational == nil {
-		return false, fmt.Errorf("%w: bounded numeric lattice is too large to solve", errUnconstructible)
+		return nil, fmt.Errorf("%w: bounded numeric lattice is too large to solve", errUnconstructible)
 	}
 
 	step := big.NewRat(1, 1)
@@ -390,19 +439,29 @@ func numberConstraintsAreProductive(number NumberConstraints) (bool, error) {
 		step.SetInt(new(big.Int).Abs(step.Num()))
 	}
 
-	minimumFactor := ceilRat(new(big.Rat).Quo(number.Minimum.Value.Rational, step))
-	if number.Minimum.Exclusive && new(big.Rat).Mul(new(big.Rat).SetInt(minimumFactor), step).
-		Cmp(number.Minimum.Value.Rational) == 0 {
-		minimumFactor.Add(minimumFactor, big.NewInt(1))
+	return step, nil
+}
+
+// minimumNumberLatticeFactor returns the first factor permitted by the lower bound.
+func minimumNumberLatticeFactor(bound *NumberBound, step *big.Rat) *big.Int {
+	factor := ceilRat(new(big.Rat).Quo(bound.Value.Rational, step))
+	if bound.Exclusive && new(big.Rat).Mul(new(big.Rat).SetInt(factor), step).
+		Cmp(bound.Value.Rational) == 0 {
+		factor.Add(factor, big.NewInt(1))
 	}
 
-	maximumFactor := floorRat(new(big.Rat).Quo(number.Maximum.Value.Rational, step))
-	if number.Maximum.Exclusive && new(big.Rat).Mul(new(big.Rat).SetInt(maximumFactor), step).
-		Cmp(number.Maximum.Value.Rational) == 0 {
-		maximumFactor.Sub(maximumFactor, big.NewInt(1))
+	return factor
+}
+
+// maximumNumberLatticeFactor returns the last factor permitted by the upper bound.
+func maximumNumberLatticeFactor(bound *NumberBound, step *big.Rat) *big.Int {
+	factor := floorRat(new(big.Rat).Quo(bound.Value.Rational, step))
+	if bound.Exclusive && new(big.Rat).Mul(new(big.Rat).SetInt(factor), step).
+		Cmp(bound.Value.Rational) == 0 {
+		factor.Sub(factor, big.NewInt(1))
 	}
 
-	return minimumFactor.Cmp(maximumFactor) <= 0, nil
+	return factor
 }
 
 // floorRat returns the mathematical floor of an exact rational.
@@ -477,8 +536,6 @@ func (registry *DomainRegistry) intersectArrays(
 }
 
 // intersectObjects applies both branches independently to every possible property name.
-//
-//nolint:cyclop // Branch-local named/additional policies require all property-state cases.
 func (registry *DomainRegistry) intersectObjects(
 	left ObjectConstraints,
 	right ObjectConstraints,
@@ -492,9 +549,78 @@ func (registry *DomainRegistry) intersectObjects(
 		return ObjectConstraints{}, err
 	}
 
+	properties, productive, err := registry.intersectObjectProperties(left, right)
+	if err != nil {
+		return ObjectConstraints{}, err
+	}
+
+	if !productive {
+		return ObjectConstraints{State: KindExcluded}, nil
+	}
+
+	result := ObjectConstraints{
+		State:      KindRestricted,
+		Properties: properties,
+		Additional: AdditionalProperties{Values: additional},
+		MinProps:   max(left.MinProps, right.MinProps),
+		MaxProps:   smallerInt(left.MaxProps, right.MaxProps),
+	}
+	if !registry.objectConstraintsAreProductive(result) {
+		return ObjectConstraints{State: KindExcluded}, nil
+	}
+
+	return result, nil
+}
+
+// intersectObjectProperties intersects each explicit-or-additional property policy.
+func (registry *DomainRegistry) intersectObjectProperties(
+	left ObjectConstraints,
+	right ObjectConstraints,
+) ([]NamedProperty, bool, error) {
 	leftProperties := propertyConstraintsByName(left.Properties)
 	rightProperties := propertyConstraintsByName(right.Properties)
+	names := objectPropertyNames(leftProperties, rightProperties)
 
+	var result []NamedProperty
+
+	for name := range names {
+		leftValues := valuesForObjectName(name, leftProperties, left.Additional)
+		rightValues := valuesForObjectName(name, rightProperties, right.Additional)
+
+		values, err := registry.IntersectDomains(leftValues, rightValues)
+		if err != nil {
+			return nil, false, fmt.Errorf("intersect property %q: %w", name, err)
+		}
+
+		leftProperty := leftProperties[name]
+		rightProperty := rightProperties[name]
+		required := leftProperty.Required || rightProperty.Required
+
+		if values == EmptyDomainID {
+			if required {
+				return nil, false, nil
+			}
+
+			result = append(result, NamedProperty{
+				Name: name, State: PropertyForbidden, Values: EmptyDomainID,
+			})
+
+			continue
+		}
+
+		result = append(result, NamedProperty{
+			Name: name, Required: required, State: PropertyAllowed, Values: values,
+		})
+	}
+
+	return result, true, nil
+}
+
+// objectPropertyNames returns the union of explicit property names.
+func objectPropertyNames(
+	leftProperties map[string]NamedProperty,
+	rightProperties map[string]NamedProperty,
+) map[string]struct{} {
 	names := make(map[string]struct{}, len(leftProperties)+len(rightProperties))
 	for name := range leftProperties {
 		names[name] = struct{}{}
@@ -504,48 +630,7 @@ func (registry *DomainRegistry) intersectObjects(
 		names[name] = struct{}{}
 	}
 
-	result := ObjectConstraints{
-		State:      KindRestricted,
-		Additional: AdditionalProperties{Values: additional},
-		MinProps:   max(left.MinProps, right.MinProps),
-		MaxProps:   smallerInt(left.MaxProps, right.MaxProps),
-	}
-
-	for name := range names {
-		leftValues := valuesForObjectName(name, leftProperties, left.Additional)
-		rightValues := valuesForObjectName(name, rightProperties, right.Additional)
-
-		values, intersectErr := registry.IntersectDomains(leftValues, rightValues)
-		if intersectErr != nil {
-			return ObjectConstraints{}, fmt.Errorf("intersect property %q: %w", name, intersectErr)
-		}
-
-		leftProperty := leftProperties[name]
-		rightProperty := rightProperties[name]
-
-		required := leftProperty.Required || rightProperty.Required
-		if values == EmptyDomainID {
-			if required {
-				return ObjectConstraints{State: KindExcluded}, nil
-			}
-
-			result.Properties = append(result.Properties, NamedProperty{
-				Name: name, State: PropertyForbidden, Values: EmptyDomainID,
-			})
-
-			continue
-		}
-
-		result.Properties = append(result.Properties, NamedProperty{
-			Name: name, Required: required, State: PropertyAllowed, Values: values,
-		})
-	}
-
-	if !registry.objectConstraintsAreProductive(result) {
-		return ObjectConstraints{State: KindExcluded}, nil
-	}
-
-	return result, nil
+	return names
 }
 
 // valuesForObjectName applies one branch's explicit-or-additional property policy.
@@ -567,30 +652,14 @@ func valuesForObjectName(
 }
 
 // objectConstraintsAreProductive checks required and achievable property counts.
-//
-//nolint:cyclop // Required, forbidden, bounded, and closed-object counts are independent cases.
 func (registry *DomainRegistry) objectConstraintsAreProductive(object ObjectConstraints) bool {
 	if object.MaxProps != nil && object.MinProps > *object.MaxProps {
 		return false
 	}
 
-	required := 0
-	availableNamed := 0
-
-	for _, property := range object.Properties {
-		if property.State == PropertyForbidden || registry.domainIsEmpty(property.Values) {
-			if property.Required {
-				return false
-			}
-
-			continue
-		}
-
-		availableNamed++
-
-		if property.Required {
-			required++
-		}
+	required, availableNamed, requiredAreProductive := registry.productiveObjectPropertyCounts(object.Properties)
+	if !requiredAreProductive {
+		return false
 	}
 
 	if object.MaxProps != nil && required > *object.MaxProps {
@@ -598,6 +667,29 @@ func (registry *DomainRegistry) objectConstraintsAreProductive(object ObjectCons
 	}
 
 	return !registry.domainIsEmpty(object.Additional.Values) || object.MinProps <= availableNamed
+}
+
+// productiveObjectPropertyCounts counts usable required and named properties.
+func (registry *DomainRegistry) productiveObjectPropertyCounts(
+	properties []NamedProperty,
+) (required int, available int, requiredAreProductive bool) {
+	for _, property := range properties {
+		if property.State == PropertyForbidden || registry.domainIsEmpty(property.Values) {
+			if property.Required {
+				return 0, 0, false
+			}
+
+			continue
+		}
+
+		available++
+
+		if property.Required {
+			required++
+		}
+	}
+
+	return required, available, true
 }
 
 // domainIsEmpty reports Empty Domain semantics for a child DomainID.
