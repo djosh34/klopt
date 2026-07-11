@@ -12,7 +12,7 @@ import (
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
 )
 
-// CompileSuite compiles the request schema and builds step-5 CasePlans.
+// CompileSuite compiles, plans, and links the request schema to Rapid generators.
 func (compiler *Compiler) CompileSuite() (*CompiledSuite, error) {
 	root, err := compiler.Compile()
 	if err != nil {
@@ -25,13 +25,69 @@ func (compiler *Compiler) CompileSuite() (*CompiledSuite, error) {
 		return nil, err
 	}
 
+	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.SchemaUses)
+	linked := make([]CasePlan, 0, len(cases))
+	for index := range cases {
+		generator, generatorErr := generators.Generator(cases[index].Values)
+		if errors.Is(generatorErr, errNoTrustedStringExample) {
+			continue
+		}
+		if generatorErr != nil {
+			return nil, compiler.failure(
+				"generate",
+				"unconstructible",
+				cases[index].Source.Pointer,
+				cases[index].Source.Keyword,
+				generatorErr,
+			)
+		}
+		cases[index].Generator = generator
+		linked = append(linked, cases[index])
+	}
+	for index := range planner.Constraints {
+		constraint := &planner.Constraints[index]
+		if constraint.Outcome != ObligationPlanned || hasRejectedCase(linked, constraint.Source) {
+			continue
+		}
+		constraint.Outcome = ObligationUnconstructible
+		constraint.Reason = "isolated failure has no trusted pattern or format example"
+	}
+	if rootDomain, ok := compiler.Domains.Domain(root); ok && rootDomain.Status == DomainProductive &&
+		!hasAcceptedCase(linked) {
+		return nil, compiler.failure(
+			"generate",
+			"unconstructible",
+			compiler.Source.RequestSchema.Pointer,
+			"",
+			errNoTrustedStringExample,
+		)
+	}
+
 	return &CompiledSuite{
 		Root:        root,
 		Domains:     compiler.Domains,
 		SchemaUses:  append([]SchemaUse(nil), compiler.SchemaUses...),
 		Constraints: append([]ConstraintPlan(nil), planner.Constraints...),
-		Cases:       cases,
+		Cases:       linked,
 	}, nil
+}
+
+func hasRejectedCase(cases []CasePlan, source ConstraintSource) bool {
+	for _, plannedCase := range cases {
+		if plannedCase.Expect == ExpectRejected && plannedCase.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAcceptedCase(cases []CasePlan) bool {
+	for _, plannedCase := range cases {
+		if plannedCase.Expect == ExpectAccepted {
+			return true
+		}
+	}
+	return false
 }
 
 // Plan builds aggregate-valid, valid-partition, and isolated invalid CasePlans.

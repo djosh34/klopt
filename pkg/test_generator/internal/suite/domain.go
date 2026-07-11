@@ -6,6 +6,7 @@ import (
 
 	//nolint:depguard // Internal suite architecture intentionally depends on internal/jsonvalue.
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
+	"pgregory.net/rapid"
 )
 
 // DomainID identifies one canonical Domain in a DomainRegistry.
@@ -161,10 +162,11 @@ type ConstraintPlan struct {
 
 // CasePlan names one semantic partition without materializing a JSON case.
 type CasePlan struct {
-	Name   string
-	Expect ExpectedResult
-	Values DomainID
-	Source ConstraintSource
+	Name      string
+	Expect    ExpectedResult
+	Values    DomainID
+	Source    ConstraintSource
+	Generator *rapid.Generator[jsonvalue.Value]
 }
 
 // CasePlanner builds canonical semantic partitions from a compiled Domain graph.
@@ -174,7 +176,7 @@ type CasePlanner struct {
 	Constraints  []ConstraintPlan
 }
 
-// CompiledSuite is the step-5 compilation result. Rapid generators are linked later.
+// CompiledSuite is a planned suite with one constructive generator per CasePlan.
 type CompiledSuite struct {
 	Root        DomainID
 	Domains     *DomainRegistry
