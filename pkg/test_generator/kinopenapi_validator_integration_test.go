@@ -8,13 +8,9 @@ import (
 	"net/http"
 	"testing"
 
-	//nolint:depguard // This test-only dependency is one independent integration SUT.
 	"github.com/getkin/kin-openapi/openapi3"
-	//nolint:depguard // This test-only dependency validates loaded requests.
 	"github.com/getkin/kin-openapi/openapi3filter"
-	//nolint:depguard // The planned adapter uses kin-openapi's legacy router.
 	"github.com/getkin/kin-openapi/routers"
-	//nolint:depguard // The planned adapter uses kin-openapi's legacy router.
 	"github.com/getkin/kin-openapi/routers/legacy"
 )
 
