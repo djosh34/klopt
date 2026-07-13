@@ -20,12 +20,13 @@ const exactDecimalRadix = 10
 
 // Compiler compiles located Schema Objects into canonical DomainIDs.
 type Compiler struct {
-	Source               oas.Source
-	Domains              *DomainRegistry
-	DomainByPointer      map[string]DomainID
-	LocalDomainByPointer map[string]DomainID
-	AtomicDomainBySource map[ConstraintSource]DomainID
-	SchemaUses           []SchemaUse
+	Source                 oas.Source
+	Domains                *DomainRegistry
+	DomainByPointer        map[string]DomainID
+	LocalDomainByPointer   map[string]DomainID
+	AtomicDomainBySource   map[ConstraintSource]DomainID
+	SchemaUses             []SchemaUse
+	mustHaveAllXValidCases bool
 }
 
 // NewCompiler creates a Compiler for one located OpenAPI source.

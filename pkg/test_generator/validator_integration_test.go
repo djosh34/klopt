@@ -90,7 +90,7 @@ func compileValidatorFixture(spec []byte) (*suite.CompiledSuite, error) {
 		return nil, fmt.Errorf("parse OpenAPI source: %w", err)
 	}
 
-	compiled, err := suite.NewCompiler(source).CompileSuite()
+	compiled, err := suite.NewCompiler(source).CompileSuite(suite.MustHaveAllXValidCases)
 	if err != nil {
 		return nil, fmt.Errorf("compile CasePlans: %w", err)
 	}

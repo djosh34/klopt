@@ -10,8 +10,20 @@ import (
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
 )
 
+// CompileOption configures a Compiler.
+type CompileOption func(*Compiler)
+
+// MustHaveAllXValidCases rejects suites with any understood but unconstructible case obligation.
+func MustHaveAllXValidCases(compiler *Compiler) {
+	compiler.mustHaveAllXValidCases = true
+}
+
 // CompileSuite compiles, plans, and links the request schema to Rapid generators.
-func (compiler *Compiler) CompileSuite() (*CompiledSuite, error) {
+func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite, error) {
+	for _, option := range options {
+		option(compiler)
+	}
+
 	root, err := compiler.Compile()
 	if err != nil {
 		return nil, err
@@ -33,6 +45,20 @@ func (compiler *Compiler) CompileSuite() (*CompiledSuite, error) {
 	}
 
 	planner.markUnconstructibleConstraints(linked)
+
+	if compiler.mustHaveAllXValidCases {
+		for _, constraint := range planner.Constraints {
+			if constraint.Outcome == ObligationUnconstructible {
+				return nil, compiler.failure(
+					"generate",
+					"unconstructible",
+					constraint.Source.Pointer,
+					constraint.Source.Keyword,
+					errors.New(constraint.Reason),
+				)
+			}
+		}
+	}
 
 	if err := compiler.requireAcceptedCase(root, linked); err != nil {
 		return nil, err

@@ -651,82 +651,82 @@ func TestStringNoFormatNullable(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "stringNoFormatNullable", func(data []byte) error {
 		var value StringNoFormatNullable
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestStringNoFormatNotNullable(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "stringNoFormatNotNullable", func(data []byte) error {
 		var value StringNoFormatNotNullable
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestRefStressObjectPut(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "refStressObjectPut", func(data []byte) error {
 		var value RefStressObjectPut
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestRefStressObject(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "refStressObject", func(data []byte) error {
 		var value RefStressObject
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestRefObject(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "refObject", func(data []byte) error {
 		var value RefObject
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestOptionalArrayNullable(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "optionalArrayNullable", func(data []byte) error {
 		var value OptionalArrayNullable
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestObjectKeysAdditionalPropertiesFalse(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "objectKeysAdditionalPropertiesFalse", func(data []byte) error {
 		var value ObjectKeysAdditionalPropertiesFalse
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestNullableObjectKeysAdditionalPropertiesFalse(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "nullableObjectKeysAdditionalPropertiesFalse", func(data []byte) error {
 		var value NullableObjectKeysAdditionalPropertiesFalse
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestCompositeObject(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "compositeObject", func(data []byte) error {
 		var value CompositeObject
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestArrayNullable(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "arrayNullable", func(data []byte) error {
 		var value ArrayNullable
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestArrayNotNullable(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "arrayNotNullable", func(data []byte) error {
 		var value ArrayNotNullable
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 
 func TestAllOfObject(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "allOfObject", func(data []byte) error {
 		var value AllOfObject
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }

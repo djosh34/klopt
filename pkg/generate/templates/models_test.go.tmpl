@@ -16,6 +16,6 @@ func Test{{ .TestName }}(t *testing.T) {
 	testgenerator.CheckJSONRequestBody(t, exampleOpenAPI, "{{ .OperationID }}", func(data []byte) error {
 		var value {{ .TypeName }}
 		return value.UnmarshalJSON(data)
-	})
+	}, testgenerator.DefaultOption)
 }
 {{- end }}

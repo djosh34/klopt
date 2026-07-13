@@ -38,7 +38,7 @@ func TestCheckJSONRequestBodyRunsCompiledPartitionsAsValidJSON(t *testing.T) {
 		}
 
 		return errors.New("not an enum member")
-	})
+	}, DefaultOption)
 	require.Greater(t, calls, 6)
 }
 
@@ -84,7 +84,13 @@ func TestCheckJSONRequestBodyBuggyValidatorHelper(t *testing.T) {
 
 	fixture, ok := validatorBugFixtures()[family]
 	require.True(t, ok)
-	CheckJSONRequestBody(t, requestBodySpec(fixture.schema), "checkThing", fixture.validate)
+	CheckJSONRequestBody(
+		t,
+		requestBodySpec(fixture.schema),
+		"checkThing",
+		fixture.validate,
+		DefaultOption,
+	)
 }
 
 // validatorBugFixture describes a schema and a validator bug that the generated checks must find.

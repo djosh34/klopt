@@ -11,6 +11,19 @@ import (
 	"pgregory.net/rapid"
 )
 
+// Option configures request-body case generation.
+type Option func(*suite.Compiler)
+
+// MustHaveAllXValidCases fails before validation if any understood case obligation is unconstructible.
+func MustHaveAllXValidCases(compiler *suite.Compiler) {
+	suite.MustHaveAllXValidCases(compiler)
+}
+
+// DefaultOption applies every default case-generation requirement.
+func DefaultOption(compiler *suite.Compiler) {
+	MustHaveAllXValidCases(compiler)
+}
+
 // CheckJSONRequestBody checks validate with generated application/json request bodies for operationID.
 // Every CasePlan runs as its own Rapid property, and validate is the only source of verdicts.
 func CheckJSONRequestBody(
@@ -18,6 +31,7 @@ func CheckJSONRequestBody(
 	openAPIYAML []byte,
 	operationID string,
 	validate func([]byte) error,
+	options ...Option,
 ) {
 	t.Helper()
 
@@ -30,7 +44,12 @@ func CheckJSONRequestBody(
 		t.Fatal(err)
 	}
 
-	compiled, err := suite.NewCompiler(source).CompileSuite()
+	compileOptions := make([]suite.CompileOption, len(options))
+	for index, option := range options {
+		compileOptions[index] = suite.CompileOption(option)
+	}
+
+	compiled, err := suite.NewCompiler(source).CompileSuite(compileOptions...)
 	if err != nil {
 		t.Fatal(err)
 	}
