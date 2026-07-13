@@ -232,9 +232,16 @@ func unmarshalObjectProperty(
 
 // findObjectProperty returns the decoder for name, if name is declared.
 func findObjectProperty(properties []objectPropertyDecoder, name string) *objectPropertyDecoder {
-	for i := range properties {
-		if properties[i].name == name {
-			return &properties[i]
+	low, high := 0, len(properties)
+	for low < high {
+		middle := low + ((high - low) >> 1)
+		switch {
+		case properties[middle].name < name:
+			low = middle + 1
+		case properties[middle].name > name:
+			high = middle
+		default:
+			return &properties[middle]
 		}
 	}
 
