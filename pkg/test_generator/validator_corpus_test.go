@@ -83,6 +83,23 @@ func TestValidatorCorpusSelfCheck(t *testing.T) {
 	}
 }
 
+// TestValidatorCorpusHasConstructibleValidCases ensures trusted examples make every conjunction generatable.
+// In particular, this catches allOf string intersections whose pattern or format languages have no shared
+// x-valid-examples witness.
+func TestValidatorCorpusHasConstructibleValidCases(t *testing.T) {
+	t.Parallel()
+
+	for _, fixture := range validatorCorpus() {
+		t.Run(fixture.ID, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := compileValidatorFixture(fixture.spec()); err != nil {
+				t.Fatalf("validator corpus fixture is not constructible: %v", err)
+			}
+		})
+	}
+}
+
 // validateValidatorCorpus verifies the exact agreed category matrix and semantic complete-spec uniqueness.
 func validateValidatorCorpus(fixtures []validatorCorpusFixture) error {
 	expectedCounts := map[string]int{
@@ -1391,15 +1408,16 @@ components:
 `),
 		corpusFixture(corpusCategoryRefs, "allof-string-length", `
       type: string
+      x-valid-examples: [ab, abc, abcd]
       allOf:
         - {minLength: 2}
         - {maxLength: 4}
 `),
 		corpusFixture(corpusCategoryRefs, "allof-string-pattern-length", `
       type: string
-      x-valid-examples: [A1]
+      x-valid-examples: [A0, A1, A5, A9]
       allOf:
-        - {pattern: '^A[0-9]$', x-valid-examples: [A1], x-invalid-examples: [B1]}
+        - {pattern: '^A[0-9]$', x-valid-examples: [A0, A1, A5, A9], x-invalid-examples: [B1]}
         - {minLength: 2, maxLength: 2}
 `),
 		corpusFixture(corpusCategoryRefs, "allof-object-required", `
@@ -1437,6 +1455,7 @@ components:
     Maximum: {maximum: 2}
 `),
 		corpusFixtureWithComponents(corpusCategoryRefs, "ref-string-intersection", `
+      x-valid-examples: [ab, abc, abcd]
       allOf:
         - {$ref: '#/components/schemas/Short'}
         - {$ref: '#/components/schemas/LongEnough'}
