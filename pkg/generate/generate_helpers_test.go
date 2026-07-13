@@ -15,20 +15,20 @@ import (
 )
 
 var (
-	// fileURIWithPositionRegex configures generator behavior.
+	// fileURIWithPositionRegex matches template file URIs with line and column positions.
 	fileURIWithPositionRegex = regexp.MustCompile(`file://\S+?:\d+:\d+`)
-	// relativeFileURIPrefixRegex configures generator behavior.
+	// relativeFileURIPrefixRegex matches template file URIs with relative paths.
 	relativeFileURIPrefixRegex = regexp.MustCompile(`file://([^/])`)
 )
 
 const (
-	// ansiRed configures generator behavior.
+	// ansiRed starts red diff output.
 	ansiRed = "\x1b[31m"
-	// ansiGreen configures generator behavior.
+	// ansiGreen starts green diff output.
 	ansiGreen = "\x1b[32m"
-	// ansiCyan configures generator behavior.
+	// ansiCyan starts cyan diff output.
 	ansiCyan = "\x1b[36m"
-	// ansiReset configures generator behavior.
+	// ansiReset resets diff output color.
 	ansiReset = "\x1b[0m"
 )
 
