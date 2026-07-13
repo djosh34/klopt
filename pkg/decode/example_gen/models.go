@@ -254,6 +254,7 @@ type jsonField struct {
 	value   any
 	depth   int
 	omitted bool
+	tagged  bool
 }
 
 // jsonFieldSource provides the fields promoted by a generated model.
@@ -274,7 +275,9 @@ func objectJSONFields(object any, names []string, optional []bool) []jsonField {
 	for index, name := range names {
 		field := value.Field(index)
 		omitted := optional[index] && field.IsNil()
-		fields = append(fields, jsonField{name: name, value: field.Interface(), omitted: omitted})
+		fields = append(fields, jsonField{
+			name: name, value: field.Interface(), omitted: omitted, tagged: true,
+		})
 	}
 
 	return fields
@@ -348,7 +351,14 @@ func dominantJSONField(fields []jsonField, candidates []int) (int, bool) {
 		case fields[candidate].depth < fields[selected].depth:
 			selected = candidate
 			conflict = false
-		case fields[candidate].depth == fields[selected].depth:
+		case fields[candidate].depth > fields[selected].depth:
+			continue
+		case fields[candidate].tagged && !fields[selected].tagged:
+			selected = candidate
+			conflict = false
+		case !fields[candidate].tagged && fields[selected].tagged:
+			continue
+		default:
 			conflict = true
 		}
 	}

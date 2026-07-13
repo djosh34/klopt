@@ -507,6 +507,111 @@ func TestMarshalDominantField(t *testing.T) {
 	require.NoError(t, err, string(output))
 }
 
+// TestGeneratedAllOfMarshalPrefersTaggedObjectFieldAtSameDepth preserves encoding/json tag dominance.
+func TestGeneratedAllOfMarshalPrefersTaggedObjectFieldAtSameDepth(t *testing.T) {
+	t.Parallel()
+
+	operation := operationWithContent(
+		"marshalTaggedFieldAllOf",
+		openapi3.NewContentWithJSONSchema(&openapi3.Schema{
+			AllOf: openapi3.SchemaRefs{
+				{Value: &openapi3.Schema{
+					AllOf: openapi3.SchemaRefs{{Value: openapi3.NewStringSchema()}},
+				}},
+				{Value: &openapi3.Schema{
+					Type:     &openapi3.Types{openapi3.TypeObject},
+					Required: []string{"MarshalTaggedFieldAllOfAllOf1AllOf1"},
+					Properties: openapi3.Schemas{
+						"MarshalTaggedFieldAllOfAllOf1AllOf1": {
+							Value: openapi3.NewStringSchema(),
+						},
+					},
+				}},
+			},
+		}),
+	)
+	generateContext := &GenerateContext{
+		Document: &openapi3.T{
+			Paths: openapi3.NewPaths(openapi3.WithPath(
+				"/marshal-tagged-field-all-of",
+				&openapi3.PathItem{Post: operation},
+			)),
+		},
+		OpenAPISource: []byte("{}"),
+	}
+
+	files, err := generateContext.GenerateInMemory()
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "models.go"), files["models.go"], fileMode))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "models_test.go"),
+		[]byte(`package example
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+type BaselineField string
+
+type BaselineNested struct {
+	BaselineField
+}
+
+type BaselineObject struct {
+	Value string `+"`json:\"BaselineField\"`"+`
+}
+
+type BaselineRoot struct {
+	BaselineNested
+	BaselineObject
+}
+
+func TestMarshalTaggedField(t *testing.T) {
+	baseline, err := json.Marshal(BaselineRoot{
+		BaselineNested: BaselineNested{BaselineField: "scalar"},
+		BaselineObject: BaselineObject{Value: "object"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "{\"BaselineField\":\"object\"}"
+	if string(baseline) != expected {
+		t.Fatalf("unexpected encoding/json baseline: %s", baseline)
+	}
+
+	model := MarshalTaggedFieldAllOf{
+		MarshalTaggedFieldAllOfAllOf1: MarshalTaggedFieldAllOfAllOf1{
+			MarshalTaggedFieldAllOfAllOf1AllOf1: "scalar",
+		},
+		MarshalTaggedFieldAllOfAllOf2: MarshalTaggedFieldAllOfAllOf2{
+			MarshalTaggedFieldAllOfAllOf1AllOf1: "object",
+		},
+	}
+
+	data, err := json.Marshal(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = "{\"MarshalTaggedFieldAllOfAllOf1AllOf1\":\"object\"}"
+	if string(data) != expected {
+		t.Fatalf("unexpected generated JSON: %s", data)
+	}
+}
+`),
+		fileMode,
+	))
+
+	command := exec.CommandContext(t.Context(), "go", "test", "-count=1", ".")
+	command.Dir = dir
+
+	command.Env = append(os.Environ(), "GO111MODULE=off")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
 // TestFilterOperationsKeepsOnlyRequestedOperation exercises the named generator behavior.
 func TestFilterOperationsKeepsOnlyRequestedOperation(t *testing.T) {
 	t.Parallel()
