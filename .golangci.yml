@@ -36,6 +36,10 @@ linters:
             - github.com/goccy/go-yaml
             - pgregory.net/rapid
             - github.com/getkin/kin-openapi
+            - decode_and_validate_generator/pkg/peekjson
+            - decode_and_validate_generator/pkg/decode/example
+            - decode_and_validate_generator/pkg/test_generator
+            - github.com/arran4/golang-diff/pkg/diff
     errcheck:
       check-blank: true
       check-type-assertions: true
