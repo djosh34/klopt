@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -431,6 +432,79 @@ func TestObjectSchemaGenerateObjectKeysAdditionalPropertiesFalse(t *testing.T) {
 	require.Contains(t, generated, "return marshalJSONFields(o.jsonFields())")
 	require.NotContains(t, generated, "switch name")
 	require.NotContains(t, generated, "`json:")
+}
+
+// TestGeneratedAllOfMarshalPrefersAnonymousScalarOverPromotedObjectField preserves encoding/json field depth.
+func TestGeneratedAllOfMarshalPrefersAnonymousScalarOverPromotedObjectField(t *testing.T) {
+	t.Parallel()
+
+	operation := operationWithContent(
+		"marshalDominantScalarAllOf",
+		openapi3.NewContentWithJSONSchema(&openapi3.Schema{
+			AllOf: openapi3.SchemaRefs{
+				{Value: openapi3.NewStringSchema()},
+				{Value: &openapi3.Schema{
+					Type:     &openapi3.Types{openapi3.TypeObject},
+					Required: []string{"MarshalDominantScalarAllOfAllOf1"},
+					Properties: openapi3.Schemas{
+						"MarshalDominantScalarAllOfAllOf1": {
+							Value: openapi3.NewStringSchema(),
+						},
+					},
+				}},
+			},
+		}),
+	)
+	generateContext := &GenerateContext{
+		Document: &openapi3.T{
+			Paths: openapi3.NewPaths(openapi3.WithPath(
+				"/marshal-dominant-scalar-all-of",
+				&openapi3.PathItem{Post: operation},
+			)),
+		},
+		OpenAPISource: []byte("{}"),
+	}
+
+	files, err := generateContext.GenerateInMemory()
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "models.go"), files["models.go"], fileMode))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "models_test.go"),
+		[]byte(`package example
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestMarshalDominantField(t *testing.T) {
+	model := MarshalDominantScalarAllOf{
+		MarshalDominantScalarAllOfAllOf1: "scalar",
+		MarshalDominantScalarAllOfAllOf2: MarshalDominantScalarAllOfAllOf2{
+			MarshalDominantScalarAllOfAllOf1: "object",
+		},
+	}
+
+	data, err := json.Marshal(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{\"MarshalDominantScalarAllOfAllOf1\":\"scalar\"}" {
+		t.Fatalf("unexpected JSON: %s", data)
+	}
+}
+`),
+		fileMode,
+	))
+
+	command := exec.CommandContext(t.Context(), "go", "test", "-count=1", ".")
+	command.Dir = dir
+
+	command.Env = append(os.Environ(), "GO111MODULE=off")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 // TestFilterOperationsKeepsOnlyRequestedOperation exercises the named generator behavior.

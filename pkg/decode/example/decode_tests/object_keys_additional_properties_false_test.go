@@ -363,6 +363,22 @@ func TestObjectDecodeKeepsLastDuplicateValue(t *testing.T) {
 	require.Equal(t, "last", *decoded.RequiredNullableString.Value)
 }
 
+// TestObjectDecodeReplacesRequiredDuplicateObjectValue preserves whole-value assignment behavior.
+func TestObjectDecodeReplacesRequiredDuplicateObjectValue(t *testing.T) {
+	t.Parallel()
+
+	var decoded example.RefStressObjectPutAllOf1AllOf3
+
+	err := decoded.UnmarshalJSON([]byte(`{
+		"final":{"finalCode":"first","sharedName":"first","optionalShared":"stale"},
+		"final":{"finalCode":"last","sharedName":"last"},
+		"nested":{"sameName":"same","sealed":{"locked":true}},
+		"nullableRequired":null
+	}`))
+	require.NoError(t, err)
+	require.Nil(t, decoded.Final.OptionalShared)
+}
+
 // TestAllOfMarshalPreservesEmbeddedFieldSelection protects generated JSON wire behavior.
 func TestAllOfMarshalPreservesEmbeddedFieldSelection(t *testing.T) {
 	t.Parallel()

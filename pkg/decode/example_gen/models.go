@@ -57,7 +57,14 @@ func requiredObjectProperty[T any](name string, target *T) objectPropertyDecoder
 		name:     name,
 		required: true,
 		decode: func(data []byte) error {
-			return json.Unmarshal(data, target)
+			var value T
+			if err := json.Unmarshal(data, &value); err != nil {
+				return err
+			}
+
+			*target = value
+
+			return nil
 		},
 	}
 }
@@ -268,8 +275,12 @@ func objectJSONFields(object any, names []string, optional []bool) []jsonField {
 
 // appendEmbeddedJSONFields adds the fields promoted by one embedded allOf member.
 func appendEmbeddedJSONFields(fields []jsonField, source jsonFieldSource) []jsonField {
+	embeddedStruct := reflect.ValueOf(source).Kind() == reflect.Struct
 	for _, field := range source.jsonFields() {
-		field.depth++
+		if embeddedStruct {
+			field.depth++
+		}
+
 		fields = append(fields, field)
 	}
 
