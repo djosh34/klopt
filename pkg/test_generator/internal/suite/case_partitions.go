@@ -68,26 +68,24 @@ func (planner *CasePlanner) addValidPartitions(
 
 // addEnumValidPartitions adds members retained by the effective occurrence oracle set.
 func (planner *CasePlanner) addEnumValidPartitions(result *caseSet, enum *EnumSet, use *schemaUse) {
-	for index, value := range enum.Values {
-		if use.examples.ValidDeclared && !generationExamplesContain(use.examples.Valid, value) {
-			continue
+	examples := use.examples.Valid
+	if !use.examples.ValidDeclared {
+		examples = make([]GenerationExample, 0, len(enum.Values))
+		for _, value := range enum.Values {
+			examples = append(examples, GenerationExample{
+				Value:  value,
+				Source: ConstraintSource{Pointer: use.pointer, Keyword: "enum"},
+			})
 		}
+	}
 
-		source := ConstraintSource{Pointer: use.pointer, Keyword: "enum"}
-		for _, example := range use.examples.Valid {
-			if example.Value.Equal(value) {
-				source = example.Source
-
-				break
-			}
-		}
-
-		member := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{value}))
+	for index, example := range examples {
+		member := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example.Value}))
 		result.add(CasePlan{
 			Name:   caseName(fmt.Sprintf("valid enum member %d", index+1), use.pointer, "enum"),
 			Expect: ExpectAccepted,
 			Values: member,
-			Source: source,
+			Source: example.Source,
 		})
 	}
 }

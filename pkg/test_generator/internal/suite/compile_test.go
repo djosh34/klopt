@@ -332,16 +332,21 @@ x-valid-examples: [short]`, "", "create"))
 func TestCompileSuiteEnforcesOracleOptionAfterCompilerReuse(t *testing.T) {
 	t.Parallel()
 
-	compiler := NewCompiler(parseSchemaSource(t, `type: object
+	source := parseSchemaSource(t, `type: object
 properties:
-  optional:
-    allOf:
-      - type: string
-        pattern: '^A$'
-        x-valid-examples: [A]
-      - type: string
-        format: email
-        x-valid-examples: [B]`, "", "create"))
+  optional: {$ref: '#/components/schemas/Disjoint'}`, `
+components:
+  schemas:
+    Disjoint:
+      allOf:
+        - type: string
+          pattern: '^A$'
+          x-valid-examples: [A]
+        - type: string
+          format: email
+          x-valid-examples: [B]
+`, "create")
+	compiler := NewCompiler(source)
 
 	_, err := compiler.Compile()
 	require.NoError(t, err)
@@ -349,12 +354,72 @@ properties:
 	_, err = compiler.CompileSuite(MustHaveAllXValidCases)
 	require.Error(t, err)
 
-	var compileError *Error
-	require.ErrorAs(t, err, &compileError)
-	require.Equal(t, "compile", compileError.Phase)
-	require.Equal(t, "unconstructible", compileError.Code)
-	require.Equal(t, "allOf", compileError.Keyword)
-	require.Contains(t, compileError.Pointer, "/properties/optional")
+	var cachedError *Error
+	require.ErrorAs(t, err, &cachedError)
+
+	_, err = NewCompiler(source).CompileSuite(MustHaveAllXValidCases)
+	require.Error(t, err)
+
+	var freshError *Error
+	require.ErrorAs(t, err, &freshError)
+	require.Equal(t, freshError.Phase, cachedError.Phase)
+	require.Equal(t, freshError.Code, cachedError.Code)
+	require.Equal(t, freshError.Keyword, cachedError.Keyword)
+	require.Equal(t, freshError.Pointer, cachedError.Pointer)
+	require.Equal(t, "compile", cachedError.Phase)
+	require.Equal(t, "unconstructible", cachedError.Code)
+	require.Equal(t, "allOf", cachedError.Keyword)
+	require.Contains(t, cachedError.Pointer, "/components/schemas/Disjoint")
+}
+
+// TestCompileSuiteIgnoresEmptyLocalOracleForUnreachableString verifies the
+// allOf option does not invent a meet for a purely local declaration.
+func TestCompileSuiteIgnoresEmptyLocalOracleForUnreachableString(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `type: boolean
+pattern: '^never$'
+x-valid-examples: []`, "", "create"))
+
+	_, err := compiler.Compile()
+	require.NoError(t, err)
+
+	compiled, err := compiler.CompileSuite(MustHaveAllXValidCases)
+	require.NoError(t, err)
+	require.NotNil(t, compiled)
+}
+
+// TestCompilerKeepsOracleEvidenceOutOfDomainIdentity verifies canonical schema
+// semantics do not depend on occurrence-local trusted values.
+func TestCompilerKeepsOracleEvidenceOutOfDomainIdentity(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `type: object
+properties:
+  first:
+    type: string
+    pattern: '^same$'
+    enum: [enum-only]
+    x-valid-examples: [first-only]
+  second:
+    type: string
+    pattern: '^same$'
+    enum: [enum-only]
+    x-valid-examples: [second-only]`, "", "create"))
+
+	_, err := compiler.Compile()
+	require.NoError(t, err)
+
+	first := compiler.rootUse.property("first")
+	second := compiler.rootUse.property("second")
+
+	require.NotNil(t, first)
+	require.NotNil(t, second)
+	require.Equal(t, first.domain, second.domain)
+	require.True(t, generationExamplesContain(first.examples.Valid, mustJSONValue(t, `"first-only"`)))
+	require.False(t, generationExamplesContain(first.examples.Valid, mustJSONValue(t, `"second-only"`)))
+	require.True(t, generationExamplesContain(second.examples.Valid, mustJSONValue(t, `"second-only"`)))
+	require.False(t, generationExamplesContain(second.examples.Valid, mustJSONValue(t, `"first-only"`)))
 }
 
 // TestCompileSuiteUnionsLocalEnumAndValidExamples verifies both local oracle

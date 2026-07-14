@@ -364,12 +364,7 @@ func (compiler *Compiler) applyEnum(
 
 	examples.ValidDeclared = true
 
-	values := make([]jsonvalue.Value, 0, len(examples.Valid))
-	for _, example := range examples.Valid {
-		values = append(values, cloneJSONValue(example.Value))
-	}
-
-	*domain = finiteDomain(values)
+	*domain = finiteDomain(atomicValues)
 
 	return nil
 }

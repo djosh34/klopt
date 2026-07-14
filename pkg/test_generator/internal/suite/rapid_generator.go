@@ -157,24 +157,16 @@ func enumGenerator(
 		return rapid.SampledFrom(cloneJSONValues(enum.Values)), nil
 	}
 
-	values := enumOracleValues(enum, use.examples.Valid)
+	values := make([]jsonvalue.Value, 0, len(use.examples.Valid))
+	for _, example := range use.examples.Valid {
+		values = append(values, cloneJSONValue(example.Value))
+	}
+
 	if len(values) == 0 {
 		return nil, errors.New("enum conjunction has no trusted valid generation case")
 	}
 
 	return rapid.SampledFrom(values), nil
-}
-
-// enumOracleValues intersects semantic enum members with exact occurrence cases.
-func enumOracleValues(enum *EnumSet, examples []GenerationExample) []jsonvalue.Value {
-	values := make([]jsonvalue.Value, 0, len(enum.Values))
-	for _, value := range enum.Values {
-		if generationExamplesContain(examples, value) {
-			values = append(values, cloneJSONValue(value))
-		}
-	}
-
-	return values
 }
 
 // appendConstructiveGenerator records a reachable generator or preserves the first construction error.

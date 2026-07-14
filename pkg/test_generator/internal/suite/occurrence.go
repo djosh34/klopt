@@ -51,7 +51,7 @@ func (compiler *Compiler) requireAllXValidCases(use *schemaUse, seen map[*schema
 	}
 
 	seen[use] = struct{}{}
-	if use.examples.ValidDeclared && len(use.examples.Valid) == 0 {
+	if len(use.allOf) > 0 && use.examples.ValidDeclared && len(use.examples.Valid) == 0 {
 		return compiler.failure(
 			"compile", "unconstructible", use.pointer, "allOf",
 			fmt.Errorf("%w: allOf merge has no trusted valid generation case", errUnconstructible),
