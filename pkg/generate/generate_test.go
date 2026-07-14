@@ -10,38 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// exampleOperations is the exact generation selection for the example fixture.
-var exampleOperations = []Operation{
-	{OperationID: "allOfObject", Variable: "allOfObject", Test: "TestAllOfObject"},
-	{OperationID: "arrayNotNullable", Variable: "arrayNotNullable", Test: "TestArrayNotNullable"},
-	{OperationID: "arrayNullable", Variable: "arrayNullable", Test: "TestArrayNullable"},
-	{OperationID: "compositeObject", Variable: "compositeObject", Test: "TestCompositeObject"},
-	{
-		OperationID: "nullableObjectKeysAdditionalPropertiesFalse",
-		Variable:    "nullableObjectKeysAdditionalPropertiesFalse",
-		Test:        "TestNullableObjectKeysAdditionalPropertiesFalse",
-	},
-	{
-		OperationID: "objectKeysAdditionalPropertiesFalse",
-		Variable:    "objectKeysAdditionalPropertiesFalse",
-		Test:        "TestObjectKeysAdditionalPropertiesFalse",
-	},
-	{OperationID: "optionalArrayNullable", Variable: "optionalArrayNullable", Test: "TestOptionalArrayNullable"},
-	{OperationID: "refObject", Variable: "refObject", Test: "TestRefObject"},
-	{OperationID: "refStressObject", Variable: "refStressObject", Test: "TestRefStressObject"},
-	{OperationID: "refStressObjectPut", Variable: "refStressObjectPut", Test: "TestRefStressObjectPut"},
-	{
-		OperationID: "stringNoFormatNotNullable",
-		Variable:    "stringNoFormatNotNullable",
-		Test:        "TestStringNoFormatNotNullable",
-	},
-	{
-		OperationID: "stringNoFormatNullable",
-		Variable:    "stringNoFormatNullable",
-		Test:        "TestStringNoFormatNullable",
-	},
-}
-
 // TestGenerateWritesCompiledValidation checks constraints, references, and generated compilation.
 func TestGenerateWritesCompiledValidation(t *testing.T) {
 	t.Parallel()
@@ -59,7 +27,7 @@ info: {title: generated, version: "1"}
 paths:
   /request:
     post:
-      operationId: request
+      operationId: request/path
       requestBody:
         required: true
         content:
@@ -80,9 +48,7 @@ components:
         child: {$ref: '#/components/schemas/Node'}
 `)
 
-	err = Generate(output, "generatefixture", spec, []Operation{
-		{OperationID: "request", Variable: "requestValidation", Test: "TestRequestValidation"},
-	})
+	err = Generate(output, "generatefixture", spec)
 	require.NoError(t, err)
 
 	probe := []byte(`package generatefixture
@@ -96,12 +62,12 @@ func TestGeneratedValidation(t *testing.T) {
 		"choice":"first",
 		"child":{"code":"aaa","amount":2,"choice":"second"}
 	}` + "`" + `)
-	if errs := requestValidation.Validate(valid); len(errs) != 0 {
+	if errs := validations["request/path"].Validate(valid); len(errs) != 0 {
 		t.Fatalf("valid body: %v", errs)
 	}
 
 	invalid := []byte(` + "`" + `{"code":"b","amount":1.25,"choice":"third"}` + "`" + `)
-	if errs := requestValidation.Validate(invalid); len(errs) != 4 {
+	if errs := validations["request/path"].Validate(invalid); len(errs) != 4 {
 		t.Fatalf("got %d errors, want 4: %v", len(errs), errs)
 	}
 }
@@ -116,14 +82,44 @@ func TestGeneratedValidation(t *testing.T) {
 	require.NoError(t, err, string(result))
 }
 
+// TestGenerateWritesEmptyValidationMap verifies documents without JSON request bodies still generate valid tests.
+func TestGenerateWritesEmptyValidationMap(t *testing.T) {
+	t.Parallel()
+
+	repo := repoRoot(t)
+	output, err := os.MkdirTemp(filepath.Join(repo, "pkg"), "generate-empty-fixture-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(output))
+	})
+
+	err = Generate(output, "generateemptyfixture", []byte(`
+openapi: 3.0.3
+info: {title: generated, version: "1"}
+paths:
+  /bodyless:
+    get: {}
+  /plain:
+    post:
+      requestBody:
+        content:
+          text/plain:
+            schema: {type: string}
+`))
+	require.NoError(t, err)
+
+	command := exec.CommandContext(t.Context(), "go", "test", "./pkg/"+filepath.Base(output))
+	command.Dir = repo
+	result, err := command.CombinedOutput()
+	require.NoError(t, err, string(result))
+}
+
 // TestGenerateStopsBeforeWritingOnParseError checks the required failure ordering.
 func TestGenerateStopsBeforeWritingOnParseError(t *testing.T) {
 	t.Parallel()
 
 	output := filepath.Join(t.TempDir(), "output")
-	err := Generate(output, "example", []byte("not openapi"), []Operation{
-		{OperationID: "request", Variable: "requestValidation", Test: "TestRequestValidation"},
-	})
+	err := Generate(output, "example", []byte("not openapi"))
 	require.Error(t, err)
 
 	_, statErr := os.Stat(output)
@@ -139,7 +135,7 @@ func TestGenerateExampleMatchesFixture(t *testing.T) {
 	require.NoError(t, err)
 
 	output := t.TempDir()
-	require.NoError(t, Generate(output, "example", openAPI, exampleOperations))
+	require.NoError(t, Generate(output, "example", openAPI))
 
 	for _, name := range []string{"validate.go", "validate_test.go"} {
 		actual, readErr := os.ReadFile(filepath.Join(output, name))
@@ -165,7 +161,6 @@ func TestRegenerateExample(t *testing.T) { //nolint:paralleltest // This test ex
 		filepath.Join(repo, "pkg", "decode", "example"),
 		"example",
 		openAPI,
-		exampleOperations,
 	))
 }
 

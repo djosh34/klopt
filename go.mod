@@ -8,6 +8,7 @@ require (
 	github.com/pb33f/libopenapi v0.38.3
 	github.com/pb33f/libopenapi-validator v0.13.13
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/tools v0.45.0
 	pgregory.net/rapid v1.3.0
 )
 
@@ -26,7 +27,8 @@ require (
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
-	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

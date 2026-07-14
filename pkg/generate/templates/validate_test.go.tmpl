@@ -11,19 +11,17 @@ import (
 // openAPI is the source document used to compile the generated validations.
 var openAPI = []byte({{.OpenAPI}})
 
-{{range .Operations}}// {{.Test}} checks {{.OperationID}}.
-func {{.Test}}(t *testing.T) {
+// TestValidations checks every generated request-body validation.
+func TestValidations(t *testing.T) {
 	t.Parallel()
 
-	testgenerator.CheckJSONRequestBody(
+	testgenerator.CheckJSONRequestBodies(
 		t,
 		openAPI,
-		{{printf "%q" .OperationID}},
-		func(data []byte) error {
-			return errors.Join({{.Variable}}.Validate(data)...)
+		func(operationID string, data []byte) error {
+			return errors.Join(validations[operationID].Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
 }
-
-{{end}}{{end}}
+{{end}}

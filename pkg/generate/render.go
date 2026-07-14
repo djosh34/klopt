@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"go/format"
+	"maps"
+	"slices"
 	"strconv"
 	"text/template"
 
 	"github.com/djosh34/decode_and_validate_generator/pkg/validation"
+	"golang.org/x/tools/imports"
 )
 
 //go:embed templates/*.go.tmpl
@@ -18,28 +20,23 @@ var templateFiles embed.FS
 type sourceTemplate struct {
 	Package     string
 	Assignments []assignmentTemplate
-	UsesJSON    bool
-	UsesRegexp  bool
-	UsesValue   bool
 }
 
 type assignmentTemplate struct {
-	Name  string
-	Nodes []string
-	Links []string
+	OperationID string
+	Nodes       []string
+	Links       []string
 }
 
 type testTemplate struct {
-	Package    string
-	OpenAPI    string
-	Operations []Operation
+	Package string
+	OpenAPI string
 }
 
 func render(
 	packageName string,
 	openAPI []byte,
-	operations []Operation,
-	parsed []*validation.Validation,
+	parsed map[string]*validation.Validation,
 ) (map[string][]byte, error) {
 	templates, err := template.ParseFS(templateFiles, "templates/*.go.tmpl")
 	if err != nil {
@@ -48,12 +45,8 @@ func render(
 
 	source := sourceTemplate{Package: packageName}
 
-	for index, compiled := range parsed {
-		assignment, imports := renderAssignment(operations[index].Variable, compiled)
-		source.Assignments = append(source.Assignments, assignment)
-		source.UsesJSON = source.UsesJSON || imports.json
-		source.UsesRegexp = source.UsesRegexp || imports.regexp
-		source.UsesValue = source.UsesValue || imports.value
+	for _, operationID := range slices.Sorted(maps.Keys(parsed)) {
+		source.Assignments = append(source.Assignments, renderAssignment(operationID, parsed[operationID]))
 	}
 
 	validate, err := executeTemplate(templates, "validate.go.tmpl", source)
@@ -62,9 +55,8 @@ func render(
 	}
 
 	validateTest, err := executeTemplate(templates, "validate_test.go.tmpl", testTemplate{
-		Package:    packageName,
-		OpenAPI:    strconv.Quote(string(openAPI)),
-		Operations: operations,
+		Package: packageName,
+		OpenAPI: strconv.Quote(string(openAPI)),
 	})
 	if err != nil {
 		return nil, err
@@ -82,7 +74,7 @@ func executeTemplate(templates *template.Template, name string, data any) ([]byt
 		return nil, fmt.Errorf("execute %s: %w", name, err)
 	}
 
-	formatted, err := format.Source(output.Bytes())
+	formatted, err := imports.Process(name, output.Bytes(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("format %s: %w", name, err)
 	}

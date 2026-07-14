@@ -43,6 +43,7 @@ linters:
             - github.com/djosh34/decode_and_validate_generator/pkg/test_generator
             - github.com/djosh34/decode_and_validate_generator/pkg/validation
             - github.com/arran4/golang-diff/pkg/diff
+            - golang.org/x/tools/imports
     errcheck:
       check-blank: true
       check-type-assertions: true

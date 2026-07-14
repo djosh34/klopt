@@ -2480,13 +2480,12 @@ func TestParseOpenAPI(t *testing.T) {
 		},
 	}
 
+	expected := make(map[string]*validation.Validation, len(tests))
 	for operationID, test := range tests {
-		t.Run(operationID, func(t *testing.T) {
-			t.Parallel()
-
-			actualValidation, parseErr := validation.Parse(spec, operationID)
-			require.NoError(t, parseErr)
-			require.Equal(t, test.expectedValidation, actualValidation)
-		})
+		expected[operationID] = test.expectedValidation
 	}
+
+	actual, err := validation.Parse(spec)
+	require.NoError(t, err)
+	require.Equal(t, expected, actual)
 }

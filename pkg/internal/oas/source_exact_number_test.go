@@ -12,7 +12,7 @@ import (
 func TestParsePreservesExactJSONNumbers(t *testing.T) {
 	t.Parallel()
 
-	source, err := Parse([]byte(`{
+	sources, err := Parse([]byte(`{
   "openapi":"3.0.3",
   "info":{"title":"exact","version":"1"},
   "paths":{"/things":{"post":{
@@ -23,8 +23,10 @@ func TestParsePreservesExactJSONNumbers(t *testing.T) {
     }}}},
     "responses":{"204":{"description":"done"}}
   }}}
-}`), "create")
+}`))
 	require.NoError(t, err)
+
+	source := sources["create"]
 	require.True(t, bytes.Contains(source.RequestSchema.Raw, []byte("1.234567890123456789e-100")))
 	require.True(t, bytes.Contains(source.RequestSchema.Raw, []byte("1e400")))
 }

@@ -3,6 +3,8 @@ package oas
 import (
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +14,7 @@ import (
 func TestParseLocatesRequestSchemaThroughDocumentReferences(t *testing.T) {
 	t.Parallel()
 
-	source, err := Parse([]byte(`
+	sources, err := Parse([]byte(`
 openapi: 3.0.3
 paths:
   /things:
@@ -44,8 +46,10 @@ components:
       $ref: '#/components/schemas/Child'
     Child:
       type: string
-`), "createThing")
+`))
 	require.NoError(t, err)
+
+	source := sources["createThing"]
 	require.True(t, source.RequestBodyRequired)
 	require.Equal(
 		t,
@@ -76,7 +80,7 @@ components:
 func TestNestedSchemaPositionsResolveWithCanonicalPointers(t *testing.T) {
 	t.Parallel()
 
-	source, err := Parse([]byte(`
+	sources, err := Parse([]byte(`
 openapi: 3.0.3
 paths:
   /escaped/~things:
@@ -104,8 +108,10 @@ components:
       type: integer
     A/B~C:
       type: boolean
-`), "nestedThing")
+`))
 	require.NoError(t, err)
+
+	source := sources["nestedThing"]
 	require.Equal(
 		t,
 		"#/paths/~1escaped~1~0things/post/requestBody/content/application~1json/schema",
@@ -133,23 +139,14 @@ components:
 	require.JSONEq(t, `{"type":"boolean"}`, string(additional.Raw))
 }
 
-// TestParseRequiresExactlyOneJSONRequestSchema verifies deterministic selection failures.
-func TestParseRequiresExactlyOneJSONRequestSchema(t *testing.T) {
+// TestParseAppliesJSONRequestOperationPolicy verifies document-wide inclusion and failures.
+func TestParseAppliesJSONRequestOperationPolicy(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
 		spec      string
-		operation string
 		wantError string
 	}{
-		"missing operation": {
-			spec: `
-openapi: 3.0.3
-paths: {}
-`,
-			operation: "missing",
-			wantError: `operationId "missing" not found`,
-		},
 		"duplicate operation": {
 			spec: `
 openapi: 3.0.3
@@ -169,23 +166,47 @@ paths:
           application/json:
             schema: {type: string}
 `,
-			operation: "duplicate",
-			wantError: `operationId "duplicate" found multiple times`,
+			wantError: `operationId "duplicate" is duplicated at #/paths/~1first/get and #/paths/~1second/post`,
 		},
-		"missing JSON media type": {
+		"duplicate operation through shared path item reference": {
 			spec: `
 openapi: 3.0.3
 paths:
-  /things:
+  /first:
+    $ref: '#/x-path-items/Shared'
+  /second:
+    $ref: '#/x-path-items/Shared'
+x-path-items:
+  Shared:
     post:
-      operationId: create
+      operationId: duplicate
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string}
+`,
+			wantError: `operationId "duplicate" is duplicated at #/paths/~1first/post and #/paths/~1second/post`,
+		},
+		"duplicate operation with non-JSON body": {
+			spec: `
+openapi: 3.0.3
+paths:
+  /first:
+    post:
+      operationId: duplicate
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string}
+  /second:
+    post:
+      operationId: duplicate
       requestBody:
         content:
           text/plain:
             schema: {type: string}
 `,
-			operation: "create",
-			wantError: "has no application/json content",
+			wantError: `operationId "duplicate" is duplicated at #/paths/~1first/post and #/paths/~1second/post`,
 		},
 		"missing schema": {
 			spec: `
@@ -198,8 +219,48 @@ paths:
         content:
           application/json: {}
 `,
-			operation: "create",
 			wantError: "schema does not exist",
+		},
+		"missing operation ID": {
+			spec: `
+openapi: 3.0.3
+paths:
+  /things:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string}
+`,
+			wantError: "operationId must be a non-empty string",
+		},
+		"non-string operation ID": {
+			spec: `
+openapi: 3.0.3
+paths:
+  /things:
+    post:
+      operationId: 7
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string}
+`,
+			wantError: "operationId must be a non-empty string",
+		},
+		"empty operation ID": {
+			spec: `
+openapi: 3.0.3
+paths:
+  /things:
+    post:
+      operationId: ''
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string}
+`,
+			wantError: "operationId must be a non-empty string",
 		},
 	}
 
@@ -207,10 +268,32 @@ paths:
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := Parse([]byte(tt.spec), tt.operation)
+			_, err := Parse([]byte(tt.spec))
 			require.ErrorContains(t, err, tt.wantError)
 		})
 	}
+
+	sources, err := Parse([]byte(`
+openapi: 3.0.3
+paths:
+  /bodyless:
+    get: {}
+  /plain:
+    post:
+      requestBody:
+        content:
+          text/plain:
+            schema: {type: string}
+  /json:
+    post:
+      operationId: exactID
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string}
+`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"exactID"}, slices.Sorted(maps.Keys(sources)))
 }
 
 // TestParseSelectsApplicationJSONMediaRangesBySpecificity verifies request content matching.
@@ -221,19 +304,23 @@ func TestParseSelectsApplicationJSONMediaRangesBySpecificity(t *testing.T) {
 		"application wildcard": "application/*: {schema: {type: string}}",
 		"global wildcard":      "'*/*': {schema: {type: boolean}}",
 		"exact wins":           "'*/*': {schema: {type: boolean}}\n          application/json: {schema: {type: string}}",
+		"parameterized exact":  "'application/json; charset=utf-8': {schema: {type: string}}",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			source, err := Parse([]byte(`openapi: 3.0.3
+			sources, err := Parse([]byte(`openapi: 3.0.3
 paths:
   /things:
     post:
       operationId: create
       requestBody:
         content:
-          `+content), "create")
+          ` + content))
 			require.NoError(t, err)
+			require.Contains(t, sources, "create")
+
+			source := sources["create"]
 
 			if name == "exact wins" {
 				require.JSONEq(t, `{"type":"string"}`, string(source.RequestSchema.Raw))
@@ -254,7 +341,7 @@ paths:
       requestBody:
         required: null
         content:
-          application/json: {schema: {type: string}}`), "create")
+          application/json: {schema: {type: string}}`))
 	require.ErrorContains(t, err, "required must be a boolean")
 }
 
@@ -298,8 +385,10 @@ paths:
 components:
   schemas:
 ` + tt.aliases)
-			source, err := Parse(spec, "create")
+			sources, err := Parse(spec)
 			require.NoError(t, err)
+
+			source := sources["create"]
 
 			_, err = source.Resolve(source.RequestSchema)
 			require.ErrorContains(t, err, tt.wantError)
@@ -316,7 +405,7 @@ components:
 func TestRequestBodyRequiredDefaultsFalse(t *testing.T) {
 	t.Parallel()
 
-	source, err := Parse([]byte(`
+	sources, err := Parse([]byte(`
 openapi: 3.0.3
 paths:
   /things:
@@ -326,7 +415,9 @@ paths:
         content:
           application/json:
             schema: {type: boolean}
-`), "create")
+`))
 	require.NoError(t, err)
+
+	source := sources["create"]
 	require.False(t, source.RequestBodyRequired)
 }

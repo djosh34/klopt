@@ -47,8 +47,8 @@ type validatorOutcome struct {
 // validatorAdapterFactory constructs one adapter after loading one fixture document.
 type validatorAdapterFactory func([]byte) (validatorAdapter, error)
 
-// TestCheckJSONRequestBodyAgainstValidators runs every generated CasePlan against all independent adapters.
-func TestCheckJSONRequestBodyAgainstValidators(t *testing.T) {
+// TestCheckJSONRequestBodiesAgainstValidators runs every generated CasePlan against all independent adapters.
+func TestCheckJSONRequestBodiesAgainstValidators(t *testing.T) {
 	t.Parallel()
 
 	fixtures := validatorCorpus()
@@ -83,9 +83,14 @@ func TestCheckJSONRequestBodyAgainstValidators(t *testing.T) {
 
 // compileValidatorFixture compiles all CasePlans once, before any adapter sees a generated body.
 func compileValidatorFixture(spec []byte) (*suite.CompiledSuite, error) {
-	source, err := oas.Parse(spec, "checkThing")
+	sources, err := oas.Parse(spec)
 	if err != nil {
 		return nil, fmt.Errorf("parse OpenAPI source: %w", err)
+	}
+
+	source, ok := sources["checkThing"]
+	if !ok {
+		return nil, errors.New(`parse OpenAPI source: operationId "checkThing" is missing`)
 	}
 
 	compiled, err := suite.NewCompiler(source).CompileSuite(suite.MustHaveAllXValidCases)
