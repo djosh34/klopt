@@ -265,7 +265,12 @@ func compileGeneratedSchema(t require.TestingT, candidate GeneratedSchema) (*sui
 
 	source, ok := sources["checkThing"]
 	if !ok {
-		return nil, errors.New(`operationId "checkThing" is missing`)
+		err = errors.New(`operationId "checkThing" is missing`)
+		if candidate.Valid {
+			require.NoError(t, err)
+		}
+
+		return nil, err
 	}
 
 	compiled, err := suite.NewCompiler(source).CompileSuite(suite.MustHaveAllXValidCases)
