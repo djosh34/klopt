@@ -3,7 +3,7 @@ package suite
 import "fmt"
 
 // meet pairs the canonical semantic intersection with the exact recursive occurrences that produced it.
-func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, error) {
+func (compiler *Compiler) meet(left *schemaUse, right *schemaUse, allOfPointer string) (*schemaUse, error) {
 	leftDomain, rightDomain, resultDomain, domain, err := compiler.meetDomains(left, right)
 	if err != nil {
 		return nil, err
@@ -15,17 +15,20 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 	}
 
 	result := &schemaUse{
-		pointer:     left.pointer,
-		domain:      domain,
-		localDomain: left.localDomain,
-		constraints: append(append([]ConstraintSource(nil), left.constraints...), right.constraints...),
-		examples:    examples,
-		atomic:      left.atomic,
-		allOf:       append(append([]*schemaUse(nil), left.allOf...), right),
-		resolved:    left.resolved,
+		pointer:      left.pointer,
+		domain:       domain,
+		localDomain:  left.localDomain,
+		constraints:  append(append([]ConstraintSource(nil), left.constraints...), right.constraints...),
+		examples:     examples,
+		atomic:       left.atomic,
+		allOf:        append(append([]*schemaUse(nil), left.allOf...), right),
+		allOfPointer: allOfPointer,
+		resolved:     left.resolved,
 	}
 
-	if err := compiler.meetChildren(result, left, leftDomain, right, rightDomain, resultDomain); err != nil {
+	if err := compiler.meetChildren(
+		result, left, leftDomain, right, rightDomain, resultDomain, allOfPointer,
+	); err != nil {
 		return nil, err
 	}
 
@@ -51,9 +54,9 @@ func (compiler *Compiler) requireAllXValidCases(use *schemaUse, seen map[*schema
 	}
 
 	seen[use] = struct{}{}
-	if len(use.allOf) > 0 && use.examples.ValidDeclared && len(use.examples.Valid) == 0 {
+	if use.allOfPointer != "" && use.examples.ValidDeclared && len(use.examples.Valid) == 0 {
 		return compiler.failure(
-			"compile", "unconstructible", use.pointer, "allOf",
+			"compile", "unconstructible", use.allOfPointer, "allOf",
 			fmt.Errorf("%w: allOf merge has no trusted valid generation case", errUnconstructible),
 		)
 	}
@@ -108,6 +111,7 @@ func (compiler *Compiler) meetChildren(
 	right *schemaUse,
 	rightDomain Domain,
 	resultDomain Domain,
+	allOfPointer string,
 ) error {
 	items, present, err := compiler.meetChild(
 		left.items,
@@ -115,6 +119,7 @@ func (compiler *Compiler) meetChildren(
 		right.items,
 		rightDomain.Array.Items,
 		resultDomain.Array.Items,
+		allOfPointer,
 	)
 	if err != nil {
 		return fmt.Errorf("meet array items: %w", err)
@@ -130,6 +135,7 @@ func (compiler *Compiler) meetChildren(
 		right.additional,
 		rightDomain.Object.Additional.Values,
 		resultDomain.Object.Additional.Values,
+		allOfPointer,
 	)
 	if err != nil {
 		return fmt.Errorf("meet additional properties: %w", err)
@@ -139,7 +145,9 @@ func (compiler *Compiler) meetChildren(
 		result.additional = additional
 	}
 
-	return compiler.meetProperties(result, left, leftDomain.Object, right, rightDomain.Object, resultDomain.Object)
+	return compiler.meetProperties(
+		result, left, leftDomain.Object, right, rightDomain.Object, resultDomain.Object, allOfPointer,
+	)
 }
 
 // meetProperties recursively pairs every schema-valued property policy.
@@ -150,6 +158,7 @@ func (compiler *Compiler) meetProperties(
 	right *schemaUse,
 	rightObject ObjectConstraints,
 	resultObject ObjectConstraints,
+	allOfPointer string,
 ) error {
 	leftProperties := propertyConstraintsByName(leftObject.Properties)
 	rightProperties := propertyConstraintsByName(rightObject.Properties)
@@ -168,7 +177,9 @@ func (compiler *Compiler) meetProperties(
 			property.Name,
 		)
 
-		use, present, childErr := compiler.meetChild(leftUse, leftValues, rightUse, rightValues, property.Values)
+		use, present, childErr := compiler.meetChild(
+			leftUse, leftValues, rightUse, rightValues, property.Values, allOfPointer,
+		)
 		if childErr != nil {
 			return fmt.Errorf("meet property %q: %w", property.Name, childErr)
 		}
@@ -188,9 +199,10 @@ func (compiler *Compiler) meetChild(
 	right *schemaUse,
 	rightDomain DomainID,
 	resultDomain DomainID,
+	allOfPointer string,
 ) (*schemaUse, bool, error) {
 	if resultDomain == EmptyDomainID {
-		return compiler.meetEmptyChild(left, leftDomain, right, rightDomain)
+		return compiler.meetEmptyChild(left, leftDomain, right, rightDomain, allOfPointer)
 	}
 
 	if resultDomain == NoDomain || resultDomain == AnyJSONDomainID {
@@ -205,7 +217,7 @@ func (compiler *Compiler) meetChild(
 		return existingChild(left, resultDomain, "right", rightDomain)
 	}
 
-	result, err := compiler.meet(left, right)
+	result, err := compiler.meet(left, right, allOfPointer)
 	if err != nil {
 		return nil, false, err
 	}
@@ -225,6 +237,7 @@ func (compiler *Compiler) meetEmptyChild(
 	leftDomain DomainID,
 	right *schemaUse,
 	rightDomain DomainID,
+	allOfPointer string,
 ) (*schemaUse, bool, error) {
 	if left == nil && right == nil {
 		return nil, false, nil
@@ -246,7 +259,7 @@ func (compiler *Compiler) meetEmptyChild(
 		return nil, false, nil
 	}
 
-	result, err := compiler.meet(left, right)
+	result, err := compiler.meet(left, right, allOfPointer)
 	if err != nil {
 		return nil, false, err
 	}

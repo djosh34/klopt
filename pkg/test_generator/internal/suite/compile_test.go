@@ -372,6 +372,73 @@ components:
 	require.Contains(t, cachedError.Pointer, "/components/schemas/Disjoint")
 }
 
+// TestCompileSuiteKeepsCachedStructuralMeetLocations verifies synthesized child
+// meets retain the parent allOf boundary that fresh compilation reports.
+func TestCompileSuiteKeepsCachedStructuralMeetLocations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+	}{
+		{
+			name: "property",
+			schema: `allOf:
+  - type: object
+    properties:
+      value: {type: string, pattern: '^A$', x-valid-examples: [A]}
+  - type: object
+    properties:
+      value: {type: string, format: email, x-valid-examples: [B]}`,
+		},
+		{
+			name: "array items",
+			schema: `allOf:
+  - type: array
+    items: {type: string, pattern: '^A$', x-valid-examples: [A]}
+  - type: array
+    items: {type: string, format: email, x-valid-examples: [B]}`,
+		},
+		{
+			name: "additional properties",
+			schema: `allOf:
+  - type: object
+    additionalProperties: {type: string, pattern: '^A$', x-valid-examples: [A]}
+  - type: object
+    additionalProperties: {type: boolean, pattern: '^B$', x-valid-examples: [B]}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			source := parseSchemaSource(t, test.schema, "", "create")
+			compiler := NewCompiler(source)
+
+			_, err := compiler.Compile()
+			require.NoError(t, err)
+
+			_, err = compiler.CompileSuite(MustHaveAllXValidCases)
+			require.Error(t, err)
+
+			var cachedError *Error
+			require.ErrorAs(t, err, &cachedError)
+
+			_, err = NewCompiler(source).CompileSuite(MustHaveAllXValidCases)
+			require.Error(t, err)
+
+			var freshError *Error
+			require.ErrorAs(t, err, &freshError)
+			require.Equal(t, freshError.Phase, cachedError.Phase)
+			require.Equal(t, freshError.Code, cachedError.Code)
+			require.Equal(t, freshError.Keyword, cachedError.Keyword)
+			require.Equal(t, freshError.Pointer, cachedError.Pointer)
+			require.Equal(t, source.RequestSchema.Pointer, cachedError.Pointer)
+		})
+	}
+}
+
 // TestCompileSuiteIgnoresEmptyLocalOracleForUnreachableString verifies the
 // allOf option does not invent a meet for a purely local declaration.
 func TestCompileSuiteIgnoresEmptyLocalOracleForUnreachableString(t *testing.T) {

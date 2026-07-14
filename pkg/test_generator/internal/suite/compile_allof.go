@@ -50,7 +50,7 @@ func (compiler *Compiler) compileAllOf(
 			return nil, err
 		}
 
-		result, err = compiler.meet(result, childUse)
+		result, err = compiler.meet(result, childUse, schema.Pointer)
 		if err != nil {
 			return nil, compiler.allOfMeetFailure(schema.Pointer, err)
 		}

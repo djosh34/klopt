@@ -209,17 +209,18 @@ type GenerationExamples struct {
 
 // schemaUse preserves one exact schema occurrence separately from its canonical Domain.
 type schemaUse struct {
-	pointer     string
-	domain      DomainID
-	localDomain DomainID
-	constraints []ConstraintSource
-	examples    GenerationExamples
-	atomic      map[string]DomainID
-	allOf       []*schemaUse
-	items       *schemaUse
-	properties  []schemaPropertyUse
-	additional  *schemaUse
-	resolved    *schemaUse
+	pointer      string
+	domain       DomainID
+	localDomain  DomainID
+	constraints  []ConstraintSource
+	examples     GenerationExamples
+	atomic       map[string]DomainID
+	allOf        []*schemaUse
+	allOfPointer string
+	items        *schemaUse
+	properties   []schemaPropertyUse
+	additional   *schemaUse
+	resolved     *schemaUse
 }
 
 // schemaPropertyUse pairs one property name with its exact schema occurrence.
