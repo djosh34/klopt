@@ -357,6 +357,80 @@ func validatorCharacterizations() []validatorCharacterization {
 			// kin-openapi v0.140.0 registers no email validator; OAS 3.0.3 leaves format policy to implementations.
 		},
 		{
+			ID: "numeric-format-int32-boundary",
+			Schema: `
+      type: integer
+      format: int32
+`,
+			Body:       []byte(`2147483647`),
+			Libopenapi: validatorBodyAccepted,
+			Kinopenapi: validatorBodyAccepted,
+		},
+		{
+			ID: "numeric-format-int32-overflow",
+			Schema: `
+      type: integer
+      format: int32
+`,
+			Body:                    []byte(`2147483648`),
+			Libopenapi:              validatorBodyAccepted,
+			Kinopenapi:              validatorBodyRejected,
+			KinopenapiErrorContains: "value should be between -2147483648 and 2147483647",
+		},
+		{
+			ID: "numeric-format-int64-boundary",
+			Schema: `
+      type: integer
+      format: int64
+`,
+			Body:       []byte(`9223372036854775807`),
+			Libopenapi: validatorBodyAccepted,
+			Kinopenapi: validatorBodyAccepted,
+		},
+		{
+			ID: "numeric-format-int64-overflow",
+			Schema: `
+      type: integer
+      format: int64
+`,
+			Body:       []byte(`9223372036854775808`),
+			Libopenapi: validatorBodyAccepted,
+			Kinopenapi: validatorBodyAccepted,
+		},
+		{
+			ID: "numeric-format-float-double-unbounded",
+			Schema: `
+      type: number
+      allOf:
+        - {format: float}
+        - {format: double}
+`,
+			Body:       []byte(`1e40`),
+			Libopenapi: validatorBodyAccepted,
+			Kinopenapi: validatorBodyAccepted,
+		},
+		{
+			ID: "numeric-format-unknown",
+			Schema: `
+      type: number
+      format: vendor-number
+`,
+			Body:       []byte(`1.25`),
+			Libopenapi: validatorBodyAccepted,
+			Kinopenapi: validatorBodyAccepted,
+		},
+		{
+			ID: "numeric-format-mismatched",
+			Schema: `
+      type: integer
+      format: double
+`,
+			Body:       []byte(`42`),
+			Libopenapi: validatorBodyAccepted,
+			Kinopenapi: validatorBodyAccepted,
+			// OAS formats are open and tools may fall back to type alone.
+		},
+		{
 			ID: "untyped-schema-null",
 			Schema: `
       minLength: 0

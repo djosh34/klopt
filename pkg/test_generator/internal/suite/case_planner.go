@@ -40,12 +40,12 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 		return nil, err
 	}
 
-	linked, err := compiler.linkCases(root, cases)
+	linked, unlinked, err := compiler.linkCases(cases)
 	if err != nil {
 		return nil, err
 	}
 
-	planner.markUnconstructibleConstraints(linked)
+	planner.markUnconstructibleConstraints(linked, unlinked)
 
 	if err := compiler.requireAcceptedCase(root, linked); err != nil {
 		return nil, err
@@ -60,19 +60,27 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 }
 
 // linkCases assigns a Rapid generator to each constructible CasePlan.
-func (compiler *Compiler) linkCases(root DomainID, cases []CasePlan) ([]CasePlan, error) {
+func (compiler *Compiler) linkCases(cases []CasePlan) ([]CasePlan, []ConstraintSource, error) {
 	generators := NewRapidGeneratorBuilder(compiler.Domains)
 	linked := make([]CasePlan, 0, len(cases))
+	unlinked := make([]ConstraintSource, 0)
 
 	for index := range cases {
-		generator, generatorErr := generators.Generator(cases[index].Values, compiler.rootUse)
+		generator, generatorErr := generators.generator(
+			cases[index].Values,
+			compiler.rootUse,
+			cases[index].evidenceUse,
+		)
 		if errors.Is(generatorErr, errNoTrustedStringExample) &&
-			(cases[index].Expect == ExpectRejected || cases[index].Values != root) {
+			cases[index].Expect == ExpectRejected &&
+			cases[index].Source.Keyword != "x-invalid-examples" {
+			unlinked = append(unlinked, cases[index].Source)
+
 			continue
 		}
 
 		if generatorErr != nil {
-			return nil, compiler.failure(
+			return nil, nil, compiler.failure(
 				"generate",
 				"unconstructible",
 				cases[index].Source.Pointer,
@@ -85,11 +93,14 @@ func (compiler *Compiler) linkCases(root DomainID, cases []CasePlan) ([]CasePlan
 		linked = append(linked, cases[index])
 	}
 
-	return linked, nil
+	return linked, unlinked, nil
 }
 
 // markUnconstructibleConstraints records isolated failures without a linked generator.
-func (planner *CasePlanner) markUnconstructibleConstraints(cases []CasePlan) {
+func (planner *CasePlanner) markUnconstructibleConstraints(
+	cases []CasePlan,
+	unlinked []ConstraintSource,
+) {
 	for index := range planner.Constraints {
 		constraint := &planner.Constraints[index]
 		if constraint.Outcome != ObligationPlanned {
@@ -100,9 +111,27 @@ func (planner *CasePlanner) markUnconstructibleConstraints(cases []CasePlan) {
 			continue
 		}
 
+		if constraintSourceContains(unlinked, constraint.Source) {
+			constraint.Outcome = ObligationUnconstructible
+			constraint.Reason = "isolated failure cannot satisfy opaque sibling rules"
+
+			continue
+		}
+
 		constraint.Outcome = ObligationUnconstructible
 		constraint.Reason = "isolated failure has no trusted pattern or format example"
 	}
+}
+
+// constraintSourceContains reports exact source membership.
+func constraintSourceContains(sources []ConstraintSource, candidate ConstraintSource) bool {
+	for _, source := range sources {
+		if source == candidate {
+			return true
+		}
+	}
+
+	return false
 }
 
 // requireAcceptedCase rejects a productive root that has no linked accepted case.
@@ -169,6 +198,8 @@ func (planner *CasePlanner) Plan(rootUse *schemaUse) ([]CasePlan, error) {
 		return nil, errors.New("plan cases: root occurrence is nil")
 	}
 
+	planner.rootUse = rootUse
+
 	rootDomain, ok := planner.Domains.Domain(rootUse.domain)
 	if !ok {
 		return nil, fmt.Errorf("plan cases: root Domain %d does not exist", rootUse.domain)
@@ -191,6 +222,8 @@ func (planner *CasePlanner) Plan(rootUse *schemaUse) ([]CasePlan, error) {
 		})
 	}
 
+	planner.addExactEvidenceCases(result, rootUse, rootUse.examples.Invalid, ExpectRejected)
+
 	if err := planner.addIsolatedFailures(result); err != nil {
 		return nil, err
 	}
@@ -202,6 +235,29 @@ func (planner *CasePlanner) Plan(rootUse *schemaUse) ([]CasePlan, error) {
 	}
 
 	return result.cases, nil
+}
+
+// addExactEvidenceCases preserves every explicit oracle value as a distinct case.
+func (planner *CasePlanner) addExactEvidenceCases(
+	result *caseSet,
+	use *schemaUse,
+	examples []GenerationExample,
+	expect ExpectedResult,
+) {
+	for index, example := range examples {
+		values := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example.Value}))
+		result.add(CasePlan{
+			Name: caseName(
+				fmt.Sprintf("%s exact evidence %d", expectName(expect), index+1),
+				example.Source.Pointer,
+				example.Source.Keyword,
+			),
+			Expect:      expect,
+			Values:      values,
+			Source:      example.Source,
+			evidenceUse: use,
+		})
+	}
 }
 
 // constraintPlans creates atomic pass/fail Domains while retaining allOf source provenance.
@@ -267,7 +323,7 @@ func (planner *CasePlanner) atomicConstraint(source ConstraintSource, use *schem
 	case "minLength", "maxLength":
 		return planner.atomicStringConstraint(source, domain)
 	case "pattern", "format":
-		return planner.atomicStringExampleConstraint(source, domain, use)
+		return planner.atomicOpaqueStringConstraint(source, domain)
 	case "minItems", "maxItems":
 		return planner.atomicArrayConstraint(source, domain)
 	case "minProperties", "maxProperties", "required", "additionalProperties":
@@ -317,9 +373,6 @@ func (planner *CasePlanner) atomicTypeConstraint(source ConstraintSource, domain
 	if domain.Number.State != KindExcluded && domain.Number.IntegersOnly {
 		pass.Number.IntegersOnly = true
 		pass.Number.State = KindRestricted
-		integerFailures := planner.finiteNumberFailures(fractionalCandidates())
-
-		fails = append(fails, integerFailures...)
 	}
 
 	return planner.plannedAtomicConstraint(source, pass, fails)
@@ -341,14 +394,7 @@ func (planner *CasePlanner) atomicNullableConstraint(
 
 // atomicEnumConstraint builds finite partitions for values outside the enum.
 func (planner *CasePlanner) atomicEnumConstraint(source ConstraintSource, domain Domain) (ConstraintPlan, bool, error) {
-	fails := make([]DomainID, 0)
-
-	for _, candidate := range outsiderCandidates(domain.Enum) {
-		failure := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{candidate}))
-		fails = append(fails, failure)
-	}
-
-	return planner.plannedAtomicConstraint(source, domain, fails)
+	return planner.plannedAtomicConstraint(source, domain, nil)
 }
 
 // atomicNumberConstraint dispatches numeric bound and multiple-of rules.
@@ -472,14 +518,7 @@ func (planner *CasePlanner) atomicMultipleOfConstraint(
 		MultipleOf: cloneNumber(domain.Number.MultipleOf),
 	})
 
-	candidates, err := nonMultipleCandidates(domain.Number.MultipleOf)
-	if err != nil {
-		return ConstraintPlan{}, false, err
-	}
-
-	fails := planner.finiteNumberFailures(candidates)
-
-	return planner.plannedAtomicConstraint(source, pass, fails)
+	return planner.plannedAtomicConstraint(source, pass, nil)
 }
 
 // atomicStringConstraint builds the pass and fail partitions for string lengths.
@@ -525,12 +564,16 @@ func (planner *CasePlanner) atomicStringConstraint(
 	return planner.plannedAtomicConstraint(source, pass, fails)
 }
 
-// atomicStringExampleConstraint builds pattern and format partitions from invalid string examples.
-func (planner *CasePlanner) atomicStringExampleConstraint(
+// atomicOpaqueStringConstraint records opaque string rules without pretending a
+// whole-occurrence invalid example isolates either rule.
+func (planner *CasePlanner) atomicOpaqueStringConstraint(
 	source ConstraintSource,
 	domain Domain,
-	use *schemaUse,
 ) (ConstraintPlan, bool, error) {
+	if domain.String.State == KindExcluded {
+		return ConstraintPlan{}, false, nil
+	}
+
 	pass := anyJSONDomain()
 
 	pass.String = StringConstraints{State: KindRestricted}
@@ -540,18 +583,7 @@ func (planner *CasePlanner) atomicStringExampleConstraint(
 		pass.String.Formats = append([]string(nil), domain.String.Formats...)
 	}
 
-	fails := make([]DomainID, 0)
-
-	for _, example := range use.examples.Invalid {
-		if example.Value.Kind != jsonvalue.KindString {
-			continue
-		}
-
-		failure := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example.Value}))
-		fails = append(fails, failure)
-	}
-
-	return planner.plannedAtomicConstraint(source, pass, fails)
+	return planner.plannedAtomicConstraint(source, pass, nil)
 }
 
 // atomicArrayConstraint builds the pass and fail partitions for array lengths.
@@ -889,12 +921,18 @@ func (planner *CasePlanner) isolationBounds() ([]DomainID, []DomainID, error) {
 
 // addConstraintFailures creates isolated rejected cases and records their obligation outcome.
 func (planner *CasePlanner) addConstraintFailures(result *caseSet, constraint *ConstraintPlan, context DomainID) error {
-	failures, err := planner.isolatedFailureDomains(*constraint, context)
+	failures, contextualStart, err := planner.isolatedFailureDomains(*constraint, context)
 	if err != nil {
 		return err
 	}
 
-	planned, unconstructible, err := planner.addFailureCases(result, *constraint, context, failures)
+	planned, unconstructible, err := planner.addFailureCases(
+		result,
+		*constraint,
+		context,
+		failures,
+		contextualStart,
+	)
 	if err != nil {
 		return err
 	}
@@ -913,6 +951,17 @@ func (planner *CasePlanner) addConstraintFailures(result *caseSet, constraint *C
 		return nil
 	}
 
+	planner.finishUnplannedConstraint(constraint, context, failures)
+
+	return nil
+}
+
+// finishUnplannedConstraint records why isolation produced no executable case.
+func (planner *CasePlanner) finishUnplannedConstraint(
+	constraint *ConstraintPlan,
+	context DomainID,
+	failures []DomainID,
+) {
 	if len(failures) > 0 {
 		if constraint.Source.Keyword == "pattern" || constraint.Source.Keyword == "format" {
 			constraint.Outcome = ObligationUnconstructible
@@ -922,27 +971,150 @@ func (planner *CasePlanner) addConstraintFailures(result *caseSet, constraint *C
 			constraint.Reason = "failing partition is empty while all sibling constraints pass"
 		}
 
-		return nil
+		return
+	}
+
+	if planner.numericContextImpliesConstraint(*constraint, context) {
+		constraint.Outcome = ObligationDominated
+		constraint.Reason = "sibling numeric context exactly implies constraint"
+
+		return
+	}
+
+	if constraint.Source.Keyword == "enum" && planner.enumContextIsExhausted(*constraint, context) {
+		constraint.Outcome = ObligationDominated
+		constraint.Reason = "sibling finite context is exhausted by enum"
+
+		return
 	}
 
 	constraint.Outcome = ObligationUnconstructible
 	if constraint.Reason == "" {
 		constraint.Reason = "no constructive failing partition"
 	}
+}
 
-	return nil
+// numericContextImpliesConstraint proves integer and multipleOf implication.
+func (planner *CasePlanner) numericContextImpliesConstraint(
+	constraint ConstraintPlan,
+	context DomainID,
+) bool {
+	pass, passOK := planner.Domains.Domain(constraint.Pass)
+
+	siblings, contextOK := planner.Domains.Domain(context)
+	if !passOK || !contextOK {
+		return false
+	}
+
+	integerTarget := constraint.Source.Keyword == "type" && pass.Number.IntegersOnly
+
+	multipleTarget := constraint.Source.Keyword == "multipleOf" && pass.Number.MultipleOf != nil
+	if !integerTarget && !multipleTarget {
+		return false
+	}
+
+	return numberContextImpliesRule(siblings, integerTarget, pass.Number.MultipleOf)
+}
+
+// enumContextIsExhausted proves dominance when the sibling context is itself finite.
+func (planner *CasePlanner) enumContextIsExhausted(constraint ConstraintPlan, context DomainID) bool {
+	pass, passOK := planner.Domains.Domain(constraint.Pass)
+
+	siblings, contextOK := planner.Domains.Domain(context)
+	if !passOK || !contextOK || pass.Enum == nil {
+		return false
+	}
+
+	if siblings.Enum == nil {
+		return scalarContextIsExhaustedByEnum(pass.Enum, siblings)
+	}
+
+	for _, value := range siblings.Enum.Values {
+		if !enumContains(pass.Enum, value) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// scalarContextIsExhaustedByEnum proves complete scalar and only-empty container contexts.
+func scalarContextIsExhaustedByEnum(enum *EnumSet, context Domain) bool {
+	return scalarKindsAreExhaustedByEnum(enum, context) &&
+		arrayContextIsExhaustedByEnum(enum, context.Array) &&
+		objectContextIsExhaustedByEnum(enum, context.Object)
+}
+
+// scalarKindsAreExhaustedByEnum proves complete null and boolean contexts.
+func scalarKindsAreExhaustedByEnum(enum *EnumSet, context Domain) bool {
+	if context.Number.State != KindExcluded || context.String.State != KindExcluded {
+		return false
+	}
+
+	nullCovered := context.Null == KindExcluded || enumContains(enum, jsonvalue.Null())
+	booleanCovered := context.Boolean == KindExcluded ||
+		enumContains(enum, jsonvalue.Bool(false)) && enumContains(enum, jsonvalue.Bool(true))
+
+	return nullCovered && booleanCovered
+}
+
+// arrayContextIsExhaustedByEnum proves an absent or only-empty array context.
+func arrayContextIsExhaustedByEnum(enum *EnumSet, array ArrayConstraints) bool {
+	if array.State == KindExcluded {
+		return true
+	}
+
+	onlyEmpty := array.MinItems == 0 && (arrayOnlyAllowsEmpty(array) || array.Items == EmptyDomainID)
+
+	return onlyEmpty && enumContains(enum, jsonvalue.Array(nil))
+}
+
+// objectContextIsExhaustedByEnum proves an absent or only-empty object context.
+func objectContextIsExhaustedByEnum(enum *EnumSet, object ObjectConstraints) bool {
+	if object.State == KindExcluded {
+		return true
+	}
+
+	empty, err := jsonvalue.Object(nil)
+
+	return err == nil && object.MinProps == 0 && objectAllowsOnlyEmpty(object) && enumContains(enum, empty)
+}
+
+// objectAllowsOnlyEmpty proves no property name can be present.
+func objectAllowsOnlyEmpty(object ObjectConstraints) bool {
+	for _, property := range object.Properties {
+		if property.Required {
+			return false
+		}
+	}
+
+	if object.MaxProps != nil && *object.MaxProps == 0 {
+		return true
+	}
+
+	for _, property := range object.Properties {
+		if property.State == PropertyAllowed && property.Values != EmptyDomainID {
+			return false
+		}
+	}
+
+	return object.Additional.Values == EmptyDomainID
 }
 
 // isolatedFailureDomains combines a constraint's static and context-specific failing partitions.
-func (planner *CasePlanner) isolatedFailureDomains(constraint ConstraintPlan, context DomainID) ([]DomainID, error) {
-	failures := append([]DomainID(nil), constraint.Fail...)
+func (planner *CasePlanner) isolatedFailureDomains(
+	constraint ConstraintPlan,
+	context DomainID,
+) ([]DomainID, int, error) {
+	failures := compactDomainIDs(constraint.Fail)
+	contextualStart := len(failures)
 
 	dynamicFailures, err := planner.contextFailures(constraint, context)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return compactDomainIDs(append(failures, dynamicFailures...)), nil
+	return compactDomainIDs(append(failures, dynamicFailures...)), contextualStart, nil
 }
 
 // addFailureCases adds productive isolated failures and reports any unconstructible failure partitions.
@@ -951,14 +1123,21 @@ func (planner *CasePlanner) addFailureCases(
 	constraint ConstraintPlan,
 	context DomainID,
 	failures []DomainID,
+	contextualStart int,
 ) (bool, bool, error) {
 	planned := false
 	unconstructible := false
 
 	for failIndex, failure := range failures {
-		values, err := planner.Domains.IntersectDomains(context, failure)
-		if err != nil {
-			return false, false, err
+		values := failure
+
+		if failIndex < contextualStart {
+			var err error
+
+			values, err = planner.Domains.IntersectDomains(context, failure)
+			if err != nil {
+				return false, false, err
+			}
 		}
 
 		if values == EmptyDomainID {

@@ -96,6 +96,8 @@ func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *sch
 		pointer:     pointer,
 		domain:      resolved.domain,
 		localDomain: resolved.localDomain,
+		arrayShape:  resolved.arrayShape,
+		objectShape: resolved.objectShape,
 		constraints: append([]ConstraintSource(nil), resolved.constraints...),
 		examples: GenerationExamples{
 			Valid:         cloneGenerationExamples(resolved.examples.Valid),
@@ -350,7 +352,9 @@ func (compiler *Compiler) applyEnum(
 
 	for _, source := range constraintSources(pointer, members) {
 		if source.Keyword != "enum" {
-			use.atomic[source.Keyword] = preEnum
+			if _, preserved := use.atomic[source.Keyword]; !preserved {
+				use.atomic[source.Keyword] = preEnum
+			}
 		}
 	}
 
@@ -572,7 +576,7 @@ func (compiler *Compiler) compileNumber(domain *Domain, members map[string]json.
 		return err
 	}
 
-	return compileNumberFormat(number, members)
+	return nil
 }
 
 // compileNumberBounds applies minimum, maximum, and multipleOf to number constraints.
@@ -705,24 +709,6 @@ func parseOptionalBool(members map[string]json.RawMessage, keyword string) (bool
 	return value, true, nil
 }
 
-// compileNumberFormat applies format to a reachable numeric kind.
-func compileNumberFormat(number *NumberConstraints, members map[string]json.RawMessage) error {
-	raw, ok := members["format"]
-	if !ok || number.State == KindExcluded {
-		return nil
-	}
-
-	format, err := parseString(raw, "format")
-	if err != nil {
-		return err
-	}
-
-	number.Format = &format
-	number.State = KindRestricted
-
-	return nil
-}
-
 // compileString applies string Schema Object keywords to a Domain.
 func compileString(domain *Domain, members map[string]json.RawMessage) error {
 	stringConstraints := &domain.String
@@ -849,7 +835,65 @@ func (compiler *Compiler) compileArray(
 		return err
 	}
 
-	return compiler.compileArrayItems(array, use, schema, members, active)
+	bounds := cloneDomain(*domain).Array
+
+	if err := compiler.compileArrayItems(array, use, schema, members, active); err != nil {
+		return err
+	}
+
+	compiler.recordArrayBoundDomains(domain, use, members, bounds)
+
+	return nil
+}
+
+// recordArrayBoundDomains preserves count rules before contradictory items
+// normalize the effective array kind away.
+func (compiler *Compiler) recordArrayBoundDomains(
+	domain *Domain,
+	use *schemaUse,
+	members map[string]json.RawMessage,
+	bounds ArrayConstraints,
+) {
+	if domain.Array.State != KindExcluded && hasArrayPlanningRule(members) {
+		planning := cloneDomain(*domain).Array
+		if use.items != nil && use.items.domain == EmptyDomainID {
+			planning.Items = AnyJSONDomainID
+		}
+
+		use.arrayShape = compiler.Domains.FindOrAddEquivalentDomain(arrayRuleDomain(planning))
+	}
+
+	for _, keyword := range []string{"minItems", "maxItems"} {
+		if _, declared := members[keyword]; !declared {
+			continue
+		}
+
+		atomic := cloneDomain(*domain)
+		atomic.Array.MinItems = bounds.MinItems
+
+		atomic.Array.MaxItems = bounds.MaxItems
+		if atomic.Array.Items == EmptyDomainID {
+			atomic.Array.Items = AnyJSONDomainID
+		}
+
+		if atomic.Array.State == KindExcluded {
+			atomic.Array.State = bounds.State
+			atomic.Array.Items = AnyJSONDomainID
+		}
+
+		use.atomic[keyword] = compiler.Domains.FindOrAddEquivalentDomain(atomic)
+	}
+}
+
+// hasArrayPlanningRule reports whether an occurrence declares an array keyword.
+func hasArrayPlanningRule(members map[string]json.RawMessage) bool {
+	for _, keyword := range []string{"minItems", "maxItems", "items"} {
+		if _, declared := members[keyword]; declared {
+			return true
+		}
+	}
+
+	return false
 }
 
 // compileArrayBounds applies minItems and maxItems when present.
@@ -966,7 +1010,109 @@ func (compiler *Compiler) compileObject(
 		return err
 	}
 
-	return compiler.compileObjectProperties(object, use, schema, members, active)
+	if err := compiler.compileObjectProperties(object, use, schema, members, active); err != nil {
+		return err
+	}
+
+	compiler.recordObjectPlanningDomains(domain, use, members)
+
+	return nil
+}
+
+// recordObjectPlanningDomains preserves occurrence-local object rules before
+// contradictory children and positive cardinality normalize the object kind away.
+func (compiler *Compiler) recordObjectPlanningDomains(
+	domain *Domain,
+	use *schemaUse,
+	members map[string]json.RawMessage,
+) {
+	if domain.Object.State == KindExcluded || !hasObjectPlanningRule(members) {
+		return
+	}
+
+	source := cloneDomain(*domain).Object
+	planning := relaxedObjectPlanningShape(source, use)
+	use.objectShape = compiler.Domains.FindOrAddEquivalentDomain(objectRuleDomain(planning))
+	compiler.recordObjectAtomicPlanningDomains(*domain, source, planning, use, members)
+}
+
+// hasObjectPlanningRule reports whether an occurrence declares an object keyword.
+func hasObjectPlanningRule(members map[string]json.RawMessage) bool {
+	for _, keyword := range []string{
+		"minProperties", "maxProperties", "required", "properties", "additionalProperties",
+	} {
+		if _, declared := members[keyword]; declared {
+			return true
+		}
+	}
+
+	return false
+}
+
+// relaxedObjectPlanningShape opens only contradictory child seams.
+func relaxedObjectPlanningShape(source ObjectConstraints, use *schemaUse) ObjectConstraints {
+	planning := source
+	for index := range planning.Properties {
+		child := use.property(planning.Properties[index].Name)
+		if child != nil && child.domain == EmptyDomainID {
+			planning.Properties[index].State = PropertyAllowed
+			planning.Properties[index].Values = AnyJSONDomainID
+		}
+	}
+
+	if use.additional != nil && use.additional.domain == EmptyDomainID {
+		planning.Additional.Values = AnyJSONDomainID
+	}
+
+	return planning
+}
+
+// recordObjectAtomicPlanningDomains preserves each declared object rule independently.
+func (compiler *Compiler) recordObjectAtomicPlanningDomains(
+	domain Domain,
+	source ObjectConstraints,
+	planning ObjectConstraints,
+	use *schemaUse,
+	members map[string]json.RawMessage,
+) {
+	for _, keyword := range []string{"minProperties", "maxProperties", "required", "additionalProperties"} {
+		if _, declared := members[keyword]; !declared {
+			continue
+		}
+
+		atomic := objectAtomicPlanningDomain(domain, source, planning, keyword)
+		use.atomic[keyword] = compiler.Domains.FindOrAddEquivalentDomain(atomic)
+	}
+}
+
+// objectAtomicPlanningDomain isolates one object rule from contradictory siblings.
+func objectAtomicPlanningDomain(
+	domain Domain,
+	source ObjectConstraints,
+	planning ObjectConstraints,
+	keyword string,
+) Domain {
+	atomic := cloneDomain(domain)
+	atomic.Object = planning
+
+	switch keyword {
+	case "minProperties":
+		atomic.Object.MaxProps = nil
+		atomic.Object.Additional.Values = AnyJSONDomainID
+	case "maxProperties":
+		atomic.Object.MinProps = 0
+		atomic.Object.Additional.Values = AnyJSONDomainID
+	case "required":
+		atomic.Object.MinProps = 0
+		atomic.Object.MaxProps = nil
+		atomic.Object.Additional.Values = AnyJSONDomainID
+	case "additionalProperties":
+		atomic.Object.MinProps = 0
+		atomic.Object.MaxProps = nil
+		atomic.Object.Additional = source.Additional
+	}
+
+	return atomic
 }
 
 // compileObjectBounds applies minProperties and maxProperties when present.

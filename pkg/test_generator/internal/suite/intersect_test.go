@@ -59,6 +59,20 @@ format: int64`)
 	require.Equal(t, formatLeft, formatRight)
 }
 
+// TestCompilerTreatsNumericFormatsAsOpenAnnotations verifies OAS numeric
+// formats do not invent generator constraints without validator consensus.
+func TestCompilerTreatsNumericFormatsAsOpenAnnotations(t *testing.T) {
+	t.Parallel()
+
+	for _, schemaType := range []string{"integer", "number"} {
+		compiler, plain := compileSchemaYAML(t, "type: "+schemaType, "")
+		for _, format := range []string{"int32", "int64", "float", "double", "vendor-number"} {
+			formatted := compileInto(t, compiler, "type: "+schemaType+"\nformat: "+format)
+			require.Equal(t, plain, formatted, schemaType+"/"+format)
+		}
+	}
+}
+
 // TestIntersectDomainsMergesKindsNumbersAndEnums verifies scalar and finite intersections.
 func TestIntersectDomainsMergesKindsNumbersAndEnums(t *testing.T) {
 	t.Parallel()
@@ -85,7 +99,6 @@ format: double`)
 	require.Equal(t, "2", domain.Number.Minimum.Value.Lexeme)
 	require.Equal(t, "20", domain.Number.Maximum.Value.Lexeme)
 	require.Equal(t, "7.5", domain.Number.MultipleOf.Lexeme)
-	require.Equal(t, "int64", *domain.Number.Format)
 
 	stringNullable := compileInto(t, compiler, `type: string
 nullable: true`)
@@ -103,6 +116,156 @@ nullable: true`)
   - enum: [null, false, 1.0, text]`, "")
 	enumDomain := mustDomain(t, enumCompiler.Domains, enumID)
 	require.Len(t, enumDomain.Enum.Values, 3)
+}
+
+// TestCompilerExcludesNestedEnumCandidatesWithDefiniteFailures verifies a
+// modeled false dominates opaque membership regardless of traversal order.
+func TestCompilerExcludesNestedEnumCandidatesWithDefiniteFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+		repeat int
+	}{
+		{
+			name: "array opaque first",
+			schema: `allOf:
+  - enum: [[opaque, ""]]
+  - type: array
+    minItems: 2
+    maxItems: 2
+    items: {type: string, minLength: 1, pattern: '^opaque$', x-valid-examples: [opaque]}`,
+			repeat: 1,
+		},
+		{
+			name: "array failure first",
+			schema: `allOf:
+  - enum: [["", opaque]]
+  - type: array
+    minItems: 2
+    maxItems: 2
+    items: {type: string, minLength: 1, pattern: '^opaque$', x-valid-examples: [opaque]}`,
+			repeat: 1,
+		},
+		{
+			name: "object stable across repeated allOf compilation",
+			schema: `allOf:
+  - enum: [{opaque: opaque, failing: ""}]
+  - type: object
+    required: [opaque, failing]
+    maxProperties: 2
+    properties:
+      opaque: {type: string, pattern: '^opaque$', x-valid-examples: [opaque]}
+      failing: {type: string, minLength: 1}
+    additionalProperties: false`,
+			repeat: 100,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			for range tt.repeat {
+				compiler := NewCompiler(parseSchemaSource(t, tt.schema, "", "create"))
+				root, err := compiler.Compile()
+				require.NoError(t, err)
+				require.Equal(t, EmptyDomainID, root)
+			}
+		})
+	}
+}
+
+// TestObjectMembershipKeepsLastDuplicatesAndUnrelatedErrors verifies stable
+// member traversal retains the previous last-value semantics without hiding errors.
+func TestObjectMembershipKeepsLastDuplicatesAndUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+
+	registry := NewDomainRegistry()
+	stringID := registry.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindString))
+	object := singleKindDomain(jsonvalue.KindObject)
+	object.Object = ObjectConstraints{
+		State: KindRestricted,
+		Properties: []NamedProperty{{
+			Name: "value", State: PropertyAllowed, Values: stringID,
+		}},
+		Additional: AdditionalProperties{Values: EmptyDomainID},
+	}
+	compiler := &Compiler{Domains: registry}
+
+	validLast := jsonvalue.Value{Kind: jsonvalue.KindObject, Object: []jsonvalue.Member{
+		{Name: "value", Value: mustJSONValue(t, `0`)},
+		{Name: "value", Value: mustJSONValue(t, `"ok"`)},
+	}}
+	matches, err := compiler.valueFitsDomain(validLast, object)
+	require.NoError(t, err)
+	require.True(t, matches)
+
+	invalidLast := jsonvalue.Value{Kind: jsonvalue.KindObject, Object: []jsonvalue.Member{
+		{Name: "value", Value: mustJSONValue(t, `"ok"`)},
+		{Name: "value", Value: mustJSONValue(t, `0`)},
+	}}
+	matches, err = compiler.valueFitsDomain(invalidLast, object)
+	require.NoError(t, err)
+	require.False(t, matches)
+
+	opaque := singleKindDomain(jsonvalue.KindString)
+	opaque.String = StringConstraints{State: KindRestricted, Patterns: []string{"^opaque$"}}
+	opaqueID := registry.FindOrAddEquivalentDomain(opaque)
+	object.Object.Properties = []NamedProperty{
+		{Name: "opaque", State: PropertyAllowed, Values: opaqueID},
+		{Name: "missing", State: PropertyAllowed, Values: DomainID(9999)},
+	}
+	candidate := jsonvalue.Value{Kind: jsonvalue.KindObject, Object: []jsonvalue.Member{
+		{Name: "opaque", Value: mustJSONValue(t, `"opaque"`)},
+		{Name: "missing", Value: mustJSONValue(t, `true`)},
+	}}
+	_, err = compiler.valueFitsDomain(candidate, object)
+	require.ErrorContains(t, err, "object property Domain does not exist")
+}
+
+// TestContainerMembershipHardErrorsDominateFalseInEveryOrder verifies recursive
+// aggregation cannot hide an invalid child Domain behind an earlier modeled failure.
+func TestContainerMembershipHardErrorsDominateFalseInEveryOrder(t *testing.T) {
+	t.Parallel()
+
+	registry := NewDomainRegistry()
+	stringID := registry.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindString))
+	object := singleKindDomain(jsonvalue.KindObject)
+	object.Object = ObjectConstraints{
+		State: KindRestricted,
+		Properties: []NamedProperty{
+			{Name: "false", State: PropertyAllowed, Values: stringID},
+			{Name: "missing", State: PropertyAllowed, Values: DomainID(9999)},
+		},
+		Additional: AdditionalProperties{Values: EmptyDomainID},
+	}
+	objectID := DomainID(len(registry.Domains))
+	registry.Domains = append(registry.Domains, object)
+	array := singleKindDomain(jsonvalue.KindArray)
+	array.Array = ArrayConstraints{State: KindRestricted, Items: objectID}
+	compiler := &Compiler{Domains: registry}
+
+	falseMember := jsonvalue.Member{Name: "false", Value: mustJSONValue(t, `0`)}
+	hardMember := jsonvalue.Member{Name: "missing", Value: mustJSONValue(t, `true`)}
+
+	objects := []jsonvalue.Value{
+		{Kind: jsonvalue.KindObject, Object: []jsonvalue.Member{falseMember, hardMember}},
+		{Kind: jsonvalue.KindObject, Object: []jsonvalue.Member{hardMember, falseMember}},
+	}
+	for _, candidate := range objects {
+		_, err := compiler.valueFitsDomain(candidate, object)
+		require.ErrorContains(t, err, "object property Domain does not exist")
+	}
+
+	for _, values := range [][]jsonvalue.Value{
+		{mustJSONValue(t, `0`), objects[1]},
+		{objects[1], mustJSONValue(t, `0`)},
+	} {
+		_, err := compiler.valueFitsDomain(jsonvalue.Array(values), array)
+		require.ErrorContains(t, err, "object property Domain does not exist")
+	}
 }
 
 // TestIntersectDomainsHandlesArrayAndObjectProductivity verifies recursive container feasibility.

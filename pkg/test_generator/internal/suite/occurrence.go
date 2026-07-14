@@ -1,10 +1,13 @@
 package suite
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // meet pairs the canonical semantic intersection with the exact recursive occurrences that produced it.
 func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, error) {
-	leftDomain, rightDomain, resultDomain, domain, err := compiler.meetDomains(left, right)
+	leftDomain, rightDomain, _, domain, err := compiler.meetDomains(left, right)
 	if err != nil {
 		return nil, err
 	}
@@ -18,6 +21,8 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		pointer:     left.pointer,
 		domain:      domain,
 		localDomain: left.localDomain,
+		arrayShape:  left.arrayShape,
+		objectShape: left.objectShape,
 		constraints: append(append([]ConstraintSource(nil), left.constraints...), right.constraints...),
 		examples:    examples,
 		atomic:      left.atomic,
@@ -25,7 +30,7 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		resolved:    left.resolved,
 	}
 
-	if err := compiler.meetChildren(result, left, leftDomain, right, rightDomain, resultDomain); err != nil {
+	if err := compiler.meetChildren(result, left, leftDomain, right, rightDomain); err != nil {
 		return nil, err
 	}
 
@@ -73,78 +78,321 @@ func (compiler *Compiler) meetChildren(
 	leftDomain Domain,
 	right *schemaUse,
 	rightDomain Domain,
-	resultDomain Domain,
 ) error {
-	items, present, err := compiler.meetChild(
-		left.items,
-		leftDomain.Array.Items,
-		right.items,
-		rightDomain.Array.Items,
-		resultDomain.Array.Items,
-	)
-	if err != nil {
-		return fmt.Errorf("meet array items: %w", err)
+	if err := compiler.meetArrayOccurrence(result, left, leftDomain, right, rightDomain); err != nil {
+		return err
 	}
 
-	if present {
-		result.items = items
-	}
-
-	additional, present, err := compiler.meetChild(
-		left.additional,
-		leftDomain.Object.Additional.Values,
-		right.additional,
-		rightDomain.Object.Additional.Values,
-		resultDomain.Object.Additional.Values,
-	)
-	if err != nil {
-		return fmt.Errorf("meet additional properties: %w", err)
-	}
-
-	if present {
-		result.additional = additional
-	}
-
-	return compiler.meetProperties(result, left, leftDomain.Object, right, rightDomain.Object, resultDomain.Object)
+	return compiler.meetObjectOccurrence(result, left, leftDomain, right, rightDomain)
 }
 
-// meetProperties recursively pairs every schema-valued property policy.
-func (compiler *Compiler) meetProperties(
+// meetArrayOccurrence composes planning shape and exact item provenance symmetrically.
+func (compiler *Compiler) meetArrayOccurrence(
+	result *schemaUse,
+	left *schemaUse,
+	leftDomain Domain,
+	right *schemaUse,
+	rightDomain Domain,
+) error {
+	leftArray, leftPresent, err := compiler.occurrenceArrayShape(left, leftDomain)
+	if err != nil {
+		return err
+	}
+
+	rightArray, rightPresent, err := compiler.occurrenceArrayShape(right, rightDomain)
+	if err != nil {
+		return err
+	}
+
+	if !leftPresent || !rightPresent {
+		return nil
+	}
+
+	leftItemUse, leftItems := occurrenceArrayItemPolicy(left, leftArray)
+	rightItemUse, rightItems := occurrenceArrayItemPolicy(right, rightArray)
+
+	items, itemUse, itemPresent, err := compiler.meetArrayItems(
+		leftItemUse,
+		leftItems,
+		rightItemUse,
+		rightItems,
+	)
+	if err != nil {
+		return err
+	}
+
+	if itemPresent {
+		result.items = itemUse
+	}
+
+	planning := arrayPlanningShape(leftArray, rightArray, items, itemPresent)
+	result.arrayShape = compiler.Domains.FindOrAddEquivalentDomain(arrayRuleDomain(planning))
+
+	return nil
+}
+
+// meetArrayItems intersects item policies and composes their exact occurrences.
+func (compiler *Compiler) meetArrayItems(
+	leftUse *schemaUse,
+	leftValues DomainID,
+	rightUse *schemaUse,
+	rightValues DomainID,
+) (DomainID, *schemaUse, bool, error) {
+	items, err := compiler.Domains.IntersectDomains(leftValues, rightValues)
+	if err != nil {
+		return NoDomain, nil, false, fmt.Errorf("meet array item Domains: %w", err)
+	}
+
+	use, present, err := compiler.meetChild(leftUse, leftValues, rightUse, rightValues, items)
+	if err != nil {
+		return NoDomain, nil, false, fmt.Errorf("meet array items: %w", err)
+	}
+
+	return items, use, present, nil
+}
+
+// arrayPlanningShape retains counts while opening only a proven contradictory item seam.
+func arrayPlanningShape(
+	left ArrayConstraints,
+	right ArrayConstraints,
+	items DomainID,
+	itemPresent bool,
+) ArrayConstraints {
+	planningItems := items
+	if items == EmptyDomainID && itemPresent {
+		planningItems = AnyJSONDomainID
+	}
+
+	planning := ArrayConstraints{
+		State:    KindRestricted,
+		Items:    planningItems,
+		MinItems: max(left.MinItems, right.MinItems),
+		MaxItems: smallerInt(left.MaxItems, right.MaxItems),
+	}
+	if items == EmptyDomainID && !itemPresent {
+		planning.MaxItems = new(0)
+	}
+
+	return planning
+}
+
+// occurrenceArrayItemPolicy restores an exact contradictory seam relaxed in the planning shape.
+func occurrenceArrayItemPolicy(use *schemaUse, shape ArrayConstraints) (*schemaUse, DomainID) {
+	if use.items != nil {
+		return use.items, use.items.domain
+	}
+
+	return nil, shape.Items
+}
+
+// occurrenceArrayShape returns one canonical planning policy without DomainID provenance lookup.
+func (compiler *Compiler) occurrenceArrayShape(use *schemaUse, semantic Domain) (ArrayConstraints, bool, error) {
+	if use.arrayShape != NoDomain {
+		shape, ok := compiler.Domains.Domain(use.arrayShape)
+		if !ok {
+			return ArrayConstraints{}, false, fmt.Errorf("array planning Domain %d does not exist", use.arrayShape)
+		}
+
+		return shape.Array, shape.Array.State != KindExcluded, nil
+	}
+
+	return semantic.Array, semantic.Array.State != KindExcluded, nil
+}
+
+// meetObjectOccurrence composes planning shape and exact property provenance symmetrically.
+func (compiler *Compiler) meetObjectOccurrence(
+	result *schemaUse,
+	left *schemaUse,
+	leftDomain Domain,
+	right *schemaUse,
+	rightDomain Domain,
+) error {
+	leftObject, leftPresent, err := compiler.occurrenceObjectShape(left, leftDomain)
+	if err != nil {
+		return err
+	}
+
+	rightObject, rightPresent, err := compiler.occurrenceObjectShape(right, rightDomain)
+	if err != nil {
+		return err
+	}
+
+	if !leftPresent || !rightPresent {
+		return nil
+	}
+
+	leftAdditionalUse, leftAdditional := occurrenceAdditionalPolicy(left, leftObject)
+	rightAdditionalUse, rightAdditional := occurrenceAdditionalPolicy(right, rightObject)
+
+	additional, additionalUse, additionalPresent, err := compiler.meetAdditionalOccurrence(
+		leftAdditionalUse,
+		leftAdditional,
+		rightAdditionalUse,
+		rightAdditional,
+	)
+	if err != nil {
+		return err
+	}
+
+	if additionalPresent {
+		result.additional = additionalUse
+	}
+
+	properties, err := compiler.meetObjectPlanningProperties(result, left, leftObject, right, rightObject)
+	if err != nil {
+		return err
+	}
+
+	planning := ObjectConstraints{
+		State:      KindRestricted,
+		Properties: properties,
+		Additional: AdditionalProperties{Values: planningAdditionalPolicy(additional, additionalPresent)},
+		MinProps:   max(leftObject.MinProps, rightObject.MinProps),
+		MaxProps:   smallerInt(leftObject.MaxProps, rightObject.MaxProps),
+	}
+	result.objectShape = compiler.Domains.FindOrAddEquivalentDomain(objectRuleDomain(planning))
+
+	return nil
+}
+
+// meetAdditionalOccurrence intersects the policy and composes exact schema provenance.
+func (compiler *Compiler) meetAdditionalOccurrence(
+	leftUse *schemaUse,
+	leftValues DomainID,
+	rightUse *schemaUse,
+	rightValues DomainID,
+) (DomainID, *schemaUse, bool, error) {
+	additional, err := compiler.Domains.IntersectDomains(leftValues, rightValues)
+	if err != nil {
+		return NoDomain, nil, false, fmt.Errorf("meet additional property Domains: %w", err)
+	}
+
+	use, present, err := compiler.meetChild(leftUse, leftValues, rightUse, rightValues, additional)
+	if err != nil {
+		return NoDomain, nil, false, fmt.Errorf("meet additional properties: %w", err)
+	}
+
+	return additional, use, present, nil
+}
+
+// planningAdditionalPolicy opens only an Empty policy backed by a schema occurrence.
+func planningAdditionalPolicy(additional DomainID, present bool) DomainID {
+	if additional == EmptyDomainID && present {
+		return AnyJSONDomainID
+	}
+
+	return additional
+}
+
+// occurrenceAdditionalPolicy restores an exact contradictory seam relaxed in the planning shape.
+func occurrenceAdditionalPolicy(use *schemaUse, shape ObjectConstraints) (*schemaUse, DomainID) {
+	if use.additional != nil {
+		return use.additional, use.additional.domain
+	}
+
+	return nil, shape.Additional.Values
+}
+
+// occurrenceObjectShape returns one canonical planning policy without DomainID provenance lookup.
+func (compiler *Compiler) occurrenceObjectShape(use *schemaUse, semantic Domain) (ObjectConstraints, bool, error) {
+	if use.objectShape != NoDomain {
+		shape, ok := compiler.Domains.Domain(use.objectShape)
+		if !ok {
+			return ObjectConstraints{}, false, fmt.Errorf("object planning Domain %d does not exist", use.objectShape)
+		}
+
+		return shape.Object, shape.Object.State != KindExcluded, nil
+	}
+
+	return semantic.Object, semantic.Object.State != KindExcluded, nil
+}
+
+// meetObjectPlanningProperties composes every explicit-or-additional property policy.
+func (compiler *Compiler) meetObjectPlanningProperties(
 	result *schemaUse,
 	left *schemaUse,
 	leftObject ObjectConstraints,
 	right *schemaUse,
 	rightObject ObjectConstraints,
-	resultObject ObjectConstraints,
-) error {
+) ([]NamedProperty, error) {
 	leftProperties := propertyConstraintsByName(leftObject.Properties)
 	rightProperties := propertyConstraintsByName(rightObject.Properties)
+	names := objectPropertyNames(leftProperties, rightProperties)
 
-	for _, property := range resultObject.Properties {
-		leftUse, leftValues := occurrencePropertyPolicy(
+	orderedNames := make([]string, 0, len(names))
+	for name := range names {
+		orderedNames = append(orderedNames, name)
+	}
+
+	sort.Strings(orderedNames)
+
+	properties := make([]NamedProperty, 0, len(orderedNames))
+	for _, name := range orderedNames {
+		property, propertyUse, err := compiler.meetObjectPlanningProperty(
 			left,
 			leftProperties,
 			leftObject.Additional,
-			property.Name,
-		)
-		rightUse, rightValues := occurrencePropertyPolicy(
 			right,
 			rightProperties,
 			rightObject.Additional,
-			property.Name,
+			name,
 		)
-
-		use, present, childErr := compiler.meetChild(leftUse, leftValues, rightUse, rightValues, property.Values)
-		if childErr != nil {
-			return fmt.Errorf("meet property %q: %w", property.Name, childErr)
+		if err != nil {
+			return nil, err
 		}
 
-		if present {
-			result.properties = append(result.properties, schemaPropertyUse{name: property.Name, use: use})
+		properties = append(properties, property)
+		if propertyUse != nil {
+			result.properties = append(result.properties, schemaPropertyUse{name: name, use: propertyUse})
 		}
 	}
 
-	return nil
+	return properties, nil
+}
+
+// meetObjectPlanningProperty composes one named policy and its exact child seam.
+func (compiler *Compiler) meetObjectPlanningProperty(
+	left *schemaUse,
+	leftProperties map[string]NamedProperty,
+	leftAdditional AdditionalProperties,
+	right *schemaUse,
+	rightProperties map[string]NamedProperty,
+	rightAdditional AdditionalProperties,
+	name string,
+) (NamedProperty, *schemaUse, error) {
+	leftUse, leftValues := occurrencePropertyPolicy(left, leftProperties, leftAdditional, name)
+	rightUse, rightValues := occurrencePropertyPolicy(right, rightProperties, rightAdditional, name)
+
+	values, err := compiler.Domains.IntersectDomains(leftValues, rightValues)
+	if err != nil {
+		return NamedProperty{}, nil, fmt.Errorf("meet property %q Domains: %w", name, err)
+	}
+
+	use, present, err := compiler.meetChild(leftUse, leftValues, rightUse, rightValues, values)
+	if err != nil {
+		return NamedProperty{}, nil, fmt.Errorf("meet property %q: %w", name, err)
+	}
+
+	required := leftProperties[name].Required || rightProperties[name].Required
+
+	if values == EmptyDomainID {
+		if present {
+			return NamedProperty{
+				Name: name, Required: required, State: PropertyAllowed, Values: AnyJSONDomainID,
+			}, use, nil
+		}
+
+		return NamedProperty{
+			Name: name, Required: required, State: PropertyForbidden, Values: EmptyDomainID,
+		}, nil, nil
+	}
+
+	property := NamedProperty{Name: name, Required: required, State: PropertyAllowed, Values: values}
+	if present {
+		return property, use, nil
+	}
+
+	return property, nil, nil
 }
 
 // meetChild combines child provenance when both policies are schema-valued.
@@ -241,7 +489,6 @@ func (use *schemaUse) preserveChildPlanningParity(left *schemaUse, right *schema
 
 	use.pointer = source.pointer
 	use.localDomain = source.localDomain
-	use.constraints = append([]ConstraintSource(nil), source.constraints...)
 	use.atomic = source.atomic
 	use.resolved = source.resolved
 }
@@ -288,10 +535,14 @@ func occurrencePropertyPolicy(
 
 	propertyUse := use.property(name)
 	if propertyUse == nil {
-		return use.additional, additional.Values
+		if use.additional != nil {
+			return use.additional, use.additional.domain
+		}
+
+		return nil, additional.Values
 	}
 
-	return propertyUse, property.Values
+	return propertyUse, propertyUse.domain
 }
 
 // property returns the exact declared-property occurrence.

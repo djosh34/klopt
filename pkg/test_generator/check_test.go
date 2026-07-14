@@ -50,6 +50,10 @@ func TestCheckJSONRequestBodyFindsBuggyValidatorsByKeywordFamily(t *testing.T) {
 		"unicode-length", "maximum", "exclusive-minimum", "multiple-of",
 		"pattern", "format", "array-items", "recursive-array-items", "required",
 		"additional-properties", "recursive-object-property", "enum",
+		"dual-multiple", "context-array-enum", "context-object-enum",
+		"contradictory-items", "contradictory-additional", "contradictory-optional",
+		"integer-number-allof", "exact-invalid-evidence", "exact-valid-evidence",
+		"exact-invalid-property", "exact-invalid-item", "exact-invalid-ref",
 	}
 	fixtures := validatorBugFixtures()
 
@@ -70,6 +74,10 @@ func TestCheckJSONRequestBodyFindsBuggyValidatorsByKeywordFamily(t *testing.T) {
 			output, err := command.CombinedOutput()
 			require.Error(t, err)
 			require.Contains(t, string(output), fixtures[family].failure)
+
+			if fixtures[family].caseName != "" {
+				require.Contains(t, string(output), fixtures[family].caseName)
+			}
 		})
 	}
 }
@@ -85,9 +93,12 @@ func TestCheckJSONRequestBodyBuggyValidatorHelper(t *testing.T) {
 
 	fixture, ok := validatorBugFixtures()[family]
 	require.True(t, ok)
+
+	spec := requestBodySpec(fixture.schema)
+	spec = append(spec, fixture.components...)
 	CheckJSONRequestBody(
 		t,
-		requestBodySpec(fixture.schema),
+		spec,
 		"checkThing",
 		fixture.validate,
 		DefaultOption,
@@ -96,9 +107,11 @@ func TestCheckJSONRequestBodyBuggyValidatorHelper(t *testing.T) {
 
 // validatorBugFixture describes a schema and a validator bug that the generated checks must find.
 type validatorBugFixture struct {
-	schema   string
-	failure  string
-	validate func([]byte) error
+	schema     string
+	components []byte
+	failure    string
+	caseName   string
+	validate   func([]byte) error
 }
 
 // validatorBugFixtures returns all deliberately buggy validator fixtures by keyword family.
@@ -191,6 +204,63 @@ func scalarValidatorBugFixtures() map[string]validatorBugFixture {
 			failure:  "invalid JSON accepted",
 			validate: booleanValidator,
 		},
+		"dual-multiple": {
+			schema: `
+      type: number
+      minimum: 0
+      maximum: 6
+      allOf:
+        - {multipleOf: 2}
+        - {multipleOf: 3}
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_multipleOf_1",
+			validate: numberValidator(func(value json.Number) bool {
+				number, err := value.Int64()
+
+				return err == nil && number >= 0 && number <= 6 && number%3 == 0
+			}),
+		},
+		"integer-number-allof": {
+			schema: `
+      allOf:
+        - {type: integer}
+        - {type: number, minimum: 0, maximum: 0.1}
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_type_6",
+			validate: numberValidator(integerNumberAllOfMutant),
+		},
+		"exact-invalid-evidence": {
+			schema: `
+      pattern: '^x$'
+      x-valid-examples: [x]
+      x-invalid-examples: [null]
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_exact_evidence_1",
+			validate: func([]byte) error { return nil },
+		},
+		"exact-valid-evidence": {
+			schema: `
+      pattern: '^x$'
+      x-valid-examples: [[1]]
+`,
+			failure:  "valid JSON rejected",
+			caseName: "valid_exact_evidence_1",
+			validate: func(body []byte) error {
+				var value any
+				if err := json.Unmarshal(body, &value); err != nil {
+					return errors.New("rejected")
+				}
+
+				if _, array := value.([]any); array {
+					return errors.New("rejected")
+				}
+
+				return nil
+			},
+		},
 	}
 }
 
@@ -238,6 +308,53 @@ func arrayValidatorBugFixtures() map[string]validatorBugFixture {
 `,
 			failure:  "invalid JSON accepted",
 			validate: recursiveArrayItemsMutant,
+		},
+		"context-array-enum": {
+			schema: `
+      type: array
+      minItems: 1
+      maxItems: 1
+      items: {type: integer, minimum: 0, maximum: 1}
+      enum: [[0]]
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_enum_1",
+			validate: func(body []byte) error {
+				var values []int
+
+				return json.Unmarshal(body, &values)
+			},
+		},
+		"contradictory-items": {
+			schema: `
+      type: array
+      items:
+        allOf:
+          - {type: string}
+          - {type: boolean}
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_contradictory_array_items",
+			validate: func(body []byte) error {
+				var values []any
+
+				return json.Unmarshal(body, &values)
+			},
+		},
+		"exact-invalid-item": {
+			schema: `
+      type: array
+      minItems: 1
+      maxItems: 1
+      items: {type: string, pattern: '^x$', x-valid-examples: [x], x-invalid-examples: [1]}
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_exact_evidence_1",
+			validate: func(body []byte) error {
+				var value []any
+
+				return json.Unmarshal(body, &value)
+			},
 		},
 	}
 }
@@ -312,7 +429,104 @@ func objectValidatorBugFixtures() map[string]validatorBugFixture {
 			failure:  "invalid JSON accepted",
 			validate: recursiveObjectPropertyMutant,
 		},
+		"context-object-enum": {
+			schema: `
+      type: object
+      required: [value]
+      properties:
+        value: {type: integer, minimum: 0, maximum: 1}
+      additionalProperties: false
+      enum: [{value: 0}]
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_enum_1",
+			validate: func(body []byte) error {
+				var value map[string]int
+
+				return json.Unmarshal(body, &value)
+			},
+		},
+		"contradictory-additional": {
+			schema: `
+      type: object
+      additionalProperties:
+        allOf:
+          - {type: string}
+          - {type: boolean}
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_contradictory_additional_property",
+			validate: func(body []byte) error {
+				var value map[string]any
+
+				return json.Unmarshal(body, &value)
+			},
+		},
+		"contradictory-optional": {
+			schema: `
+      type: object
+      properties:
+        value:
+          allOf:
+            - {type: string}
+            - {type: boolean}
+      additionalProperties: false
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_contradictory_optional_property_value",
+			validate: func(body []byte) error {
+				var value map[string]any
+
+				return json.Unmarshal(body, &value)
+			},
+		},
+		"exact-invalid-property": {
+			schema: `
+      type: object
+      required: [value]
+      maxProperties: 1
+      properties:
+        value: {type: string, pattern: '^x$', x-valid-examples: [x], x-invalid-examples: [1]}
+      additionalProperties: false
+`,
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_exact_evidence_1",
+			validate: func(body []byte) error {
+				var value map[string]any
+
+				return json.Unmarshal(body, &value)
+			},
+		},
+		"exact-invalid-ref": {
+			schema: `
+      type: object
+      required: [value]
+      maxProperties: 1
+      properties:
+        value: {$ref: '#/components/schemas/Evidence'}
+      additionalProperties: false
+`,
+			components: []byte(`
+components:
+  schemas:
+    Evidence: {type: string, pattern: '^x$', x-valid-examples: [x], x-invalid-examples: [1]}
+`),
+			failure:  "invalid JSON accepted",
+			caseName: "invalid_exact_evidence_1",
+			validate: func(body []byte) error {
+				var value map[string]any
+
+				return json.Unmarshal(body, &value)
+			},
+		},
 	}
+}
+
+// integerNumberAllOfMutant accepts bounded non-integers by ignoring the integer branch.
+func integerNumberAllOfMutant(value json.Number) bool {
+	number, err := value.Float64()
+
+	return err == nil && number >= 0 && number <= 0.1
 }
 
 // recursiveArrayItemsMutant deliberately omits the second conjoined item maximum.
