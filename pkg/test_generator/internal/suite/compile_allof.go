@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"decode_and_validate_generator/pkg/internal/jsonvalue"
 	"decode_and_validate_generator/pkg/internal/oas"
+	"decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // compileAllOf folds each allOf child into the local sibling occurrence.

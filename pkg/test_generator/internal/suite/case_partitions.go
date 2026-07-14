@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"decode_and_validate_generator/pkg/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // labeledIntBoundary identifies an integer boundary used to name a partition.

@@ -4,7 +4,7 @@ package suite
 import (
 	"fmt"
 
-	"decode_and_validate_generator/pkg/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/jsonvalue"
 	"pgregory.net/rapid"
 )
 

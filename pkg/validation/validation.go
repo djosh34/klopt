@@ -1,16 +1,17 @@
 // Package validation parses one OpenAPI 3.0.3 JSON request schema and validates
 // raw JSON request bodies against an immutable compiled graph.
 //
-// Parse is the only supported constructor. Direct construction, invalid field
-// combinations, mutation after parsing, and mutation concurrent with Validate
-// have undefined behavior.
+// Parse is the OpenAPI constructor. Callers may also construct a compiled graph
+// directly by populating every exported textual and exact field consistently.
+// Invalid field combinations, mutation after construction, and mutation
+// concurrent with Validate have undefined behavior.
 package validation
 
 import (
 	"encoding/json"
 	"regexp"
 
-	"decode_and_validate_generator/pkg/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // Validation is one compiled OpenAPI Schema Object.
@@ -38,7 +39,8 @@ type KindValidation struct {
 type EnumValidation struct {
 	Values []json.RawMessage
 
-	exactValues []jsonvalue.Value
+	// ExactValues is the compiled semantic form of Values used by Validate.
+	ExactValues []jsonvalue.Value
 }
 
 // NumberBound is one exact inclusive or exclusive decimal bound.
@@ -46,7 +48,8 @@ type NumberBound struct {
 	Value     string
 	Exclusive bool
 
-	exactValue jsonvalue.Number
+	// ExactValue is the compiled numeric form of Value used by Validate.
+	ExactValue jsonvalue.Number
 }
 
 // NumberValidation holds exact numeric constraints.
@@ -55,14 +58,16 @@ type NumberValidation struct {
 	Maximum    *NumberBound
 	MultipleOf string
 
-	exactMultipleOf *jsonvalue.Number
+	// ExactMultipleOf is the compiled numeric form of MultipleOf used by Validate.
+	ExactMultipleOf *jsonvalue.Number
 }
 
 // CountBound is one exact non-negative integer bound for a collection or string length.
 type CountBound struct {
 	Value string
 
-	exactValue jsonvalue.Number
+	// ExactValue is the compiled numeric form of Value used by Validate.
+	ExactValue jsonvalue.Number
 }
 
 // StringValidation holds string-specific constraints.
@@ -72,7 +77,8 @@ type StringValidation struct {
 	Pattern   string
 	Format    string
 
-	compiledPattern *regexp.Regexp
+	// CompiledPattern is the compiled form of Pattern used by Validate.
+	CompiledPattern *regexp.Regexp
 }
 
 // ArrayValidation holds array-specific constraints.

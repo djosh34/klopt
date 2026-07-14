@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"decode_and_validate_generator/pkg/internal/jsonvalue"
 	"decode_and_validate_generator/pkg/internal/oas"
+	"decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // Parse selects one operation's JSON request body and compiles its reachable schema graph.
@@ -371,7 +371,7 @@ func compileEnum(validation *Validation, pointer string, members map[string]json
 
 	validation.EnumValidation.Values = make([]json.RawMessage, len(values))
 
-	validation.EnumValidation.exactValues = make([]jsonvalue.Value, len(values))
+	validation.EnumValidation.ExactValues = make([]jsonvalue.Value, len(values))
 	for index, value := range values {
 		exact, err := jsonvalue.Parse(value)
 		if err != nil {
@@ -379,7 +379,7 @@ func compileEnum(validation *Validation, pointer string, members map[string]json
 		}
 
 		validation.EnumValidation.Values[index] = append(json.RawMessage(nil), value...)
-		validation.EnumValidation.exactValues[index] = exact
+		validation.EnumValidation.ExactValues[index] = exact
 	}
 
 	return nil
@@ -411,13 +411,13 @@ func compileNumber(validation *Validation, pointer string, members map[string]js
 
 	if minimum != nil {
 		validation.NumberValidation.Minimum = &NumberBound{
-			Value: minimum.Lexeme, Exclusive: exclusiveMinimum, exactValue: *minimum,
+			Value: minimum.Lexeme, Exclusive: exclusiveMinimum, ExactValue: *minimum,
 		}
 	}
 
 	if maximum != nil {
 		validation.NumberValidation.Maximum = &NumberBound{
-			Value: maximum.Lexeme, Exclusive: exclusiveMaximum, exactValue: *maximum,
+			Value: maximum.Lexeme, Exclusive: exclusiveMaximum, ExactValue: *maximum,
 		}
 	}
 
@@ -437,7 +437,7 @@ func compileNumber(validation *Validation, pointer string, members map[string]js
 		}
 
 		validation.NumberValidation.MultipleOf = multiple.Lexeme
-		validation.NumberValidation.exactMultipleOf = &multiple
+		validation.NumberValidation.ExactMultipleOf = &multiple
 	}
 
 	return nil
@@ -470,7 +470,7 @@ func compileString(validation *Validation, pointer string, members map[string]js
 		}
 
 		validation.StringValidation.Pattern = pattern
-		validation.StringValidation.compiledPattern = compiled
+		validation.StringValidation.CompiledPattern = compiled
 	}
 
 	if raw, ok := members["format"]; ok {
@@ -747,7 +747,7 @@ func decodeOptionalNonNegativeInteger(members map[string]json.RawMessage, keywor
 		return nil, fmt.Errorf("%s must be a non-negative integer", keyword)
 	}
 
-	return &CountBound{Value: value.Lexeme, exactValue: value}, nil
+	return &CountBound{Value: value.Lexeme, ExactValue: value}, nil
 }
 
 // decodeRequired decodes and lexically sorts unique required property names.

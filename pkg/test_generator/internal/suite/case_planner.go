@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"decode_and_validate_generator/pkg/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // CompileOption configures a Compiler.

@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"decode_and_validate_generator/pkg/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // Validate validates one present or absent raw JSON request body.
@@ -208,7 +208,7 @@ func (kind KindValidation) validate(validation *Validation, value instance, poin
 
 // validate applies exact semantic enum membership.
 func (enum EnumValidation) validate(validation *Validation, value instance, pointer string) []error {
-	if len(enum.exactValues) == 0 {
+	if len(enum.ExactValues) == 0 {
 		return nil
 	}
 
@@ -217,7 +217,7 @@ func (enum EnumValidation) validate(validation *Validation, value instance, poin
 		return []error{newValidationError(validation, pointer, "enum", err.Error())}
 	}
 
-	for _, allowed := range enum.exactValues {
+	for _, allowed := range enum.ExactValues {
 		if allowed.Equal(candidate) {
 			return nil
 		}
@@ -237,7 +237,7 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 	var errs []error
 
 	if number.Minimum != nil {
-		comparison := value.number.Compare(number.Minimum.exactValue)
+		comparison := value.number.Compare(number.Minimum.ExactValue)
 		if comparison < 0 || comparison == 0 && number.Minimum.Exclusive {
 			reason := fmt.Sprintf("value must be greater than or equal to %s", number.Minimum.Value)
 			keyword := "minimum"
@@ -252,7 +252,7 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 	}
 
 	if number.Maximum != nil {
-		comparison := value.number.Compare(number.Maximum.exactValue)
+		comparison := value.number.Compare(number.Maximum.ExactValue)
 		if comparison > 0 || comparison == 0 && number.Maximum.Exclusive {
 			reason := fmt.Sprintf("value must be less than or equal to %s", number.Maximum.Value)
 			keyword := "maximum"
@@ -266,7 +266,7 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 		}
 	}
 
-	if number.exactMultipleOf != nil && !value.number.IsMultipleOf(*number.exactMultipleOf) {
+	if number.ExactMultipleOf != nil && !value.number.IsMultipleOf(*number.ExactMultipleOf) {
 		errs = append(errs, newValidationError(
 			validation,
 			pointer,
@@ -303,7 +303,7 @@ func (stringValidation StringValidation) validate(
 		)))
 	}
 
-	if stringValidation.compiledPattern != nil && !stringValidation.compiledPattern.MatchString(value.string) {
+	if stringValidation.CompiledPattern != nil && !stringValidation.CompiledPattern.MatchString(value.string) {
 		errs = append(errs, newValidationError(validation, pointer, "pattern", fmt.Sprintf(
 			"string does not match %q", stringValidation.Pattern,
 		)))
@@ -471,7 +471,7 @@ func compareCount(count int, bound *CountBound) int {
 		Rational: new(big.Rat).SetInt64(int64(count)),
 	}
 
-	return value.Compare(bound.exactValue)
+	return value.Compare(bound.ExactValue)
 }
 
 // hasObjectMember searches lexically sorted raw members.
