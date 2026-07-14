@@ -194,10 +194,17 @@ type ConstraintSource struct {
 	Keyword string
 }
 
+// GenerationExample is one trusted generation input at its exact declaration.
+type GenerationExample struct {
+	Value  jsonvalue.Value
+	Source ConstraintSource
+}
+
 // GenerationExamples are trusted generation inputs and not Domain identity.
 type GenerationExamples struct {
-	Valid   []jsonvalue.Value
-	Invalid []jsonvalue.Value
+	Valid         []GenerationExample
+	Invalid       []GenerationExample
+	ValidDeclared bool
 }
 
 // schemaUse preserves one exact schema occurrence separately from its canonical Domain.

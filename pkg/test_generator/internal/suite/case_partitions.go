@@ -50,18 +50,7 @@ func (planner *CasePlanner) addValidPartitions(
 	}
 
 	if domain.Enum != nil {
-		for index, value := range domain.Enum.Values {
-			member := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{value}))
-			result.add(CasePlan{
-				Name:   caseName(fmt.Sprintf("valid enum member %d", index+1), use.pointer, "enum"),
-				Expect: ExpectAccepted,
-				Values: member,
-				Source: ConstraintSource{
-					Pointer: use.pointer,
-					Keyword: "enum",
-				},
-			})
-		}
+		planner.addEnumValidPartitions(result, domain.Enum, use)
 
 		return nil
 	}
@@ -75,6 +64,23 @@ func (planner *CasePlanner) addValidPartitions(
 	}
 
 	return planner.addObjectPartitions(result, domain, use, active)
+}
+
+// addEnumValidPartitions adds members retained by the effective occurrence oracle set.
+func (planner *CasePlanner) addEnumValidPartitions(result *caseSet, enum *EnumSet, use *schemaUse) {
+	for index, value := range enum.Values {
+		if use.examples.ValidDeclared && !generationExamplesContain(use.examples.Valid, value) {
+			continue
+		}
+
+		member := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{value}))
+		result.add(CasePlan{
+			Name:   caseName(fmt.Sprintf("valid enum member %d", index+1), use.pointer, "enum"),
+			Expect: ExpectAccepted,
+			Values: member,
+			Source: ConstraintSource{Pointer: use.pointer, Keyword: "enum"},
+		})
+	}
 }
 
 // addScalarValidPartitions adds numeric and string boundary partitions.
@@ -207,11 +213,11 @@ func (planner *CasePlanner) addStringLengthPartitions(
 // addTrustedStringPartitions adds accepted partitions for valid string examples.
 func (planner *CasePlanner) addTrustedStringPartitions(result *caseSet, root DomainID, use *schemaUse) error {
 	for index, example := range use.examples.Valid {
-		if example.Kind != jsonvalue.KindString {
+		if example.Value.Kind != jsonvalue.KindString {
 			continue
 		}
 
-		candidate := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example}))
+		candidate := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example.Value}))
 
 		value, err := planner.Domains.IntersectDomains(root, candidate)
 		if err != nil {

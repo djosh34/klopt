@@ -10,8 +10,8 @@ import (
 	"pgregory.net/rapid"
 )
 
-// TestRapidGeneratorBuilderMemoizesDomains verifies that each Domain generator is built once.
-func TestRapidGeneratorBuilderMemoizesDomains(t *testing.T) {
+// TestRapidGeneratorBuilderMemoizesOccurrences verifies that each occurrence generator is built once.
+func TestRapidGeneratorBuilderMemoizesOccurrences(t *testing.T) {
 	t.Parallel()
 
 	compiler := NewCompiler(parseSchemaSource(t, `type: array
@@ -21,10 +21,10 @@ items: {type: boolean}`, "", "create"))
 	compiled, err := compiler.CompileSuite()
 	require.NoError(t, err)
 
-	builder := NewRapidGeneratorBuilder(compiled.Domains, compiler.rootUse)
-	first, err := builder.Generator(compiled.Root)
+	builder := NewRapidGeneratorBuilder(compiled.Domains)
+	first, err := builder.Generator(compiled.Root, compiler.rootUse)
 	require.NoError(t, err)
-	second, err := builder.Generator(compiled.Root)
+	second, err := builder.Generator(compiled.Root, compiler.rootUse)
 	require.NoError(t, err)
 	require.Same(t, first, second)
 }
@@ -125,15 +125,6 @@ func TestAdditionalPropertyNamesNeverCollide(t *testing.T) {
 	require.Equal(t, "additional1", additionalPropertyName(properties, 0))
 	require.Equal(t, "additional3", additionalPropertyName(properties, 1))
 	require.Equal(t, "additional4", additionalPropertyName(properties, 2))
-}
-
-// TestStringLanguageKeysAreUnambiguous verifies trusted example caches cannot cross language sets.
-func TestStringLanguageKeysAreUnambiguous(t *testing.T) {
-	t.Parallel()
-
-	one := stringLanguageKey(StringConstraints{Patterns: []string{"a\x00b"}})
-	two := stringLanguageKey(StringConstraints{Patterns: []string{"a", "b"}})
-	require.NotEqual(t, one, two)
 }
 
 // TestCompileSuiteRejectsEmptyRoot verifies the public checker cannot silently execute zero cases.

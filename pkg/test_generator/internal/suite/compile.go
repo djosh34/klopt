@@ -98,8 +98,9 @@ func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *sch
 		localDomain: resolved.localDomain,
 		constraints: append([]ConstraintSource(nil), resolved.constraints...),
 		examples: GenerationExamples{
-			Valid:   cloneJSONValues(resolved.examples.Valid),
-			Invalid: cloneJSONValues(resolved.examples.Invalid),
+			Valid:         cloneGenerationExamples(resolved.examples.Valid),
+			Invalid:       cloneGenerationExamples(resolved.examples.Invalid),
+			ValidDeclared: resolved.examples.ValidDeclared,
 		},
 		atomic:     resolved.atomic,
 		items:      resolved.items,
@@ -185,9 +186,9 @@ func (compiler *Compiler) compileSchemaDomain(
 	members map[string]json.RawMessage,
 	active map[string]struct{},
 ) (Domain, []ConstraintSource, GenerationExamples, error) {
-	examples, err := compileGenerationExamples(members)
+	examples, err := compiler.compileLocalGenerationExamples(schema.Pointer, members)
 	if err != nil {
-		return Domain{}, nil, GenerationExamples{}, compiler.failure("compile", "malformed", schema.Pointer, "", err)
+		return Domain{}, nil, GenerationExamples{}, err
 	}
 
 	domain := anyJSONDomain()
@@ -223,11 +224,65 @@ func (compiler *Compiler) compileSchemaDomain(
 		return Domain{}, nil, GenerationExamples{}, compiler.failure("compile", "unconstructible", schema.Pointer, "", err)
 	}
 
-	if err := compiler.applyEnum(&domain, use, schema.Pointer, members, examples); err != nil {
+	if err := compiler.applyLocalOracles(&domain, use, schema.Pointer, members, &examples); err != nil {
 		return Domain{}, nil, GenerationExamples{}, err
 	}
 
 	return domain, constraints, examples, nil
+}
+
+// compileLocalGenerationExamples parses extension values and locates malformed input.
+func (compiler *Compiler) compileLocalGenerationExamples(
+	pointer string,
+	members map[string]json.RawMessage,
+) (GenerationExamples, error) {
+	examples, err := compileGenerationExamples(pointer, members)
+	if err == nil {
+		return examples, nil
+	}
+
+	var exampleError *generationExampleError
+	if errors.As(err, &exampleError) {
+		return GenerationExamples{}, compiler.failure(
+			"compile", "malformed", pointer, exampleError.Keyword, exampleError.Cause,
+		)
+	}
+
+	return GenerationExamples{}, compiler.failure("compile", "malformed", pointer, "", err)
+}
+
+// applyLocalOracles compiles enum cases and validates exact local oracle evidence.
+func (compiler *Compiler) applyLocalOracles(
+	domain *Domain,
+	use *schemaUse,
+	pointer string,
+	members map[string]json.RawMessage,
+	examples *GenerationExamples,
+) error {
+	if err := compiler.applyEnum(domain, use, pointer, members, examples); err != nil {
+		return err
+	}
+
+	if overlap := generationExampleOverlap(*examples); overlap != nil {
+		return compiler.failure(
+			"compile", "malformed", overlap.Source.Pointer, overlap.Source.Keyword,
+			errors.New("trusted value is declared both valid and invalid"),
+		)
+	}
+
+	if !hasOpaqueStringDomain(*domain) || examples.ValidDeclared && len(examples.Valid) > 0 {
+		return nil
+	}
+
+	keyword := "pattern"
+	if _, ok := members[keyword]; !ok {
+		keyword = "format"
+	}
+
+	return compiler.failure(
+		"compile", "unconstructible", pointer, keyword,
+		errors.New("pattern or format has no trusted valid example declared locally"),
+	)
 }
 
 // compileScalarConstraints applies number and string keyword families.
@@ -267,7 +322,7 @@ func (compiler *Compiler) applyEnum(
 	use *schemaUse,
 	pointer string,
 	members map[string]json.RawMessage,
-	examples GenerationExamples,
+	examples *GenerationExamples,
 ) error {
 	raw, ok := members["enum"]
 	if !ok {
@@ -300,18 +355,16 @@ func (compiler *Compiler) applyEnum(
 	}
 
 	use.atomic["enum"] = compiler.Domains.FindOrAddEquivalentDomain(finiteDomain(atomicValues))
-
-	values, err := compiler.compileEnum(raw, *domain, examples.Valid)
-	if err != nil {
-		code := "malformed"
-		if errors.Is(err, errUnconstructible) {
-			code = "unconstructible"
-		}
-
-		return compiler.failure("compile", code, pointer, "enum", err)
+	for _, value := range atomicValues {
+		appendGenerationExample(&examples.Valid, GenerationExample{
+			Value:  value,
+			Source: ConstraintSource{Pointer: pointer, Keyword: "enum"},
+		})
 	}
 
-	*domain = finiteDomain(values)
+	examples.ValidDeclared = true
+
+	*domain = finiteDomain(atomicValues)
 
 	return nil
 }
@@ -1289,45 +1342,133 @@ func eliminateContradictoryObjects(domain *Domain) {
 var errUnconstructible = errors.New("unconstructible")
 
 // compileGenerationExamples parses trusted valid and invalid generation examples.
-func compileGenerationExamples(members map[string]json.RawMessage) (GenerationExamples, error) {
+func compileGenerationExamples(pointer string, members map[string]json.RawMessage) (GenerationExamples, error) {
 	var examples GenerationExamples
 
-	entries := []struct {
-		keyword string
-		target  *[]jsonvalue.Value
-	}{
-		{keyword: "x-valid-examples", target: &examples.Valid},
-		{keyword: "x-invalid-examples", target: &examples.Invalid},
+	if err := validateGenerationExamplePlacement(members); err != nil {
+		return GenerationExamples{}, err
 	}
 
-	for _, entry := range entries {
-		keyword, target := entry.keyword, entry.target
-
-		raw, ok := members[keyword]
-		if !ok {
-			continue
-		}
-
-		if isJSONNull(raw) {
-			return GenerationExamples{}, fmt.Errorf("%s must be an array", keyword)
-		}
-
-		var values []json.RawMessage
-		if err := json.Unmarshal(raw, &values); err != nil {
-			return GenerationExamples{}, fmt.Errorf("%s must be an array: %w", keyword, err)
-		}
-
-		for _, valueRaw := range values {
-			value, err := jsonvalue.Parse(valueRaw)
-			if err != nil {
-				return GenerationExamples{}, fmt.Errorf("parse %s: %w", keyword, err)
-			}
-
-			*target = append(*target, value)
+	for _, keyword := range []string{"x-valid-examples", "x-invalid-examples"} {
+		if err := compileGenerationExampleKeyword(pointer, members, keyword, &examples); err != nil {
+			return GenerationExamples{}, err
 		}
 	}
 
 	return examples, nil
+}
+
+// generationExampleError locates malformed extension input at its keyword.
+type generationExampleError struct {
+	Keyword string
+	Cause   error
+}
+
+// Error returns the malformed extension cause.
+func (exampleError *generationExampleError) Error() string {
+	return exampleError.Cause.Error()
+}
+
+// validateGenerationExamplePlacement requires an opaque rule on the same Schema Object.
+func validateGenerationExamplePlacement(members map[string]json.RawMessage) error {
+	if hasOpaqueStringRule(members) {
+		return nil
+	}
+
+	for _, keyword := range []string{"x-valid-examples", "x-invalid-examples"} {
+		if _, ok := members[keyword]; ok {
+			return &generationExampleError{
+				Keyword: keyword,
+				Cause:   errors.New("extension requires a pattern or format on the same Schema Object"),
+			}
+		}
+	}
+
+	return nil
+}
+
+// compileGenerationExampleKeyword parses one valid or invalid extension array.
+func compileGenerationExampleKeyword(
+	pointer string,
+	members map[string]json.RawMessage,
+	keyword string,
+	examples *GenerationExamples,
+) error {
+	raw, ok := members[keyword]
+	if !ok {
+		return nil
+	}
+
+	target := &examples.Invalid
+	if keyword == "x-valid-examples" {
+		target = &examples.Valid
+		examples.ValidDeclared = true
+	}
+
+	if isJSONNull(raw) {
+		return &generationExampleError{Keyword: keyword, Cause: fmt.Errorf("%s must be an array", keyword)}
+	}
+
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return &generationExampleError{
+			Keyword: keyword, Cause: fmt.Errorf("%s must be an array: %w", keyword, err),
+		}
+	}
+
+	for _, valueRaw := range values {
+		value, err := jsonvalue.Parse(valueRaw)
+		if err != nil {
+			return &generationExampleError{Keyword: keyword, Cause: fmt.Errorf("parse %s: %w", keyword, err)}
+		}
+
+		appendGenerationExample(target, GenerationExample{
+			Value: value, Source: ConstraintSource{Pointer: pointer, Keyword: keyword},
+		})
+	}
+
+	return nil
+}
+
+// hasOpaqueStringRule reports whether a direct pattern or format is declared.
+func hasOpaqueStringRule(members map[string]json.RawMessage) bool {
+	_, hasPattern := members["pattern"]
+	_, hasFormat := members["format"]
+
+	return hasPattern || hasFormat
+}
+
+// hasOpaqueStringDomain reports whether a reachable string kind needs oracle evidence.
+func hasOpaqueStringDomain(domain Domain) bool {
+	return domain.String.State != KindExcluded &&
+		(len(domain.String.Patterns) > 0 || len(domain.String.Formats) > 0)
+}
+
+// appendGenerationExample appends one semantically distinct exact case.
+func appendGenerationExample(examples *[]GenerationExample, candidate GenerationExample) {
+	for _, example := range *examples {
+		if example.Value.Equal(candidate.Value) {
+			return
+		}
+	}
+
+	*examples = append(*examples, GenerationExample{
+		Value:  cloneJSONValue(candidate.Value),
+		Source: candidate.Source,
+	})
+}
+
+// generationExampleOverlap returns an invalid case also declared valid.
+func generationExampleOverlap(examples GenerationExamples) *GenerationExample {
+	for index := range examples.Invalid {
+		for _, valid := range examples.Valid {
+			if examples.Invalid[index].Value.Equal(valid.Value) {
+				return &examples.Invalid[index]
+			}
+		}
+	}
+
+	return nil
 }
 
 // constraintSources records the supported constraint keywords in source order.
@@ -1357,6 +1498,16 @@ func cloneJSONValues(values []jsonvalue.Value) []jsonvalue.Value {
 	result := make([]jsonvalue.Value, len(values))
 	for index, value := range values {
 		result[index] = cloneJSONValue(value)
+	}
+
+	return result
+}
+
+// cloneGenerationExamples deep-copies exact values and preserves their source.
+func cloneGenerationExamples(examples []GenerationExample) []GenerationExample {
+	result := make([]GenerationExample, len(examples))
+	for index, example := range examples {
+		result[index] = GenerationExample{Value: cloneJSONValue(example.Value), Source: example.Source}
 	}
 
 	return result

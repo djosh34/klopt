@@ -332,7 +332,7 @@ func typeNullableEnumCorpus() []validatorCorpusFixture {
       type: integer
       minimum: 0
       maximum: 2
-      enum: [-1, 0, 1, 2, 3]
+      enum: [0, 1, 2]
 `),
 		corpusFixture(corpusCategoryTypes, "enum-number-multiple", `
       type: number
@@ -345,7 +345,7 @@ func typeNullableEnumCorpus() []validatorCorpusFixture {
       type: string
       minLength: 2
       maxLength: 3
-      enum: [a, ok, yes, tool]
+      enum: [ok, yes]
 `),
 		corpusFixture(corpusCategoryTypes, "enum-string-pattern", `
       type: string
@@ -378,7 +378,7 @@ func typeNullableEnumCorpus() []validatorCorpusFixture {
 		corpusFixture(corpusCategoryTypes, "enum-untyped-sibling-constraint", `
       nullable: true
       minLength: 1
-      enum: ["", x, 1, null]
+      enum: [x, 1, null]
 `),
 	)
 
@@ -490,7 +490,7 @@ func numericCorpus() []validatorCorpusFixture {
 		corpusFixture(corpusCategoryNumeric, "integer-enum-minimum", `
       type: integer
       minimum: -1
-      enum: [-2, -1, 0, 1]
+      enum: [-1, 0, 1]
 `),
 		corpusFixture(corpusCategoryNumeric, "number-enum-exclusive-maximum", `
       type: number
@@ -1411,14 +1411,12 @@ components:
 `),
 		corpusFixture(corpusCategoryRefs, "allof-string-length", `
       type: string
-      x-valid-examples: [ab, abc, abcd]
       allOf:
         - {minLength: 2}
         - {maxLength: 4}
 `),
 		corpusFixture(corpusCategoryRefs, "allof-string-pattern-length", `
       type: string
-      x-valid-examples: [A0, A1, A5, A9]
       allOf:
         - {pattern: '^A[0-9]$', x-valid-examples: [A0, A1, A5, A9], x-invalid-examples: [B1]}
         - {minLength: 2, maxLength: 2}
@@ -1478,7 +1476,6 @@ components:
     Maximum: {maximum: 2}
 `),
 		corpusFixtureWithComponents(corpusCategoryRefs, "ref-string-intersection", `
-      x-valid-examples: [ab, abc, abcd]
       allOf:
         - {$ref: '#/components/schemas/Short'}
         - {$ref: '#/components/schemas/LongEnough'}

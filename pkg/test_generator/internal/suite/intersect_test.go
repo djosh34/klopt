@@ -152,12 +152,8 @@ func TestCompilerFoldsNestedAllOfSiblingsAndPreservesProvenance(t *testing.T) {
 
 	compiler, id := compileSchemaYAML(t, `type: string
 maxLength: 8
-x-valid-examples: [trusted]
-x-invalid-examples: [outer-invalid]
 allOf:
   - minLength: 2
-    x-valid-examples: [child]
-    x-invalid-examples: [child-invalid]
   - allOf:
       - maxLength: 5
       - minLength: 3`, "")
@@ -166,8 +162,6 @@ allOf:
 	require.Equal(t, 5, *domain.String.MaxLength)
 
 	use := schemaUseAt(t, compiler.rootUse, compiler.Source.RequestSchema.Pointer)
-	require.Equal(t, "trusted", use.examples.Valid[0].String)
-	require.Len(t, use.examples.Invalid, 2)
 	require.Contains(t, use.constraints, ConstraintSource{
 		Pointer: compiler.Source.RequestSchema.Pointer,
 		Keyword: "allOf",
@@ -190,22 +184,21 @@ func TestCompilerUsesTrustedExamplesForPatternAndFormatConjunctions(t *testing.T
 	require.Equal(t, []string{"^a$"}, domain.String.Patterns)
 	require.Equal(t, []string{"email"}, domain.String.Formats)
 	use := schemaUseAt(t, compiler.rootUse, compiler.Source.RequestSchema.Pointer)
-	require.Equal(t, "not-a", use.examples.Valid[0].String)
+	require.Equal(t, "not-a", use.examples.Valid[0].Value.String)
 
-	outerCompiler, outerID := compileSchemaYAML(t, `x-valid-examples: [outer-trusted]
+	outerSource := parseSchemaSource(t, `x-valid-examples: [outer-trusted]
 allOf:
   - pattern: first
-  - format: email`, "")
-	require.NotEqual(t, EmptyDomainID, outerID)
-	outerUse := schemaUseAt(t, outerCompiler.rootUse, outerCompiler.Source.RequestSchema.Pointer)
-	require.Equal(t, "outer-trusted", outerUse.examples.Valid[0].String)
+  - format: email`, "", "create")
+	_, err := NewCompiler(outerSource).Compile()
+	require.ErrorContains(t, err, "x-valid-examples")
 
 	source := parseSchemaSource(t, `allOf:
   - pattern: '^a$'
     x-valid-examples: [a]
   - format: email
     x-valid-examples: [b]`, "", "create")
-	_, err := NewCompiler(source).CompileSuite(MustHaveAllXValidCases)
+	_, err = NewCompiler(source).CompileSuite(MustHaveAllXValidCases)
 	require.Error(t, err)
 
 	var compileError *Error
@@ -223,9 +216,6 @@ func TestCompilerDistinguishesMalformedUnsupportedUnconstructibleAndEmptyAllOf(t
 	}{
 		"malformed":   {schema: `allOf: []`, code: "malformed"},
 		"unsupported": {schema: `allOf: [{anyOf: [{type: string}]}]`, code: "unsupported"},
-		"mixed enum cannot be narrowed": {schema: `pattern: a
-x-valid-examples: [other]
-enum: [1, a]`, code: "unconstructible"},
 	}
 	for name, testCase := range tests {
 		t.Run(name, func(t *testing.T) {

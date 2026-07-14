@@ -12,7 +12,7 @@ import (
 // Option configures request-body case generation.
 type Option func(*suite.Compiler)
 
-// MustHaveAllXValidCases rejects allOf string merges without a shared trusted valid example.
+// MustHaveAllXValidCases requires every oracle-backed allOf merge to retain a shared valid case.
 func MustHaveAllXValidCases(compiler *suite.Compiler) {
 	suite.MustHaveAllXValidCases(compiler)
 }

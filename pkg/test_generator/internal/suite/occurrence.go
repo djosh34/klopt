@@ -9,12 +9,17 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		return nil, err
 	}
 
+	examples, err := compiler.meetGenerationExamples(left.examples, leftDomain, right.examples, rightDomain)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &schemaUse{
 		pointer:     left.pointer,
 		domain:      domain,
 		localDomain: left.localDomain,
 		constraints: append(append([]ConstraintSource(nil), left.constraints...), right.constraints...),
-		examples:    mergeGenerationExamples(left.examples, right.examples),
+		examples:    examples,
 		atomic:      left.atomic,
 		allOf:       append(append([]*schemaUse(nil), left.allOf...), right),
 		resolved:    left.resolved,
@@ -22,6 +27,14 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 
 	if err := compiler.meetChildren(result, left, leftDomain, right, rightDomain, resultDomain); err != nil {
 		return nil, err
+	}
+
+	if overlap := generationExampleOverlap(result.examples); overlap != nil {
+		return nil, &generationOverlapError{Example: *overlap}
+	}
+
+	if compiler.mustHaveAllXValidCases && result.examples.ValidDeclared && len(result.examples.Valid) == 0 {
+		return nil, fmt.Errorf("%w: allOf merge has no trusted valid generation case", errUnconstructible)
 	}
 
 	return result, nil
@@ -223,20 +236,24 @@ func (use *schemaUse) preserveChildPlanningParity(left *schemaUse, right *schema
 	}
 
 	if source == nil {
-		use.examples = GenerationExamples{}
-
 		return
 	}
 
 	use.pointer = source.pointer
 	use.localDomain = source.localDomain
 	use.constraints = append([]ConstraintSource(nil), source.constraints...)
-	use.examples = GenerationExamples{
-		Valid:   cloneJSONValues(source.examples.Valid),
-		Invalid: cloneJSONValues(source.examples.Invalid),
-	}
 	use.atomic = source.atomic
 	use.resolved = source.resolved
+}
+
+// generationOverlapError preserves the invalid declaration source across a meet.
+type generationOverlapError struct {
+	Example GenerationExample
+}
+
+// Error reports the contradictory oracle declaration.
+func (overlap *generationOverlapError) Error() string {
+	return "trusted value is declared both valid and invalid"
 }
 
 // existingChild returns the schema-valued side of an intersection with an implicit policy.
@@ -323,31 +340,4 @@ func (use *schemaUse) find(pointer string) *schemaUse {
 	}
 
 	return use.additional.find(pointer)
-}
-
-// walk visits each reachable occurrence once.
-func (use *schemaUse) walk(visit func(*schemaUse), seen map[*schemaUse]struct{}) {
-	if use == nil {
-		return
-	}
-
-	if _, ok := seen[use]; ok {
-		return
-	}
-
-	seen[use] = struct{}{}
-	visit(use)
-	use.resolved.walk(visit, seen)
-
-	for _, member := range use.allOf {
-		member.walk(visit, seen)
-	}
-
-	use.items.walk(visit, seen)
-
-	for _, property := range use.properties {
-		property.use.walk(visit, seen)
-	}
-
-	use.additional.walk(visit, seen)
 }
