@@ -11,54 +11,6 @@ import (
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
 )
 
-// compileEnum parses and filters enum values compatible with a Domain.
-func (compiler *Compiler) compileEnum(
-	raw json.RawMessage,
-	domain Domain,
-	validExamples []jsonvalue.Value,
-) ([]jsonvalue.Value, error) {
-	members, err := decodeEnumMembers(raw)
-	if err != nil {
-		return nil, err
-	}
-
-	values := make([]jsonvalue.Value, 0, len(members))
-	unconstructibleString := false
-
-	for _, member := range members {
-		value, err := jsonvalue.Parse(member)
-		if err != nil {
-			return nil, fmt.Errorf("parse enum member: %w", err)
-		}
-
-		if jsonValuesContain(values, value) {
-			continue
-		}
-
-		include, needsExample, err := compiler.enumValueCompatibility(value, domain, validExamples)
-		if err != nil {
-			return nil, err
-		}
-
-		if needsExample {
-			unconstructibleString = true
-		}
-
-		if include {
-			values = append(values, value)
-		}
-	}
-
-	if unconstructibleString {
-		return nil, fmt.Errorf(
-			"%w: enum string with pattern or format needs a trusted compatible valid example",
-			errUnconstructible,
-		)
-	}
-
-	return values, nil
-}
-
 // decodeEnumMembers validates and decodes the enum array.
 func decodeEnumMembers(raw json.RawMessage) ([]json.RawMessage, error) {
 	var members []json.RawMessage
@@ -71,33 +23,6 @@ func decodeEnumMembers(raw json.RawMessage) ([]json.RawMessage, error) {
 	}
 
 	return members, nil
-}
-
-// enumValueCompatibility reports whether to include a value or require a trusted example for it.
-func (compiler *Compiler) enumValueCompatibility(
-	value jsonvalue.Value,
-	domain Domain,
-	validExamples []jsonvalue.Value,
-) (bool, bool, error) {
-	modeled := cloneDomain(domain)
-	modeled.String.Patterns = nil
-	modeled.String.Formats = nil
-
-	matches, err := compiler.valueFitsDomain(value, modeled)
-	if err != nil || !matches {
-		return matches, false, err
-	}
-
-	if value.Kind == jsonvalue.KindString &&
-		(len(domain.String.Patterns) > 0 || len(domain.String.Formats) > 0) {
-		if jsonValuesContain(validExamples, value) {
-			return true, false, nil
-		}
-
-		return false, true, nil
-	}
-
-	return true, false, nil
 }
 
 // finiteDomain returns a Domain containing exactly the supplied enum values.
@@ -167,6 +92,17 @@ func domainCanContainValue(domain Domain, value jsonvalue.Value) bool {
 // enumContains reports semantic membership in a finite enum Domain.
 func enumContains(enum *EnumSet, candidate jsonvalue.Value) bool {
 	for _, value := range enum.Values {
+		if value.Equal(candidate) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// jsonValuesContain reports semantic JSON membership.
+func jsonValuesContain(values []jsonvalue.Value, candidate jsonvalue.Value) bool {
+	for _, value := range values {
 		if value.Equal(candidate) {
 			return true
 		}

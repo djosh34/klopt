@@ -11,9 +11,15 @@ import (
 // CompileOption configures a Compiler.
 type CompileOption func(*Compiler)
 
-// MustHaveAllXValidCases rejects allOf string merges without a shared trusted valid example.
+// MustHaveAllXValidCases requires every oracle-backed allOf merge to retain a shared valid case.
 func MustHaveAllXValidCases(compiler *Compiler) {
+	if compiler.mustHaveAllXValidCases {
+		return
+	}
+
 	compiler.mustHaveAllXValidCases = true
+	compiler.usesByPointer = make(map[string]*schemaUse)
+	compiler.rootUse = nil
 }
 
 // CompileSuite compiles, plans, and links the request schema to Rapid generators.
@@ -55,11 +61,11 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 
 // linkCases assigns a Rapid generator to each constructible CasePlan.
 func (compiler *Compiler) linkCases(root DomainID, cases []CasePlan) ([]CasePlan, error) {
-	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.rootUse)
+	generators := NewRapidGeneratorBuilder(compiler.Domains)
 	linked := make([]CasePlan, 0, len(cases))
 
 	for index := range cases {
-		generator, generatorErr := generators.Generator(cases[index].Values)
+		generator, generatorErr := generators.Generator(cases[index].Values, compiler.rootUse)
 		if errors.Is(generatorErr, errNoTrustedStringExample) &&
 			(cases[index].Expect == ExpectRejected || cases[index].Values != root) {
 			continue
@@ -238,12 +244,6 @@ func (planner *CasePlanner) constraintUse(source ConstraintSource, root *schemaU
 	use := root.find(source.Pointer)
 	if use == nil {
 		use = root
-	}
-
-	if (source.Keyword == "pattern" || source.Keyword == "format") && len(use.examples.Invalid) == 0 {
-		copyUse := *use
-		copyUse.examples.Invalid = cloneJSONValues(root.examples.Invalid)
-		use = &copyUse
 	}
 
 	return use
@@ -543,11 +543,11 @@ func (planner *CasePlanner) atomicStringExampleConstraint(
 	fails := make([]DomainID, 0)
 
 	for _, example := range use.examples.Invalid {
-		if example.Kind != jsonvalue.KindString {
+		if example.Value.Kind != jsonvalue.KindString {
 			continue
 		}
 
-		failure := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example}))
+		failure := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example.Value}))
 		fails = append(fails, failure)
 	}
 

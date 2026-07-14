@@ -15,48 +15,40 @@ import (
 // generatedCollectionSlack limits unbounded generated collections to a small range above their minimum.
 const generatedCollectionSlack = 4
 
-// errNoTrustedStringExample reports that trusted examples cannot satisfy a string Domain.
-var errNoTrustedStringExample = errors.New("pattern or format Domain has no trusted valid example in its length range")
+// errNoTrustedStringExample reports that a string Domain has no retained trusted example.
+var errNoTrustedStringExample = errors.New("pattern or format Domain has no trusted valid example")
 
 // RapidGeneratorBuilder links canonical Domains to shared constructive Rapid generators.
 type RapidGeneratorBuilder struct {
-	domains        *DomainRegistry
-	generators     map[DomainID]*rapid.Generator[jsonvalue.Value]
-	stringExamples map[string][]jsonvalue.Value
+	domains    *DomainRegistry
+	generators map[generatorKey]*rapid.Generator[jsonvalue.Value]
+}
+
+// generatorKey identifies one Domain at one exact occurrence.
+type generatorKey struct {
+	domain DomainID
+	use    *schemaUse
 }
 
 // NewRapidGeneratorBuilder creates a generator builder for one compiled Domain graph.
-func NewRapidGeneratorBuilder(domains *DomainRegistry, root *schemaUse) *RapidGeneratorBuilder {
-	builder := &RapidGeneratorBuilder{
-		domains:        domains,
-		generators:     make(map[DomainID]*rapid.Generator[jsonvalue.Value]),
-		stringExamples: make(map[string][]jsonvalue.Value),
+func NewRapidGeneratorBuilder(domains *DomainRegistry) *RapidGeneratorBuilder {
+	return &RapidGeneratorBuilder{
+		domains:    domains,
+		generators: make(map[generatorKey]*rapid.Generator[jsonvalue.Value]),
 	}
-
-	root.walk(func(use *schemaUse) {
-		domain, ok := domains.Domain(use.domain)
-		if !ok || len(domain.String.Patterns) == 0 && len(domain.String.Formats) == 0 {
-			return
-		}
-
-		key := stringLanguageKey(domain.String)
-		for _, example := range use.examples.Valid {
-			if example.Kind == jsonvalue.KindString && !jsonValuesContain(builder.stringExamples[key], example) {
-				builder.stringExamples[key] = append(builder.stringExamples[key], cloneJSONValue(example))
-			}
-		}
-	}, make(map[*schemaUse]struct{}))
-
-	return builder
 }
 
-// Generator returns the memoized constructive generator for id.
-func (builder *RapidGeneratorBuilder) Generator(id DomainID) (*rapid.Generator[jsonvalue.Value], error) {
+// Generator returns the memoized constructive generator for one exact occurrence.
+func (builder *RapidGeneratorBuilder) Generator(
+	id DomainID,
+	use *schemaUse,
+) (*rapid.Generator[jsonvalue.Value], error) {
 	if builder == nil || builder.domains == nil {
 		return nil, errors.New("build Rapid generator: Domain registry is nil")
 	}
 
-	if generator, ok := builder.generators[id]; ok {
+	key := generatorKey{domain: id, use: use}
+	if generator, ok := builder.generators[key]; ok {
 		return generator, nil
 	}
 
@@ -73,7 +65,7 @@ func (builder *RapidGeneratorBuilder) Generator(id DomainID) (*rapid.Generator[j
 			rapid.Just(jsonvalue.Array(nil)),
 			rapid.Just(jsonvalue.Value{Kind: jsonvalue.KindObject, Object: []jsonvalue.Member{}}),
 		)
-		builder.generators[id] = generator
+		builder.generators[key] = generator
 
 		return generator, nil
 	}
@@ -87,20 +79,24 @@ func (builder *RapidGeneratorBuilder) Generator(id DomainID) (*rapid.Generator[j
 		return nil, fmt.Errorf("build Rapid generator: Domain %d is not productive", id)
 	}
 
-	generator, err := builder.domainGenerator(domain)
+	generator, err := builder.domainGenerator(domain, use, use != nil && id == use.domain)
 	if err != nil {
 		return nil, fmt.Errorf("build Rapid generator for Domain %d: %w", id, err)
 	}
 
-	builder.generators[id] = generator
+	builder.generators[key] = generator
 
 	return generator, nil
 }
 
 // domainGenerator builds a generator from every reachable JSON kind in domain.
-func (builder *RapidGeneratorBuilder) domainGenerator(domain Domain) (*rapid.Generator[jsonvalue.Value], error) {
+func (builder *RapidGeneratorBuilder) domainGenerator(
+	domain Domain,
+	use *schemaUse,
+	useOracle bool,
+) (*rapid.Generator[jsonvalue.Value], error) {
 	if domain.Enum != nil {
-		return rapid.SampledFrom(cloneJSONValues(domain.Enum.Values)), nil
+		return enumGenerator(domain.Enum, use, useOracle)
 	}
 
 	var (
@@ -123,19 +119,19 @@ func (builder *RapidGeneratorBuilder) domainGenerator(domain Domain) (*rapid.Gen
 	}
 
 	if domain.String.State != KindExcluded {
-		generator, err := builder.stringGenerator(domain.String)
+		generator, err := builder.stringGenerator(domain.String, use, useOracle)
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
 
 	if domain.Array.State != KindExcluded {
-		generator, err := builder.arrayGenerator(domain.Array)
+		generator, err := builder.arrayGenerator(domain.Array, use)
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
 
 	if domain.Object.State != KindExcluded {
-		generator, err := builder.objectGenerator(domain.Object)
+		generator, err := builder.objectGenerator(domain.Object, use)
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
@@ -149,6 +145,28 @@ func (builder *RapidGeneratorBuilder) domainGenerator(domain Domain) (*rapid.Gen
 	}
 
 	return nil, errors.New("productive Domain has no reachable JSON kind")
+}
+
+// enumGenerator samples the effective occurrence cases without changing Domain identity.
+func enumGenerator(
+	enum *EnumSet,
+	use *schemaUse,
+	useOracle bool,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if !useOracle || !use.examples.ValidDeclared {
+		return rapid.SampledFrom(cloneJSONValues(enum.Values)), nil
+	}
+
+	values := make([]jsonvalue.Value, 0, len(use.examples.Valid))
+	for _, example := range use.examples.Valid {
+		values = append(values, cloneJSONValue(example.Value))
+	}
+
+	if len(values) == 0 {
+		return nil, errors.New("enum conjunction has no trusted valid generation case")
+	}
+
+	return rapid.SampledFrom(values), nil
 }
 
 // appendConstructiveGenerator records a reachable generator or preserves the first construction error.
@@ -445,9 +463,11 @@ func mustGeneratedNumber(t *rapid.T, rational *big.Rat) jsonvalue.Value {
 // stringGenerator builds arbitrary strings or samples trusted pattern and format examples.
 func (builder *RapidGeneratorBuilder) stringGenerator(
 	constraints StringConstraints,
+	use *schemaUse,
+	useOracle bool,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	if len(constraints.Patterns) > 0 || len(constraints.Formats) > 0 {
-		return builder.trustedStringGenerator(constraints)
+		return trustedStringGenerator(constraints, use, useOracle)
 	}
 
 	maximum := generatedCollectionMaximum(constraints.MinLength, constraints.MaxLength)
@@ -456,18 +476,32 @@ func (builder *RapidGeneratorBuilder) stringGenerator(
 	return rapid.Map(generator, jsonvalue.String), nil
 }
 
-// trustedStringGenerator samples trusted examples that satisfy the configured length range.
-func (builder *RapidGeneratorBuilder) trustedStringGenerator(
+// trustedStringGenerator samples exact occurrence cases, filtering only for an
+// isolated partition Domain rather than rechecking the effective occurrence.
+func trustedStringGenerator(
 	constraints StringConstraints,
+	use *schemaUse,
+	useOracle bool,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	examples := builder.stringExamples[stringLanguageKey(constraints)]
-	values := make([]jsonvalue.Value, 0, len(examples))
+	if use == nil {
+		return nil, fmt.Errorf("trusted string generator has no schema occurrence: %w", errNoTrustedStringExample)
+	}
 
-	for _, example := range examples {
-		length := utf8.RuneCountInString(example.String)
-		if length >= constraints.MinLength && (constraints.MaxLength == nil || length <= *constraints.MaxLength) {
-			values = append(values, cloneJSONValue(example))
+	values := make([]jsonvalue.Value, 0, len(use.examples.Valid))
+
+	for _, example := range use.examples.Valid {
+		if example.Value.Kind != jsonvalue.KindString {
+			continue
 		}
+
+		if !useOracle {
+			length := utf8.RuneCountInString(example.Value.String)
+			if length < constraints.MinLength || constraints.MaxLength != nil && length > *constraints.MaxLength {
+				continue
+			}
+		}
+
+		values = append(values, cloneJSONValue(example.Value))
 	}
 
 	if len(values) == 0 {
@@ -491,24 +525,17 @@ func generatedCollectionMaximum(minimum int, configuredMaximum *int) int {
 	return maximum
 }
 
-// stringLanguageKey identifies a shared set of pattern and format constraints.
-func stringLanguageKey(constraints StringConstraints) string {
-	key := ""
-	for _, values := range [][]string{constraints.Patterns, constraints.Formats} {
-		key += strconv.Itoa(len(values)) + ":"
-		for _, value := range values {
-			key += strconv.Itoa(len(value)) + ":" + value
-		}
-	}
-
-	return key
-}
-
 // arrayGenerator builds arrays from the generator for their item Domain.
 func (builder *RapidGeneratorBuilder) arrayGenerator(
 	constraints ArrayConstraints,
+	use *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	items, err := builder.Generator(constraints.Items)
+	var itemsUse *schemaUse
+	if use != nil {
+		itemsUse = use.items
+	}
+
+	items, err := builder.Generator(constraints.Items, itemsUse)
 	if err != nil {
 		if constraints.MinItems == 0 && constraints.MaxItems != nil && *constraints.MaxItems == 0 {
 			return rapid.Just(jsonvalue.Array(nil)), nil
@@ -525,13 +552,19 @@ func (builder *RapidGeneratorBuilder) arrayGenerator(
 // objectGenerator builds objects from feasible declared and additional properties.
 func (builder *RapidGeneratorBuilder) objectGenerator(
 	constraints ObjectConstraints,
+	use *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	required, optional, err := builder.objectPropertyGenerators(constraints.Properties)
+	required, optional, err := builder.objectPropertyGenerators(constraints.Properties, use)
 	if err != nil {
 		return nil, err
 	}
 
-	additional, additionalErr := builder.Generator(constraints.Additional.Values)
+	var additionalUse *schemaUse
+	if use != nil {
+		additionalUse = use.additional
+	}
+
+	additional, additionalErr := builder.Generator(constraints.Additional.Values, additionalUse)
 
 	minimum, maximum, err := objectPropertyCountRange(
 		constraints,
@@ -551,6 +584,7 @@ func (builder *RapidGeneratorBuilder) objectGenerator(
 // objectPropertyGenerators separates feasible declared properties into required and optional groups.
 func (builder *RapidGeneratorBuilder) objectPropertyGenerators(
 	properties []NamedProperty,
+	use *schemaUse,
 ) ([]objectPropertyGenerator, []objectPropertyGenerator, error) {
 	required := make([]objectPropertyGenerator, 0, len(properties))
 	optional := make([]objectPropertyGenerator, 0, len(properties))
@@ -560,7 +594,15 @@ func (builder *RapidGeneratorBuilder) objectPropertyGenerators(
 			continue
 		}
 
-		values, err := builder.Generator(property.Values)
+		var propertyUse *schemaUse
+		if use != nil {
+			propertyUse = use.property(property.Name)
+			if propertyUse == nil {
+				propertyUse = use.additional
+			}
+		}
+
+		values, err := builder.Generator(property.Values, propertyUse)
 		if err != nil && property.Required {
 			return nil, nil, fmt.Errorf("object property %q: %w", property.Name, err)
 		}
