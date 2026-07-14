@@ -1,4 +1,4 @@
-NEVER EVER CHANGE .golangci.yml for ANY REASON!
+NEVER EVER CHANGE .golangci.yml, unless it is to add to depguard allow list
 EVEN IF YOU THINK THIS OR THAT IS 'UNSUPPORTED' (YOU ARE WRONG, DONT FUCKING CHANGE IT)
 
 you are not allowed to create stuff like stringPtr and boolPtr, instead, because of go1.26+ you MUST use new("string") instead
