@@ -423,7 +423,62 @@ func hasCharacterizedValidatorLimitation(schema []byte) bool {
 		bytes.Contains(schema, []byte("1.234567890123456789")) ||
 		bytes.Contains(schema, []byte("9.876543210987654321")) ||
 		bytes.Contains(schema, []byte("Reference Object siblings are ignored")) ||
+		generatedSchemaContainsNullableAllOf(schema) ||
 		generatedSchemaContainsTypelessOccurrence(schema)
+}
+
+func generatedSchemaContainsNullableAllOf(raw []byte) bool {
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return false
+	}
+
+	schema, err := generatedRequestSchemaFromJSON(document)
+	if err != nil {
+		return false
+	}
+
+	return schemaContainsNullableAllOf(schema)
+}
+
+func schemaContainsNullableAllOf(value any) bool {
+	return schemaContainsNullableWithinAllOf(value, false)
+}
+
+func schemaContainsNullableWithinAllOf(value any, withinAllOf bool) bool {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+
+	_, hasAllOf := object["allOf"].([]any)
+	if nullable, ok := object["nullable"].(bool); ok && nullable && (withinAllOf || hasAllOf) {
+		return true
+	}
+
+	for _, keyword := range []string{"items", "additionalProperties"} {
+		if schemaContainsNullableWithinAllOf(object[keyword], withinAllOf) {
+			return true
+		}
+	}
+
+	if properties, ok := object["properties"].(map[string]any); ok {
+		for _, child := range properties {
+			if schemaContainsNullableWithinAllOf(child, withinAllOf) {
+				return true
+			}
+		}
+	}
+
+	if children, ok := object["allOf"].([]any); ok {
+		for _, child := range children {
+			if schemaContainsNullableWithinAllOf(child, true) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func generatedSchemaContainsTypelessOccurrence(raw []byte) bool {
@@ -534,8 +589,9 @@ func TestGeneratedSchemasExerciseRequiredShapes(t *testing.T) {
 	}
 
 	for _, feature := range []string{
-		"typeless", "nullable", "number", "exact-number", "enum", "pattern", "format",
-		"array", "object", "additional-schema", "allOf", "nested-allOf", "ref", "escaped-ref",
+		"typeless", "nullable", "nullable-object-false", "nullable-object-true",
+		"number", "exact-number", "enum", "pattern", "format",
+		"array", "object", "additional-schema", "allOf", "nested-allOf", "ref", "escaped-ref", "unicode-ref",
 	} {
 		require.Truef(t, seen[feature], "feature %s was not generated", feature)
 	}
@@ -616,6 +672,12 @@ func collectSchemaCoverage(
 		seen["typeless"] = true
 	}
 
+	if object["type"] == "object" {
+		if nullable, ok := object["nullable"].(bool); ok {
+			seen[fmt.Sprintf("nullable-object-%t", nullable)] = true
+		}
+	}
+
 	for keyword, feature := range map[string]string{
 		"nullable": "nullable", "enum": "enum", "pattern": "pattern", "format": "format",
 		"items": "array", "properties": "object", "$ref": "ref",
@@ -628,6 +690,10 @@ func collectSchemaCoverage(
 	if reference, ok := object["$ref"].(string); ok &&
 		(strings.Contains(reference, "~0") || strings.Contains(reference, "~1")) {
 		seen["escaped-ref"] = true
+	}
+
+	if reference, ok := object["$ref"].(string); ok && strings.Contains(reference, "%CE%BB") {
+		seen["unicode-ref"] = true
 	}
 
 	if _, ok := object["$ref"].(string); ok {

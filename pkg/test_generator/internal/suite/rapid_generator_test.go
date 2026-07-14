@@ -205,6 +205,42 @@ additionalProperties: {type: number}`, "", "create"))
 func TestCompileSuiteConstructsRecursiveStructuralConjunctions(t *testing.T) {
 	t.Parallel()
 
+	t.Run("array planning survives an excluded intermediate branch", func(t *testing.T) {
+		t.Parallel()
+
+		compiler := NewCompiler(parseSchemaSource(t, `minItems: 0
+maxItems: 2
+allOf:
+  - type: array
+    items: {enum: [false, -0, "", "λ"]}
+  - type: number
+  - {minItems: 0, maxItems: 2}`, "", "create"))
+		_, err := compiler.CompileSuite()
+		require.Error(t, err)
+
+		var compileError *Error
+		require.ErrorAs(t, err, &compileError)
+		require.Equal(t, "unconstructible", compileError.Code)
+	})
+
+	t.Run("additional property planning survives an excluded intermediate branch", func(t *testing.T) {
+		t.Parallel()
+
+		compiler := NewCompiler(parseSchemaSource(t, `maxItems: 2
+allOf:
+  - type: object
+    properties: {}
+    additionalProperties: {enum: [false, -0, "", "λ"]}
+  - type: boolean
+  - {minProperties: 0, maxProperties: 2}`, "", "create"))
+		_, err := compiler.CompileSuite()
+		require.Error(t, err)
+
+		var compileError *Error
+		require.ErrorAs(t, err, &compileError)
+		require.Equal(t, "unconstructible", compileError.Code)
+	})
+
 	t.Run("referenced compatible array items", func(t *testing.T) {
 		t.Parallel()
 

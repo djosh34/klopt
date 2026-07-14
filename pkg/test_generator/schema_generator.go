@@ -286,7 +286,7 @@ func generatedReferenceSchema() *rapid.Generator[generatedSchemaObject] {
 		"#/components/schemas/Container/properties/",
 		"#/components/schemas/Container/properties/~0",
 		"#/components/schemas/Container/properties/~1",
-		"#/components/schemas/Container/properties/λ",
+		"#/components/schemas/Container/properties/%CE%BB",
 	}), func(reference string) generatedSchemaObject {
 		return generatedSchemaObject{
 			"$ref":        reference,
@@ -339,6 +339,14 @@ func generatedObjectSchema() *rapid.Generator[generatedSchemaObject] {
 		}
 
 		schema := generatedSchemaObject{"type": "object", "properties": properties}
+
+		switch rapid.IntRange(0, 2).Draw(t, "object nullable") {
+		case 1:
+			schema["nullable"] = false
+		case 2:
+			schema["nullable"] = true
+		}
+
 		if len(required) != 0 {
 			schema["required"] = required
 		}
