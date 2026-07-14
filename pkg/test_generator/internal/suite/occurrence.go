@@ -108,10 +108,6 @@ func (compiler *Compiler) meetProperties(
 	rightProperties := propertyConstraintsByName(rightObject.Properties)
 
 	for _, property := range resultObject.Properties {
-		if !propertyHasOccurrence(property) {
-			continue
-		}
-
 		leftUse, leftValues := occurrencePropertyPolicy(
 			left,
 			leftProperties,
@@ -138,12 +134,6 @@ func (compiler *Compiler) meetProperties(
 	return nil
 }
 
-// propertyHasOccurrence reports whether planning can recurse into a property Domain.
-func propertyHasOccurrence(property NamedProperty) bool {
-	return property.State != PropertyForbidden && property.Values != AnyJSONDomainID &&
-		property.Values != EmptyDomainID
-}
-
 // meetChild combines child provenance when both policies are schema-valued.
 func (compiler *Compiler) meetChild(
 	left *schemaUse,
@@ -152,7 +142,11 @@ func (compiler *Compiler) meetChild(
 	rightDomain DomainID,
 	resultDomain DomainID,
 ) (*schemaUse, bool, error) {
-	if resultDomain == NoDomain || resultDomain == AnyJSONDomainID || resultDomain == EmptyDomainID {
+	if resultDomain == EmptyDomainID {
+		return compiler.meetEmptyChild(left, right)
+	}
+
+	if resultDomain == NoDomain || resultDomain == AnyJSONDomainID {
 		return nil, false, nil
 	}
 
@@ -178,6 +172,26 @@ func (compiler *Compiler) meetChild(
 	return result, true, nil
 }
 
+// meetEmptyChild retains the contradictory occurrences that made a child policy impossible.
+func (compiler *Compiler) meetEmptyChild(left *schemaUse, right *schemaUse) (*schemaUse, bool, error) {
+	if left == nil || right == nil {
+		return nil, false, nil
+	}
+
+	result, err := compiler.meet(left, right)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if result.domain != EmptyDomainID {
+		return nil, false, fmt.Errorf("metadata Domain %d differs from semantic Domain %d", result.domain, EmptyDomainID)
+	}
+
+	result.preserveChildPlanningParity(left, right)
+
+	return result, true, nil
+}
+
 // preserveChildPlanningParity keeps current child obligations while all contributors remain in allOf provenance.
 func (use *schemaUse) preserveChildPlanningParity(left *schemaUse, right *schemaUse) {
 	var source *schemaUse
@@ -188,9 +202,7 @@ func (use *schemaUse) preserveChildPlanningParity(left *schemaUse, right *schema
 	}
 
 	if source == nil {
-		use.constraints = nil
 		use.examples = GenerationExamples{}
-		use.atomic = nil
 
 		return
 	}
@@ -236,7 +248,12 @@ func occurrencePropertyPolicy(
 		return nil, EmptyDomainID
 	}
 
-	return use.property(name), property.Values
+	propertyUse := use.property(name)
+	if propertyUse == nil {
+		return use.additional, additional.Values
+	}
+
+	return propertyUse, property.Values
 }
 
 // property returns the exact declared-property occurrence.
