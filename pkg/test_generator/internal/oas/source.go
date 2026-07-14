@@ -66,9 +66,14 @@ func Parse(spec []byte, operationID string) (Source, error) {
 		return Source{}, errors.New("operationId must not be empty")
 	}
 
-	document, err := yaml.YAMLToJSON(spec)
-	if err != nil {
-		return Source{}, fmt.Errorf("parse OpenAPI YAML: %w", err)
+	document := spec
+	if !json.Valid(spec) {
+		var err error
+
+		document, err = yaml.YAMLToJSON(spec)
+		if err != nil {
+			return Source{}, fmt.Errorf("parse OpenAPI YAML: %w", err)
+		}
 	}
 
 	var root map[string]json.RawMessage

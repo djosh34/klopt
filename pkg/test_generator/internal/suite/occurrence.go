@@ -105,6 +105,14 @@ func (compiler *Compiler) meetArrayOccurrence(
 	}
 
 	if !leftPresent || !rightPresent {
+		if leftPresent {
+			result.arrayShape = left.arrayShape
+			result.items = left.items
+		} else if rightPresent {
+			result.arrayShape = right.arrayShape
+			result.items = right.items
+		}
+
 		return nil
 	}
 
@@ -218,6 +226,16 @@ func (compiler *Compiler) meetObjectOccurrence(
 	}
 
 	if !leftPresent || !rightPresent {
+		if leftPresent {
+			result.objectShape = left.objectShape
+			result.properties = append([]schemaPropertyUse(nil), left.properties...)
+			result.additional = left.additional
+		} else if rightPresent {
+			result.objectShape = right.objectShape
+			result.properties = append([]schemaPropertyUse(nil), right.properties...)
+			result.additional = right.additional
+		}
+
 		return nil
 	}
 

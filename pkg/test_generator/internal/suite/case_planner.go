@@ -145,7 +145,8 @@ func (compiler *Compiler) requireAcceptedCase(root DomainID, cases []CasePlan) e
 
 	if rootDomain.Status == DomainEmpty {
 		return compiler.failure(
-			"generate", "empty", compiler.Source.RequestSchema.Pointer, "", errors.New("request schema accepts no JSON value"),
+			"generate", "unconstructible", compiler.Source.RequestSchema.Pointer, "",
+			errors.New("request schema accepts no JSON value"),
 		)
 	}
 

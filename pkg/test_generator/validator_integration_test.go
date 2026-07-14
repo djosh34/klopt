@@ -523,6 +523,36 @@ func validatorCharacterizations() []validatorCharacterization {
 			// libopenapi-validator v0.13.13 rejects it during schema validation while kin-openapi v0.140.0 accepts it.
 		},
 		{
+			ID: "nullable-allof-contradictory-typed-children",
+			Schema: `
+      type: string
+      nullable: true
+      allOf:
+        - {type: number}
+        - {type: boolean}
+`,
+			Body:       []byte(`null`),
+			Libopenapi: validatorBodyAccepted,
+			Kinopenapi: validatorBodyAccepted,
+			// The allOf children validate independently and both reject null, so the conjunction is empty.
+			// libopenapi-validator v0.13.13 and kin-openapi v0.140.0 both incorrectly accept null.
+		},
+		{
+			ID: "allof-nullable-children-nonnullable-parent",
+			Schema: `
+      type: boolean
+      allOf:
+        - {type: boolean, nullable: true}
+        - {type: boolean, nullable: true}
+`,
+			Body:                    []byte(`null`),
+			Libopenapi:              validatorBodyRejected,
+			LibopenapiErrorContains: "got null, want boolean",
+			Kinopenapi:              validatorBodyAccepted,
+			// The non-nullable parent type rejects null even though each allOf child independently permits it.
+			// kin-openapi v0.140.0 incorrectly lets the nullable children make the parent nullable.
+		},
+		{
 			ID: "reference-object-sibling-ignored",
 			Schema: `
       $ref: '#/components/schemas/Text'
