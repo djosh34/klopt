@@ -2,6 +2,8 @@ package suite
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
 )
@@ -11,6 +13,9 @@ type labeledIntBoundary struct {
 	label string
 	value int
 }
+
+// exactStructuralCollectionLimit bounds deterministic witness materialization.
+const exactStructuralCollectionLimit = 4096
 
 // addValidPartitions adds kind/classes and recursively lifts child partitions by DomainID.
 func (planner *CasePlanner) addValidPartitions(
@@ -32,26 +37,13 @@ func (planner *CasePlanner) addValidPartitions(
 	}
 
 	source := ConstraintSource{Pointer: use.pointer}
+	planner.addExactEvidenceCases(result, use, use.examples.Valid, ExpectAccepted)
 
-	for _, kind := range reachableKinds(domain) {
-		kindDomain := planner.Domains.FindOrAddEquivalentDomain(singleKindDomain(kind))
-
-		partition, err := planner.Domains.IntersectDomains(id, kindDomain)
-		if err != nil {
-			return err
-		}
-
-		result.add(CasePlan{
-			Name:   caseName("valid kind "+kindName(kind), use.pointer, ""),
-			Expect: ExpectAccepted,
-			Values: partition,
-			Source: source,
-		})
+	if err := planner.addKindPartitions(result, id, domain, source); err != nil {
+		return err
 	}
 
 	if domain.Enum != nil {
-		planner.addEnumValidPartitions(result, domain.Enum, use)
-
 		return nil
 	}
 
@@ -66,28 +58,37 @@ func (planner *CasePlanner) addValidPartitions(
 	return planner.addObjectPartitions(result, domain, use, active)
 }
 
-// addEnumValidPartitions adds members retained by the effective occurrence oracle set.
-func (planner *CasePlanner) addEnumValidPartitions(result *caseSet, enum *EnumSet, use *schemaUse) {
-	examples := use.examples.Valid
-	if !use.examples.ValidDeclared {
-		examples = make([]GenerationExample, 0, len(enum.Values))
-		for _, value := range enum.Values {
-			examples = append(examples, GenerationExample{
-				Value:  value,
-				Source: ConstraintSource{Pointer: use.pointer, Keyword: "enum"},
-			})
+// addKindPartitions adds one accepted partition per constructible JSON kind.
+func (planner *CasePlanner) addKindPartitions(
+	result *caseSet,
+	id DomainID,
+	domain Domain,
+	source ConstraintSource,
+) error {
+	for _, kind := range reachableKinds(domain) {
+		if kind == jsonvalue.KindString && hasOpaqueStringConstraints(domain.String) {
+			continue
 		}
-	}
 
-	for index, example := range examples {
-		member := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example.Value}))
+		kindDomain := planner.Domains.FindOrAddEquivalentDomain(singleKindDomain(kind))
+
+		partition, err := planner.Domains.IntersectDomains(id, kindDomain)
+		if err != nil {
+			return err
+		}
+
 		result.add(CasePlan{
-			Name:   caseName(fmt.Sprintf("valid enum member %d", index+1), use.pointer, "enum"),
-			Expect: ExpectAccepted,
-			Values: member,
-			Source: example.Source,
+			Name:   caseName("valid kind "+kindName(kind), source.Pointer, ""),
+			Expect: ExpectAccepted, Values: partition, Source: source,
 		})
 	}
+
+	return nil
+}
+
+// hasOpaqueStringConstraints reports whether arbitrary construction is unavailable.
+func hasOpaqueStringConstraints(constraints StringConstraints) bool {
+	return len(constraints.Patterns) > 0 || len(constraints.Formats) > 0
 }
 
 // addScalarValidPartitions adds numeric and string boundary partitions.
@@ -164,11 +165,11 @@ func (planner *CasePlanner) addStringValidPartitions(
 		return nil
 	}
 
-	if err := planner.addStringLengthPartitions(result, root, domain.String, use); err != nil {
-		return err
+	if len(domain.String.Patterns) > 0 || len(domain.String.Formats) > 0 {
+		return nil
 	}
 
-	return planner.addTrustedStringPartitions(result, root, use)
+	return planner.addStringLengthPartitions(result, root, domain.String, use)
 }
 
 // addStringLengthPartitions adds accepted partitions at the configured string lengths.
@@ -217,40 +218,6 @@ func (planner *CasePlanner) addStringLengthPartitions(
 	return nil
 }
 
-// addTrustedStringPartitions adds accepted partitions for valid string examples.
-func (planner *CasePlanner) addTrustedStringPartitions(result *caseSet, root DomainID, use *schemaUse) error {
-	for index, example := range use.examples.Valid {
-		if example.Value.Kind != jsonvalue.KindString {
-			continue
-		}
-
-		candidate := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example.Value}))
-
-		value, err := planner.Domains.IntersectDomains(root, candidate)
-		if err != nil {
-			return err
-		}
-
-		if value != EmptyDomainID {
-			result.add(CasePlan{
-				Name: caseName(
-					fmt.Sprintf("valid trusted string example %d", index+1),
-					use.pointer,
-					"pattern/format",
-				),
-				Expect: ExpectAccepted,
-				Values: value,
-				Source: ConstraintSource{
-					Pointer: use.pointer,
-					Keyword: "pattern/format",
-				},
-			})
-		}
-	}
-
-	return nil
-}
-
 // addArrayPartitions adds count and lifted item partitions for an array Domain.
 func (planner *CasePlanner) addArrayPartitions(
 	result *caseSet,
@@ -258,6 +225,10 @@ func (planner *CasePlanner) addArrayPartitions(
 	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
+	if err := planner.addContradictoryArrayFailure(result, use); err != nil {
+		return err
+	}
+
 	if domain.Array.State == KindExcluded {
 		return nil
 	}
@@ -265,6 +236,40 @@ func (planner *CasePlanner) addArrayPartitions(
 	planner.addArrayCountPartitions(result, domain, use)
 
 	return planner.addArrayItemPartitions(result, domain, use, active)
+}
+
+// addContradictoryArrayFailure materializes one array that passes occurrence
+// sibling rules and reaches an impossible item policy.
+func (planner *CasePlanner) addContradictoryArrayFailure(result *caseSet, use *schemaUse) error {
+	if use.items == nil || use.items.domain != EmptyDomainID {
+		return nil
+	}
+
+	count := max(1, occurrenceMinimum(planner, use, "minItems"))
+	if count > exactStructuralCollectionLimit {
+		return nil
+	}
+
+	items := make([]jsonvalue.Value, count)
+	for index := range items {
+		items[index] = jsonvalue.Null()
+	}
+
+	value := jsonvalue.Array(items)
+
+	passes, err := planner.valueFitsStructuralArraySiblings(value, use)
+	if err != nil || !passes {
+		return err
+	}
+
+	planner.addExactStructuralFailure(
+		result,
+		value,
+		ConstraintSource{Pointer: use.pointer, Keyword: "items"},
+		"invalid contradictory array items",
+	)
+
+	return nil
 }
 
 // addArrayCountPartitions adds accepted partitions at the configured array item counts.
@@ -309,7 +314,11 @@ func (planner *CasePlanner) addArrayItemPartitions(
 	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
-	if domain.Array.Items == AnyJSONDomainID || domain.Array.Items == EmptyDomainID {
+	if domain.Array.Items == EmptyDomainID {
+		return nil
+	}
+
+	if domain.Array.Items == AnyJSONDomainID {
 		return nil
 	}
 
@@ -339,7 +348,7 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 	childCases []CasePlan,
 ) {
 	for _, child := range childCases {
-		if child.Values == domain.Array.Items && child.Expect == ExpectAccepted {
+		if isAggregateChildCase(child, domain.Array.Items) {
 			continue
 		}
 
@@ -356,10 +365,11 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 
 		values := planner.Domains.FindOrAddEquivalentDomain(lifted)
 		result.add(CasePlan{
-			Name:   caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
-			Expect: child.Expect,
-			Values: values,
-			Source: child.Source,
+			Name:        caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
+			Expect:      child.Expect,
+			Values:      values,
+			Source:      child.Source,
+			evidenceUse: child.evidenceUse,
 		})
 	}
 }
@@ -371,6 +381,21 @@ func (planner *CasePlanner) addObjectPartitions(
 	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
+	planning := domain
+
+	if use.objectShape != NoDomain {
+		shape, ok := planner.Domains.Domain(use.objectShape)
+		if !ok {
+			return fmt.Errorf("plan object at %s: preserved shape Domain does not exist", use.pointer)
+		}
+
+		planning.Object = shape.Object
+	}
+
+	if err := planner.addContradictoryObjectFailures(result, planning, use); err != nil {
+		return err
+	}
+
 	if domain.Object.State == KindExcluded {
 		return nil
 	}
@@ -382,6 +407,36 @@ func (planner *CasePlanner) addObjectPartitions(
 	}
 
 	return planner.addAdditionalPropertyPartitions(result, domain, use, active)
+}
+
+// addContradictoryObjectFailures plans impossible child seams before the
+// effective object kind can disappear through productivity normalization.
+func (planner *CasePlanner) addContradictoryObjectFailures(
+	result *caseSet,
+	domain Domain,
+	use *schemaUse,
+) error {
+	if domain.Object.State == KindExcluded {
+		return nil
+	}
+
+	for _, property := range domain.Object.Properties {
+		child := use.property(property.Name)
+		if child == nil || child.domain != EmptyDomainID {
+			continue
+		}
+
+		_, _, err := planner.addContradictoryPropertyFailure(result, domain, use, property)
+		if err != nil {
+			return err
+		}
+	}
+
+	if use.additional != nil && use.additional.domain == EmptyDomainID {
+		return planner.addContradictoryAdditionalFailure(result, domain, use)
+	}
+
+	return nil
 }
 
 // addObjectCountPartitions adds accepted partitions at the configured object property counts.
@@ -426,7 +481,9 @@ func (planner *CasePlanner) addDeclaredPropertyPartitions(
 ) error {
 	for _, property := range domain.Object.Properties {
 		if property.State == PropertyForbidden {
-			planner.addForbiddenPropertyFailure(result, domain, use, property)
+			if err := planner.addForbiddenPropertyFailure(result, domain, use, property); err != nil {
+				return err
+			}
 
 			continue
 		}
@@ -447,7 +504,12 @@ func (planner *CasePlanner) addForbiddenPropertyFailure(
 	domain Domain,
 	use *schemaUse,
 	property NamedProperty,
-) {
+) error {
+	source, stop, err := planner.addContradictoryPropertyFailure(result, domain, use, property)
+	if err != nil || stop {
+		return err
+	}
+
 	failure := objectOnly(domain)
 	for index := range failure.Object.Properties {
 		if failure.Object.Properties[index].Name == property.Name {
@@ -467,12 +529,44 @@ func (planner *CasePlanner) addForbiddenPropertyFailure(
 			),
 			Expect: ExpectRejected,
 			Values: values,
-			Source: ConstraintSource{
-				Pointer: use.pointer,
-				Keyword: "additionalProperties",
-			},
+			Source: source,
 		})
 	}
+
+	return nil
+}
+
+// addContradictoryPropertyFailure adds an exact body for an impossible optional child.
+func (planner *CasePlanner) addContradictoryPropertyFailure(
+	result *caseSet,
+	domain Domain,
+	use *schemaUse,
+	property NamedProperty,
+) (ConstraintSource, bool, error) {
+	source := ConstraintSource{Pointer: use.pointer, Keyword: "additionalProperties"}
+
+	child := use.property(property.Name)
+	if child == nil || child.domain != EmptyDomainID {
+		return source, false, nil
+	}
+
+	source.Keyword = "properties"
+
+	value, constructible, err := planner.contradictoryObjectWitness(domain.Object, property.Name, false)
+	if err != nil || !constructible {
+		return source, false, err
+	}
+
+	passes, err := planner.valueFitsRelaxedObject(value, domain, property.Name, false)
+	if err != nil || !passes {
+		return source, !passes, err
+	}
+
+	planner.addExactStructuralFailure(
+		result, value, source, "invalid contradictory optional property "+property.Name,
+	)
+
+	return source, false, nil
 }
 
 // addOptionalPropertyPartitions adds present and absent partitions for an optional property.
@@ -542,7 +636,7 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 	}
 
 	for _, child := range childCases {
-		if child.Expect == ExpectAccepted && child.Values == property.Values {
+		if isAggregateChildCase(child, property.Values) {
 			continue
 		}
 
@@ -566,13 +660,19 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 				use.pointer,
 				"properties",
 			),
-			Expect: expect,
-			Values: values,
-			Source: child.Source,
+			Expect:      expect,
+			Values:      values,
+			Source:      child.Source,
+			evidenceUse: child.evidenceUse,
 		})
 	}
 
 	return nil
+}
+
+// isAggregateChildCase identifies the synthetic child aggregate, not evidence.
+func isAggregateChildCase(child CasePlan, values DomainID) bool {
+	return child.Expect == ExpectAccepted && child.Values == values && child.Source.Keyword == ""
 }
 
 // propertyChildPartitions plans one exact declared-property occurrence.
@@ -626,7 +726,7 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 	}
 
 	if domain.Object.Additional.Values == EmptyDomainID {
-		return nil
+		return planner.addContradictoryAdditionalFailure(result, domain, use)
 	}
 
 	if use.additional == nil {
@@ -660,13 +760,385 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 				use.pointer,
 				"additionalProperties",
 			),
-			Expect: child.Expect,
-			Values: values,
-			Source: child.Source,
+			Expect:      child.Expect,
+			Values:      values,
+			Source:      child.Source,
+			evidenceUse: child.evidenceUse,
 		})
 	}
 
 	return nil
+}
+
+// addContradictoryAdditionalFailure adds a reachable exact additional value.
+func (planner *CasePlanner) addContradictoryAdditionalFailure(
+	result *caseSet,
+	domain Domain,
+	use *schemaUse,
+) error {
+	name := unusedPropertyName(domain.Object)
+
+	if use.additional == nil ||
+		!occurrenceAllowsPositiveCount(planner, use, "maxProperties") {
+		return nil
+	}
+
+	value, constructible, err := planner.contradictoryObjectWitness(domain.Object, name, true)
+	if err != nil || !constructible {
+		return err
+	}
+
+	passes, err := planner.valueFitsRelaxedObject(value, domain, name, true)
+	if err != nil || !passes {
+		return err
+	}
+
+	planner.addExactStructuralFailure(
+		result,
+		value,
+		ConstraintSource{Pointer: use.pointer, Keyword: "additionalProperties"},
+		"invalid contradictory additional property",
+	)
+
+	return nil
+}
+
+// contradictoryObjectWitness constructs the smallest object that satisfies
+// every modeled sibling shape rule while making one contradictory child present.
+func (planner *CasePlanner) contradictoryObjectWitness(
+	object ObjectConstraints,
+	target string,
+	targetAdditional bool,
+) (jsonvalue.Value, bool, error) {
+	if !objectWitnessCardinalityIsSafe(object) {
+		return jsonvalue.Value{}, false, nil
+	}
+
+	properties := append([]NamedProperty(nil), object.Properties...)
+	sort.Slice(properties, func(left int, right int) bool {
+		return properties[left].Name < properties[right].Name
+	})
+
+	members, constructible, err := planner.buildObjectWitnessMembers(
+		object,
+		properties,
+		target,
+		targetAdditional,
+	)
+	if err != nil || !constructible {
+		return jsonvalue.Value{}, false, err
+	}
+
+	if !objectWitnessFitsMaximum(object, members) {
+		return jsonvalue.Value{}, false, nil
+	}
+
+	value, err := jsonvalue.Object(members)
+	if err != nil {
+		return jsonvalue.Value{}, false, err
+	}
+
+	return value, true, nil
+}
+
+// objectWitnessCardinalityIsSafe rejects impossible or oversized materialization.
+func objectWitnessCardinalityIsSafe(object ObjectConstraints) bool {
+	if object.MinProps > exactStructuralCollectionLimit {
+		return false
+	}
+
+	return object.MaxProps == nil || *object.MaxProps >= 1
+}
+
+// objectWitnessFitsMaximum checks the completed property count.
+func objectWitnessFitsMaximum(object ObjectConstraints, members []jsonvalue.Member) bool {
+	return object.MaxProps == nil || len(members) <= *object.MaxProps
+}
+
+// buildObjectWitnessMembers fills required, optional, and additional siblings.
+func (planner *CasePlanner) buildObjectWitnessMembers(
+	object ObjectConstraints,
+	properties []NamedProperty,
+	target string,
+	targetAdditional bool,
+) ([]jsonvalue.Member, bool, error) {
+	members := []jsonvalue.Member{{Name: target, Value: jsonvalue.Null()}}
+
+	members, constructible, err := planner.appendRequiredWitnessMembers(members, properties, target)
+	if err != nil || !constructible || len(members) > exactStructuralCollectionLimit {
+		return nil, false, err
+	}
+
+	members, err = planner.appendOptionalWitnessMembers(members, properties, target, object.MinProps)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return planner.fillObjectWitnessMinimum(members, object, targetAdditional)
+}
+
+// appendRequiredWitnessMembers adds every required sibling with one exact value.
+func (planner *CasePlanner) appendRequiredWitnessMembers(
+	members []jsonvalue.Member,
+	properties []NamedProperty,
+	target string,
+) ([]jsonvalue.Member, bool, error) {
+	for _, property := range properties {
+		if property.Name == target || !property.Required {
+			continue
+		}
+
+		value, constructible, err := planner.firstContextValue(property.Values)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if !constructible {
+			return nil, false, nil
+		}
+
+		members = append(members, jsonvalue.Member{Name: property.Name, Value: value})
+	}
+
+	return members, true, nil
+}
+
+// appendOptionalWitnessMembers fills the minimum from declared optional siblings.
+func (planner *CasePlanner) appendOptionalWitnessMembers(
+	members []jsonvalue.Member,
+	properties []NamedProperty,
+	target string,
+	minimum int,
+) ([]jsonvalue.Member, error) {
+	for _, property := range properties {
+		if len(members) >= minimum {
+			break
+		}
+
+		if property.Name == target || property.Required || property.State == PropertyForbidden {
+			continue
+		}
+
+		value, constructible, err := planner.firstContextValue(property.Values)
+		if err != nil {
+			return nil, err
+		}
+
+		if constructible {
+			members = append(members, jsonvalue.Member{Name: property.Name, Value: value})
+		}
+	}
+
+	return members, nil
+}
+
+// fillObjectWitnessMinimum adds additional names until the minimum is met.
+func (planner *CasePlanner) fillObjectWitnessMinimum(
+	members []jsonvalue.Member,
+	object ObjectConstraints,
+	targetAdditional bool,
+) ([]jsonvalue.Member, bool, error) {
+	for len(members) < object.MinProps {
+		if len(members) >= exactStructuralCollectionLimit {
+			return nil, false, nil
+		}
+
+		value, constructible, err := planner.additionalWitnessValue(object, targetAdditional)
+		if err != nil || !constructible {
+			return nil, false, err
+		}
+
+		members = append(members, jsonvalue.Member{
+			Name: unusedMemberName(object.Properties, members), Value: value,
+		})
+	}
+
+	return members, true, nil
+}
+
+// additionalWitnessValue selects the target null or one valid sibling value.
+func (planner *CasePlanner) additionalWitnessValue(
+	object ObjectConstraints,
+	targetAdditional bool,
+) (jsonvalue.Value, bool, error) {
+	if targetAdditional {
+		return jsonvalue.Null(), true, nil
+	}
+
+	return planner.firstContextValue(object.Additional.Values)
+}
+
+// occurrenceMinimum returns the strongest source-local minimum rule.
+func occurrenceMinimum(planner *CasePlanner, use *schemaUse, keyword string) int {
+	minimum := 0
+
+	for _, source := range use.constraints {
+		if source.Keyword != keyword {
+			continue
+		}
+
+		sourceUse := use.find(source.Pointer)
+		if sourceUse == nil {
+			continue
+		}
+
+		atomic, ok := sourceUse.atomic[keyword]
+		if !ok {
+			continue
+		}
+
+		domain, ok := planner.Domains.Domain(atomic)
+		if ok && keyword == "minItems" {
+			minimum = max(minimum, domain.Array.MinItems)
+		}
+	}
+
+	return minimum
+}
+
+// valueFitsStructuralArraySiblings proves an exact array against every modeled
+// parent constraint while excluding only the contradictory item subtree.
+func (planner *CasePlanner) valueFitsStructuralArraySiblings(
+	value jsonvalue.Value,
+	use *schemaUse,
+) (bool, error) {
+	context := AnyJSONDomainID
+
+	for _, constraint := range planner.Constraints {
+		if use.find(constraint.Source.Pointer) == nil ||
+			constraint.Source.Pointer == use.items.pointer ||
+			strings.HasPrefix(constraint.Source.Pointer, use.items.pointer+"/") {
+			continue
+		}
+
+		intersection, err := planner.Domains.IntersectDomains(context, constraint.Pass)
+		if err != nil {
+			return false, err
+		}
+
+		context = intersection
+	}
+
+	domain, ok := planner.Domains.Domain(context)
+	if !ok {
+		return false, fmt.Errorf("array sibling Domain %d does not exist", context)
+	}
+
+	domain.Array.Items = AnyJSONDomainID
+
+	return (&Compiler{Domains: planner.Domains}).valueFitsDomain(value, domain)
+}
+
+// valueFitsRelaxedObject proves an exact object after relaxing only the child
+// seam intentionally made contradictory by the schema occurrence.
+func (planner *CasePlanner) valueFitsRelaxedObject(
+	value jsonvalue.Value,
+	domain Domain,
+	target string,
+	targetAdditional bool,
+) (bool, error) {
+	relaxed := cloneDomain(domain)
+	if targetAdditional {
+		relaxed.Object.Additional.Values = AnyJSONDomainID
+	} else {
+		for index := range relaxed.Object.Properties {
+			if relaxed.Object.Properties[index].Name == target {
+				relaxed.Object.Properties[index].State = PropertyAllowed
+				relaxed.Object.Properties[index].Values = AnyJSONDomainID
+			}
+		}
+	}
+
+	return (&Compiler{Domains: planner.Domains}).valueFitsDomain(value, relaxed)
+}
+
+// firstContextValue selects one exact modeled value for a sibling child.
+func (planner *CasePlanner) firstContextValue(id DomainID) (jsonvalue.Value, bool, error) {
+	values, err := planner.contextChildValues(id, 1, make(map[DomainID]bool))
+	if err != nil || len(values) == 0 {
+		return jsonvalue.Value{}, false, err
+	}
+
+	return values[0], true, nil
+}
+
+// unusedMemberName returns a name absent from declared and already selected members.
+func unusedMemberName(properties []NamedProperty, members []jsonvalue.Member) string {
+	used := make(map[string]struct{}, len(properties)+len(members))
+	for _, property := range properties {
+		used[property.Name] = struct{}{}
+	}
+
+	for _, member := range members {
+		used[member.Name] = struct{}{}
+	}
+
+	for suffix := 0; ; suffix++ {
+		name := "additional"
+		if suffix > 0 {
+			name = fmt.Sprintf("additional%d", suffix)
+		}
+
+		if _, exists := used[name]; !exists {
+			return name
+		}
+	}
+}
+
+// addExactStructuralFailure adds one deterministic whole-occurrence rejected body.
+func (planner *CasePlanner) addExactStructuralFailure(
+	result *caseSet,
+	value jsonvalue.Value,
+	source ConstraintSource,
+	name string,
+) {
+	values := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{value}))
+	result.add(CasePlan{
+		Name:   caseName(name, source.Pointer, source.Keyword),
+		Expect: ExpectRejected,
+		Values: values,
+		Source: source,
+	})
+}
+
+// occurrenceAllowsPositiveCount rejects fabricated structural failures when a
+// source-local maximum explicitly prevents a non-empty container.
+func occurrenceAllowsPositiveCount(planner *CasePlanner, use *schemaUse, keyword string) bool {
+	for _, source := range use.constraints {
+		if source.Keyword != keyword {
+			continue
+		}
+
+		sourceUse := use.find(source.Pointer)
+		if sourceUse == nil {
+			continue
+		}
+
+		atomic := sourceUse.localDomain
+		if value, ok := sourceUse.atomic[keyword]; ok {
+			atomic = value
+		}
+
+		domain, ok := planner.Domains.Domain(atomic)
+		if !ok {
+			continue
+		}
+
+		if occurrenceMaximumIsZero(domain, keyword) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// occurrenceMaximumIsZero reports an explicit zero container maximum.
+func occurrenceMaximumIsZero(domain Domain, keyword string) bool {
+	if keyword == "maxItems" {
+		return domain.Array.MaxItems != nil && *domain.Array.MaxItems == 0
+	}
+
+	return keyword == "maxProperties" && domain.Object.MaxProps != nil && *domain.Object.MaxProps == 0
 }
 
 // childPartitions plans accepted and isolated rejected cases for a nested Domain.
@@ -681,12 +1153,13 @@ func (planner *CasePlanner) childPartitions(
 		Values: use.domain,
 		Source: ConstraintSource{Pointer: use.pointer},
 	})
+	planner.addExactEvidenceCases(children, use, use.examples.Invalid, ExpectRejected)
 
 	if err := planner.addValidPartitions(children, use, active); err != nil {
 		return nil, err
 	}
 
-	childPlanner := &CasePlanner{Domains: planner.Domains}
+	childPlanner := &CasePlanner{Domains: planner.Domains, rootUse: use}
 
 	constraints, err := childPlanner.constraintPlans(use)
 	if err != nil {

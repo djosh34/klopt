@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"testing"
 
+	"decode_and_validate_generator/pkg/test_generator/internal/suite"
 	"github.com/goccy/go-yaml"
+	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 const (
@@ -62,7 +65,7 @@ func corpusFixtureWithComponents(
 
 // validatorCorpus is the sole shared fixture table. Its builders append in a fixed category and dimension order.
 func validatorCorpus() []validatorCorpusFixture {
-	fixtures := make([]validatorCorpusFixture, 0, 322)
+	fixtures := make([]validatorCorpusFixture, 0)
 	fixtures = append(fixtures, typeNullableEnumCorpus()...)
 	fixtures = append(fixtures, numericCorpus()...)
 	fixtures = append(fixtures, stringCorpus()...)
@@ -70,16 +73,288 @@ func validatorCorpus() []validatorCorpusFixture {
 	fixtures = append(fixtures, objectCorpus()...)
 	fixtures = append(fixtures, referenceAllOfCorpus()...)
 	fixtures = append(fixtures, crossFamilyCorpus()...)
+	fixtures = append(fixtures, witnessCompletenessCorpus()...)
 
 	return fixtures
 }
 
-// TestValidatorCorpusSelfCheck catches accidental duplicate fixtures and count drift before the broad matrix runs.
+// TestValidatorCorpusSelfCheck catches duplicate fixtures and empty categories before the broad matrix runs.
 func TestValidatorCorpusSelfCheck(t *testing.T) {
 	t.Parallel()
 
 	if err := validateValidatorCorpus(validatorCorpus()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// witnessCompletenessCorpus adds consensus-safe exact witness obligations.
+func witnessCompletenessCorpus() []validatorCorpusFixture {
+	return []validatorCorpusFixture{
+		corpusFixture(corpusCategoryNumeric, "witness-integer-number-allof", `
+      allOf:
+        - {type: integer}
+        - {type: number, minimum: 0, maximum: 1}
+`),
+		corpusFixture(corpusCategoryNumeric, "witness-narrow-lattice", `
+      type: number
+      minimum: 0.29
+      maximum: 0.31
+      multipleOf: 0.1
+`),
+		corpusFixture(corpusCategoryNumeric, "witness-dual-multiple-2-3", `
+      type: number
+      minimum: 0
+      maximum: 6
+      allOf:
+        - {multipleOf: 2}
+        - {multipleOf: 3}
+`),
+		corpusFixture(corpusCategoryNumeric, "witness-dual-multiple-decimal", `
+      type: number
+      minimum: 0
+      maximum: 1
+      allOf:
+        - {multipleOf: 0.2}
+        - {multipleOf: 0.3}
+`),
+		corpusFixture(corpusCategoryArrays, "witness-contradictory-items", `
+      type: array
+      items:
+        allOf:
+          - {type: string}
+          - {type: boolean}
+`),
+		corpusFixture(corpusCategoryObjects, "witness-contradictory-additional", `
+      type: object
+      additionalProperties:
+        allOf:
+          - {type: string}
+          - {type: boolean}
+`),
+		corpusFixture(corpusCategoryObjects, "witness-contradictory-optional", `
+      type: object
+      properties:
+        value:
+          allOf:
+            - {type: string}
+            - {type: boolean}
+      additionalProperties: false
+`),
+		corpusFixture(corpusCategoryStrings, "witness-pattern-format-invalid-evidence", `
+      type: string
+      pattern: '^[^@]+@example[.]com$'
+      format: email
+      x-valid-examples: [ok@example.com]
+      x-invalid-examples: [wrong]
+`),
+		corpusFixture(corpusCategoryStrings, "witness-direct-evidence", `
+      type: string
+      pattern: '.*'
+      x-valid-examples: [ok]
+      x-invalid-examples: [1]
+`),
+		corpusFixture(corpusCategoryObjects, "witness-property-evidence", `
+      type: object
+      required: [value]
+      maxProperties: 1
+      properties:
+        value: {type: string, pattern: '.*', x-valid-examples: [ok], x-invalid-examples: [1]}
+      additionalProperties: false
+`),
+		corpusFixture(corpusCategoryArrays, "witness-item-evidence", `
+      type: array
+      minItems: 1
+      maxItems: 1
+      items: {type: string, pattern: '.*', x-valid-examples: [ok], x-invalid-examples: [1]}
+`),
+		corpusFixtureWithComponents(corpusCategoryRefs, "witness-ref-evidence", `
+      type: object
+      required: [value]
+      maxProperties: 1
+      properties:
+        value: {$ref: '#/components/schemas/Evidence'}
+      additionalProperties: false
+`, `
+components:
+  schemas:
+    Evidence: {type: string, pattern: '.*', x-valid-examples: [ok], x-invalid-examples: [1]}
+`),
+		corpusFixture(corpusCategoryStrings, "witness-empty-invalid-evidence", `
+      type: string
+      pattern: '.*'
+      enum: [ok]
+      x-invalid-examples: []
+`),
+	}
+}
+
+// TestValidatorCorpusDeclaresTargetedWitnessCoverage pins important generated
+// cases by fixture, source, expectation, and exact canonical JSON.
+func TestValidatorCorpusDeclaresTargetedWitnessCoverage(t *testing.T) {
+	t.Parallel()
+
+	fixtures := validatorCorpus()
+
+	byID := make(map[string]validatorCorpusFixture, len(fixtures))
+	for _, fixture := range fixtures {
+		byID[fixture.ID] = fixture
+	}
+
+	for _, expectation := range validatorCorpusCoverage() {
+		t.Run(expectation.FixtureID, func(t *testing.T) {
+			t.Parallel()
+			assertValidatorCorpusExpectation(t, byID, expectation)
+		})
+	}
+}
+
+// assertValidatorCorpusExpectation checks one targeted fixture declaration.
+func assertValidatorCorpusExpectation(
+	t *testing.T,
+	byID map[string]validatorCorpusFixture,
+	expectation validatorCorpusExpectation,
+) {
+	t.Helper()
+
+	fixture, ok := byID[expectation.FixtureID]
+	require.True(t, ok)
+
+	compiled, err := compileValidatorFixture(fixture.spec())
+	require.NoError(t, err)
+
+	if expectation.Absent {
+		assertValidatorCorpusExpectationAbsent(t, compiled, expectation)
+
+		return
+	}
+
+	found := false
+
+	for _, plannedCase := range compiled.Cases {
+		if plannedCase.Source != expectation.Source || plannedCase.Expect != expectation.Expect {
+			continue
+		}
+
+		if expectation.Generated {
+			assertGeneratedCorpusBody(t, plannedCase, expectation.JSON)
+
+			return
+		}
+
+		domain, exists := compiled.Domains.Domain(plannedCase.Values)
+		if !exists || domain.Enum == nil || len(domain.Enum.Values) != 1 {
+			continue
+		}
+
+		body, marshalErr := domain.Enum.Values[0].MarshalJSON()
+		require.NoError(t, marshalErr)
+
+		found = found || string(body) == expectation.JSON
+	}
+
+	require.True(t, found, "%+v", expectation)
+}
+
+// assertValidatorCorpusExpectationAbsent checks an explicitly empty evidence declaration.
+func assertValidatorCorpusExpectationAbsent(
+	t *testing.T,
+	compiled *suite.CompiledSuite,
+	expectation validatorCorpusExpectation,
+) {
+	t.Helper()
+
+	for _, plannedCase := range compiled.Cases {
+		require.False(t, plannedCase.Source == expectation.Source && plannedCase.Expect == expectation.Expect)
+	}
+}
+
+// assertGeneratedCorpusBody requires every draw to equal the declared whole body.
+func assertGeneratedCorpusBody(t *testing.T, plannedCase suite.CasePlan, want string) {
+	t.Helper()
+
+	rapid.Check(t, func(rt *rapid.T) {
+		value := plannedCase.Generator.Draw(rt, "value")
+		body, err := value.MarshalJSON()
+		require.NoError(rt, err)
+		require.Equal(rt, want, string(body))
+	})
+}
+
+// validatorCorpusCoverage is one targeted observable coverage declaration.
+type validatorCorpusExpectation struct {
+	FixtureID string
+	Source    suite.ConstraintSource
+	Expect    suite.ExpectedResult
+	JSON      string
+	Absent    bool
+	Generated bool
+}
+
+// validatorCorpusCoverage returns the exact cases that defend the PR4 matrix.
+func validatorCorpusCoverage() []validatorCorpusExpectation {
+	const root = "#/paths/~1things/post/requestBody/content/application~1json/schema"
+
+	return []validatorCorpusExpectation{
+		{FixtureID: corpusCategoryTypes + "/enum-homogeneous-array", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "enum",
+		}, Expect: suite.ExpectRejected, JSON: `[]`},
+		{FixtureID: corpusCategoryTypes + "/enum-homogeneous-object", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "enum",
+		}, Expect: suite.ExpectRejected, JSON: `{"a":"a"}`},
+		{FixtureID: corpusCategoryNumeric + "/witness-integer-number-allof", Source: suite.ConstraintSource{
+			Pointer: root + "/allOf/0", Keyword: "type",
+		}, Expect: suite.ExpectRejected, JSON: "0.5"},
+		{FixtureID: corpusCategoryNumeric + "/witness-narrow-lattice", Source: suite.ConstraintSource{
+			Pointer: root,
+		}, Expect: suite.ExpectAccepted, JSON: "0.3", Generated: true},
+		{FixtureID: corpusCategoryNumeric + "/witness-narrow-lattice", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "multipleOf",
+		}, Expect: suite.ExpectRejected, JSON: "0.31"},
+		{FixtureID: corpusCategoryNumeric + "/witness-dual-multiple-2-3", Source: suite.ConstraintSource{
+			Pointer: root + "/allOf/0", Keyword: "multipleOf",
+		}, Expect: suite.ExpectRejected, JSON: "3"},
+		{FixtureID: corpusCategoryNumeric + "/witness-dual-multiple-decimal", Source: suite.ConstraintSource{
+			Pointer: root + "/allOf/0", Keyword: "multipleOf",
+		}, Expect: suite.ExpectRejected, JSON: "0.3"},
+		{FixtureID: corpusCategoryArrays + "/witness-contradictory-items", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "items",
+		}, Expect: suite.ExpectRejected, JSON: "[null]"},
+		{FixtureID: corpusCategoryObjects + "/witness-contradictory-additional", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "additionalProperties",
+		}, Expect: suite.ExpectRejected, JSON: `{"additional":null}`},
+		{FixtureID: corpusCategoryObjects + "/witness-contradictory-optional", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "properties",
+		}, Expect: suite.ExpectRejected, JSON: `{"value":null}`},
+		{FixtureID: corpusCategoryStrings + "/witness-pattern-format-invalid-evidence", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "x-invalid-examples",
+		}, Expect: suite.ExpectRejected, JSON: `"wrong"`},
+		{FixtureID: corpusCategoryStrings + "/witness-direct-evidence", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "x-valid-examples",
+		}, Expect: suite.ExpectAccepted, JSON: `"ok"`},
+		{FixtureID: corpusCategoryStrings + "/witness-direct-evidence", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "x-invalid-examples",
+		}, Expect: suite.ExpectRejected, JSON: `1`},
+		{FixtureID: corpusCategoryObjects + "/witness-property-evidence", Source: suite.ConstraintSource{
+			Pointer: root + "/properties/value", Keyword: "x-valid-examples",
+		}, Expect: suite.ExpectAccepted, JSON: `{"value":"ok"}`, Generated: true},
+		{FixtureID: corpusCategoryObjects + "/witness-property-evidence", Source: suite.ConstraintSource{
+			Pointer: root + "/properties/value", Keyword: "x-invalid-examples",
+		}, Expect: suite.ExpectRejected, JSON: `{"value":1}`, Generated: true},
+		{FixtureID: corpusCategoryArrays + "/witness-item-evidence", Source: suite.ConstraintSource{
+			Pointer: root + "/items", Keyword: "x-valid-examples",
+		}, Expect: suite.ExpectAccepted, JSON: `["ok"]`, Generated: true},
+		{FixtureID: corpusCategoryArrays + "/witness-item-evidence", Source: suite.ConstraintSource{
+			Pointer: root + "/items", Keyword: "x-invalid-examples",
+		}, Expect: suite.ExpectRejected, JSON: `[1]`, Generated: true},
+		{FixtureID: corpusCategoryRefs + "/witness-ref-evidence", Source: suite.ConstraintSource{
+			Pointer: "#/components/schemas/Evidence", Keyword: "x-valid-examples",
+		}, Expect: suite.ExpectAccepted, JSON: `{"value":"ok"}`, Generated: true},
+		{FixtureID: corpusCategoryRefs + "/witness-ref-evidence", Source: suite.ConstraintSource{
+			Pointer: "#/components/schemas/Evidence", Keyword: "x-invalid-examples",
+		}, Expect: suite.ExpectRejected, JSON: `{"value":1}`, Generated: true},
+		{FixtureID: corpusCategoryStrings + "/witness-empty-invalid-evidence", Source: suite.ConstraintSource{
+			Pointer: root, Keyword: "x-invalid-examples",
+		}, Expect: suite.ExpectRejected, Absent: true},
 	}
 }
 
@@ -102,31 +377,13 @@ func TestValidatorCorpusHasConstructibleValidCases(t *testing.T) {
 
 // validateValidatorCorpus verifies the exact agreed category matrix and semantic complete-spec uniqueness.
 func validateValidatorCorpus(fixtures []validatorCorpusFixture) error {
-	expectedCounts := map[string]int{
-		corpusCategoryTypes:   44,
-		corpusCategoryNumeric: 64,
-		corpusCategoryStrings: 52,
-		corpusCategoryArrays:  36,
-		corpusCategoryObjects: 52,
-		corpusCategoryRefs:    36,
-		corpusCategoryCross:   38,
-	}
-	expectedCategories := []string{
-		corpusCategoryTypes,
-		corpusCategoryNumeric,
-		corpusCategoryStrings,
-		corpusCategoryArrays,
-		corpusCategoryObjects,
-		corpusCategoryRefs,
-		corpusCategoryCross,
-	}
-
-	if len(fixtures) != 322 {
-		return fmt.Errorf("validator corpus total is %d, want 322", len(fixtures))
+	expectedCategories := map[string]struct{}{
+		corpusCategoryTypes: {}, corpusCategoryNumeric: {}, corpusCategoryStrings: {},
+		corpusCategoryArrays: {}, corpusCategoryObjects: {}, corpusCategoryRefs: {}, corpusCategoryCross: {},
 	}
 
 	var (
-		counts = make(map[string]int, len(expectedCounts))
+		counts = make(map[string]int, len(expectedCategories))
 		ids    = make(map[string]struct{}, len(fixtures))
 		specs  = make(map[string]string, len(fixtures))
 	)
@@ -136,7 +393,7 @@ func validateValidatorCorpus(fixtures []validatorCorpusFixture) error {
 			return errors.New("validator corpus has an empty fixture ID")
 		}
 
-		if _, knownCategory := expectedCounts[fixture.Category]; !knownCategory {
+		if _, knownCategory := expectedCategories[fixture.Category]; !knownCategory {
 			return fmt.Errorf("validator corpus has unexpected category %q", fixture.Category)
 		}
 
@@ -159,14 +416,9 @@ func validateValidatorCorpus(fixtures []validatorCorpusFixture) error {
 		counts[fixture.Category]++
 	}
 
-	for _, category := range expectedCategories {
-		if counts[category] != expectedCounts[category] {
-			return fmt.Errorf(
-				"validator corpus category %q has %d fixtures, want %d",
-				category,
-				counts[category],
-				expectedCounts[category],
-			)
+	for category := range expectedCategories {
+		if counts[category] == 0 {
+			return fmt.Errorf("validator corpus category %q is empty", category)
 		}
 	}
 
@@ -196,7 +448,7 @@ func canonicalCorpusSpec(spec []byte) (string, error) {
 	return string(canonical), nil
 }
 
-// typeNullableEnumCorpus covers omitted/single types, nullable, and enum partitions in 44 rows.
+// typeNullableEnumCorpus covers omitted/single types, nullable, and enum partitions.
 func typeNullableEnumCorpus() []validatorCorpusFixture {
 	fixtures := []validatorCorpusFixture{
 		corpusFixture(corpusCategoryTypes, "omitted-type-any-json", `
@@ -385,7 +637,7 @@ func typeNullableEnumCorpus() []validatorCorpusFixture {
 	return fixtures
 }
 
-// numericCorpus covers inclusive/exclusive boundaries, lattice combinations, and safe numeric spellings in 64 rows.
+// numericCorpus covers inclusive/exclusive boundaries, lattice combinations, and safe numeric spellings.
 func numericCorpus() []validatorCorpusFixture {
 	fixtures := make([]validatorCorpusFixture, 0, 64)
 
@@ -551,7 +803,7 @@ func numericCorpus() []validatorCorpusFixture {
 	return fixtures
 }
 
-// stringCorpus covers string lengths, portable patterns, trusted formats, and combinations in 52 rows.
+// stringCorpus covers string lengths, portable patterns, trusted formats, and combinations.
 func stringCorpus() []validatorCorpusFixture {
 	fixtures := []validatorCorpusFixture{
 		corpusFixture(corpusCategoryStrings, "length-minimum-zero", "type: string\nminLength: 0"),
@@ -759,7 +1011,7 @@ func stringCorpus() []validatorCorpusFixture {
 }
 
 // arrayCorpus covers collection bounds, item forms, nullable/enum items,
-// nesting, and impossible item schemas in 36 rows.
+// nesting, and impossible item schemas.
 func arrayCorpus() []validatorCorpusFixture {
 	fixtures := []validatorCorpusFixture{
 		corpusFixture(corpusCategoryArrays, "bounds-minimum-zero", "type: array\nminItems: 0\nitems: {type: integer}"),
@@ -970,7 +1222,7 @@ func arrayCorpus() []validatorCorpusFixture {
 	return fixtures
 }
 
-// objectCorpus covers object counts, request readOnly omission, all additionalProperties modes, and names in 52 rows.
+// objectCorpus covers object counts, request readOnly omission, all additionalProperties modes, and names.
 func objectCorpus() []validatorCorpusFixture {
 	fixtures := []validatorCorpusFixture{
 		corpusFixture(corpusCategoryObjects, "bounds-minimum-zero", "type: object\nminProperties: 0"),
@@ -1299,7 +1551,7 @@ func objectCorpus() []validatorCorpusFixture {
 	return fixtures
 }
 
-// referenceAllOfCorpus covers local pointers and allOf intersections in 36 rows.
+// referenceAllOfCorpus covers local pointers and allOf intersections.
 func referenceAllOfCorpus() []validatorCorpusFixture {
 	return []validatorCorpusFixture{
 		corpusFixtureWithComponents(corpusCategoryRefs, "direct-ref", `

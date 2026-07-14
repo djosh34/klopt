@@ -203,7 +203,50 @@ func stringFits(value string, constraints StringConstraints) (bool, error) {
 	}
 
 	if len(constraints.Patterns) > 0 || len(constraints.Formats) > 0 {
-		return false, fmt.Errorf("%w: enum with pattern or format needs trusted compatible examples", errUnconstructible)
+		return false, errOpaqueStringMembership
+	}
+
+	return true, nil
+}
+
+// errOpaqueStringMembership marks an enum membership check that needs occurrence evidence.
+var errOpaqueStringMembership = fmt.Errorf(
+	"%w: enum with pattern or format needs trusted compatible examples",
+	errUnconstructible,
+)
+
+// childMembership aggregates recursive checks without letting opaque membership
+// hide a definite modeled failure.
+type childMembership struct {
+	opaque bool
+	failed bool
+}
+
+// add records one child result while propagating hard errors immediately.
+func (membership *childMembership) add(matches bool, err error) error {
+	if err == nil {
+		membership.failed = membership.failed || !matches
+
+		return nil
+	}
+
+	if errors.Is(err, errOpaqueStringMembership) {
+		membership.opaque = true
+
+		return nil
+	}
+
+	return err
+}
+
+// result applies hard error > false > opaque > true precedence.
+func (membership childMembership) result() (bool, error) {
+	if membership.failed {
+		return false, nil
+	}
+
+	if membership.opaque {
+		return false, errOpaqueStringMembership
 	}
 
 	return true, nil
@@ -216,19 +259,22 @@ func (compiler *Compiler) arrayFits(values []jsonvalue.Value, constraints ArrayC
 		return false, nil
 	}
 
-	for _, value := range values {
-		child, ok := compiler.Domains.Domain(constraints.Items)
-		if !ok {
-			return false, errors.New("array item Domain does not exist")
-		}
+	child, ok := compiler.Domains.Domain(constraints.Items)
+	if !ok && len(values) > 0 {
+		return false, errors.New("array item Domain does not exist")
+	}
 
+	var membership childMembership
+
+	for _, value := range values {
 		matches, err := compiler.valueFitsDomain(value, child)
-		if err != nil || !matches {
-			return matches, err
+
+		if addErr := membership.add(matches, err); addErr != nil {
+			return false, addErr
 		}
 	}
 
-	return true, nil
+	return membership.result()
 }
 
 // objectFits reports whether a JSON object satisfies object constraints.
@@ -244,7 +290,7 @@ func (compiler *Compiler) objectFits(members []jsonvalue.Member, constraints Obj
 		return false, nil
 	}
 
-	return compiler.objectMembersFit(byName, properties, constraints.Additional)
+	return compiler.objectMembersFit(members, properties, constraints.Additional)
 }
 
 // fitsObjectSize reports whether an object has an allowed number of members.
@@ -288,14 +334,29 @@ func hasRequiredProperties(members map[string]jsonvalue.Value, properties map[st
 
 // objectMembersFit reports whether each object member satisfies its selected child Domain.
 func (compiler *Compiler) objectMembersFit(
-	members map[string]jsonvalue.Value,
+	members []jsonvalue.Member,
 	properties map[string]NamedProperty,
 	additional AdditionalProperties,
 ) (bool, error) {
-	for name, value := range members {
-		childID, allowed := propertyDomain(name, properties, additional)
+	last := make(map[string]int, len(members))
+	for index, member := range members {
+		last[member.Name] = index
+	}
+
+	var membership childMembership
+
+	for index, member := range members {
+		if last[member.Name] != index {
+			continue
+		}
+
+		childID, allowed := propertyDomain(member.Name, properties, additional)
 		if !allowed {
-			return false, nil
+			if addErr := membership.add(false, nil); addErr != nil {
+				return false, addErr
+			}
+
+			continue
 		}
 
 		child, ok := compiler.Domains.Domain(childID)
@@ -303,13 +364,14 @@ func (compiler *Compiler) objectMembersFit(
 			return false, errors.New("object property Domain does not exist")
 		}
 
-		matches, err := compiler.valueFitsDomain(value, child)
-		if err != nil || !matches {
-			return matches, err
+		matches, err := compiler.valueFitsDomain(member.Value, child)
+
+		if addErr := membership.add(matches, err); addErr != nil {
+			return false, addErr
 		}
 	}
 
-	return true, nil
+	return membership.result()
 }
 
 // propertyDomain returns the child Domain and permission for one object member name.

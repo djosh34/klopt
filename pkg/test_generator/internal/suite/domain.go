@@ -71,7 +71,6 @@ type NumberConstraints struct {
 	Minimum      *NumberBound
 	Maximum      *NumberBound
 	MultipleOf   *jsonvalue.Number
-	Format       *string
 }
 
 // StringConstraints constrains JSON strings.
@@ -161,17 +160,19 @@ type ConstraintPlan struct {
 
 // CasePlan names one semantic partition without materializing a JSON case.
 type CasePlan struct {
-	Name      string
-	Expect    ExpectedResult
-	Values    DomainID
-	Source    ConstraintSource
-	Generator *rapid.Generator[jsonvalue.Value]
+	Name        string
+	Expect      ExpectedResult
+	Values      DomainID
+	Source      ConstraintSource
+	Generator   *rapid.Generator[jsonvalue.Value]
+	evidenceUse *schemaUse
 }
 
 // CasePlanner builds canonical semantic partitions from a compiled Domain graph.
 type CasePlanner struct {
 	Domains     *DomainRegistry
 	Constraints []ConstraintPlan
+	rootUse     *schemaUse
 }
 
 // CompiledSuite is a planned suite with one constructive generator per CasePlan.
@@ -212,6 +213,8 @@ type schemaUse struct {
 	pointer     string
 	domain      DomainID
 	localDomain DomainID
+	arrayShape  DomainID
+	objectShape DomainID
 	constraints []ConstraintSource
 	examples    GenerationExamples
 	atomic      map[string]DomainID

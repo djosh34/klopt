@@ -137,7 +137,7 @@ func normalizeNumber(number *NumberConstraints) {
 
 	if number.State == KindUnrestricted || number.State == KindRestricted &&
 		!number.IntegersOnly && number.Minimum == nil && number.Maximum == nil &&
-		number.MultipleOf == nil && number.Format == nil {
+		number.MultipleOf == nil {
 		*number = NumberConstraints{State: KindUnrestricted}
 	}
 }
@@ -311,9 +311,8 @@ func (registry *DomainRegistry) appendNumber(encoded []byte, number NumberConstr
 	encoded = appendBool(encoded, number.IntegersOnly)
 	encoded = appendBound(encoded, number.Minimum)
 	encoded = appendBound(encoded, number.Maximum)
-	encoded = appendNumberValue(encoded, number.MultipleOf)
 
-	return appendOptionalString(encoded, number.Format)
+	return appendNumberValue(encoded, number.MultipleOf)
 }
 
 // appendString appends the semantic string constraint encoding.
@@ -427,10 +426,6 @@ func cloneDomain(domain Domain) Domain {
 	domain.Number.Minimum = cloneBound(domain.Number.Minimum)
 	domain.Number.Maximum = cloneBound(domain.Number.Maximum)
 	domain.Number.MultipleOf = cloneNumber(domain.Number.MultipleOf)
-
-	if domain.Number.Format != nil {
-		domain.Number.Format = new(*domain.Number.Format)
-	}
 
 	if domain.String.MaxLength != nil {
 		domain.String.MaxLength = new(*domain.String.MaxLength)

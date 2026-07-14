@@ -1,6 +1,7 @@
 package suite
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"sort"
@@ -10,15 +11,6 @@ import (
 
 // decimalPrimeFive is the non-binary prime in finite decimal denominators.
 const decimalPrimeFive = 5
-
-// Numeric format ranks define the deterministic narrower-format order.
-const (
-	numberFormatInt32Rank = iota
-	numberFormatInt64Rank
-	numberFormatFloatRank
-	numberFormatDoubleRank
-	numberFormatUnknownRank
-)
 
 // IntersectDomains returns the canonical constructive intersection of two Domains.
 func (registry *DomainRegistry) IntersectDomains(leftID DomainID, rightID DomainID) (DomainID, error) {
@@ -185,8 +177,6 @@ func intersectNumbers(left NumberConstraints, right NumberConstraints) (NumberCo
 		return NumberConstraints{}, err
 	}
 
-	result.Format = intersectNumberFormats(left.Format, right.Format, result.IntegersOnly)
-
 	productive, err := numberConstraintsAreProductive(result)
 	if err != nil {
 		return NumberConstraints{}, err
@@ -314,64 +304,6 @@ func exactJSONNumberFromRat(value *big.Rat) (*jsonvalue.Number, error) {
 	}
 
 	return &parsed, nil
-}
-
-// intersectNumberFormats chooses the deterministic narrower applicable format.
-func intersectNumberFormats(left *string, right *string, integersOnly bool) *string {
-	left = applicableNumberFormat(left, integersOnly)
-	right = applicableNumberFormat(right, integersOnly)
-
-	selected := left
-	if selected == nil || right != nil && numberFormatLess(*right, *selected) {
-		selected = right
-	}
-
-	if selected == nil {
-		return nil
-	}
-
-	return new(*selected)
-}
-
-// applicableNumberFormat removes non-integer formats from an integer intersection.
-func applicableNumberFormat(format *string, integersOnly bool) *string {
-	if format == nil || !integersOnly {
-		return format
-	}
-
-	if *format != "int32" && *format != "int64" {
-		return nil
-	}
-
-	return format
-}
-
-// numberFormatLess orders known formats from narrower to wider and unknown formats lexically.
-func numberFormatLess(left string, right string) bool {
-	leftRank := numberFormatRank(left)
-
-	rightRank := numberFormatRank(right)
-	if leftRank != rightRank {
-		return leftRank < rightRank
-	}
-
-	return left < right
-}
-
-// numberFormatRank assigns a stable intersection order to numeric formats.
-func numberFormatRank(format string) int {
-	switch format {
-	case "int32":
-		return numberFormatInt32Rank
-	case "int64":
-		return numberFormatInt64Rank
-	case "float":
-		return numberFormatFloatRank
-	case "double":
-		return numberFormatDoubleRank
-	default:
-		return numberFormatUnknownRank
-	}
 }
 
 // numberConstraintsAreProductive solves exact bound and lattice feasibility.
@@ -729,6 +661,11 @@ func (registry *DomainRegistry) intersectEnums(result *Domain, left *EnumSet, ri
 
 	for _, value := range candidates {
 		matches, err := compiler.valueFitsDomain(value, knownConstraints)
+		if errors.Is(err, errOpaqueStringMembership) {
+			// Exact occurrence evidence decides opaque descendants after Domain intersection.
+			matches, err = true, nil
+		}
+
 		if err != nil {
 			return err
 		}
