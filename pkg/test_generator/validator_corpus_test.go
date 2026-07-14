@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/suite"
+	"github.com/djosh34/decode_and_validate_generator/pkg/test_generator/internal/suite"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"

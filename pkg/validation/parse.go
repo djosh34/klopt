@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"decode_and_validate_generator/pkg/internal/oas"
-	"decode_and_validate_generator/pkg/jsonvalue"
+	"github.com/djosh34/decode_and_validate_generator/pkg/internal/oas"
+	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // Parse selects one operation's JSON request body and compiles its reachable schema graph.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"decode_and_validate_generator/pkg/jsonvalue"
+	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // witnessDecimalRadix keeps derived witnesses representable as JSON decimals.

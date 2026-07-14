@@ -3,7 +3,7 @@ package example
 import (
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator"
+	"github.com/djosh34/decode_and_validate_generator/pkg/test_generator"
 )
 
 // exampleOpenAPI is the source document for generated model tests.

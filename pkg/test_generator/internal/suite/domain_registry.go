@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"sort"
 
-	"decode_and_validate_generator/pkg/jsonvalue"
+	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
 )
 
 // DomainRegistry owns canonical Domains and their semantic identity.

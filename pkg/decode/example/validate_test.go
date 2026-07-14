@@ -1,9 +1,10 @@
 package example
 
 import (
+	"errors"
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator"
+	testgenerator "github.com/djosh34/decode_and_validate_generator/pkg/test_generator"
 )
 
 // exampleOpenAPI is the source document for generated model tests.
@@ -657,9 +658,7 @@ func TestStringNoFormatNullable(t *testing.T) {
 		exampleOpenAPI,
 		"stringNoFormatNullable",
 		func(data []byte) error {
-			var value StringNoFormatNullable
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(stringNoFormatNullable.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -674,9 +673,7 @@ func TestStringNoFormatNotNullable(t *testing.T) {
 		exampleOpenAPI,
 		"stringNoFormatNotNullable",
 		func(data []byte) error {
-			var value StringNoFormatNotNullable
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(stringNoFormatNotNullable.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -691,9 +688,7 @@ func TestRefStressObjectPut(t *testing.T) {
 		exampleOpenAPI,
 		"refStressObjectPut",
 		func(data []byte) error {
-			var value RefStressObjectPut
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(refStressObjectPut.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -708,9 +703,7 @@ func TestRefStressObject(t *testing.T) {
 		exampleOpenAPI,
 		"refStressObject",
 		func(data []byte) error {
-			var value RefStressObject
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(refStressObject.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -725,9 +718,7 @@ func TestRefObject(t *testing.T) {
 		exampleOpenAPI,
 		"refObject",
 		func(data []byte) error {
-			var value RefObject
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(refObject.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -742,9 +733,7 @@ func TestOptionalArrayNullable(t *testing.T) {
 		exampleOpenAPI,
 		"optionalArrayNullable",
 		func(data []byte) error {
-			var value OptionalArrayNullable
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(optionalArrayNullable.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -759,9 +748,7 @@ func TestObjectKeysAdditionalPropertiesFalse(t *testing.T) {
 		exampleOpenAPI,
 		"objectKeysAdditionalPropertiesFalse",
 		func(data []byte) error {
-			var value ObjectKeysAdditionalPropertiesFalse
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(objectKeysAdditionalPropertiesFalse.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -776,9 +763,7 @@ func TestNullableObjectKeysAdditionalPropertiesFalse(t *testing.T) {
 		exampleOpenAPI,
 		"nullableObjectKeysAdditionalPropertiesFalse",
 		func(data []byte) error {
-			var value NullableObjectKeysAdditionalPropertiesFalse
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(nullableObjectKeysAdditionalPropertiesFalse.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -793,9 +778,7 @@ func TestCompositeObject(t *testing.T) {
 		exampleOpenAPI,
 		"compositeObject",
 		func(data []byte) error {
-			var value CompositeObject
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(compositeObject.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -810,9 +793,7 @@ func TestArrayNullable(t *testing.T) {
 		exampleOpenAPI,
 		"arrayNullable",
 		func(data []byte) error {
-			var value ArrayNullable
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(arrayNullable.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -827,9 +808,7 @@ func TestArrayNotNullable(t *testing.T) {
 		exampleOpenAPI,
 		"arrayNotNullable",
 		func(data []byte) error {
-			var value ArrayNotNullable
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(arrayNotNullable.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
@@ -844,9 +823,7 @@ func TestAllOfObject(t *testing.T) {
 		exampleOpenAPI,
 		"allOfObject",
 		func(data []byte) error {
-			var value AllOfObject
-
-			return value.UnmarshalJSON(data)
+			return errors.Join(allOfObject.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)

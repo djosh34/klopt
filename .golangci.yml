@@ -36,12 +36,12 @@ linters:
             - github.com/goccy/go-yaml
             - pgregory.net/rapid
             - github.com/getkin/kin-openapi
-            - decode_and_validate_generator/pkg/peekjson
-            - decode_and_validate_generator/pkg/decode/example
-            - decode_and_validate_generator/pkg/jsonvalue
-            - decode_and_validate_generator/pkg/internal/oas
-            - decode_and_validate_generator/pkg/test_generator
-            - decode_and_validate_generator/pkg/validation
+            - github.com/djosh34/decode_and_validate_generator/pkg/peekjson
+            - github.com/djosh34/decode_and_validate_generator/pkg/decode/example
+            - github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue
+            - github.com/djosh34/decode_and_validate_generator/pkg/internal/oas
+            - github.com/djosh34/decode_and_validate_generator/pkg/test_generator
+            - github.com/djosh34/decode_and_validate_generator/pkg/validation
             - github.com/arran4/golang-diff/pkg/diff
     errcheck:
       check-blank: true

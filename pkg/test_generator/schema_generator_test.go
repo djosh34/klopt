@@ -15,8 +15,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"decode_and_validate_generator/pkg/internal/oas"
-	"decode_and_validate_generator/pkg/test_generator/internal/suite"
+	"github.com/djosh34/decode_and_validate_generator/pkg/internal/oas"
+	"github.com/djosh34/decode_and_validate_generator/pkg/test_generator/internal/suite"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
