@@ -2,7 +2,6 @@ package suite
 
 import (
 	"fmt"
-	"strings"
 
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
 )
@@ -16,11 +15,10 @@ type labeledIntBoundary struct {
 // addValidPartitions adds kind/classes and recursively lifts child partitions by DomainID.
 func (planner *CasePlanner) addValidPartitions(
 	result *caseSet,
-	id DomainID,
-	use SchemaUse,
-	uses []SchemaUse,
+	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
+	id := use.domain
 	if active[id] {
 		return nil
 	}
@@ -33,7 +31,7 @@ func (planner *CasePlanner) addValidPartitions(
 		return nil
 	}
 
-	source := ConstraintSource{Pointer: use.Pointer}
+	source := ConstraintSource{Pointer: use.pointer}
 
 	for _, kind := range reachableKinds(domain) {
 		kindDomain := planner.Domains.FindOrAddEquivalentDomain(singleKindDomain(kind))
@@ -44,7 +42,7 @@ func (planner *CasePlanner) addValidPartitions(
 		}
 
 		result.add(CasePlan{
-			Name:   caseName("valid kind "+kindName(kind), use.Pointer, ""),
+			Name:   caseName("valid kind "+kindName(kind), use.pointer, ""),
 			Expect: ExpectAccepted,
 			Values: partition,
 			Source: source,
@@ -55,11 +53,11 @@ func (planner *CasePlanner) addValidPartitions(
 		for index, value := range domain.Enum.Values {
 			member := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{value}))
 			result.add(CasePlan{
-				Name:   caseName(fmt.Sprintf("valid enum member %d", index+1), use.Pointer, "enum"),
+				Name:   caseName(fmt.Sprintf("valid enum member %d", index+1), use.pointer, "enum"),
 				Expect: ExpectAccepted,
 				Values: member,
 				Source: ConstraintSource{
-					Pointer: use.Pointer,
+					Pointer: use.pointer,
 					Keyword: "enum",
 				},
 			})
@@ -72,11 +70,11 @@ func (planner *CasePlanner) addValidPartitions(
 		return err
 	}
 
-	if err := planner.addArrayPartitions(result, domain, use, uses, active); err != nil {
+	if err := planner.addArrayPartitions(result, domain, use, active); err != nil {
 		return err
 	}
 
-	return planner.addObjectPartitions(result, domain, use, uses, active)
+	return planner.addObjectPartitions(result, domain, use, active)
 }
 
 // addScalarValidPartitions adds numeric and string boundary partitions.
@@ -84,7 +82,7 @@ func (planner *CasePlanner) addScalarValidPartitions(
 	result *caseSet,
 	root DomainID,
 	domain Domain,
-	use SchemaUse,
+	use *schemaUse,
 ) error {
 	if err := planner.addNumberBoundaryPartitions(result, root, domain, use); err != nil {
 		return err
@@ -98,7 +96,7 @@ func (planner *CasePlanner) addNumberBoundaryPartitions(
 	result *caseSet,
 	root DomainID,
 	domain Domain,
-	use SchemaUse,
+	use *schemaUse,
 ) error {
 	if domain.Number.State == KindExcluded {
 		return nil
@@ -131,10 +129,10 @@ func (planner *CasePlanner) addNumberBoundaryPartitions(
 
 		if value != EmptyDomainID {
 			result.add(CasePlan{
-				Name:   caseName("valid number "+entry.label+" boundary", use.Pointer, entry.label),
+				Name:   caseName("valid number "+entry.label+" boundary", use.pointer, entry.label),
 				Expect: ExpectAccepted,
 				Values: value,
-				Source: ConstraintSource{Pointer: use.Pointer, Keyword: entry.label},
+				Source: ConstraintSource{Pointer: use.pointer, Keyword: entry.label},
 			})
 		}
 	}
@@ -147,7 +145,7 @@ func (planner *CasePlanner) addStringValidPartitions(
 	result *caseSet,
 	root DomainID,
 	domain Domain,
-	use SchemaUse,
+	use *schemaUse,
 ) error {
 	if domain.String.State == KindExcluded {
 		return nil
@@ -165,7 +163,7 @@ func (planner *CasePlanner) addStringLengthPartitions(
 	result *caseSet,
 	root DomainID,
 	constraints StringConstraints,
-	use SchemaUse,
+	use *schemaUse,
 ) error {
 	lengths := []labeledIntBoundary{
 		{label: "minimum", value: constraints.MinLength},
@@ -190,13 +188,13 @@ func (planner *CasePlanner) addStringLengthPartitions(
 			result.add(CasePlan{
 				Name: caseName(
 					"valid string "+length.label+" length",
-					use.Pointer,
+					use.pointer,
 					length.label+"Length",
 				),
 				Expect: ExpectAccepted,
 				Values: value,
 				Source: ConstraintSource{
-					Pointer: use.Pointer,
+					Pointer: use.pointer,
 					Keyword: length.label + "Length",
 				},
 			})
@@ -207,8 +205,8 @@ func (planner *CasePlanner) addStringLengthPartitions(
 }
 
 // addTrustedStringPartitions adds accepted partitions for valid string examples.
-func (planner *CasePlanner) addTrustedStringPartitions(result *caseSet, root DomainID, use SchemaUse) error {
-	for index, example := range use.Examples.Valid {
+func (planner *CasePlanner) addTrustedStringPartitions(result *caseSet, root DomainID, use *schemaUse) error {
+	for index, example := range use.examples.Valid {
 		if example.Kind != jsonvalue.KindString {
 			continue
 		}
@@ -224,13 +222,13 @@ func (planner *CasePlanner) addTrustedStringPartitions(result *caseSet, root Dom
 			result.add(CasePlan{
 				Name: caseName(
 					fmt.Sprintf("valid trusted string example %d", index+1),
-					use.Pointer,
+					use.pointer,
 					"pattern/format",
 				),
 				Expect: ExpectAccepted,
 				Values: value,
 				Source: ConstraintSource{
-					Pointer: use.Pointer,
+					Pointer: use.pointer,
 					Keyword: "pattern/format",
 				},
 			})
@@ -244,8 +242,7 @@ func (planner *CasePlanner) addTrustedStringPartitions(result *caseSet, root Dom
 func (planner *CasePlanner) addArrayPartitions(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
-	uses []SchemaUse,
+	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
 	if domain.Array.State == KindExcluded {
@@ -254,11 +251,11 @@ func (planner *CasePlanner) addArrayPartitions(
 
 	planner.addArrayCountPartitions(result, domain, use)
 
-	return planner.addArrayItemPartitions(result, domain, use, uses, active)
+	return planner.addArrayItemPartitions(result, domain, use, active)
 }
 
 // addArrayCountPartitions adds accepted partitions at the configured array item counts.
-func (planner *CasePlanner) addArrayCountPartitions(result *caseSet, domain Domain, use SchemaUse) {
+func (planner *CasePlanner) addArrayCountPartitions(result *caseSet, domain Domain, use *schemaUse) {
 	counts := []labeledIntBoundary{
 		{label: "minimum", value: domain.Array.MinItems},
 	}
@@ -278,13 +275,13 @@ func (planner *CasePlanner) addArrayCountPartitions(result *caseSet, domain Doma
 			result.add(CasePlan{
 				Name: caseName(
 					"valid array "+count.label+" count",
-					use.Pointer,
+					use.pointer,
 					count.label+"Items",
 				),
 				Expect: ExpectAccepted,
 				Values: value,
 				Source: ConstraintSource{
-					Pointer: use.Pointer,
+					Pointer: use.pointer,
 					Keyword: count.label + "Items",
 				},
 			})
@@ -296,8 +293,7 @@ func (planner *CasePlanner) addArrayCountPartitions(result *caseSet, domain Doma
 func (planner *CasePlanner) addArrayItemPartitions(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
-	uses []SchemaUse,
+	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
 	if domain.Array.Items == AnyJSONDomainID || domain.Array.Items == EmptyDomainID {
@@ -308,9 +304,11 @@ func (planner *CasePlanner) addArrayItemPartitions(
 		return nil
 	}
 
-	childUse := childSchemaUse(uses, use.Pointer+"/items", domain.Array.Items)
+	if use.items == nil {
+		return fmt.Errorf("plan array items at %s: schema occurrence is missing", use.pointer)
+	}
 
-	childCases, err := planner.childPartitions(domain.Array.Items, childUse, uses, active)
+	childCases, err := planner.childPartitions(use.items, active)
 	if err != nil {
 		return err
 	}
@@ -324,7 +322,7 @@ func (planner *CasePlanner) addArrayItemPartitions(
 func (planner *CasePlanner) addLiftedArrayChildPartitions(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
+	use *schemaUse,
 	childCases []CasePlan,
 ) {
 	for _, child := range childCases {
@@ -345,7 +343,7 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 
 		values := planner.Domains.FindOrAddEquivalentDomain(lifted)
 		result.add(CasePlan{
-			Name:   caseName(expectName(child.Expect)+" array item / "+child.Name, use.Pointer, "items"),
+			Name:   caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
 			Expect: child.Expect,
 			Values: values,
 			Source: child.Source,
@@ -357,8 +355,7 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 func (planner *CasePlanner) addObjectPartitions(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
-	uses []SchemaUse,
+	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
 	if domain.Object.State == KindExcluded {
@@ -367,15 +364,15 @@ func (planner *CasePlanner) addObjectPartitions(
 
 	planner.addObjectCountPartitions(result, domain, use)
 
-	if err := planner.addDeclaredPropertyPartitions(result, domain, use, uses, active); err != nil {
+	if err := planner.addDeclaredPropertyPartitions(result, domain, use, active); err != nil {
 		return err
 	}
 
-	return planner.addAdditionalPropertyPartitions(result, domain, use, uses, active)
+	return planner.addAdditionalPropertyPartitions(result, domain, use, active)
 }
 
 // addObjectCountPartitions adds accepted partitions at the configured object property counts.
-func (planner *CasePlanner) addObjectCountPartitions(result *caseSet, domain Domain, use SchemaUse) {
+func (planner *CasePlanner) addObjectCountPartitions(result *caseSet, domain Domain, use *schemaUse) {
 	counts := []labeledIntBoundary{
 		{label: "minimum", value: domain.Object.MinProps},
 	}
@@ -393,13 +390,13 @@ func (planner *CasePlanner) addObjectCountPartitions(result *caseSet, domain Dom
 			result.add(CasePlan{
 				Name: caseName(
 					"valid object "+count.label+" count",
-					use.Pointer,
+					use.pointer,
 					count.label+"Properties",
 				),
 				Expect: ExpectAccepted,
 				Values: values,
 				Source: ConstraintSource{
-					Pointer: use.Pointer,
+					Pointer: use.pointer,
 					Keyword: count.label + "Properties",
 				},
 			})
@@ -411,8 +408,7 @@ func (planner *CasePlanner) addObjectCountPartitions(result *caseSet, domain Dom
 func (planner *CasePlanner) addDeclaredPropertyPartitions(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
-	uses []SchemaUse,
+	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
 	for _, property := range domain.Object.Properties {
@@ -424,7 +420,7 @@ func (planner *CasePlanner) addDeclaredPropertyPartitions(
 
 		planner.addOptionalPropertyPartitions(result, domain, use, property)
 
-		if err := planner.addPropertyChildPartitions(result, domain, use, uses, active, property); err != nil {
+		if err := planner.addPropertyChildPartitions(result, domain, use, active, property); err != nil {
 			return err
 		}
 	}
@@ -436,7 +432,7 @@ func (planner *CasePlanner) addDeclaredPropertyPartitions(
 func (planner *CasePlanner) addForbiddenPropertyFailure(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
+	use *schemaUse,
 	property NamedProperty,
 ) {
 	failure := objectOnly(domain)
@@ -453,13 +449,13 @@ func (planner *CasePlanner) addForbiddenPropertyFailure(
 		result.add(CasePlan{
 			Name: caseName(
 				"invalid forbidden property "+property.Name,
-				use.Pointer,
+				use.pointer,
 				"additionalProperties",
 			),
 			Expect: ExpectRejected,
 			Values: values,
 			Source: ConstraintSource{
-				Pointer: use.Pointer,
+				Pointer: use.pointer,
 				Keyword: "additionalProperties",
 			},
 		})
@@ -470,7 +466,7 @@ func (planner *CasePlanner) addForbiddenPropertyFailure(
 func (planner *CasePlanner) addOptionalPropertyPartitions(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
+	use *schemaUse,
 	property NamedProperty,
 ) {
 	if property.Required {
@@ -501,13 +497,13 @@ func (planner *CasePlanner) addOptionalPropertyPartitions(
 			result.add(CasePlan{
 				Name: caseName(
 					"valid optional property "+property.Name+" "+shape.label,
-					use.Pointer,
+					use.pointer,
 					"properties",
 				),
 				Expect: ExpectAccepted,
 				Values: values,
 				Source: ConstraintSource{
-					Pointer: use.Pointer,
+					Pointer: use.pointer,
 					Keyword: "properties",
 				},
 			})
@@ -519,8 +515,7 @@ func (planner *CasePlanner) addOptionalPropertyPartitions(
 func (planner *CasePlanner) addPropertyChildPartitions(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
-	uses []SchemaUse,
+	use *schemaUse,
 	active map[DomainID]bool,
 	property NamedProperty,
 ) error {
@@ -528,13 +523,7 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 		return nil
 	}
 
-	childUse := childSchemaUse(
-		uses,
-		use.Pointer+"/properties/"+escapePointerToken(property.Name),
-		property.Values,
-	)
-
-	childCases, err := planner.childPartitions(property.Values, childUse, uses, active)
+	childCases, err := planner.propertyChildPartitions(use, property.Name, active)
 	if err != nil {
 		return err
 	}
@@ -561,7 +550,7 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 		result.add(CasePlan{
 			Name: caseName(
 				expectName(expect)+" property "+property.Name+" / "+child.Name,
-				use.Pointer,
+				use.pointer,
 				"properties",
 			),
 			Expect: expect,
@@ -573,12 +562,25 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 	return nil
 }
 
+// propertyChildPartitions plans one exact declared-property occurrence.
+func (planner *CasePlanner) propertyChildPartitions(
+	use *schemaUse,
+	name string,
+	active map[DomainID]bool,
+) ([]CasePlan, error) {
+	childUse := use.property(name)
+	if childUse == nil {
+		return nil, fmt.Errorf("plan property %q at %s: schema occurrence is missing", name, use.pointer)
+	}
+
+	return planner.childPartitions(childUse, active)
+}
+
 // addAdditionalPropertyPartitions adds partitions for the object's additional-property policy.
 func (planner *CasePlanner) addAdditionalPropertyPartitions(
 	result *caseSet,
 	domain Domain,
-	use SchemaUse,
-	uses []SchemaUse,
+	use *schemaUse,
 	active map[DomainID]bool,
 ) error {
 	if domain.Object.Additional.Values == AnyJSONDomainID {
@@ -593,11 +595,11 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 		values := planner.Domains.FindOrAddEquivalentDomain(lifted)
 		if values != EmptyDomainID {
 			result.add(CasePlan{
-				Name:   caseName("valid additional property", use.Pointer, "additionalProperties"),
+				Name:   caseName("valid additional property", use.pointer, "additionalProperties"),
 				Expect: ExpectAccepted,
 				Values: values,
 				Source: ConstraintSource{
-					Pointer: use.Pointer,
+					Pointer: use.pointer,
 					Keyword: "additionalProperties",
 				},
 			})
@@ -610,9 +612,11 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 		return nil
 	}
 
-	childUse := childSchemaUse(uses, use.Pointer+"/additionalProperties", domain.Object.Additional.Values)
+	if use.additional == nil {
+		return fmt.Errorf("plan additional properties at %s: schema occurrence is missing", use.pointer)
+	}
 
-	childCases, err := planner.childPartitions(domain.Object.Additional.Values, childUse, uses, active)
+	childCases, err := planner.childPartitions(use.additional, active)
 	if err != nil {
 		return err
 	}
@@ -636,7 +640,7 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 		result.add(CasePlan{
 			Name: caseName(
 				expectName(child.Expect)+" additional property / "+child.Name,
-				use.Pointer,
+				use.pointer,
 				"additionalProperties",
 			),
 			Expect: child.Expect,
@@ -650,28 +654,24 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 
 // childPartitions plans accepted and isolated rejected cases for a nested Domain.
 func (planner *CasePlanner) childPartitions(
-	id DomainID,
-	use SchemaUse,
-	uses []SchemaUse,
+	use *schemaUse,
 	active map[DomainID]bool,
 ) ([]CasePlan, error) {
 	children := newCaseSet()
 	children.add(CasePlan{
-		Name:   caseName("valid aggregate", use.Pointer, ""),
+		Name:   caseName("valid aggregate", use.pointer, ""),
 		Expect: ExpectAccepted,
-		Values: id,
-		Source: ConstraintSource{Pointer: use.Pointer},
+		Values: use.domain,
+		Source: ConstraintSource{Pointer: use.pointer},
 	})
 
-	if err := planner.addValidPartitions(children, id, use, uses, active); err != nil {
+	if err := planner.addValidPartitions(children, use, active); err != nil {
 		return nil, err
 	}
 
-	childPlanner := &CasePlanner{
-		Domains: planner.Domains, LocalDomains: planner.LocalDomains, AtomicDomains: planner.AtomicDomains,
-	}
+	childPlanner := &CasePlanner{Domains: planner.Domains}
 
-	constraints, err := childPlanner.constraintPlans(use, uses)
+	constraints, err := childPlanner.constraintPlans(use)
 	if err != nil {
 		return nil, err
 	}
@@ -684,21 +684,6 @@ func (planner *CasePlanner) childPartitions(
 	planner.Constraints = append(planner.Constraints, childPlanner.Constraints...)
 
 	return children.cases, nil
-}
-
-// childSchemaUse returns the exact child occurrence or an occurrence with the requested Domain.
-func childSchemaUse(uses []SchemaUse, pointer string, id DomainID) SchemaUse {
-	if exact := schemaUseByPointer(uses, pointer); exact.Domain != NoDomain {
-		return exact
-	}
-
-	for _, use := range uses {
-		if use.Domain == id {
-			return use
-		}
-	}
-
-	return SchemaUse{Pointer: pointer, Domain: id}
 }
 
 // objectOnly returns domain restricted to the object JSON kind.
@@ -733,11 +718,6 @@ func unusedPropertyName(object ObjectConstraints) string {
 
 		name = fmt.Sprintf("additional%d", suffix)
 	}
-}
-
-// escapePointerToken escapes token for use in a JSON Pointer.
-func escapePointerToken(token string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(token, "~", "~0"), "/", "~1")
 }
 
 // kindMaskDomain returns the unrestricted Domain limited to source's reachable JSON kinds.

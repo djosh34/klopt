@@ -170,17 +170,14 @@ type CasePlan struct {
 
 // CasePlanner builds canonical semantic partitions from a compiled Domain graph.
 type CasePlanner struct {
-	Domains       *DomainRegistry
-	LocalDomains  map[string]DomainID
-	AtomicDomains map[ConstraintSource]DomainID
-	Constraints   []ConstraintPlan
+	Domains     *DomainRegistry
+	Constraints []ConstraintPlan
 }
 
 // CompiledSuite is a planned suite with one constructive generator per CasePlan.
 type CompiledSuite struct {
 	Root        DomainID
 	Domains     *DomainRegistry
-	SchemaUses  []SchemaUse
 	Constraints []ConstraintPlan
 	Cases       []CasePlan
 }
@@ -203,12 +200,25 @@ type GenerationExamples struct {
 	Invalid []jsonvalue.Value
 }
 
-// SchemaUse preserves source metadata separately from a canonical Domain.
-type SchemaUse struct {
-	Pointer     string
-	Domain      DomainID
-	Constraints []ConstraintSource
-	Examples    GenerationExamples
+// schemaUse preserves one exact schema occurrence separately from its canonical Domain.
+type schemaUse struct {
+	pointer     string
+	domain      DomainID
+	localDomain DomainID
+	constraints []ConstraintSource
+	examples    GenerationExamples
+	atomic      map[string]DomainID
+	allOf       []*schemaUse
+	items       *schemaUse
+	properties  []schemaPropertyUse
+	additional  *schemaUse
+	resolved    *schemaUse
+}
+
+// schemaPropertyUse pairs one property name with its exact schema occurrence.
+type schemaPropertyUse struct {
+	name string
+	use  *schemaUse
 }
 
 // Error reports a stable compilation outcome with source context.

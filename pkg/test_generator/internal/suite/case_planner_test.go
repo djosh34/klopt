@@ -211,6 +211,107 @@ additionalProperties: false`, "", "create"))
 	}
 }
 
+// TestCompileSuiteKeepsLiftedChildMetadataOccurrenceLocal verifies equivalent child Domains do not share provenance.
+func TestCompileSuiteKeepsLiftedChildMetadataOccurrenceLocal(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		targetSchema  string
+		extra         string
+		targetBranch  int
+		sourcePointer string
+	}{
+		"direct target first": {
+			targetSchema: "type: string\n        minLength: 2",
+			targetBranch: 0,
+		},
+		"direct target second": {
+			targetSchema: "type: string\n        minLength: 2",
+			targetBranch: 1,
+		},
+		"referenced target first": {
+			targetSchema:  "$ref: '#/components/schemas/Text'",
+			targetBranch:  0,
+			sourcePointer: "#/components/schemas/Text",
+			extra: `
+components:
+  schemas:
+    Text:
+      type: string
+      minLength: 2
+`,
+		},
+		"referenced target second": {
+			targetSchema:  "$ref: '#/components/schemas/Text'",
+			targetBranch:  1,
+			sourcePointer: "#/components/schemas/Text",
+			extra: `
+components:
+  schemas:
+    Text:
+      type: string
+      minLength: 2
+`,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			branches := []string{
+				"type: object\n    properties:\n      target:\n        " + tt.targetSchema,
+				"type: object",
+			}
+			if tt.targetBranch == 1 {
+				branches[0], branches[1] = branches[1], branches[0]
+			}
+
+			schema := `type: object
+properties:
+  borrowed:
+    type: string
+    minLength: 2
+allOf:
+  - ` + branches[0] + `
+  - ` + branches[1]
+
+			firstCompiler := NewCompiler(parseSchemaSource(t, schema, tt.extra, "create"))
+			first, err := firstCompiler.CompileSuite()
+			require.NoError(t, err)
+
+			secondCompiler := NewCompiler(parseSchemaSource(t, schema, tt.extra, "create"))
+			second, err := secondCompiler.CompileSuite()
+			require.NoError(t, err)
+			require.Equal(t, caseNames(first.Cases), caseNames(second.Cases))
+
+			root := firstCompiler.Source.RequestSchema.Pointer
+			targetPointer := root + fmt.Sprintf("/allOf/%d/properties/target", tt.targetBranch)
+
+			expectedSource := tt.sourcePointer
+			if expectedSource == "" {
+				expectedSource = targetPointer
+			}
+
+			found := false
+
+			for _, plannedCase := range first.Cases {
+				if !strings.Contains(plannedCase.Name, "property target /") ||
+					plannedCase.Source.Keyword != "minLength" {
+					continue
+				}
+
+				found = true
+
+				require.Equal(t, expectedSource, plannedCase.Source.Pointer)
+				require.NotContains(t, plannedCase.Name, root+"/properties/borrowed")
+			}
+
+			require.True(t, found)
+		})
+	}
+}
+
 // TestCasePlannerLiftsArrayValidAndInvalidChildPartitions verifies array child partition lifting.
 func TestCasePlannerLiftsArrayValidAndInvalidChildPartitions(t *testing.T) {
 	t.Parallel()
@@ -350,14 +451,11 @@ func TestCasePlannerDoesNotOverflowMaximumFailureBounds(t *testing.T) {
 			t.Parallel()
 
 			compiler := NewCompiler(parseSchemaSource(t, schema, "", "create"))
-			root, err := compiler.Compile()
+			_, err := compiler.Compile()
 			require.NoError(t, err)
 
-			planner := &CasePlanner{
-				Domains: compiler.Domains, LocalDomains: compiler.LocalDomainByPointer,
-				AtomicDomains: compiler.AtomicDomainBySource,
-			}
-			_, err = planner.Plan(root, compiler.SchemaUses)
+			planner := &CasePlanner{Domains: compiler.Domains}
+			_, err = planner.Plan(compiler.rootUse)
 			require.NoError(t, err)
 
 			for _, constraint := range planner.Constraints {

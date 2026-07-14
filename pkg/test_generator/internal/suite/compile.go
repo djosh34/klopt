@@ -20,68 +20,96 @@ const exactDecimalRadix = 10
 type Compiler struct {
 	Source                 oas.Source
 	Domains                *DomainRegistry
-	DomainByPointer        map[string]DomainID
-	LocalDomainByPointer   map[string]DomainID
-	AtomicDomainBySource   map[ConstraintSource]DomainID
-	SchemaUses             []SchemaUse
+	usesByPointer          map[string]*schemaUse
+	rootUse                *schemaUse
 	mustHaveAllXValidCases bool
 }
 
 // NewCompiler creates a Compiler for one located OpenAPI source.
 func NewCompiler(source oas.Source) *Compiler {
 	return &Compiler{
-		Source:               source,
-		Domains:              NewDomainRegistry(),
-		DomainByPointer:      make(map[string]DomainID),
-		LocalDomainByPointer: make(map[string]DomainID),
-		AtomicDomainBySource: make(map[ConstraintSource]DomainID),
-		SchemaUses:           make([]SchemaUse, 0),
+		Source:        source,
+		Domains:       NewDomainRegistry(),
+		usesByPointer: make(map[string]*schemaUse),
 	}
 }
 
 // Compile compiles the selected request Schema Object.
 func (compiler *Compiler) Compile() (DomainID, error) {
-	return compiler.CompileSchema(compiler.Source.RequestSchema)
+	use, err := compiler.compileSchema(compiler.Source.RequestSchema, make(map[string]struct{}))
+	if err != nil {
+		return NoDomain, err
+	}
+
+	compiler.rootUse = use
+
+	return use.domain, nil
 }
 
 // CompileSchema compiles one inline Schema Object or Reference Object.
 func (compiler *Compiler) CompileSchema(schema oas.LocatedSchema) (DomainID, error) {
-	return compiler.compileSchema(schema, make(map[string]struct{}))
+	use, err := compiler.compileSchema(schema, make(map[string]struct{}))
+	if err != nil {
+		return NoDomain, err
+	}
+
+	return use.domain, nil
 }
 
 // compileSchema resolves and compiles one schema occurrence.
 func (compiler *Compiler) compileSchema(
 	occurrence oas.LocatedSchema,
 	active map[string]struct{},
-) (DomainID, error) {
-	if id, ok := compiler.DomainByPointer[occurrence.Pointer]; ok {
-		return id, nil
+) (*schemaUse, error) {
+	if use, ok := compiler.usesByPointer[occurrence.Pointer]; ok {
+		return use, nil
 	}
 
 	resolved, err := compiler.Source.Resolve(occurrence)
 	if err != nil {
-		return NoDomain, compiler.failure("compile", "unsupported", occurrence.Pointer, "$ref", err)
+		return nil, compiler.failure("compile", "unsupported", occurrence.Pointer, "$ref", err)
 	}
 
-	if id, ok := compiler.DomainByPointer[resolved.Pointer]; ok {
-		compiler.recordResolvedUse(occurrence.Pointer, resolved.Pointer, id)
-
-		return id, nil
+	if use, ok := compiler.usesByPointer[resolved.Pointer]; ok {
+		return compiler.referenceUse(occurrence.Pointer, use), nil
 	}
 
 	if _, recursive := active[resolved.Pointer]; recursive {
-		return NoDomain, compiler.recursiveReferenceFailure(resolved.Pointer)
+		return nil, compiler.recursiveReferenceFailure(resolved.Pointer)
 	}
 
-	return compiler.compileResolvedSchema(occurrence, resolved, active)
+	use, err := compiler.compileResolvedSchema(resolved, active)
+	if err != nil {
+		return nil, err
+	}
+
+	if occurrence.Pointer == resolved.Pointer {
+		return use, nil
+	}
+
+	return compiler.referenceUse(occurrence.Pointer, use), nil
 }
 
-// recordResolvedUse records an occurrence that reused a resolved schema Domain.
-func (compiler *Compiler) recordResolvedUse(occurrencePointer string, resolvedPointer string, id DomainID) {
-	compiler.DomainByPointer[occurrencePointer] = id
-	compiler.LocalDomainByPointer[occurrencePointer] = compiler.LocalDomainByPointer[resolvedPointer]
-	constraints, examples := compiler.metadataForPointer(resolvedPointer)
-	compiler.addSchemaUse(occurrencePointer, id, constraints, examples)
+// referenceUse records one Reference Object occurrence without copying its resolved occurrence graph.
+func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *schemaUse {
+	use := &schemaUse{
+		pointer:     pointer,
+		domain:      resolved.domain,
+		localDomain: resolved.localDomain,
+		constraints: append([]ConstraintSource(nil), resolved.constraints...),
+		examples: GenerationExamples{
+			Valid:   cloneJSONValues(resolved.examples.Valid),
+			Invalid: cloneJSONValues(resolved.examples.Invalid),
+		},
+		atomic:     resolved.atomic,
+		items:      resolved.items,
+		properties: append([]schemaPropertyUse(nil), resolved.properties...),
+		additional: resolved.additional,
+		resolved:   resolved,
+	}
+	compiler.usesByPointer[pointer] = use
+
+	return use
 }
 
 // recursiveReferenceFailure reports a reference cycle unsupported by this compiler step.
@@ -95,51 +123,48 @@ func (compiler *Compiler) recursiveReferenceFailure(pointer string) *Error {
 	)
 }
 
-// compileResolvedSchema compiles a resolved schema and records both of its pointers.
+// compileResolvedSchema compiles and records the resolved schema occurrence.
+// referenceUse records any Reference Object occurrence pointer.
 func (compiler *Compiler) compileResolvedSchema(
-	occurrence oas.LocatedSchema,
 	resolved oas.LocatedSchema,
 	active map[string]struct{},
-) (DomainID, error) {
+) (*schemaUse, error) {
 	active[resolved.Pointer] = struct{}{}
 	defer delete(active, resolved.Pointer)
 
 	members, err := schemaMembers(resolved)
 	if err != nil {
-		return NoDomain, compiler.failure("compile", "malformed", resolved.Pointer, "", err)
+		return nil, compiler.failure("compile", "malformed", resolved.Pointer, "", err)
 	}
 
 	if validationErr := validateSchemaKeywords(members); validationErr != nil {
-		return NoDomain, compiler.failure("compile", "malformed", resolved.Pointer, "", validationErr)
+		return nil, compiler.failure("compile", "malformed", resolved.Pointer, "", validationErr)
 	}
 
 	if keyword := unsupportedKeyword(members); keyword != "" {
-		return NoDomain, compiler.unsupportedKeywordFailure(resolved.Pointer, keyword)
+		return nil, compiler.unsupportedKeywordFailure(resolved.Pointer, keyword)
 	}
 
-	domain, constraints, examples, err := compiler.compileSchemaDomain(resolved, members, active)
+	use := &schemaUse{pointer: resolved.Pointer, atomic: make(map[string]DomainID)}
+
+	domain, constraints, examples, err := compiler.compileSchemaDomain(use, resolved, members, active)
 	if err != nil {
-		return NoDomain, err
+		return nil, err
 	}
 
-	id := compiler.Domains.FindOrAddEquivalentDomain(domain)
-	compiler.LocalDomainByPointer[resolved.Pointer] = id
-	compiler.LocalDomainByPointer[occurrence.Pointer] = id
+	use.domain = compiler.Domains.FindOrAddEquivalentDomain(domain)
+	use.localDomain = use.domain
+	use.constraints = constraints
+	use.examples = examples
 
-	id, constraints, examples, err = compiler.compileAllOf(resolved, members, active, id, constraints, examples)
+	use, err = compiler.compileAllOf(resolved, members, active, use)
 	if err != nil {
-		return NoDomain, err
+		return nil, err
 	}
 
-	compiler.DomainByPointer[resolved.Pointer] = id
-	compiler.DomainByPointer[occurrence.Pointer] = id
-	compiler.addSchemaUse(occurrence.Pointer, id, constraints, examples)
+	compiler.usesByPointer[resolved.Pointer] = use
 
-	if occurrence.Pointer != resolved.Pointer {
-		compiler.addSchemaUse(resolved.Pointer, id, constraints, examples)
-	}
-
-	return id, nil
+	return use, nil
 }
 
 // unsupportedKeywordFailure reports a known Schema Object keyword not supported by this step.
@@ -155,6 +180,7 @@ func (compiler *Compiler) unsupportedKeywordFailure(pointer string, keyword stri
 
 // compileSchemaDomain compiles all schema keywords into a Domain and source metadata.
 func (compiler *Compiler) compileSchemaDomain(
+	use *schemaUse,
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
@@ -184,11 +210,11 @@ func (compiler *Compiler) compileSchemaDomain(
 		return Domain{}, nil, GenerationExamples{}, err
 	}
 
-	if err := compiler.compileArray(&domain, schema, members, active); err != nil {
+	if err := compiler.compileArray(&domain, use, schema, members, active); err != nil {
 		return Domain{}, nil, GenerationExamples{}, err
 	}
 
-	if err := compiler.compileObject(&domain, schema, members, active); err != nil {
+	if err := compiler.compileObject(&domain, use, schema, members, active); err != nil {
 		return Domain{}, nil, GenerationExamples{}, err
 	}
 
@@ -197,7 +223,7 @@ func (compiler *Compiler) compileSchemaDomain(
 		return Domain{}, nil, GenerationExamples{}, compiler.failure("compile", "unconstructible", schema.Pointer, "", err)
 	}
 
-	if err := compiler.applyEnum(&domain, schema.Pointer, members, examples); err != nil {
+	if err := compiler.applyEnum(&domain, use, schema.Pointer, members, examples); err != nil {
 		return Domain{}, nil, GenerationExamples{}, err
 	}
 
@@ -238,6 +264,7 @@ func (compiler *Compiler) validateFormat(pointer string, members map[string]json
 // applyEnum replaces a Domain with the compatible finite enum values when enum is present.
 func (compiler *Compiler) applyEnum(
 	domain *Domain,
+	use *schemaUse,
 	pointer string,
 	members map[string]json.RawMessage,
 	examples GenerationExamples,
@@ -268,14 +295,11 @@ func (compiler *Compiler) applyEnum(
 
 	for _, source := range constraintSources(pointer, members) {
 		if source.Keyword != "enum" {
-			compiler.AtomicDomainBySource[source] = preEnum
+			use.atomic[source.Keyword] = preEnum
 		}
 	}
 
-	compiler.AtomicDomainBySource[ConstraintSource{
-		Pointer: pointer,
-		Keyword: "enum",
-	}] = compiler.Domains.FindOrAddEquivalentDomain(finiteDomain(atomicValues))
+	use.atomic["enum"] = compiler.Domains.FindOrAddEquivalentDomain(finiteDomain(atomicValues))
 
 	values, err := compiler.compileEnum(raw, *domain, examples.Valid)
 	if err != nil {
@@ -751,6 +775,7 @@ func compileStringFormat(stringConstraints *StringConstraints, members map[strin
 // compileArray applies array Schema Object keywords to a Domain.
 func (compiler *Compiler) compileArray(
 	domain *Domain,
+	use *schemaUse,
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
@@ -771,7 +796,7 @@ func (compiler *Compiler) compileArray(
 		return err
 	}
 
-	return compiler.compileArrayItems(array, schema, members, active)
+	return compiler.compileArrayItems(array, use, schema, members, active)
 }
 
 // compileArrayBounds applies minItems and maxItems when present.
@@ -844,6 +869,7 @@ func restrictArray(array *ArrayConstraints) {
 // compileArrayItems compiles the items schema when present.
 func (compiler *Compiler) compileArrayItems(
 	array *ArrayConstraints,
+	use *schemaUse,
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
@@ -857,12 +883,13 @@ func (compiler *Compiler) compileArrayItems(
 		return compiler.failure("compile", "malformed", schema.Pointer, "items", err)
 	}
 
-	childID, err := compiler.compileSchema(child, active)
+	childUse, err := compiler.compileSchema(child, active)
 	if err != nil {
 		return err
 	}
 
-	array.Items = childID
+	use.items = childUse
+	array.Items = childUse.domain
 	restrictArray(array)
 
 	return nil
@@ -871,6 +898,7 @@ func (compiler *Compiler) compileArrayItems(
 // compileObject applies object Schema Object keywords to a Domain.
 func (compiler *Compiler) compileObject(
 	domain *Domain,
+	use *schemaUse,
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
@@ -881,11 +909,11 @@ func (compiler *Compiler) compileObject(
 		return err
 	}
 
-	if err := compiler.compileObjectProperties(object, schema, members, active); err != nil {
+	if err := compiler.compileObjectProperties(object, use, schema, members, active); err != nil {
 		return err
 	}
 
-	return compiler.compileAdditionalProperties(object, schema, members, active)
+	return compiler.compileAdditionalProperties(object, use, schema, members, active)
 }
 
 // compileObjectBounds applies minProperties and maxProperties when present.
@@ -955,11 +983,12 @@ func restrictObject(object *ObjectConstraints) {
 // compileObjectProperties compiles properties and required names into object constraints.
 func (compiler *Compiler) compileObjectProperties(
 	object *ObjectConstraints,
+	use *schemaUse,
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
 ) error {
-	properties, err := compiler.compileProperties(schema, members, active)
+	properties, err := compiler.compileProperties(use, schema, members, active)
 	if err != nil {
 		return err
 	}
@@ -1057,6 +1086,7 @@ func mapProperties(properties map[string]NamedProperty) []NamedProperty {
 // compileAdditionalProperties applies additionalProperties when present.
 func (compiler *Compiler) compileAdditionalProperties(
 	object *ObjectConstraints,
+	use *schemaUse,
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
@@ -1066,11 +1096,12 @@ func (compiler *Compiler) compileAdditionalProperties(
 		return nil
 	}
 
-	values, err := compiler.additionalPropertyDomain(raw, schema, active)
+	values, childUse, err := compiler.additionalPropertyDomain(raw, schema, active)
 	if err != nil {
 		return err
 	}
 
+	use.additional = childUse
 	object.Additional.Values = values
 	restrictObject(object)
 
@@ -1082,9 +1113,9 @@ func (compiler *Compiler) additionalPropertyDomain(
 	raw json.RawMessage,
 	schema oas.LocatedSchema,
 	active map[string]struct{},
-) (DomainID, error) {
+) (DomainID, *schemaUse, error) {
 	if isJSONNull(raw) {
-		return NoDomain, compiler.failure(
+		return NoDomain, nil, compiler.failure(
 			"compile",
 			"malformed",
 			schema.Pointer,
@@ -1096,22 +1127,28 @@ func (compiler *Compiler) additionalPropertyDomain(
 	var allowed bool
 	if err := json.Unmarshal(raw, &allowed); err == nil {
 		if allowed {
-			return AnyJSONDomainID, nil
+			return AnyJSONDomainID, nil, nil
 		}
 
-		return EmptyDomainID, nil
+		return EmptyDomainID, nil, nil
 	}
 
 	child, err := compiler.Source.Child(schema, "additionalProperties")
 	if err != nil {
-		return NoDomain, compiler.failure("compile", "malformed", schema.Pointer, "additionalProperties", err)
+		return NoDomain, nil, compiler.failure("compile", "malformed", schema.Pointer, "additionalProperties", err)
 	}
 
-	return compiler.compileSchema(child, active)
+	use, err := compiler.compileSchema(child, active)
+	if err != nil {
+		return NoDomain, nil, err
+	}
+
+	return use.domain, use, nil
 }
 
 // compileProperties compiles each declared property Schema Object.
 func (compiler *Compiler) compileProperties(
+	use *schemaUse,
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
@@ -1145,12 +1182,13 @@ func (compiler *Compiler) compileProperties(
 			return nil, compiler.failure("compile", "malformed", schema.Pointer, "properties", err)
 		}
 
-		childID, err := compiler.compileSchema(child, active)
+		childUse, err := compiler.compileSchema(child, active)
 		if err != nil {
 			return nil, err
 		}
 
-		properties[name] = NamedProperty{Name: name, State: PropertyAllowed, Values: childID}
+		use.properties = append(use.properties, schemaPropertyUse{name: name, use: childUse})
+		properties[name] = NamedProperty{Name: name, State: PropertyAllowed, Values: childUse.domain}
 	}
 
 	return properties, nil
@@ -1308,41 +1346,6 @@ func constraintSources(pointer string, members map[string]json.RawMessage) []Con
 	}
 
 	return result
-}
-
-// metadataForPointer returns source metadata already recorded for a schema pointer.
-func (compiler *Compiler) metadataForPointer(pointer string) ([]ConstraintSource, GenerationExamples) {
-	for _, use := range compiler.SchemaUses {
-		if use.Pointer == pointer {
-			return use.Constraints, use.Examples
-		}
-	}
-
-	return nil, GenerationExamples{}
-}
-
-// addSchemaUse records source metadata once for a schema pointer.
-func (compiler *Compiler) addSchemaUse(
-	pointer string,
-	domain DomainID,
-	constraints []ConstraintSource,
-	examples GenerationExamples,
-) {
-	for _, use := range compiler.SchemaUses {
-		if use.Pointer == pointer {
-			return
-		}
-	}
-
-	compiler.SchemaUses = append(compiler.SchemaUses, SchemaUse{
-		Pointer:     pointer,
-		Domain:      domain,
-		Constraints: append([]ConstraintSource(nil), constraints...),
-		Examples: GenerationExamples{
-			Valid:   cloneJSONValues(examples.Valid),
-			Invalid: cloneJSONValues(examples.Invalid),
-		},
-	})
 }
 
 // cloneJSONValues returns deep copies of exact JSON values.

@@ -14,30 +14,28 @@ func (compiler *Compiler) compileAllOf(
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
-	result DomainID,
-	constraints []ConstraintSource,
-	examples GenerationExamples,
-) (DomainID, []ConstraintSource, GenerationExamples, error) {
+	result *schemaUse,
+) (*schemaUse, error) {
 	raw, ok := members["allOf"]
 	if !ok {
-		return result, constraints, examples, nil
+		return result, nil
 	}
 
 	if isJSONNull(raw) {
-		return NoDomain, nil, GenerationExamples{}, compiler.failure(
+		return nil, compiler.failure(
 			"compile", "malformed", schema.Pointer, "allOf", errors.New("allOf must be a non-empty array"),
 		)
 	}
 
 	var children []json.RawMessage
 	if err := json.Unmarshal(raw, &children); err != nil {
-		return NoDomain, nil, GenerationExamples{}, compiler.failure(
+		return nil, compiler.failure(
 			"compile", "malformed", schema.Pointer, "allOf", err,
 		)
 	}
 
 	if len(children) == 0 {
-		return NoDomain, nil, GenerationExamples{}, compiler.failure(
+		return nil, compiler.failure(
 			"compile",
 			"malformed",
 			schema.Pointer,
@@ -46,28 +44,24 @@ func (compiler *Compiler) compileAllOf(
 		)
 	}
 
-	schemaWideValid := cloneJSONValues(examples.Valid)
+	schemaWideValid := cloneJSONValues(result.examples.Valid)
 
 	for index := range children {
-		childResult, childConstraints, mergedExamples, err := compiler.compileAllOfChild(
+		merged, err := compiler.compileAllOfChild(
 			schema,
 			index,
 			active,
 			result,
-			examples,
 			schemaWideValid,
 		)
 		if err != nil {
-			return NoDomain, nil, GenerationExamples{}, err
+			return nil, err
 		}
 
-		result = childResult
-		examples = mergedExamples
-
-		constraints = append(constraints, childConstraints...)
+		result = merged
 	}
 
-	return result, constraints, examples, nil
+	return result, nil
 }
 
 // compileAllOfChild intersects one allOf child and merges its source metadata.
@@ -75,39 +69,37 @@ func (compiler *Compiler) compileAllOfChild(
 	schema oas.LocatedSchema,
 	index int,
 	active map[string]struct{},
-	result DomainID,
-	examples GenerationExamples,
+	result *schemaUse,
 	schemaWideValid []jsonvalue.Value,
-) (DomainID, []ConstraintSource, GenerationExamples, error) {
+) (*schemaUse, error) {
 	child, err := compiler.Source.Child(schema, "allOf", fmt.Sprintf("%d", index))
 	if err != nil {
-		return NoDomain, nil, GenerationExamples{}, compiler.failure(
+		return nil, compiler.failure(
 			"compile", "malformed", schema.Pointer, "allOf", err,
 		)
 	}
 
-	childID, err := compiler.compileSchema(child, active)
+	childUse, err := compiler.compileSchema(child, active)
 	if err != nil {
-		return NoDomain, nil, GenerationExamples{}, err
+		return nil, err
 	}
 
-	childConstraints, childExamples := compiler.metadataForPointer(child.Pointer)
-	leftDomain, leftOK := compiler.Domains.Domain(result)
+	leftDomain, leftOK := compiler.Domains.Domain(result.domain)
 
-	rightDomain, rightOK := compiler.Domains.Domain(childID)
+	rightDomain, rightOK := compiler.Domains.Domain(childUse.domain)
 	if !leftOK || !rightOK {
-		return NoDomain, nil, GenerationExamples{}, compiler.failure(
+		return nil, compiler.failure(
 			"compile", "malformed", schema.Pointer, "allOf", errors.New("compiled allOf Domain does not exist"),
 		)
 	}
 
 	enumNeedsStringExamples := enumCrossesStringLanguage(leftDomain, rightDomain)
-	mergedExamples := mergeGenerationExamples(examples, childExamples)
+	mergedExamples := mergeGenerationExamples(result.examples, childUse.examples)
 	compatibleExamples, needsStringExamples := compatibleStringExamples(
 		leftDomain,
 		rightDomain,
-		examples.Valid,
-		childExamples.Valid,
+		result.examples.Valid,
+		childUse.examples.Valid,
 	)
 
 	mergedExamples.Valid = mergedValidExamples(
@@ -118,24 +110,36 @@ func (compiler *Compiler) compileAllOfChild(
 		compatibleExamples,
 		leftDomain,
 		rightDomain,
-		examples.Valid,
-		childExamples.Valid,
+		result.examples.Valid,
+		childUse.examples.Valid,
 	)
 
-	result, mergedDomain, err := compiler.intersectAllOfDomains(schema.Pointer, result, childID)
+	merged, err := compiler.meet(result, childUse)
 	if err != nil {
-		return NoDomain, nil, GenerationExamples{}, err
+		code := "malformed"
+		if errors.Is(err, errUnconstructible) {
+			code = "unconstructible"
+		}
+
+		return nil, compiler.failure("compile", code, schema.Pointer, "allOf", err)
 	}
 
-	result, mergedDomain, err = compiler.refineAllOfEnum(
+	mergedDomain, ok := compiler.Domains.Domain(merged.domain)
+	if !ok {
+		return nil, compiler.failure(
+			"compile", "malformed", schema.Pointer, "allOf", errors.New("merged allOf Domain does not exist"),
+		)
+	}
+
+	merged.domain, mergedDomain, err = compiler.refineAllOfEnum(
 		schema.Pointer,
-		result,
+		merged.domain,
 		mergedDomain,
 		mergedExamples.Valid,
 		enumNeedsStringExamples,
 	)
 	if err != nil {
-		return NoDomain, nil, GenerationExamples{}, err
+		return nil, err
 	}
 
 	if err := compiler.validateAllOfStringExamples(
@@ -144,10 +148,12 @@ func (compiler *Compiler) compileAllOfChild(
 		needsStringExamples,
 		mergedExamples.Valid,
 	); err != nil {
-		return NoDomain, nil, GenerationExamples{}, err
+		return nil, err
 	}
 
-	return result, childConstraints, mergedExamples, nil
+	merged.examples = mergedExamples
+
+	return merged, nil
 }
 
 // mergedValidExamples selects the trusted evidence applicable to a new conjunction.
@@ -175,32 +181,6 @@ func mergedValidExamples(
 	}
 
 	return merged
-}
-
-// intersectAllOfDomains intersects two Domains and returns the merged Domain.
-func (compiler *Compiler) intersectAllOfDomains(
-	pointer string,
-	left DomainID,
-	right DomainID,
-) (DomainID, Domain, error) {
-	result, err := compiler.Domains.IntersectDomains(left, right)
-	if err != nil {
-		code := "malformed"
-		if errors.Is(err, errUnconstructible) {
-			code = "unconstructible"
-		}
-
-		return NoDomain, Domain{}, compiler.failure("compile", code, pointer, "allOf", err)
-	}
-
-	mergedDomain, ok := compiler.Domains.Domain(result)
-	if !ok {
-		return NoDomain, Domain{}, compiler.failure(
-			"compile", "malformed", pointer, "allOf", errors.New("merged allOf Domain does not exist"),
-		)
-	}
-
-	return result, mergedDomain, nil
 }
 
 // refineAllOfEnum keeps only enum strings backed by trusted compatible examples.

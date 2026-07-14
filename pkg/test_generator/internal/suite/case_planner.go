@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
 )
@@ -28,12 +27,9 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 		return nil, err
 	}
 
-	planner := &CasePlanner{
-		Domains: compiler.Domains, LocalDomains: compiler.LocalDomainByPointer,
-		AtomicDomains: compiler.AtomicDomainBySource,
-	}
+	planner := &CasePlanner{Domains: compiler.Domains}
 
-	cases, err := planner.Plan(root, compiler.SchemaUses)
+	cases, err := planner.Plan(compiler.rootUse)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +48,6 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 	return &CompiledSuite{
 		Root:        root,
 		Domains:     compiler.Domains,
-		SchemaUses:  append([]SchemaUse(nil), compiler.SchemaUses...),
 		Constraints: append([]ConstraintPlan(nil), planner.Constraints...),
 		Cases:       linked,
 	}, nil
@@ -60,7 +55,7 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 
 // linkCases assigns a Rapid generator to each constructible CasePlan.
 func (compiler *Compiler) linkCases(root DomainID, cases []CasePlan) ([]CasePlan, error) {
-	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.SchemaUses)
+	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.rootUse)
 	linked := make([]CasePlan, 0, len(cases))
 
 	for index := range cases {
@@ -159,19 +154,21 @@ func hasAcceptedCase(cases []CasePlan) bool {
 }
 
 // Plan builds aggregate-valid, valid-partition, and isolated invalid CasePlans.
-func (planner *CasePlanner) Plan(root DomainID, uses []SchemaUse) ([]CasePlan, error) {
+func (planner *CasePlanner) Plan(rootUse *schemaUse) ([]CasePlan, error) {
 	if planner == nil || planner.Domains == nil {
 		return nil, errors.New("plan cases: Domain registry is nil")
 	}
 
-	rootDomain, ok := planner.Domains.Domain(root)
-	if !ok {
-		return nil, fmt.Errorf("plan cases: root Domain %d does not exist", root)
+	if rootUse == nil {
+		return nil, errors.New("plan cases: root occurrence is nil")
 	}
 
-	rootUse := rootSchemaUse(root, uses)
+	rootDomain, ok := planner.Domains.Domain(rootUse.domain)
+	if !ok {
+		return nil, fmt.Errorf("plan cases: root Domain %d does not exist", rootUse.domain)
+	}
 
-	constraints, err := planner.constraintPlans(rootUse, uses)
+	constraints, err := planner.constraintPlans(rootUse)
 	if err != nil {
 		return nil, err
 	}
@@ -181,10 +178,10 @@ func (planner *CasePlanner) Plan(root DomainID, uses []SchemaUse) ([]CasePlan, e
 	result := newCaseSet()
 	if rootDomain.Status == DomainProductive {
 		result.add(CasePlan{
-			Name:   caseName("valid aggregate", rootUse.Pointer, ""),
+			Name:   caseName("valid aggregate", rootUse.pointer, ""),
 			Expect: ExpectAccepted,
-			Values: root,
-			Source: ConstraintSource{Pointer: rootUse.Pointer},
+			Values: rootUse.domain,
+			Source: ConstraintSource{Pointer: rootUse.pointer},
 		})
 	}
 
@@ -193,7 +190,7 @@ func (planner *CasePlanner) Plan(root DomainID, uses []SchemaUse) ([]CasePlan, e
 	}
 
 	if rootDomain.Status == DomainProductive {
-		if err := planner.addValidPartitions(result, root, rootUse, uses, make(map[DomainID]bool)); err != nil {
+		if err := planner.addValidPartitions(result, rootUse, make(map[DomainID]bool)); err != nil {
 			return nil, err
 		}
 	}
@@ -201,42 +198,19 @@ func (planner *CasePlanner) Plan(root DomainID, uses []SchemaUse) ([]CasePlan, e
 	return result.cases, nil
 }
 
-// rootSchemaUse returns the request occurrence, which compilation records last among equivalent roots.
-func rootSchemaUse(root DomainID, uses []SchemaUse) SchemaUse {
-	var requestUse SchemaUse
-	for _, use := range uses {
-		if use.Domain == root && strings.Contains(use.Pointer, "/requestBody/") &&
-			(requestUse.Domain == NoDomain || len(use.Pointer) < len(requestUse.Pointer)) {
-			requestUse = use
-		}
-	}
-
-	if requestUse.Domain != NoDomain {
-		return requestUse
-	}
-
-	for _, use := range uses {
-		if use.Domain == root {
-			return use
-		}
-	}
-
-	return SchemaUse{Domain: root}
-}
-
 // constraintPlans creates atomic pass/fail Domains while retaining allOf source provenance.
-func (planner *CasePlanner) constraintPlans(root SchemaUse, uses []SchemaUse) ([]ConstraintPlan, error) {
-	plans := make([]ConstraintPlan, 0, len(root.Constraints))
+func (planner *CasePlanner) constraintPlans(root *schemaUse) ([]ConstraintPlan, error) {
+	plans := make([]ConstraintPlan, 0, len(root.constraints))
 	seen := make(map[ConstraintSource]struct{})
 
-	for _, source := range root.Constraints {
+	for _, source := range root.constraints {
 		if _, duplicate := seen[source]; duplicate {
 			continue
 		}
 
 		seen[source] = struct{}{}
 
-		use := planner.constraintUse(source, root, uses)
+		use := planner.constraintUse(source, root)
 
 		plan, include, err := planner.atomicConstraint(source, use)
 		if err != nil {
@@ -259,39 +233,26 @@ func (planner *CasePlanner) constraintPlans(root SchemaUse, uses []SchemaUse) ([
 	return plans, nil
 }
 
-// constraintUse resolves the SchemaUse that supplies source's local rule and examples.
-func (planner *CasePlanner) constraintUse(source ConstraintSource, root SchemaUse, uses []SchemaUse) SchemaUse {
-	use := schemaUseByPointer(uses, source.Pointer)
-	if use.Domain == NoDomain {
+// constraintUse resolves the occurrence that supplies source's local rule and examples.
+func (planner *CasePlanner) constraintUse(source ConstraintSource, root *schemaUse) *schemaUse {
+	use := root.find(source.Pointer)
+	if use == nil {
 		use = root
 	}
 
-	if local, ok := planner.LocalDomains[source.Pointer]; ok {
-		use.Domain = local
-	}
-
-	if (source.Keyword == "pattern" || source.Keyword == "format") && len(use.Examples.Invalid) == 0 {
-		use.Examples.Invalid = cloneJSONValues(root.Examples.Invalid)
+	if (source.Keyword == "pattern" || source.Keyword == "format") && len(use.examples.Invalid) == 0 {
+		copyUse := *use
+		copyUse.examples.Invalid = cloneJSONValues(root.examples.Invalid)
+		use = &copyUse
 	}
 
 	return use
 }
 
-// schemaUseByPointer returns the first use recorded at pointer.
-func schemaUseByPointer(uses []SchemaUse, pointer string) SchemaUse {
-	for _, use := range uses {
-		if use.Pointer == pointer {
-			return use
-		}
-	}
-
-	return SchemaUse{}
-}
-
 // atomicConstraint constructs an applicability-correct atomic rule.
 // Passing Domains leave unrelated JSON kinds unrestricted; failing Domains contain only the failing kind.
-func (planner *CasePlanner) atomicConstraint(source ConstraintSource, use SchemaUse) (ConstraintPlan, bool, error) {
-	domain, ok := planner.atomicConstraintDomain(source, use.Domain)
+func (planner *CasePlanner) atomicConstraint(source ConstraintSource, use *schemaUse) (ConstraintPlan, bool, error) {
+	domain, ok := planner.atomicConstraintDomain(source, use)
 	if !ok {
 		return ConstraintPlan{}, false, nil
 	}
@@ -317,12 +278,12 @@ func (planner *CasePlanner) atomicConstraint(source ConstraintSource, use Schema
 }
 
 // atomicConstraintDomain returns the source-local Domain before whole-schema enum filtering.
-func (planner *CasePlanner) atomicConstraintDomain(source ConstraintSource, fallback DomainID) (Domain, bool) {
-	if atomic, ok := planner.AtomicDomains[source]; ok {
+func (planner *CasePlanner) atomicConstraintDomain(source ConstraintSource, use *schemaUse) (Domain, bool) {
+	if atomic, ok := use.atomic[source.Keyword]; ok {
 		return planner.Domains.Domain(atomic)
 	}
 
-	return planner.Domains.Domain(fallback)
+	return planner.Domains.Domain(use.localDomain)
 }
 
 // atomicPrimitiveConstraint dispatches type, nullable, and enum rules.
@@ -568,7 +529,7 @@ func (planner *CasePlanner) atomicStringConstraint(
 func (planner *CasePlanner) atomicStringExampleConstraint(
 	source ConstraintSource,
 	domain Domain,
-	use SchemaUse,
+	use *schemaUse,
 ) (ConstraintPlan, bool, error) {
 	pass := anyJSONDomain()
 
@@ -581,7 +542,7 @@ func (planner *CasePlanner) atomicStringExampleConstraint(
 
 	fails := make([]DomainID, 0)
 
-	for _, example := range use.Examples.Invalid {
+	for _, example := range use.examples.Invalid {
 		if example.Kind != jsonvalue.KindString {
 			continue
 		}

@@ -26,26 +26,26 @@ type RapidGeneratorBuilder struct {
 }
 
 // NewRapidGeneratorBuilder creates a generator builder for one compiled Domain graph.
-func NewRapidGeneratorBuilder(domains *DomainRegistry, uses []SchemaUse) *RapidGeneratorBuilder {
+func NewRapidGeneratorBuilder(domains *DomainRegistry, root *schemaUse) *RapidGeneratorBuilder {
 	builder := &RapidGeneratorBuilder{
 		domains:        domains,
 		generators:     make(map[DomainID]*rapid.Generator[jsonvalue.Value]),
 		stringExamples: make(map[string][]jsonvalue.Value),
 	}
 
-	for _, use := range uses {
-		domain, ok := domains.Domain(use.Domain)
+	root.walk(func(use *schemaUse) {
+		domain, ok := domains.Domain(use.domain)
 		if !ok || len(domain.String.Patterns) == 0 && len(domain.String.Formats) == 0 {
-			continue
+			return
 		}
 
 		key := stringLanguageKey(domain.String)
-		for _, example := range use.Examples.Valid {
+		for _, example := range use.examples.Valid {
 			if example.Kind == jsonvalue.KindString && !jsonValuesContain(builder.stringExamples[key], example) {
 				builder.stringExamples[key] = append(builder.stringExamples[key], cloneJSONValue(example))
 			}
 		}
-	}
+	}, make(map[*schemaUse]struct{}))
 
 	return builder
 }

@@ -164,16 +164,6 @@ components:
 	nested, ok := compiler.Domains.Domain(properties["nested"].Values)
 	require.True(t, ok)
 	require.Equal(t, properties["first"].Values, nested.Array.Items)
-	require.Equal(
-		t,
-		properties["first"].Values,
-		compiler.DomainByPointer["#/components/schemas/Text"],
-	)
-	require.Equal(
-		t,
-		properties["first"].Values,
-		compiler.DomainByPointer[compiler.Source.RequestSchema.Pointer+"/properties/first"],
-	)
 }
 
 // TestCompilerKeepsExamplesOutOfDomainIdentity verifies examples do not affect Domain identity.
@@ -196,10 +186,10 @@ properties:
 	properties := propertiesByName(root.Object.Properties)
 	require.Equal(t, properties["first"].Values, properties["second"].Values)
 
-	firstUse := schemaUseAt(t, compiler.SchemaUses, compiler.Source.RequestSchema.Pointer+"/properties/first")
-	secondUse := schemaUseAt(t, compiler.SchemaUses, compiler.Source.RequestSchema.Pointer+"/properties/second")
-	require.Equal(t, "first", firstUse.Examples.Valid[0].String)
-	require.Equal(t, "second", secondUse.Examples.Valid[0].String)
+	firstUse := schemaUseAt(t, compiler.rootUse, compiler.Source.RequestSchema.Pointer+"/properties/first")
+	secondUse := schemaUseAt(t, compiler.rootUse, compiler.Source.RequestSchema.Pointer+"/properties/second")
+	require.Equal(t, "first", firstUse.examples.Valid[0].String)
+	require.Equal(t, "second", secondUse.examples.Valid[0].String)
 }
 
 // TestCompilerReportsMalformedUnsupportedAndRecursiveSchemas verifies stable compiler failures.
@@ -522,18 +512,17 @@ func propertiesByName(properties []NamedProperty) map[string]NamedProperty {
 }
 
 // schemaUseAt returns test metadata for a source pointer.
-func schemaUseAt(t *testing.T, uses []SchemaUse, pointer string) SchemaUse {
+func schemaUseAt(t *testing.T, root *schemaUse, pointer string) *schemaUse {
 	t.Helper()
 
-	for _, use := range uses {
-		if use.Pointer == pointer {
-			return use
-		}
+	use := root.find(pointer)
+	if use != nil {
+		return use
 	}
 
-	require.FailNow(t, "SchemaUse not found", pointer)
+	require.FailNow(t, "schema use not found", pointer)
 
-	return SchemaUse{}
+	return nil
 }
 
 // TestFiniteEnumUsesExactSemanticJSON verifies semantic JSON equality removes duplicate enum values.

@@ -21,7 +21,7 @@ items: {type: boolean}`, "", "create"))
 	compiled, err := compiler.CompileSuite()
 	require.NoError(t, err)
 
-	builder := NewRapidGeneratorBuilder(compiled.Domains, compiled.SchemaUses)
+	builder := NewRapidGeneratorBuilder(compiled.Domains, compiler.rootUse)
 	first, err := builder.Generator(compiled.Root)
 	require.NoError(t, err)
 	second, err := builder.Generator(compiled.Root)

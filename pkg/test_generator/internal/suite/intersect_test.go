@@ -165,14 +165,14 @@ allOf:
 	require.Equal(t, 3, domain.String.MinLength)
 	require.Equal(t, 5, *domain.String.MaxLength)
 
-	use := schemaUseAt(t, compiler.SchemaUses, compiler.Source.RequestSchema.Pointer)
-	require.Equal(t, "trusted", use.Examples.Valid[0].String)
-	require.Len(t, use.Examples.Invalid, 2)
-	require.Contains(t, use.Constraints, ConstraintSource{
+	use := schemaUseAt(t, compiler.rootUse, compiler.Source.RequestSchema.Pointer)
+	require.Equal(t, "trusted", use.examples.Valid[0].String)
+	require.Len(t, use.examples.Invalid, 2)
+	require.Contains(t, use.constraints, ConstraintSource{
 		Pointer: compiler.Source.RequestSchema.Pointer,
 		Keyword: "allOf",
 	})
-	require.Contains(t, use.Constraints, ConstraintSource{
+	require.Contains(t, use.constraints, ConstraintSource{
 		Pointer: compiler.Source.RequestSchema.Pointer + "/allOf/0", Keyword: "minLength",
 	})
 }
@@ -189,16 +189,16 @@ func TestCompilerUsesTrustedExamplesForPatternAndFormatConjunctions(t *testing.T
 	domain := mustDomain(t, compiler.Domains, id)
 	require.Equal(t, []string{"^a$"}, domain.String.Patterns)
 	require.Equal(t, []string{"email"}, domain.String.Formats)
-	use := schemaUseAt(t, compiler.SchemaUses, compiler.Source.RequestSchema.Pointer)
-	require.Equal(t, "not-a", use.Examples.Valid[0].String)
+	use := schemaUseAt(t, compiler.rootUse, compiler.Source.RequestSchema.Pointer)
+	require.Equal(t, "not-a", use.examples.Valid[0].String)
 
 	outerCompiler, outerID := compileSchemaYAML(t, `x-valid-examples: [outer-trusted]
 allOf:
   - pattern: first
   - format: email`, "")
 	require.NotEqual(t, EmptyDomainID, outerID)
-	outerUse := schemaUseAt(t, outerCompiler.SchemaUses, outerCompiler.Source.RequestSchema.Pointer)
-	require.Equal(t, "outer-trusted", outerUse.Examples.Valid[0].String)
+	outerUse := schemaUseAt(t, outerCompiler.rootUse, outerCompiler.Source.RequestSchema.Pointer)
+	require.Equal(t, "outer-trusted", outerUse.examples.Valid[0].String)
 
 	source := parseSchemaSource(t, `allOf:
   - pattern: '^a$'
