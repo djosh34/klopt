@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/internal/jsonvalue"
 	"github.com/stretchr/testify/require"
 )
 
@@ -418,9 +418,7 @@ multipleOf: 2`, "")
 	largerHuge, err := jsonvalue.ParseNumber("2e100001")
 	require.NoError(t, err)
 
-	comparison, ok := compareExactNumbers(huge, largerHuge)
-	require.True(t, ok)
-	require.Negative(t, comparison)
+	require.Negative(t, huge.Compare(largerHuge))
 }
 
 // compileInto copies one separately compiled test Domain graph into a registry.

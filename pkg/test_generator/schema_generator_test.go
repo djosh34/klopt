@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/oas"
+	"decode_and_validate_generator/pkg/internal/oas"
 	"decode_and_validate_generator/pkg/test_generator/internal/suite"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
@@ -284,7 +284,7 @@ func compileGeneratedSchema(t require.TestingT, candidate GeneratedSchema) (*sui
 }
 
 // TestGeneratedSchemasAgainstValidators sends every subsequently generated body
-// from a constructible valid schema to both independent validators.
+// from a constructible valid schema to the runtime and applicable external validators.
 func TestGeneratedSchemasAgainstValidators(t *testing.T) {
 	t.Parallel()
 
@@ -300,16 +300,19 @@ func TestGeneratedSchemasAgainstValidators(t *testing.T) {
 			return
 		}
 
-		if hasCharacterizedValidatorLimitation(candidate.OpenAPIJSON) {
-			return
-		}
-
-		adapters, err := newValidatorAdapters(candidate.OpenAPIJSON)
-		if isCharacterizedGeneratedSetupFailure(candidate.OpenAPIJSON, err) {
-			return
-		}
-
+		runtimeAdapter, err := newRuntimeValidationRequestBodyValidator(candidate.OpenAPIJSON)
 		require.NoError(t, err, "%s", candidate.OpenAPIJSON)
+
+		adapters := []validatorAdapter{runtimeAdapter}
+
+		if !hasCharacterizedExternalValidatorLimitation(candidate.OpenAPIJSON) {
+			externalAdapters, externalErr := newExternalValidatorAdapters(candidate.OpenAPIJSON)
+			if !isCharacterizedExternalSetupFailure(candidate.OpenAPIJSON, externalErr) {
+				require.NoError(t, externalErr, "%s", candidate.OpenAPIJSON)
+
+				adapters = append(adapters, externalAdapters...)
+			}
+		}
 
 		defer releaseValidatorAdapters(adapters)
 
@@ -345,19 +348,19 @@ func TestGeneratedSchemasAgainstValidators(t *testing.T) {
 	require.Positive(t, validBodies)
 	require.Positive(t, invalidBodies)
 	t.Logf(
-		"dual-validator totals: schemas=%d valid bodies=%d invalid bodies=%d",
+		"validator totals: schemas=%d valid bodies=%d invalid bodies=%d",
 		validatedSchemas,
 		validBodies,
 		invalidBodies,
 	)
 }
 
-func isCharacterizedGeneratedSetupFailure(schema []byte, err error) bool {
+func isCharacterizedExternalSetupFailure(schema []byte, err error) bool {
 	if err == nil {
 		return false
 	}
 
-	if hasCharacterizedValidatorLimitation(schema) {
+	if hasCharacterizedExternalValidatorLimitation(schema) {
 		return true
 	}
 
@@ -412,9 +415,8 @@ func schemaHasEmptyProperty(value any) bool {
 	return false
 }
 
-// hasCharacterizedValidatorLimitation routes cases already pinned by
-// TestValidatorCharacterizations away from the consensus body oracle.
-func hasCharacterizedValidatorLimitation(schema []byte) bool {
+// hasCharacterizedExternalValidatorLimitation routes pinned cases away from third-party adapters only.
+func hasCharacterizedExternalValidatorLimitation(schema []byte) bool {
 	return bytes.Contains(schema, []byte("1e400")) ||
 		bytes.Contains(schema, []byte("-1e400")) ||
 		bytes.Contains(schema, []byte("1e300")) ||

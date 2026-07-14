@@ -4,7 +4,7 @@ package testgenerator
 import (
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/oas"
+	"decode_and_validate_generator/pkg/internal/oas"
 	"decode_and_validate_generator/pkg/test_generator/internal/suite"
 	"pgregory.net/rapid"
 )

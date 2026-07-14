@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/internal/jsonvalue"
 	"pgregory.net/rapid"
 )
 

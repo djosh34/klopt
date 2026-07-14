@@ -5,16 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"sort"
 	"strings"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
-	"decode_and_validate_generator/pkg/test_generator/internal/oas"
+	"decode_and_validate_generator/pkg/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/internal/oas"
 )
-
-// exactDecimalRadix is the JSON number radix used for symbolic exponent comparison.
-const exactDecimalRadix = 10
 
 // Compiler compiles located Schema Objects into canonical DomainIDs.
 type Compiler struct {
@@ -1729,129 +1725,4 @@ func compareNumberToZero(number jsonvalue.Number) int {
 	}
 
 	return 1
-}
-
-// compareExactNumbers compares arbitrary-size canonical JSON decimals without materializing their exponents.
-func compareExactNumbers(left jsonvalue.Number, right jsonvalue.Number) (int, bool) {
-	if left.Rational != nil && right.Rational != nil {
-		return left.Rational.Cmp(right.Rational), true
-	}
-
-	leftNegative, leftDigits, leftExponent, leftOK := exactDecimalParts(left.Lexeme)
-
-	rightNegative, rightDigits, rightExponent, rightOK := exactDecimalParts(right.Lexeme)
-	if !leftOK || !rightOK {
-		return 0, false
-	}
-
-	if leftDigits == "0" || rightDigits == "0" {
-		return compareExactZero(leftNegative, leftDigits, rightNegative, rightDigits), true
-	}
-
-	if leftNegative != rightNegative {
-		if leftNegative {
-			return -1, true
-		}
-
-		return 1, true
-	}
-
-	comparison := compareDecimalMagnitudes(leftDigits, leftExponent, rightDigits, rightExponent)
-	if leftNegative {
-		comparison = -comparison
-	}
-
-	return comparison, true
-}
-
-// exactDecimalParts splits a canonical JSON decimal into sign, digits, and a base-ten exponent.
-func exactDecimalParts(lexeme string) (bool, string, *big.Int, bool) {
-	negative := strings.HasPrefix(lexeme, "-")
-	if negative {
-		lexeme = lexeme[1:]
-	}
-
-	exponent := new(big.Int)
-	if exponentIndex := strings.IndexByte(lexeme, 'e'); exponentIndex >= 0 {
-		parsed, ok := new(big.Int).SetString(lexeme[exponentIndex+1:], exactDecimalRadix)
-		if !ok {
-			return false, "", nil, false
-		}
-
-		exponent = parsed
-		lexeme = lexeme[:exponentIndex]
-	}
-
-	if decimalIndex := strings.IndexByte(lexeme, '.'); decimalIndex >= 0 {
-		fractionLength := len(lexeme) - decimalIndex - 1
-		lexeme = lexeme[:decimalIndex] + lexeme[decimalIndex+1:]
-
-		exponent.Sub(exponent, big.NewInt(int64(fractionLength)))
-	}
-
-	digits := strings.TrimLeft(lexeme, "0")
-	if digits == "" {
-		return false, "0", new(big.Int), true
-	}
-
-	return negative, digits, exponent, true
-}
-
-// compareExactZero handles sign while canonical zero remains unsigned.
-func compareExactZero(leftNegative bool, leftDigits string, rightNegative bool, rightDigits string) int {
-	if leftDigits == "0" && rightDigits == "0" {
-		return 0
-	}
-
-	if leftDigits == "0" {
-		if rightNegative {
-			return 1
-		}
-
-		return -1
-	}
-
-	if leftNegative {
-		return -1
-	}
-
-	return 1
-}
-
-// compareDecimalMagnitudes compares positive digit/exponent pairs exactly.
-func compareDecimalMagnitudes(
-	leftDigits string,
-	leftExponent *big.Int,
-	rightDigits string,
-	rightExponent *big.Int,
-) int {
-	leftMagnitude := new(big.Int).Add(leftExponent, big.NewInt(int64(len(leftDigits))))
-
-	rightMagnitude := new(big.Int).Add(rightExponent, big.NewInt(int64(len(rightDigits))))
-	if comparison := leftMagnitude.Cmp(rightMagnitude); comparison != 0 {
-		return comparison
-	}
-
-	width := max(len(leftDigits), len(rightDigits))
-	for index := range width {
-		leftDigit := byte('0')
-		if index < len(leftDigits) {
-			leftDigit = leftDigits[index]
-		}
-
-		rightDigit := byte('0')
-		if index < len(rightDigits) {
-			rightDigit = rightDigits[index]
-		}
-
-		if leftDigit < rightDigit {
-			return -1
-		}
-
-		if leftDigit > rightDigit {
-			return 1
-		}
-	}
-
-	return 0
 }

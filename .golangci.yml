@@ -38,7 +38,10 @@ linters:
             - github.com/getkin/kin-openapi
             - decode_and_validate_generator/pkg/peekjson
             - decode_and_validate_generator/pkg/decode/example
+            - decode_and_validate_generator/pkg/internal/jsonvalue
+            - decode_and_validate_generator/pkg/internal/oas
             - decode_and_validate_generator/pkg/test_generator
+            - decode_and_validate_generator/pkg/validation
             - github.com/arran4/golang-diff/pkg/diff
     errcheck:
       check-blank: true

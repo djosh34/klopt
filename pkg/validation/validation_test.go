@@ -1,0 +1,451 @@
+package validation
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// TestValidationSupportedKeywordsAtRootNestedAndAllOf covers every runtime rule at each schema shape.
+func TestValidationSupportedKeywordsAtRootNestedAndAllOf(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		schema  string
+		valid   string
+		invalid string
+		keyword string
+	}{
+		{name: "type", schema: `{"type":"boolean"}`, valid: `true`, invalid: `0`, keyword: "type"},
+		{name: "integer", schema: `{"type":"integer"}`, valid: `9007199254740993`, invalid: `1.5`, keyword: "type"},
+		{name: "nullable", schema: `{"type":"string","nullable":true}`, valid: `null`, invalid: `1`, keyword: "type"},
+		{name: "enum", schema: `{"enum":[1,{"a":2}]}`, valid: `1.0`, invalid: `2`, keyword: "enum"},
+		{name: "minimum", schema: `{"minimum":1}`, valid: `1`, invalid: `0`, keyword: "minimum"},
+		{
+			name: "exclusiveMinimum", schema: `{"minimum":1,"exclusiveMinimum":true}`,
+			valid: `2`, invalid: `1`, keyword: "exclusiveMinimum",
+		},
+		{name: "maximum", schema: `{"maximum":1}`, valid: `1`, invalid: `2`, keyword: "maximum"},
+		{
+			name: "exclusiveMaximum", schema: `{"maximum":1,"exclusiveMaximum":true}`,
+			valid: `0`, invalid: `1`, keyword: "exclusiveMaximum",
+		},
+		{name: "multipleOf", schema: `{"multipleOf":0.1}`, valid: `0.3`, invalid: `0.31`, keyword: "multipleOf"},
+		{name: "minLength", schema: `{"minLength":2}`, valid: `"λx"`, invalid: `"λ"`, keyword: "minLength"},
+		{name: "maxLength", schema: `{"maxLength":1}`, valid: `"λ"`, invalid: `"λx"`, keyword: "maxLength"},
+		{name: "pattern", schema: `{"pattern":"^a+$"}`, valid: `"aa"`, invalid: `"b"`, keyword: "pattern"},
+		{name: "minItems", schema: `{"minItems":1}`, valid: `[0]`, invalid: `[]`, keyword: "minItems"},
+		{name: "maxItems", schema: `{"maxItems":1}`, valid: `[0]`, invalid: `[0,1]`, keyword: "maxItems"},
+		{name: "items", schema: `{"items":{"type":"integer"}}`, valid: `[1]`, invalid: `[1.5]`, keyword: "type"},
+		{name: "uniqueItems", schema: `{"uniqueItems":true}`, valid: `[1,2]`, invalid: `[1,1.0]`, keyword: "uniqueItems"},
+		{name: "minProperties", schema: `{"minProperties":1}`, valid: `{"a":1}`, invalid: `{}`, keyword: "minProperties"},
+		{
+			name: "maxProperties", schema: `{"maxProperties":1}`,
+			valid: `{"a":1}`, invalid: `{"a":1,"b":2}`, keyword: "maxProperties",
+		},
+		{name: "required", schema: `{"required":["a"]}`, valid: `{"a":1}`, invalid: `{}`, keyword: "required"},
+		{
+			name: "properties", schema: `{"properties":{"a":{"type":"string"}}}`,
+			valid: `{"a":"x"}`, invalid: `{"a":1}`, keyword: "type",
+		},
+		{
+			name: "additionalPropertiesFalse", schema: `{"additionalProperties":false}`,
+			valid: `{}`, invalid: `{"a":1}`, keyword: "additionalProperties",
+		},
+		{
+			name: "additionalPropertiesSchema", schema: `{"additionalProperties":{"type":"string"}}`,
+			valid: `{"a":"x"}`, invalid: `{"a":1}`, keyword: "type",
+		},
+	}
+
+	shapes := []struct {
+		name        string
+		wrapSchema  func(string) string
+		wrapBody    func(string) string
+		wantPointer string
+	}{
+		{name: "root", wrapSchema: identity, wrapBody: identity, wantPointer: "instance #"},
+		{
+			name: "nested",
+			wrapSchema: func(schema string) string {
+				return fmt.Sprintf(`{"type":"object","required":["value"],"properties":{"value":%s}}`, schema)
+			},
+			wrapBody:    func(body string) string { return fmt.Sprintf(`{"value":%s}`, body) },
+			wantPointer: "instance #/value",
+		},
+		{
+			name:        "allOf",
+			wrapSchema:  func(schema string) string { return fmt.Sprintf(`{"allOf":[%s]}`, schema) },
+			wrapBody:    identity,
+			wantPointer: "schema #/paths/~1things/post/requestBody/content/application~1json/schema/allOf/0",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, shape := range shapes {
+				t.Run(shape.name, func(t *testing.T) {
+					t.Parallel()
+
+					parsed := mustParseSchema(t, shape.wrapSchema(test.schema), "")
+					require.Empty(t, parsed.Validate(json.RawMessage(shape.wrapBody(test.valid))))
+
+					errs := parsed.Validate(json.RawMessage(shape.wrapBody(test.invalid)))
+					require.NotEmpty(t, errs)
+					require.Contains(t, errors.Join(errs...).Error(), "keyword "+test.keyword)
+					require.Contains(t, errors.Join(errs...).Error(), shape.wantPointer)
+				})
+			}
+		})
+	}
+}
+
+// TestParseExposesCompiledGraphAndCopiesInput covers the supported construction seam.
+func TestParseExposesCompiledGraphAndCopiesInput(t *testing.T) {
+	t.Parallel()
+
+	spec := openAPISpec(`{
+		"type":"object","required":["value"],
+		"properties":{"value":{"type":"string","minLength":1}},
+		"additionalProperties":false,
+		"allOf":[{"maxProperties":1}]
+	}`, "", true)
+	parsed, err := Parse(spec, "checkThing")
+	require.NoError(t, err)
+
+	for index := range spec {
+		spec[index] = ' '
+	}
+
+	require.True(t, parsed.BodyRequired)
+	require.Equal(t, "object", parsed.KindValidation.Type)
+	require.Equal(t, []string{"value"}, parsed.ObjectValidation.Required)
+	require.Len(t, parsed.ObjectValidation.Properties, 1)
+	require.Equal(t, "value", parsed.ObjectValidation.Properties[0].Name)
+	require.Equal(t, "string", parsed.ObjectValidation.Properties[0].Validation.KindValidation.Type)
+	require.False(t, parsed.ObjectValidation.AdditionalPropertiesAllowed)
+	require.Len(t, parsed.AllOfValidations, 1)
+	require.Empty(t, parsed.Validate(json.RawMessage(`{"value":"x"}`)))
+}
+
+// TestValidationStringFormats covers every agreed format and unknown-format fallback.
+func TestValidationStringFormats(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		format  string
+		valid   string
+		invalid string
+	}{
+		{format: "byte", valid: `"YWJj"`, invalid: `"%%%"`},
+		{format: "date", valid: `"2026-07-14"`, invalid: `"2026-02-30"`},
+		{format: "date-time", valid: `"2026-07-14T12:30:00Z"`, invalid: `"2026-07-14"`},
+		{format: "email", valid: `"a@example.com"`, invalid: `"not-an-email"`},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			t.Parallel()
+
+			parsed := mustParseSchema(t, fmt.Sprintf(`{"type":"string","format":%q}`, test.format), "")
+			require.Empty(t, parsed.Validate(json.RawMessage(test.valid)))
+			require.Contains(t, errors.Join(parsed.Validate(json.RawMessage(test.invalid))...).Error(), "keyword format")
+		})
+	}
+
+	unknown := mustParseSchema(t, `{"type":"string","format":"vendor-string"}`, "")
+	require.Empty(t, unknown.Validate(json.RawMessage(`"anything"`)))
+}
+
+// TestValidationStrictJSONAndBodyPresence covers transport-independent raw-body rules.
+func TestValidationStrictJSONAndBodyPresence(t *testing.T) {
+	t.Parallel()
+
+	optional := mustParseSchema(t, `{}`, "")
+	require.Nil(t, optional.Validate(nil))
+	require.NotEmpty(t, optional.Validate(json.RawMessage("   ")))
+
+	required := mustParseSchemaWithRequired(t, `{}`, "", true)
+	require.Contains(t, errors.Join(required.Validate(nil)...).Error(), "required body is absent")
+	require.Nil(t, required.Validate(json.RawMessage(`null`)))
+
+	invalidBodies := []json.RawMessage{
+		{0xff},
+		json.RawMessage(`true false`),
+		json.RawMessage(`{"a":1,"a":2}`),
+		json.RawMessage(`{"a":{"b":1,"b":2}}`),
+		json.RawMessage(`"\ud800"`),
+		json.RawMessage(`"\udc00"`),
+	}
+	for _, body := range invalidBodies {
+		require.NotEmpty(t, optional.Validate(body), "%q", body)
+	}
+}
+
+// TestValidationExactNumbers covers values beyond float64 and arbitrary exponent materialization.
+func TestValidationExactNumbers(t *testing.T) {
+	t.Parallel()
+
+	parsed := mustParseSchema(t, `{
+		"type":"number",
+		"minimum":9007199254740993,
+		"maximum":9007199254740993,
+		"multipleOf":0.1
+	}`, "")
+	require.Empty(t, parsed.Validate(json.RawMessage(`9007199254740993`)))
+	require.NotEmpty(t, parsed.Validate(json.RawMessage(`9007199254740992`)))
+	require.NotEmpty(t, parsed.Validate(json.RawMessage(`9007199254740994`)))
+
+	spelling := mustParseSchema(t, `{"minimum":1,"maximum":1}`, "")
+	for _, body := range []json.RawMessage{json.RawMessage(`1`), json.RawMessage(`1.0`), json.RawMessage(`1e0`)} {
+		require.Empty(t, spelling.Validate(body))
+	}
+
+	zero := mustParseSchema(t, `{"minimum":0,"maximum":0}`, "")
+	require.Empty(t, zero.Validate(json.RawMessage(`-0`)))
+
+	huge := mustParseSchema(t, `{"minimum":1e400,"maximum":1e400}`, "")
+	require.Empty(t, huge.Validate(json.RawMessage(`1e400`)))
+	require.NotEmpty(t, huge.Validate(json.RawMessage(`9e399`)))
+
+	hugeExponent := mustParseSchema(t, `{"multipleOf":3e-100001}`, "")
+	require.Empty(t, hugeExponent.Validate(json.RawMessage(`9e-100001`)))
+	require.NotEmpty(t, hugeExponent.Validate(json.RawMessage(`1e-100001`)))
+
+	integer := mustParseSchema(t, `{"type":"integer"}`, "")
+	require.Empty(t, integer.Validate(json.RawMessage(`1e100001`)))
+	require.NotEmpty(t, integer.Validate(json.RawMessage(`1e-100001`)))
+}
+
+// TestValidationRecursionUniqueItemsAndAllOf covers recursive and composition graph behavior directly.
+func TestValidationRecursionUniqueItemsAndAllOf(t *testing.T) {
+	t.Parallel()
+
+	components := `,"components":{"schemas":{"Node":{"type":"object","required":["value"],"properties":{
+		"value":{"type":"integer"},"child":{"$ref":"#/components/schemas/Node"}
+	},"additionalProperties":false}}}`
+	recursive := mustParseSchema(t, `{"$ref":"#/components/schemas/Node"}`, components)
+	require.Empty(t, recursive.Validate(json.RawMessage(`{"value":1,"child":{"value":2}}`)))
+	errs := recursive.Validate(json.RawMessage(`{"value":1,"child":{"value":2.5}}`))
+	require.Contains(t, errors.Join(errs...).Error(), "instance #/child/value")
+
+	unique := mustParseSchema(t, `{"type":"array","uniqueItems":true}`, "")
+	require.NotEmpty(t, unique.Validate(json.RawMessage(`[{"a":1},{"a":1.0}]`)))
+
+	allOf := mustParseSchema(t, `{"allOf":[{"minimum":1},{"maximum":2}]}`, "")
+	require.Empty(t, allOf.Validate(json.RawMessage(`1.5`)))
+	errs = allOf.Validate(json.RawMessage(`3`))
+	require.Contains(t, errors.Join(errs...).Error(), "/allOf/1")
+}
+
+// TestParseRejectsUnsupportedAndMalformedReachableSchemas covers every parse-time rejection.
+func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		components string
+		want       string
+	}{
+		{name: "oneOf", schema: `{"oneOf":[{}]}`, want: "oneOf"},
+		{name: "anyOf", schema: `{"anyOf":[{}]}`, want: "anyOf"},
+		{name: "not", schema: `{"not":{}}`, want: "not"},
+		{name: "readOnly", schema: `{"readOnly":false}`, want: "readOnly"},
+		{name: "writeOnly", schema: `{"writeOnly":false}`, want: "writeOnly"},
+		{name: "discriminator", schema: `{"discriminator":{"propertyName":"kind"}}`, want: "discriminator"},
+		{name: "externalRef", schema: `{"$ref":"other.yaml#/Thing"}`, want: "external reference"},
+		{name: "unsupportedPattern", schema: `{"pattern":"^(?!bad$).+$"}`, want: "unsupported RE2 pattern"},
+		{name: "unknownKeyword", schema: `{"const":1}`, want: "unsupported Schema Object keyword"},
+		{name: "malformedBound", schema: `{"minItems":-1}`, want: "minItems"},
+		{name: "malformedMultiple", schema: `{"multipleOf":0}`, want: "greater than zero"},
+		{name: "malformedRequired", schema: `{"required":["a","a"]}`, want: "unique strings"},
+		{
+			name:       "nonConsumingCycle",
+			schema:     `{"$ref":"#/components/schemas/Loop"}`,
+			components: `,"components":{"schemas":{"Loop":{"allOf":[{"$ref":"#/components/schemas/Loop"}]}}}`,
+			want:       "non-consuming schema cycle",
+		},
+		{
+			name:       "nestedUnsupported",
+			schema:     `{"properties":{"value":{"$ref":"#/components/schemas/Bad"}}}`,
+			components: `,"components":{"schemas":{"Bad":{"oneOf":[{}]}}}`,
+			want:       "oneOf",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Parse(openAPISpec(test.schema, test.components, false), "checkThing")
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+
+	_, err := Parse(openAPISpec(`{}`, "", false), "")
+	require.ErrorContains(t, err, "operationId must not be empty")
+	_, err = Parse(openAPISpec(`{}`, "", false), "missing")
+	require.ErrorContains(t, err, "not found")
+	_, err = Parse([]byte(`{"openapi":"3.0.3","paths":{"/a":{"post":{"operationId":"checkThing"}}}}`), "checkThing")
+	require.ErrorContains(t, err, "request body")
+}
+
+// TestValidationErrorsAreStableAndFresh covers repeatability and caller-owned result slices.
+func TestValidationErrorsAreStableAndFresh(t *testing.T) {
+	t.Parallel()
+
+	parsed := mustParseSchema(t, `{"type":"array","minItems":2,"items":{"type":"integer"}}`, "")
+	body := json.RawMessage(`[1.5]`)
+	first := parsed.Validate(body)
+	second := parsed.Validate(body)
+	require.Equal(t, errorStrings(first), errorStrings(second))
+	require.Len(t, first, 2)
+	first[0] = errors.New("caller mutation")
+
+	require.Equal(t, errorStrings(second), errorStrings(parsed.Validate(body)))
+}
+
+// TestValidationConcurrentHighContention proves one parsed graph is immutable across concurrent calls.
+//
+//nolint:cyclop // The required barrier, mutation probe, and buffered mismatch reporting are one concurrency scenario.
+func TestValidationConcurrentHighContention(t *testing.T) {
+	t.Parallel()
+
+	components := `,"components":{"schemas":{"Node":{"type":"object","required":["name","amount","children"],"properties":{
+		"name":{"type":"string","pattern":"^[a-z]+$"},
+		"amount":{"type":"integer","minimum":9007199254740993,"multipleOf":3},
+		"children":{"type":"array","items":{"$ref":"#/components/schemas/Node"}}
+	},"additionalProperties":false,"allOf":[{"minProperties":3}]}}}`
+	parsed := mustParseSchema(t, `{"$ref":"#/components/schemas/Node"}`, components)
+
+	bodies := []json.RawMessage{
+		json.RawMessage(`{"name":"root","amount":9007199254740993,"children":[]}`),
+		json.RawMessage(`{"name":"BAD","amount":9007199254740992,"children":[]}`),
+		json.RawMessage(
+			`{"name":"root","amount":9007199254740993,"children":` +
+				`[{"name":"child","amount":9007199254740996,"children":[]}]}`,
+		),
+		json.RawMessage(`{"name":"root","amount":9007199254740994,"children":[],"extra":true}`),
+	}
+
+	expected := make([][]string, len(bodies))
+	for index, body := range bodies {
+		expected[index] = errorStrings(parsed.Validate(body))
+	}
+
+	const (
+		goroutineCount    = 256
+		callsPerGoroutine = 250
+	)
+
+	start := make(chan struct{})
+	mismatches := make(chan string, goroutineCount)
+
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(goroutineCount)
+
+	for worker := range goroutineCount {
+		go func() {
+			defer waitGroup.Done()
+
+			<-start
+
+			for iteration := range callsPerGoroutine {
+				bodyIndex := (worker + iteration) % len(bodies)
+
+				errs := parsed.Validate(bodies[bodyIndex])
+				if got := errorStrings(errs); !equalStrings(got, expected[bodyIndex]) {
+					select {
+					case mismatches <- fmt.Sprintf(
+						"worker %d iteration %d: got %v want %v", worker, iteration, got, expected[bodyIndex],
+					):
+					default:
+					}
+				}
+
+				for index := range errs {
+					errs[index] = errors.New("caller mutation")
+				}
+
+				if got := errorStrings(parsed.Validate(bodies[bodyIndex])); !equalStrings(got, expected[bodyIndex]) {
+					select {
+					case mismatches <- fmt.Sprintf(
+						"worker %d iteration %d after mutation: got %v want %v",
+						worker, iteration, got, expected[bodyIndex],
+					):
+					default:
+					}
+				}
+			}
+		}()
+	}
+
+	close(start)
+	waitGroup.Wait()
+	close(mismatches)
+
+	for mismatch := range mismatches {
+		t.Error(mismatch)
+	}
+}
+
+// identity returns its input unchanged.
+func identity(value string) string {
+	return value
+}
+
+// mustParseSchema builds one optional-body OpenAPI fixture and requires parse success.
+func mustParseSchema(t *testing.T, schema string, components string) *Validation {
+	t.Helper()
+
+	return mustParseSchemaWithRequired(t, schema, components, false)
+}
+
+// mustParseSchemaWithRequired builds one OpenAPI fixture and requires parse success.
+func mustParseSchemaWithRequired(t *testing.T, schema string, components string, required bool) *Validation {
+	t.Helper()
+
+	parsed, err := Parse(openAPISpec(schema, components, required), "checkThing")
+	require.NoError(t, err)
+
+	return parsed
+}
+
+// openAPISpec embeds one JSON Schema Object into one selected OpenAPI operation.
+func openAPISpec(schema string, components string, required bool) []byte {
+	return fmt.Appendf(nil, `{
+		"openapi":"3.0.3",
+		"info":{"title":"test","version":"1"},
+		"paths":{"/things":{"post":{
+			"operationId":"checkThing",
+			"requestBody":{"required":%t,"content":{"application/json":{"schema":%s}}},
+			"responses":{"204":{"description":"ok"}}
+		}}}%s
+	}`, required, schema, components)
+}
+
+// errorStrings copies an error sequence into comparable strings.
+func errorStrings(errs []error) []string {
+	if len(errs) == 0 {
+		return nil
+	}
+
+	result := make([]string, len(errs))
+	for index, err := range errs {
+		result[index] = err.Error()
+	}
+
+	return result
+}
+
+// equalStrings compares two ordered string slices.
+func equalStrings(left []string, right []string) bool {
+	return strings.Join(left, "\x00") == strings.Join(right, "\x00")
+}

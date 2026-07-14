@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-	"strings"
 	"unicode/utf8"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/internal/jsonvalue"
 )
 
 // decodeEnumMembers validates and decodes the enum array.
@@ -131,11 +129,7 @@ func fitsIntegerConstraint(value jsonvalue.Number, constraints NumberConstraints
 		return true
 	}
 
-	if value.Rational != nil {
-		return value.Rational.IsInt()
-	}
-
-	return !strings.Contains(value.Lexeme, "e-") && !strings.Contains(value.Lexeme, ".")
+	return value.IsInteger()
 }
 
 // fitsNumberBounds reports whether a value is inside its minimum and maximum bounds.
@@ -154,10 +148,7 @@ func fitsMinimum(value jsonvalue.Number, bound *NumberBound) (bool, error) {
 		return true, nil
 	}
 
-	comparison, ok := compareExactNumbers(value, bound.Value)
-	if !ok {
-		return false, fmt.Errorf("%w: enum number is too large to compare", errUnconstructible)
-	}
+	comparison := value.Compare(bound.Value)
 
 	return comparison > 0 || comparison == 0 && !bound.Exclusive, nil
 }
@@ -168,10 +159,7 @@ func fitsMaximum(value jsonvalue.Number, bound *NumberBound) (bool, error) {
 		return true, nil
 	}
 
-	comparison, ok := compareExactNumbers(value, bound.Value)
-	if !ok {
-		return false, fmt.Errorf("%w: enum number is too large to compare", errUnconstructible)
-	}
+	comparison := value.Compare(bound.Value)
 
 	return comparison < 0 || comparison == 0 && !bound.Exclusive, nil
 }
@@ -182,13 +170,7 @@ func fitsMultipleOf(value jsonvalue.Number, multipleOf *jsonvalue.Number) (bool,
 		return true, nil
 	}
 
-	if value.Rational == nil || multipleOf.Rational == nil {
-		return false, fmt.Errorf("%w: enum multipleOf is too large to compare", errUnconstructible)
-	}
-
-	quotient := new(big.Rat).Quo(value.Rational, multipleOf.Rational)
-
-	return quotient.IsInt(), nil
+	return value.IsMultipleOf(*multipleOf), nil
 }
 
 // stringFits reports whether a JSON string satisfies string constraints.

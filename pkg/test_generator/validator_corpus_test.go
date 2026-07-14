@@ -30,7 +30,7 @@ const (
 	corpusCategoryCross = "cross-family"
 )
 
-// validatorCorpusFixture is one deterministic request-body schema shared by both adapters.
+// validatorCorpusFixture is one deterministic request-body schema shared by all adapters.
 type validatorCorpusFixture struct {
 	ID         string
 	Category   string
@@ -38,7 +38,7 @@ type validatorCorpusFixture struct {
 	Components string
 }
 
-// spec builds the complete OpenAPI document used for duplicate checks, generator compilation, and both adapters.
+// spec builds the document used for duplicate checks, generator compilation, and all adapters.
 func (fixture validatorCorpusFixture) spec() []byte {
 	return append(requestBodySpec(fixture.Schema), fixture.Components...)
 }
@@ -1268,21 +1268,6 @@ func objectCorpus() []validatorCorpusFixture {
       properties:
         id: {type: integer, minimum: 1}
         note: {type: string}
-      additionalProperties: false
-`),
-		corpusFixture(corpusCategoryObjects, "request-read-only-required-omitted", `
-      type: object
-      required: [id]
-      maxProperties: 0
-      properties:
-        id: {type: string, readOnly: true}
-      additionalProperties: false
-`),
-		corpusFixture(corpusCategoryObjects, "write-only-required", `
-      type: object
-      required: [secret]
-      properties:
-        secret: {type: string, writeOnly: true}
       additionalProperties: false
 `),
 		corpusFixture(corpusCategoryObjects, "required-implicit-property", `

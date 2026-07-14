@@ -6,7 +6,7 @@ import (
 	"math/big"
 	"sort"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/internal/jsonvalue"
 )
 
 // decimalPrimeFive is the non-binary prime in finite decimal denominators.
@@ -199,10 +199,7 @@ func stricterMinimum(left *NumberBound, right *NumberBound) (*NumberBound, error
 		return cloneBound(left), nil
 	}
 
-	comparison, ok := compareExactNumbers(left.Value, right.Value)
-	if !ok {
-		return nil, fmt.Errorf("%w: number minimums are too large to compare", errUnconstructible)
-	}
+	comparison := left.Value.Compare(right.Value)
 
 	if comparison > 0 {
 		return cloneBound(left), nil
@@ -225,10 +222,7 @@ func stricterMaximum(left *NumberBound, right *NumberBound) (*NumberBound, error
 		return cloneBound(left), nil
 	}
 
-	comparison, ok := compareExactNumbers(left.Value, right.Value)
-	if !ok {
-		return nil, fmt.Errorf("%w: number maximums are too large to compare", errUnconstructible)
-	}
+	comparison := left.Value.Compare(right.Value)
 
 	if comparison < 0 {
 		return cloneBound(left), nil
@@ -330,10 +324,7 @@ func numberBoundsAreProductive(minimum *NumberBound, maximum *NumberBound) (bool
 		return true, nil
 	}
 
-	comparison, ok := compareExactNumbers(minimum.Value, maximum.Value)
-	if !ok {
-		return false, fmt.Errorf("%w: numeric bounds cannot be compared exactly", errUnconstructible)
-	}
+	comparison := minimum.Value.Compare(maximum.Value)
 
 	if comparison > 0 || comparison == 0 && (minimum.Exclusive || maximum.Exclusive) {
 		return false, nil

@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"decode_and_validate_generator/pkg/test_generator/internal/oas"
+	"decode_and_validate_generator/pkg/internal/oas"
 	"decode_and_validate_generator/pkg/test_generator/internal/suite"
 	"pgregory.net/rapid"
 )
 
-// requestBodyValidator is the private seam shared by the two independent request validators.
+// requestBodyValidator is the private seam shared by all independent request validators.
 type requestBodyValidator interface {
 	Validate(body []byte) error
 }
@@ -47,7 +47,7 @@ type validatorOutcome struct {
 // validatorAdapterFactory constructs one adapter after loading one fixture document.
 type validatorAdapterFactory func([]byte) (validatorAdapter, error)
 
-// TestCheckJSONRequestBodyAgainstValidators runs every generated CasePlan against both independent adapters.
+// TestCheckJSONRequestBodyAgainstValidators runs every generated CasePlan against all independent adapters.
 func TestCheckJSONRequestBodyAgainstValidators(t *testing.T) {
 	t.Parallel()
 
@@ -81,7 +81,7 @@ func TestCheckJSONRequestBodyAgainstValidators(t *testing.T) {
 	}
 }
 
-// compileValidatorFixture compiles all CasePlans once, before either adapter sees any generated body.
+// compileValidatorFixture compiles all CasePlans once, before any adapter sees a generated body.
 func compileValidatorFixture(spec []byte) (*suite.CompiledSuite, error) {
 	source, err := oas.Parse(spec, "checkThing")
 	if err != nil {
@@ -100,12 +100,28 @@ func compileValidatorFixture(spec []byte) (*suite.CompiledSuite, error) {
 	return compiled, nil
 }
 
-// newValidatorAdapters creates both independently loaded validators before any body is checked.
+// newValidatorAdapters creates all independently loaded validators before any body is checked.
 func newValidatorAdapters(spec []byte) ([]validatorAdapter, error) {
-	factories := []validatorAdapterFactory{
+	return newValidatorAdaptersFromFactories(spec, []validatorAdapterFactory{
+		newRuntimeValidationRequestBodyValidator,
 		newLibopenapiRequestBodyValidator,
 		newKinopenapiRequestBodyValidator,
-	}
+	})
+}
+
+// newExternalValidatorAdapters creates only the pinned third-party validators.
+func newExternalValidatorAdapters(spec []byte) ([]validatorAdapter, error) {
+	return newValidatorAdaptersFromFactories(spec, []validatorAdapterFactory{
+		newLibopenapiRequestBodyValidator,
+		newKinopenapiRequestBodyValidator,
+	})
+}
+
+// newValidatorAdaptersFromFactories constructs and validates each requested adapter.
+func newValidatorAdaptersFromFactories(
+	spec []byte,
+	factories []validatorAdapterFactory,
+) ([]validatorAdapter, error) {
 	adapters := make([]validatorAdapter, 0, len(factories))
 
 	for _, factory := range factories {
@@ -153,7 +169,7 @@ func releaseValidatorAdapters(adapters []validatorAdapter) {
 	}
 }
 
-// runValidatorCasePlans draws each body once and gives its exact bytes to both adapters.
+// runValidatorCasePlans draws each body once and gives its exact bytes to all adapters.
 func runValidatorCasePlans(
 	t *testing.T,
 	fixture validatorCorpusFixture,
@@ -284,6 +300,8 @@ type validatorCharacterization struct {
 	Schema                  string
 	Components              string
 	Body                    []byte
+	Runtime                 validatorPhase
+	RuntimeErrorContains    string
 	Libopenapi              validatorPhase
 	LibopenapiErrorContains string
 	Kinopenapi              validatorPhase
@@ -291,6 +309,8 @@ type validatorCharacterization struct {
 }
 
 // validatorCharacterizations contains no allowlist: each row pins one body and one exact adapter phase.
+//
+//nolint:maintidx // Keeping all fixed cross-validator expectations together makes omissions visible.
 func validatorCharacterizations() []validatorCharacterization {
 	return []validatorCharacterization{
 		{
@@ -300,9 +320,11 @@ func validatorCharacterizations() []validatorCharacterization {
       minimum: 9007199254740993
       maximum: 9007199254740993
 `,
-			Body:       []byte(`9007199254740992`),
-			Libopenapi: validatorBodyAccepted,
-			Kinopenapi: validatorBodyAccepted,
+			Body:                 []byte(`9007199254740992`),
+			Runtime:              validatorBodyRejected,
+			RuntimeErrorContains: "keyword minimum",
+			Libopenapi:           validatorBodyAccepted,
+			Kinopenapi:           validatorBodyAccepted,
 			// libopenapi-validator v0.13.13 and kin-openapi v0.140.0 both round schema and body numbers to float64.
 			// Wright draft-00 §4.2 defines JSON numbers as arbitrary-precision base-10 decimals, so this body is invalid.
 		},
@@ -350,9 +372,11 @@ func validatorCharacterizations() []validatorCharacterization {
       format: email
       x-valid-examples: [a@example.com]
 `,
-			Body:       []byte(`"not-an-email"`),
-			Libopenapi: validatorBodyAccepted,
-			Kinopenapi: validatorBodyAccepted,
+			Body:                 []byte(`"not-an-email"`),
+			Runtime:              validatorBodyRejected,
+			RuntimeErrorContains: "keyword format",
+			Libopenapi:           validatorBodyAccepted,
+			Kinopenapi:           validatorBodyAccepted,
 			// libopenapi-validator v0.13.13 treats this format as an annotation.
 			// kin-openapi v0.140.0 registers no email validator; OAS 3.0.3 leaves format policy to implementations.
 		},
@@ -531,9 +555,11 @@ func validatorCharacterizations() []validatorCharacterization {
         - {type: number}
         - {type: boolean}
 `,
-			Body:       []byte(`null`),
-			Libopenapi: validatorBodyAccepted,
-			Kinopenapi: validatorBodyAccepted,
+			Body:                 []byte(`null`),
+			Runtime:              validatorBodyRejected,
+			RuntimeErrorContains: "keyword type",
+			Libopenapi:           validatorBodyAccepted,
+			Kinopenapi:           validatorBodyAccepted,
 			// The allOf children validate independently and both reject null, so the conjunction is empty.
 			// libopenapi-validator v0.13.13 and kin-openapi v0.140.0 both incorrectly accept null.
 		},
@@ -546,6 +572,8 @@ func validatorCharacterizations() []validatorCharacterization {
         - {type: boolean, nullable: true}
 `,
 			Body:                    []byte(`null`),
+			Runtime:                 validatorBodyRejected,
+			RuntimeErrorContains:    "keyword type",
 			Libopenapi:              validatorBodyRejected,
 			LibopenapiErrorContains: "got null, want boolean",
 			Kinopenapi:              validatorBodyAccepted,
@@ -581,6 +609,8 @@ components:
       x-invalid-examples: [bad]
 `,
 			Body:                    []byte(`"bad"`),
+			Runtime:                 validatorSetupRejected,
+			RuntimeErrorContains:    "unsupported RE2 pattern",
 			Libopenapi:              validatorSetupRejected,
 			LibopenapiErrorContains: "OpenAPI document is not valid according to the 3.0.3 specification",
 			Kinopenapi:              validatorSetupRejected,
@@ -597,11 +627,60 @@ components:
       additionalProperties: false
 `,
 			Body:                    []byte(`{"id":"server"}`),
+			Runtime:                 validatorSetupRejected,
+			RuntimeErrorContains:    "readOnly",
 			Libopenapi:              validatorBodyAccepted,
 			Kinopenapi:              validatorBodyRejected,
 			KinopenapiErrorContains: "readOnly property \"id\" in request",
 			// OAS 3.0.3 says readOnly properties SHOULD NOT be sent in requests and removes their requiredness for requests.
 			// libopenapi-validator v0.13.13 accepts this by default; kin-openapi v0.140.0 rejects it under VisitAsRequest.
+		},
+		{
+			ID:                   "unsupported-one-of",
+			Schema:               "      oneOf: [{type: string}]\n",
+			Body:                 []byte(`"x"`),
+			Runtime:              validatorSetupRejected,
+			RuntimeErrorContains: "oneOf",
+			Libopenapi:           validatorBodyAccepted,
+			Kinopenapi:           validatorBodyAccepted,
+		},
+		{
+			ID:                   "unsupported-any-of",
+			Schema:               "      anyOf: [{type: string}]\n",
+			Body:                 []byte(`"x"`),
+			Runtime:              validatorSetupRejected,
+			RuntimeErrorContains: "anyOf",
+			Libopenapi:           validatorBodyAccepted,
+			Kinopenapi:           validatorBodyAccepted,
+		},
+		{
+			ID:                   "unsupported-not",
+			Schema:               "      not: {type: number}\n",
+			Body:                 []byte(`"x"`),
+			Runtime:              validatorSetupRejected,
+			RuntimeErrorContains: "not",
+			Libopenapi:           validatorBodyAccepted,
+			Kinopenapi:           validatorBodyAccepted,
+		},
+		{
+			ID:                   "unsupported-write-only",
+			Schema:               "      type: string\n      writeOnly: true\n",
+			Body:                 []byte(`"x"`),
+			Runtime:              validatorSetupRejected,
+			RuntimeErrorContains: "writeOnly",
+			Libopenapi:           validatorBodyAccepted,
+			Kinopenapi:           validatorBodyAccepted,
+		},
+		{
+			ID: "unsupported-discriminator",
+			Schema: "      type: object\n" +
+				"      discriminator: {propertyName: kind}\n",
+			Body:                    []byte(`{}`),
+			Runtime:                 validatorSetupRejected,
+			RuntimeErrorContains:    "discriminator",
+			Libopenapi:              validatorBodyRejected,
+			LibopenapiErrorContains: "discriminator property 'kind' is missing",
+			Kinopenapi:              validatorBodyAccepted,
 		},
 	}
 }
@@ -625,6 +704,8 @@ func runValidatorCharacterizations(
 // expectedValidatorOutcome returns the exact phase and stable reason pinned for one adapter version.
 func (row validatorCharacterization) expectedValidatorOutcome(adapterName string) (validatorPhase, string) {
 	switch adapterName {
+	case runtimeValidationName:
+		return row.Runtime, row.RuntimeErrorContains
 	case libopenapiValidatorName:
 		return row.Libopenapi, row.LibopenapiErrorContains
 	case kinopenapiValidatorName:

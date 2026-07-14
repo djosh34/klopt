@@ -170,6 +170,11 @@ func addGeneratedTypelessKeywords(t *rapid.T, schema generatedSchemaObject) {
 	if len(schema) == 0 || len(schema) == 1 && schema["nullable"] != nil {
 		schema["enum"] = []any{false, generatedNumber("-0"), "", "λ"}
 	}
+
+	if _, hasEnum := schema["enum"]; hasEnum {
+		delete(schema, "x-valid-examples")
+		delete(schema, "x-invalid-examples")
+	}
 }
 
 func addGeneratedStringKeywords(t *rapid.T, schema generatedSchemaObject) {

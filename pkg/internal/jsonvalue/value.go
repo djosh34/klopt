@@ -17,6 +17,10 @@ import (
 const (
 	// decimalRadix is the JSON number radix.
 	decimalRadix = 10
+	// decimalFactorTwo is one prime factor of the decimal radix.
+	decimalFactorTwo = 2
+	// decimalFactorFive is the other prime factor of the decimal radix.
+	decimalFactorFive = 5
 	// hexadecimalOffset is the first hexadecimal letter's value.
 	hexadecimalOffset = 10
 	// unicodeEscapeWidth is the digit count in a Unicode escape.
@@ -50,6 +54,80 @@ const (
 type Number struct {
 	Lexeme   string
 	Rational *big.Rat
+}
+
+// Compare returns -1, 0, or 1 according to the exact mathematical ordering.
+func (number Number) Compare(other Number) int {
+	if number.Rational != nil && other.Rational != nil {
+		return number.Rational.Cmp(other.Rational)
+	}
+
+	negative, digits, exponent := decimalParts(number.Lexeme)
+	otherNegative, otherDigits, otherExponent := decimalParts(other.Lexeme)
+
+	if digits == "0" || otherDigits == "0" {
+		return compareZero(negative, digits, otherNegative, otherDigits)
+	}
+
+	if negative != otherNegative {
+		if negative {
+			return -1
+		}
+
+		return 1
+	}
+
+	comparison := compareMagnitudes(digits, exponent, otherDigits, otherExponent)
+	if negative {
+		return -comparison
+	}
+
+	return comparison
+}
+
+// IsInteger reports whether the exact mathematical value is an integer.
+func (number Number) IsInteger() bool {
+	if number.Rational != nil {
+		return number.Rational.IsInt()
+	}
+
+	_, digits, exponent := decimalParts(number.Lexeme)
+
+	return digits == "0" || exponent.Sign() >= 0
+}
+
+// IsMultipleOf reports whether the exact quotient by divisor is an integer.
+func (number Number) IsMultipleOf(divisor Number) bool {
+	_, digits, exponent := decimalParts(number.Lexeme)
+
+	_, divisorDigits, divisorExponent := decimalParts(divisor.Lexeme)
+	if divisorDigits == "0" {
+		return false
+	}
+
+	if digits == "0" {
+		return true
+	}
+
+	coefficient, ok := new(big.Int).SetString(digits, decimalRadix)
+	if !ok {
+		return false
+	}
+
+	divisorCoefficient, ok := new(big.Int).SetString(divisorDigits, decimalRadix)
+	if !ok {
+		return false
+	}
+
+	common := new(big.Int).GCD(nil, nil, coefficient, divisorCoefficient)
+	coefficient.Quo(coefficient, common)
+	divisorCoefficient.Quo(divisorCoefficient, common)
+
+	delta := new(big.Int).Sub(exponent, divisorExponent)
+
+	return factorBalance(coefficient, divisorCoefficient, delta, decimalFactorTwo) >= 0 &&
+		factorBalance(coefficient, divisorCoefficient, delta, decimalFactorFive) >= 0 &&
+		containsOnlyDecimalFactors(divisorCoefficient)
 }
 
 // Member is one JSON object member.
@@ -592,6 +670,141 @@ func normalizeJSONNumber(number string) (string, *big.Int, error) {
 	exponent.Add(exponent, big.NewInt(int64(len(digits)-len(trimmedDigits)-fractionLength)))
 
 	return formatCanonicalNumber(negative, trimmedDigits, exponent), exponent, nil
+}
+
+// decimalParts splits a canonical number into sign, coefficient digits, and exponent.
+func decimalParts(lexeme string) (bool, string, *big.Int) {
+	negative := strings.HasPrefix(lexeme, "-")
+	if negative {
+		lexeme = lexeme[1:]
+	}
+
+	exponent := new(big.Int)
+	if exponentIndex := strings.IndexByte(lexeme, 'e'); exponentIndex >= 0 {
+		parsedExponent, ok := new(big.Int).SetString(lexeme[exponentIndex+1:], decimalRadix)
+		if !ok {
+			panic("jsonvalue.Number contains an invalid canonical exponent")
+		}
+
+		exponent.Set(parsedExponent)
+
+		lexeme = lexeme[:exponentIndex]
+	}
+
+	if decimalIndex := strings.IndexByte(lexeme, '.'); decimalIndex >= 0 {
+		fractionLength := len(lexeme) - decimalIndex - 1
+		lexeme = lexeme[:decimalIndex] + lexeme[decimalIndex+1:]
+
+		exponent.Sub(exponent, big.NewInt(int64(fractionLength)))
+	}
+
+	digits := strings.TrimLeft(lexeme, "0")
+	if digits == "" {
+		return false, "0", new(big.Int)
+	}
+
+	return negative, digits, exponent
+}
+
+// compareZero compares a zero operand without losing the other operand's sign.
+func compareZero(leftNegative bool, leftDigits string, rightNegative bool, rightDigits string) int {
+	if leftDigits == "0" && rightDigits == "0" {
+		return 0
+	}
+
+	if leftDigits == "0" {
+		if rightNegative {
+			return 1
+		}
+
+		return -1
+	}
+
+	if leftNegative {
+		return -1
+	}
+
+	return 1
+}
+
+// compareMagnitudes compares positive coefficient/exponent pairs.
+func compareMagnitudes(leftDigits string, leftExponent *big.Int, rightDigits string, rightExponent *big.Int) int {
+	leftMagnitude := new(big.Int).Add(leftExponent, big.NewInt(int64(len(leftDigits))))
+
+	rightMagnitude := new(big.Int).Add(rightExponent, big.NewInt(int64(len(rightDigits))))
+	if comparison := leftMagnitude.Cmp(rightMagnitude); comparison != 0 {
+		return comparison
+	}
+
+	for index := range max(len(leftDigits), len(rightDigits)) {
+		leftDigit := byte('0')
+		if index < len(leftDigits) {
+			leftDigit = leftDigits[index]
+		}
+
+		rightDigit := byte('0')
+		if index < len(rightDigits) {
+			rightDigit = rightDigits[index]
+		}
+
+		if leftDigit < rightDigit {
+			return -1
+		}
+
+		if leftDigit > rightDigit {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+// factorBalance returns the signed exponent of factor in an exact quotient.
+func factorBalance(numerator *big.Int, denominator *big.Int, decimalExponent *big.Int, factor int64) int {
+	balance := new(big.Int).Set(decimalExponent)
+	balance.Add(balance, big.NewInt(int64(factorCount(numerator, factor))))
+	balance.Sub(balance, big.NewInt(int64(factorCount(denominator, factor))))
+
+	return balance.Sign()
+}
+
+// factorCount counts one prime factor without changing value.
+func factorCount(value *big.Int, factor int64) int {
+	remaining := new(big.Int).Set(value)
+	divisor := big.NewInt(factor)
+	remainder := new(big.Int)
+	count := 0
+
+	for {
+		quotient, modulus := new(big.Int).QuoRem(remaining, divisor, remainder)
+		if modulus.Sign() != 0 {
+			return count
+		}
+
+		count++
+		remaining = quotient
+	}
+}
+
+// containsOnlyDecimalFactors reports whether value's only prime factors are 2 and 5.
+func containsOnlyDecimalFactors(value *big.Int) bool {
+	remaining := new(big.Int).Set(value)
+
+	for _, factor := range []int64{2, 5} {
+		divisor := big.NewInt(factor)
+		remainder := new(big.Int)
+
+		for {
+			quotient, modulus := new(big.Int).QuoRem(remaining, divisor, remainder)
+			if modulus.Sign() != 0 {
+				break
+			}
+
+			remaining = quotient
+		}
+	}
+
+	return remaining.Cmp(big.NewInt(1)) == 0
 }
 
 // formatCanonicalNumber chooses the shorter bounded plain or scientific form.

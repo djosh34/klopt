@@ -51,6 +51,31 @@ func TestParseNumberRetainsExactRational(t *testing.T) {
 	require.Nil(t, huge.Rational)
 }
 
+// TestNumberExactOperationsWithArbitraryExponents verifies symbolic decimal arithmetic.
+func TestNumberExactOperationsWithArbitraryExponents(t *testing.T) {
+	t.Parallel()
+
+	parse := func(lexeme string) Number {
+		t.Helper()
+
+		number, err := ParseNumber(lexeme)
+		require.NoError(t, err)
+
+		return number
+	}
+
+	require.Equal(t, 1, parse("1e100001").Compare(parse("9e100000")))
+	require.Equal(t, -1, parse("-1e100001").Compare(parse("-9e100000")))
+	require.Zero(t, parse("1.0").Compare(parse("1e0")))
+	require.True(t, parse("1e100001").IsInteger())
+	require.False(t, parse("1e-100001").IsInteger())
+	require.True(t, parse("1e100001").IsMultipleOf(parse("2e100000")))
+	require.False(t, parse("1e100001").IsMultipleOf(parse("3e100000")))
+	require.True(t, parse("1e-100001").IsMultipleOf(parse("5e-100002")))
+	require.False(t, parse("1e-100001").IsMultipleOf(parse("3e-100002")))
+	require.True(t, parse("0").IsMultipleOf(parse("1e100001")))
+}
+
 // TestExactNumbersBeyondFloat64RemainDistinct verifies equality never rounds through binary floats.
 func TestExactNumbersBeyondFloat64RemainDistinct(t *testing.T) {
 	t.Parallel()
