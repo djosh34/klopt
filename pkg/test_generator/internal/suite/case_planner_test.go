@@ -696,6 +696,23 @@ enum: [1, 2]`, "", "create"))
 	require.True(t, foundOne)
 }
 
+// TestCasePlannerBuildsStringEnumOutsiderBeyondAlphabet verifies fixed-length
+// enum search continues with distinct strings after exhausting a through z.
+func TestCasePlannerBuildsStringEnumOutsiderBeyondAlphabet(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `type: string
+minLength: 1
+maxLength: 1
+enum: [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z]`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	found, err := hasExactRejectedCase(compiled, "enum", `"0"`)
+	require.NoError(t, err)
+	require.True(t, found, exactRejectedBodies(t, compiled, "enum"))
+}
+
 // TestCasePlannerBuildsObjectEnumOutsider verifies object-only enums receive an invalid partition.
 func TestCasePlannerBuildsObjectEnumOutsider(t *testing.T) {
 	t.Parallel()

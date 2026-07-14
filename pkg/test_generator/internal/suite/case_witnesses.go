@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
 )
@@ -401,9 +402,21 @@ func contextStrings(constraints StringConstraints, limit int) []string {
 	}
 
 	result := make([]string, 0, limit)
-	for index := 0; index < limit; index++ {
-		letter := rune('a' + index%26)
-		result = append(result, strings.Repeat(string(letter), length))
+
+	const preferred = "abcdefghijklmnopqrstuvwxyz0123456789"
+	for _, character := range preferred {
+		result = append(result, strings.Repeat(string(character), length))
+		if len(result) == limit {
+			return result
+		}
+	}
+
+	for character := rune(0); character <= utf8.MaxRune && len(result) < limit; character++ {
+		if !utf8.ValidRune(character) || strings.ContainsRune(preferred, character) {
+			continue
+		}
+
+		result = append(result, strings.Repeat(string(character), length))
 	}
 
 	return result
