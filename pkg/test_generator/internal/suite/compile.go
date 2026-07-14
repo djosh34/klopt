@@ -123,7 +123,8 @@ func (compiler *Compiler) recursiveReferenceFailure(pointer string) *Error {
 	)
 }
 
-// compileResolvedSchema compiles a resolved schema and records both of its pointers.
+// compileResolvedSchema compiles and records the resolved schema occurrence.
+// referenceUse records any Reference Object occurrence pointer.
 func (compiler *Compiler) compileResolvedSchema(
 	resolved oas.LocatedSchema,
 	active map[string]struct{},

@@ -104,13 +104,26 @@ func (compiler *Compiler) meetProperties(
 	rightObject ObjectConstraints,
 	resultObject ObjectConstraints,
 ) error {
+	leftProperties := propertyConstraintsByName(leftObject.Properties)
+	rightProperties := propertyConstraintsByName(rightObject.Properties)
+
 	for _, property := range resultObject.Properties {
 		if !propertyHasOccurrence(property) {
 			continue
 		}
 
-		leftUse, leftValues := occurrencePropertyPolicy(left, leftObject, property.Name)
-		rightUse, rightValues := occurrencePropertyPolicy(right, rightObject, property.Name)
+		leftUse, leftValues := occurrencePropertyPolicy(
+			left,
+			leftProperties,
+			leftObject.Additional,
+			property.Name,
+		)
+		rightUse, rightValues := occurrencePropertyPolicy(
+			right,
+			rightProperties,
+			rightObject.Additional,
+			property.Name,
+		)
 
 		use, present, childErr := compiler.meetChild(leftUse, leftValues, rightUse, rightValues, property.Values)
 		if childErr != nil {
@@ -210,14 +223,13 @@ func existingChild(
 // occurrencePropertyPolicy returns the explicit or additional policy for one property name.
 func occurrencePropertyPolicy(
 	use *schemaUse,
-	object ObjectConstraints,
+	properties map[string]NamedProperty,
+	additional AdditionalProperties,
 	name string,
 ) (*schemaUse, DomainID) {
-	properties := propertyConstraintsByName(object.Properties)
-
 	property, ok := properties[name]
 	if !ok {
-		return use.additional, object.Additional.Values
+		return use.additional, additional.Values
 	}
 
 	if property.State == PropertyForbidden {
