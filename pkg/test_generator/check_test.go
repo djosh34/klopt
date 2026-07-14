@@ -48,7 +48,8 @@ func TestCheckJSONRequestBodyFindsBuggyValidatorsByKeywordFamily(t *testing.T) {
 
 	families := []string{
 		"unicode-length", "maximum", "exclusive-minimum", "multiple-of",
-		"pattern", "format", "array-items", "required", "additional-properties", "enum",
+		"pattern", "format", "array-items", "recursive-array-items", "required",
+		"additional-properties", "recursive-object-property", "enum",
 	}
 	fixtures := validatorBugFixtures()
 
@@ -225,6 +226,19 @@ func arrayValidatorBugFixtures() map[string]validatorBugFixture {
 				return nil
 			},
 		},
+		"recursive-array-items": {
+			schema: `
+      minItems: 1
+      maxItems: 2
+      allOf:
+        - type: array
+          items: {type: integer, minimum: 0}
+        - type: array
+          items: {type: integer, maximum: 0}
+`,
+			failure:  "invalid JSON accepted",
+			validate: recursiveArrayItemsMutant,
+		},
 	}
 }
 
@@ -282,7 +296,55 @@ func objectValidatorBugFixtures() map[string]validatorBugFixture {
 				return nil
 			},
 		},
+		"recursive-object-property": {
+			schema: `
+      allOf:
+        - type: object
+          required: [value]
+          properties:
+            value: {type: integer, minimum: 0}
+          additionalProperties: false
+        - type: object
+          properties:
+            value: {type: integer, maximum: 0}
+          additionalProperties: false
+`,
+			failure:  "invalid JSON accepted",
+			validate: recursiveObjectPropertyMutant,
+		},
 	}
+}
+
+// recursiveArrayItemsMutant deliberately omits the second conjoined item maximum.
+func recursiveArrayItemsMutant(body []byte) error {
+	var values []any
+	if err := json.Unmarshal(body, &values); err != nil || len(values) < 1 || len(values) > 2 {
+		return errors.New("rejected")
+	}
+
+	for _, value := range values {
+		number, ok := value.(float64)
+		if !ok || number < 0 || number != float64(int64(number)) {
+			return errors.New("rejected")
+		}
+	}
+
+	return nil
+}
+
+// recursiveObjectPropertyMutant deliberately omits the second conjoined property maximum.
+func recursiveObjectPropertyMutant(body []byte) error {
+	var object map[string]any
+	if err := json.Unmarshal(body, &object); err != nil || len(object) != 1 {
+		return errors.New("rejected")
+	}
+
+	value, ok := object["value"].(float64)
+	if !ok || value < 0 || value != float64(int64(value)) {
+		return errors.New("rejected")
+	}
+
+	return nil
 }
 
 // stringValidator returns a JSON validator with the supplied string acceptance rule.

@@ -909,11 +909,11 @@ func (compiler *Compiler) compileObject(
 		return err
 	}
 
-	if err := compiler.compileObjectProperties(object, use, schema, members, active); err != nil {
+	if err := compiler.compileAdditionalProperties(object, use, schema, members, active); err != nil {
 		return err
 	}
 
-	return compiler.compileAdditionalProperties(object, use, schema, members, active)
+	return compiler.compileObjectProperties(object, use, schema, members, active)
 }
 
 // compileObjectBounds applies minProperties and maxProperties when present.
@@ -1007,7 +1007,7 @@ func (compiler *Compiler) compileObjectProperties(
 		delete(required, name)
 	}
 
-	applyRequiredProperties(properties, required)
+	applyRequiredProperties(properties, required, object.Additional)
 	object.Properties = mapProperties(properties)
 
 	if len(properties) > 0 || len(required) > 0 {
@@ -1061,11 +1061,15 @@ func (compiler *Compiler) readOnlyProperties(
 }
 
 // applyRequiredProperties marks declared and implicit required properties.
-func applyRequiredProperties(properties map[string]NamedProperty, required map[string]struct{}) {
+func applyRequiredProperties(
+	properties map[string]NamedProperty,
+	required map[string]struct{},
+	additional AdditionalProperties,
+) {
 	for name := range required {
 		property, ok := properties[name]
 		if !ok {
-			property = NamedProperty{Name: name, State: PropertyAllowed, Values: AnyJSONDomainID}
+			property = NamedProperty{Name: name, State: PropertyAllowed, Values: additional.Values}
 		}
 
 		property.Required = true

@@ -570,7 +570,11 @@ func (planner *CasePlanner) propertyChildPartitions(
 ) ([]CasePlan, error) {
 	childUse := use.property(name)
 	if childUse == nil {
-		return nil, fmt.Errorf("plan property %q at %s: schema occurrence is missing", name, use.pointer)
+		childUse = use.additional
+	}
+
+	if childUse == nil {
+		return nil, fmt.Errorf("plan property policy %q at %s: schema occurrence is missing", name, use.pointer)
 	}
 
 	return planner.childPartitions(childUse, active)
