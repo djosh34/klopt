@@ -10,7 +10,7 @@ import (
 	"github.com/djosh34/decode_and_validate_generator/pkg/validation"
 )
 
-func renderAssignment(name string, root *validation.Validation) assignmentTemplate {
+func renderAssignment(operationID string, root *validation.Validation) assignmentTemplate {
 	nodes := collectValidations(root)
 
 	indexes := make(map[*validation.Validation]int, len(nodes))
@@ -18,7 +18,7 @@ func renderAssignment(name string, root *validation.Validation) assignmentTempla
 		indexes[node] = index
 	}
 
-	assignment := assignmentTemplate{Name: name}
+	assignment := assignmentTemplate{OperationID: operationID}
 
 	for _, node := range nodes {
 		assignment.Nodes = append(assignment.Nodes, validationLiteral(node))
@@ -311,25 +311,25 @@ func validationLinks(
 ) []string {
 	var links []string
 	if compiled.ArrayValidation.Items != nil {
-		links = append(links, fmt.Sprintf("validations[%d].ArrayValidation.Items = validations[%d]", index,
+		links = append(links, fmt.Sprintf("nodes[%d].ArrayValidation.Items = nodes[%d]", index,
 			indexes[compiled.ArrayValidation.Items]))
 	}
 
 	for propertyIndex, property := range compiled.ObjectValidation.Properties {
-		links = append(links, fmt.Sprintf("validations[%d].ObjectValidation.Properties[%d].Validation = validations[%d]",
+		links = append(links, fmt.Sprintf("nodes[%d].ObjectValidation.Properties[%d].Validation = nodes[%d]",
 			index, propertyIndex, indexes[property.Validation]))
 	}
 
 	if compiled.ObjectValidation.AdditionalPropertiesValidation != nil {
 		links = append(links, fmt.Sprintf(
-			"validations[%d].ObjectValidation.AdditionalPropertiesValidation = validations[%d]",
+			"nodes[%d].ObjectValidation.AdditionalPropertiesValidation = nodes[%d]",
 			index, indexes[compiled.ObjectValidation.AdditionalPropertiesValidation],
 		))
 	}
 
 	for _, child := range compiled.AllOfValidations {
 		links = append(links, fmt.Sprintf(
-			"validations[%d].AllOfValidations = append(validations[%d].AllOfValidations, validations[%d])",
+			"nodes[%d].AllOfValidations = append(nodes[%d].AllOfValidations, nodes[%d])",
 			index, index, indexes[child],
 		))
 	}

@@ -2,6 +2,8 @@
 package testgenerator
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/djosh34/decode_and_validate_generator/pkg/internal/oas"
@@ -22,13 +24,12 @@ func DefaultOption(compiler *suite.Compiler) {
 	MustHaveAllXValidCases(compiler)
 }
 
-// CheckJSONRequestBody checks validate with generated application/json request bodies for operationID.
+// CheckJSONRequestBodies checks validate with generated application/json request bodies for every operation.
 // Every CasePlan runs as its own Rapid property, and validate is the only source of verdicts.
-func CheckJSONRequestBody(
+func CheckJSONRequestBodies(
 	t *testing.T,
 	openAPIYAML []byte,
-	operationID string,
-	validate func([]byte) error,
+	validate func(operationID string, body []byte) error,
 	options ...Option,
 ) {
 	t.Helper()
@@ -37,7 +38,7 @@ func CheckJSONRequestBody(
 		t.Fatal("validator is nil")
 	}
 
-	source, err := oas.Parse(openAPIYAML, operationID)
+	sources, err := oas.Parse(openAPIYAML)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,22 +48,28 @@ func CheckJSONRequestBody(
 		compileOptions[index] = suite.CompileOption(option)
 	}
 
-	compiled, err := suite.NewCompiler(source).CompileSuite(compileOptions...)
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
+		t.Run(operationID, func(t *testing.T) {
+			t.Parallel()
 
-	for _, plannedCase := range compiled.Cases {
-		t.Run(plannedCase.Name, rapid.MakeCheck(func(rt *rapid.T) {
-			value := plannedCase.Generator.Draw(rt, "json value")
-
-			body, marshalErr := value.MarshalJSON()
-			if marshalErr != nil {
-				rt.Fatalf("encode generated JSON: %v", marshalErr)
+			compiled, err := suite.NewCompiler(sources[operationID]).CompileSuite(compileOptions...)
+			if err != nil {
+				t.Fatal(err)
 			}
 
-			checkValidationResult(rt, plannedCase.Expect, body, validate(body))
-		}))
+			for _, plannedCase := range compiled.Cases {
+				t.Run(plannedCase.Name, rapid.MakeCheck(func(rt *rapid.T) {
+					value := plannedCase.Generator.Draw(rt, "json value")
+
+					body, marshalErr := value.MarshalJSON()
+					if marshalErr != nil {
+						rt.Fatalf("encode generated JSON: %v", marshalErr)
+					}
+
+					checkValidationResult(rt, plannedCase.Expect, body, validate(operationID, body))
+				}))
+			}
+		})
 	}
 }
 

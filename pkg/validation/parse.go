@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -14,30 +16,35 @@ import (
 	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
 )
 
-// Parse selects one operation's JSON request body and compiles its reachable schema graph.
-func Parse(spec []byte, operationID string) (*Validation, error) {
-	source, err := oas.Parse(spec, operationID)
+// Parse compiles every JSON request-body schema in one OpenAPI document.
+func Parse(spec []byte) (map[string]*Validation, error) {
+	sources, err := oas.Parse(spec)
 	if err != nil {
 		return nil, err
 	}
 
-	compiler := schemaCompiler{
-		source:   source,
-		bySchema: make(map[string]*Validation),
-		active:   make(map[string]int),
-	}
+	parsed := make(map[string]*Validation, len(sources))
+	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
+		source := sources[operationID]
+		compiler := schemaCompiler{
+			source:   source,
+			bySchema: make(map[string]*Validation),
+			active:   make(map[string]int),
+		}
 
-	parsed, err := compiler.compile(source.RequestSchema, 0)
-	if err != nil {
-		return nil, err
-	}
+		root, err := compiler.compile(source.RequestSchema, 0)
+		if err != nil {
+			return nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
+		}
 
-	parsed.BodyRequired = source.RequestBodyRequired
+		root.BodyRequired = source.RequestBodyRequired
+		parsed[operationID] = root
+	}
 
 	return parsed, nil
 }
 
-// schemaCompiler owns call-local compilation state for one Parse.
+// schemaCompiler owns compilation state for one operation.
 type schemaCompiler struct {
 	source   oas.Source
 	bySchema map[string]*Validation

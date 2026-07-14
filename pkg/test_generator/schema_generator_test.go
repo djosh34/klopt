@@ -254,13 +254,18 @@ func TestEveryGeneratedMutationIsRejectedIndependently(t *testing.T) {
 }
 
 func compileGeneratedSchema(t require.TestingT, candidate GeneratedSchema) (*suite.CompiledSuite, error) {
-	source, err := oas.Parse(candidate.OpenAPIJSON, "checkThing")
+	sources, err := oas.Parse(candidate.OpenAPIJSON)
 	if err != nil {
 		if candidate.Valid {
 			require.NoError(t, err)
 		}
 
 		return nil, err
+	}
+
+	source, ok := sources["checkThing"]
+	if !ok {
+		return nil, errors.New(`operationId "checkThing" is missing`)
 	}
 
 	compiled, err := suite.NewCompiler(source).CompileSuite(suite.MustHaveAllXValidCases)

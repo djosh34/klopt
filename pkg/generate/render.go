@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"text/template"
 
@@ -21,22 +23,20 @@ type sourceTemplate struct {
 }
 
 type assignmentTemplate struct {
-	Name  string
-	Nodes []string
-	Links []string
+	OperationID string
+	Nodes       []string
+	Links       []string
 }
 
 type testTemplate struct {
-	Package    string
-	OpenAPI    string
-	Operations []Operation
+	Package string
+	OpenAPI string
 }
 
 func render(
 	packageName string,
 	openAPI []byte,
-	operations []Operation,
-	parsed []*validation.Validation,
+	parsed map[string]*validation.Validation,
 ) (map[string][]byte, error) {
 	templates, err := template.ParseFS(templateFiles, "templates/*.go.tmpl")
 	if err != nil {
@@ -45,8 +45,8 @@ func render(
 
 	source := sourceTemplate{Package: packageName}
 
-	for index, compiled := range parsed {
-		source.Assignments = append(source.Assignments, renderAssignment(operations[index].Variable, compiled))
+	for _, operationID := range slices.Sorted(maps.Keys(parsed)) {
+		source.Assignments = append(source.Assignments, renderAssignment(operationID, parsed[operationID]))
 	}
 
 	validate, err := executeTemplate(templates, "validate.go.tmpl", source)
@@ -55,9 +55,8 @@ func render(
 	}
 
 	validateTest, err := executeTemplate(templates, "validate_test.go.tmpl", testTemplate{
-		Package:    packageName,
-		OpenAPI:    strconv.Quote(string(openAPI)),
-		Operations: operations,
+		Package: packageName,
+		OpenAPI: strconv.Quote(string(openAPI)),
 	})
 	if err != nil {
 		return nil, err

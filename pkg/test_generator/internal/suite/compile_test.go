@@ -1273,8 +1273,11 @@ paths:
           application/json:
             schema:
 ` + indent(schema, 14) + "\n" + extra
-	source, err := oas.Parse([]byte(spec), operation)
+	sources, err := oas.Parse([]byte(spec))
 	require.NoError(t, err)
+
+	source, ok := sources[operation]
+	require.True(t, ok, "operationId %q is missing", operation)
 
 	return source
 }

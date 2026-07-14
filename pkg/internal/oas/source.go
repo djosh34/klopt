@@ -6,15 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/goccy/go-yaml"
 )
 
-// Source retains one parsed document and its selected request Schema Object.
+// Source retains one parsed document and one request Schema Object.
 type Source struct {
 	Document            json.RawMessage
 	RequestSchema       LocatedSchema
@@ -60,39 +61,35 @@ func (referenceError *ReferenceError) Unwrap() error {
 	return referenceError.Cause
 }
 
-// Parse parses YAML once and selects one application/json request Schema Object.
-func Parse(spec []byte, operationID string) (Source, error) {
-	if operationID == "" {
-		return Source{}, errors.New("operationId must not be empty")
-	}
-
+// Parse parses YAML once and collects every application/json request Schema Object.
+func Parse(spec []byte) (map[string]Source, error) {
 	document := spec
 	if !json.Valid(spec) {
 		var err error
 
 		document, err = yaml.YAMLToJSON(spec)
 		if err != nil {
-			return Source{}, fmt.Errorf("parse OpenAPI YAML: %w", err)
+			return nil, fmt.Errorf("parse OpenAPI YAML: %w", err)
 		}
 	}
 
 	var root map[string]json.RawMessage
 	if unmarshalErr := json.Unmarshal(document, &root); unmarshalErr != nil {
-		return Source{}, fmt.Errorf("parse OpenAPI document JSON: %w", unmarshalErr)
+		return nil, fmt.Errorf("parse OpenAPI document JSON: %w", unmarshalErr)
 	}
 
 	if root == nil {
-		return Source{}, errors.New("OpenAPI document must be an object")
+		return nil, errors.New("OpenAPI document must be an object")
 	}
 
 	var version string
 	if err := json.Unmarshal(root["openapi"], &version); err != nil || version != "3.0.3" {
-		return Source{}, errors.New(`OpenAPI document version must be "3.0.3"`)
+		return nil, errors.New(`OpenAPI document version must be "3.0.3"`)
 	}
 
 	source := Source{Document: append(json.RawMessage(nil), document...)}
 
-	return source.selectRequest(root["paths"], operationID)
+	return source.collectRequests(root["paths"])
 }
 
 // Resolve follows a local Reference Object chain and ignores all Reference Object siblings.
@@ -174,39 +171,154 @@ func (source Source) Child(parent LocatedSchema, tokens ...string) (LocatedSchem
 	return current, nil
 }
 
-// selectRequest locates request-body metadata in a parsed document.
-func (source Source) selectRequest(paths json.RawMessage, operationID string) (Source, error) {
-	operation, err := source.findOperation(paths, operationID)
-	if err != nil {
-		return Source{}, err
+// collectRequests walks all path operations in deterministic path and method order.
+//
+//nolint:cyclop // Path, method, inclusion, and duplicate handling are one deterministic collection pass.
+func (source Source) collectRequests(pathsRaw json.RawMessage) (map[string]Source, error) {
+	var paths map[string]json.RawMessage
+	if err := json.Unmarshal(pathsRaw, &paths); err != nil {
+		return nil, fmt.Errorf("parse OpenAPI paths: %w", err)
 	}
 
-	requestBody, err := source.requiredChild(operation, "requestBody")
-	if err != nil {
-		return Source{}, fmt.Errorf("operationId %q request body: %w", operationID, err)
+	if paths == nil {
+		return nil, errors.New("parse OpenAPI paths: paths must be an object")
 	}
 
-	requestBody, err = source.Resolve(requestBody)
-	if err != nil {
-		return Source{}, fmt.Errorf("operationId %q request body: %w", operationID, err)
+	result := make(map[string]Source)
+	locations := make(map[string]string)
+
+	for _, path := range slices.Sorted(maps.Keys(paths)) {
+		if strings.HasPrefix(path, "x-") {
+			continue
+		}
+
+		pathItem := LocatedSchema{Raw: paths[path], Pointer: appendPointer("#/paths", path)}
+
+		resolved, err := source.Resolve(pathItem)
+		if err != nil {
+			return nil, fmt.Errorf("resolve OpenAPI path item %q: %w", path, err)
+		}
+
+		operations, err := operationChildren(resolved)
+		if err != nil {
+			return nil, fmt.Errorf("parse OpenAPI path item %q: %w", path, err)
+		}
+
+		for _, operation := range operations {
+			operationSource, operationID, included, err := source.requestSource(operation)
+			if err != nil {
+				return nil, err
+			}
+
+			if !included {
+				continue
+			}
+
+			if first, duplicate := locations[operationID]; duplicate {
+				return nil, fmt.Errorf(
+					"operationId %q is duplicated at %s and %s",
+					operationID,
+					first,
+					operation.Pointer,
+				)
+			}
+
+			locations[operationID] = operation.Pointer
+			result[operationID] = operationSource
+		}
 	}
 
-	var body struct {
-		Required json.RawMessage            `json:"required"`
-		Content  map[string]json.RawMessage `json:"content"`
+	return result, nil
+}
+
+// requestSource returns one operation's JSON request-body source when it qualifies.
+//
+//nolint:cyclop // Each request-body field needs its own malformed-input diagnostic or skip decision.
+func (source Source) requestSource(operation LocatedSchema) (Source, string, bool, error) {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(operation.Raw, &members); err != nil {
+		return Source{}, "", false, fmt.Errorf("parse operation at %s: %w", operation.Pointer, err)
 	}
+
+	if members == nil {
+		return Source{}, "", false, fmt.Errorf("parse operation at %s: operation must be an object", operation.Pointer)
+	}
+
+	requestBodyRaw, hasRequestBody := members["requestBody"]
+	if !hasRequestBody {
+		return Source{}, "", false, nil
+	}
+
+	requestBody := LocatedSchema{Raw: requestBodyRaw, Pointer: appendPointer(operation.Pointer, "requestBody")}
+
+	requestBody, resolveErr := source.Resolve(requestBody)
+	if resolveErr != nil {
+		return Source{}, "", false, fmt.Errorf("operation at %s request body: %w", operation.Pointer, resolveErr)
+	}
+
+	var body map[string]json.RawMessage
 	if unmarshalErr := json.Unmarshal(requestBody.Raw, &body); unmarshalErr != nil {
-		return Source{}, fmt.Errorf("parse operationId %q request body: %w", operationID, unmarshalErr)
+		return Source{}, "", false, fmt.Errorf(
+			"parse operation at %s request body: %w",
+			operation.Pointer,
+			unmarshalErr,
+		)
 	}
 
-	required, err := optionalBoolean(body.Required, "required")
+	if body == nil {
+		return Source{}, "", false, fmt.Errorf("parse operation at %s request body: must be an object", operation.Pointer)
+	}
+
+	required, err := optionalBoolean(body["required"], "required")
 	if err != nil {
-		return Source{}, fmt.Errorf("parse operationId %q request body: %w", operationID, err)
+		return Source{}, "", false, fmt.Errorf("parse operation at %s request body: %w", operation.Pointer, err)
 	}
 
-	mediaTypeName, mediaTypeRaw, ok := applicationJSONMediaType(body.Content)
+	contentRaw, hasContent := body["content"]
+	if !hasContent {
+		return Source{}, "", false, fmt.Errorf(
+			"parse operation at %s request body: content does not exist",
+			operation.Pointer,
+		)
+	}
+
+	var content map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(contentRaw, &content); unmarshalErr != nil {
+		return Source{}, "", false, fmt.Errorf(
+			"parse operation at %s request body content: %w",
+			operation.Pointer,
+			unmarshalErr,
+		)
+	}
+
+	if content == nil {
+		return Source{}, "", false, fmt.Errorf(
+			"parse operation at %s request body: content must be an object",
+			operation.Pointer,
+		)
+	}
+
+	mediaTypeName, mediaTypeRaw, ok := applicationJSONMediaType(content)
 	if !ok {
-		return Source{}, fmt.Errorf("operationId %q request body has no application/json content", operationID)
+		return Source{}, "", false, nil
+	}
+
+	operationIDRaw, hasOperationID := members["operationId"]
+	if !hasOperationID {
+		return Source{}, "", false, fmt.Errorf("operation at %s: operationId must be a non-empty string", operation.Pointer)
+	}
+
+	var operationID string
+	if unmarshalErr := json.Unmarshal(operationIDRaw, &operationID); unmarshalErr != nil {
+		return Source{}, "", false, fmt.Errorf(
+			"operation at %s: operationId must be a non-empty string: %w",
+			operation.Pointer,
+			unmarshalErr,
+		)
+	}
+
+	if operationID == "" {
+		return Source{}, "", false, fmt.Errorf("operation at %s: operationId must be a non-empty string", operation.Pointer)
 	}
 
 	mediaType := LocatedSchema{
@@ -216,13 +328,14 @@ func (source Source) selectRequest(paths json.RawMessage, operationID string) (S
 
 	schema, err := source.requiredChild(mediaType, "schema")
 	if err != nil {
-		return Source{}, fmt.Errorf("operationId %q application/json schema: %w", operationID, err)
+		return Source{}, "", false, fmt.Errorf("operationId %q application/json schema: %w", operationID, err)
 	}
 
-	source.RequestSchema = schema
-	source.RequestBodyRequired = required
-
-	return source, nil
+	return Source{
+		Document:            source.Document,
+		RequestSchema:       schema,
+		RequestBodyRequired: required,
+	}, operationID, true, nil
 }
 
 // optionalBoolean decodes an absent-or-boolean field without accepting null.
@@ -254,101 +367,6 @@ func applicationJSONMediaType(content map[string]json.RawMessage) (string, json.
 	return "", nil, false
 }
 
-// findOperation finds exactly one operation with operationID.
-//
-//nolint:cyclop // Malformed unreachable paths are retained only as fallback diagnostics.
-func (source Source) findOperation(pathsRaw json.RawMessage, operationID string) (LocatedSchema, error) {
-	var paths map[string]json.RawMessage
-	if err := json.Unmarshal(pathsRaw, &paths); err != nil {
-		return LocatedSchema{}, fmt.Errorf("parse OpenAPI paths: %w", err)
-	}
-
-	pathNames := make([]string, 0, len(paths))
-	for path := range paths {
-		if !strings.HasPrefix(path, "x-") {
-			pathNames = append(pathNames, path)
-		}
-	}
-
-	sort.Strings(pathNames)
-
-	matches := make([]LocatedSchema, 0, 1)
-
-	var firstMalformed error
-
-	for _, path := range pathNames {
-		pathMatches, err := source.matchingOperations(path, paths[path], operationID)
-		if err != nil {
-			if firstMalformed == nil {
-				firstMalformed = err
-			}
-
-			continue
-		}
-
-		matches = append(matches, pathMatches...)
-	}
-
-	switch len(matches) {
-	case 0:
-		if firstMalformed != nil {
-			return LocatedSchema{}, firstMalformed
-		}
-
-		return LocatedSchema{}, fmt.Errorf("operationId %q not found", operationID)
-	case 1:
-		return matches[0], nil
-	default:
-		return LocatedSchema{}, fmt.Errorf("operationId %q found multiple times", operationID)
-	}
-}
-
-// matchingOperations returns operations on one path with operationID.
-func (source Source) matchingOperations(
-	path string,
-	raw json.RawMessage,
-	operationID string,
-) ([]LocatedSchema, error) {
-	pathItem := LocatedSchema{Raw: raw, Pointer: appendPointer("#/paths", path)}
-
-	resolved, err := source.Resolve(pathItem)
-	if err != nil {
-		return nil, fmt.Errorf("resolve OpenAPI path item %q: %w", path, err)
-	}
-
-	operations, err := operationChildren(resolved)
-	if err != nil {
-		return nil, fmt.Errorf("parse OpenAPI path item %q: %w", path, err)
-	}
-
-	matches := make([]LocatedSchema, 0, 1)
-
-	var firstMalformed error
-
-	for _, operation := range operations {
-		var identity struct {
-			OperationID string `json:"operationId"`
-		}
-		if unmarshalErr := json.Unmarshal(operation.Raw, &identity); unmarshalErr != nil {
-			if firstMalformed == nil {
-				firstMalformed = fmt.Errorf("parse operation at %s: %w", operation.Pointer, unmarshalErr)
-			}
-
-			continue
-		}
-
-		if identity.OperationID == operationID {
-			matches = append(matches, operation)
-		}
-	}
-
-	if len(matches) == 0 && firstMalformed != nil {
-		return nil, firstMalformed
-	}
-
-	return matches, nil
-}
-
 // requiredChild returns a present, non-null object member.
 func (source Source) requiredChild(parent LocatedSchema, name string) (LocatedSchema, error) {
 	child, err := source.Child(parent, name)
@@ -369,6 +387,10 @@ func operationChildren(pathItem LocatedSchema) ([]LocatedSchema, error) {
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(pathItem.Raw, &members); err != nil {
 		return nil, err
+	}
+
+	if members == nil {
+		return nil, errors.New("path item must be an object")
 	}
 
 	methods := []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}

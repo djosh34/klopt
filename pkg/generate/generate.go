@@ -2,7 +2,6 @@
 package generate
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -16,26 +15,14 @@ const (
 	fileMode = 0o644
 )
 
-// Operation names one validation and its generated test.
-type Operation struct {
-	OperationID string
-	Variable    string
-	Test        string
-}
-
-// Generate parses every operation and writes validate.go and validate_test.go.
-func Generate(dir string, packageName string, openAPI []byte, operations []Operation) error {
-	parsed := make([]*validation.Validation, len(operations))
-	for index, operation := range operations {
-		compiled, err := validation.Parse(openAPI, operation.OperationID)
-		if err != nil {
-			return fmt.Errorf("parse operation %q: %w", operation.OperationID, err)
-		}
-
-		parsed[index] = compiled
+// Generate parses one OpenAPI document and writes validate.go and validate_test.go.
+func Generate(dir string, packageName string, openAPI []byte) error {
+	parsed, err := validation.Parse(openAPI)
+	if err != nil {
+		return err
 	}
 
-	files, err := render(packageName, openAPI, operations, parsed)
+	files, err := render(packageName, openAPI, parsed)
 	if err != nil {
 		return err
 	}

@@ -8,25 +8,33 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
 
-// TestCheckJSONRequestBodyRunsCompiledPartitionsAsValidJSON verifies that compiled partitions contain valid JSON.
-func TestCheckJSONRequestBodyRunsCompiledPartitionsAsValidJSON(t *testing.T) {
+// TestCheckJSONRequestBodiesRunsCompiledPartitionsAsValidJSON verifies compiled partitions and operation routing.
+func TestCheckJSONRequestBodiesRunsCompiledPartitionsAsValidJSON(t *testing.T) {
 	t.Parallel()
 
 	spec := requestBodySpec(`
       enum: [null, true, 1, "λ", [], {}]
 `)
-	calls := 0
 
-	CheckJSONRequestBody(t, spec, "checkThing", func(body []byte) error {
+	var calls atomic.Int64
+
+	t.Cleanup(func() {
+		require.Greater(t, calls.Load(), int64(6))
+	})
+
+	CheckJSONRequestBodies(t, spec, func(operationID string, body []byte) error {
+		require.Equal(t, "checkThing", operationID)
 		require.True(t, json.Valid(body))
 
-		calls++
+		calls.Add(1)
 
 		compact, err := compactJSON(body)
 		require.NoError(t, err)
@@ -39,11 +47,73 @@ func TestCheckJSONRequestBodyRunsCompiledPartitionsAsValidJSON(t *testing.T) {
 
 		return errors.New("not an enum member")
 	}, DefaultOption)
-	require.Greater(t, calls, 6)
 }
 
-// TestCheckJSONRequestBodyFindsBuggyValidatorsByKeywordFamily verifies that each keyword family detects a bug.
-func TestCheckJSONRequestBodyFindsBuggyValidatorsByKeywordFamily(t *testing.T) {
+// TestCheckJSONRequestBodiesRoutesEveryExactOperationID verifies one parse and document-wide dispatch.
+func TestCheckJSONRequestBodiesRoutesEveryExactOperationID(t *testing.T) {
+	t.Parallel()
+
+	spec := []byte(`
+openapi: 3.0.3
+paths:
+  /upper:
+    post:
+      operationId: Case/Sensitive
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string}
+  /lower:
+    post:
+      operationId: case
+      requestBody:
+        content:
+          application/json:
+            schema: {type: boolean}
+`)
+
+	seen := make(map[string]int)
+
+	var mutex sync.Mutex
+
+	t.Cleanup(func() {
+		mutex.Lock()
+		defer mutex.Unlock()
+
+		require.Positive(t, seen["Case/Sensitive"])
+		require.Positive(t, seen["case"])
+		require.Len(t, seen, 2)
+	})
+
+	CheckJSONRequestBodies(t, spec, func(operationID string, body []byte) error {
+		mutex.Lock()
+		seen[operationID]++
+		mutex.Unlock()
+
+		var value any
+		if err := json.Unmarshal(body, &value); err != nil {
+			return err
+		}
+
+		switch operationID {
+		case "Case/Sensitive":
+			if _, ok := value.(string); !ok {
+				return errors.New("not a string")
+			}
+		case "case":
+			if _, ok := value.(bool); !ok {
+				return errors.New("not a boolean")
+			}
+		default:
+			return fmt.Errorf("unexpected operationId %q", operationID)
+		}
+
+		return nil
+	}, DefaultOption)
+}
+
+// TestCheckJSONRequestBodiesFindsBuggyValidatorsByKeywordFamily verifies that each keyword family detects a bug.
+func TestCheckJSONRequestBodiesFindsBuggyValidatorsByKeywordFamily(t *testing.T) {
 	t.Parallel()
 
 	families := []string{
@@ -63,7 +133,7 @@ func TestCheckJSONRequestBodyFindsBuggyValidatorsByKeywordFamily(t *testing.T) {
 
 			command := exec.Command(
 				os.Args[0],
-				"-test.run=^TestCheckJSONRequestBodyBuggyValidatorHelper$",
+				"-test.run=^TestCheckJSONRequestBodiesBuggyValidatorHelper$",
 				"-test.v",
 				"-rapid.checks=5",
 				"-rapid.nofailfile",
@@ -82,8 +152,8 @@ func TestCheckJSONRequestBodyFindsBuggyValidatorsByKeywordFamily(t *testing.T) {
 	}
 }
 
-// TestCheckJSONRequestBodyBuggyValidatorHelper runs a deliberately buggy validator in a subprocess.
-func TestCheckJSONRequestBodyBuggyValidatorHelper(t *testing.T) {
+// TestCheckJSONRequestBodiesBuggyValidatorHelper runs a deliberately buggy validator in a subprocess.
+func TestCheckJSONRequestBodiesBuggyValidatorHelper(t *testing.T) {
 	t.Parallel()
 
 	family := os.Getenv("TEST_GENERATOR_BUG_FAMILY")
@@ -96,11 +166,12 @@ func TestCheckJSONRequestBodyBuggyValidatorHelper(t *testing.T) {
 
 	spec := requestBodySpec(fixture.schema)
 	spec = append(spec, fixture.components...)
-	CheckJSONRequestBody(
+	CheckJSONRequestBodies(
 		t,
 		spec,
-		"checkThing",
-		fixture.validate,
+		func(_ string, body []byte) error {
+			return fixture.validate(body)
+		},
 		DefaultOption,
 	)
 }
