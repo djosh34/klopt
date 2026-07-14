@@ -823,6 +823,81 @@ enum: [{value: 0}]`,
 	}
 }
 
+// TestCompileSuiteVariesEveryArrayItemForEnumOutsiders verifies fixed-size
+// arrays can construct an outsider that differs after the first item.
+func TestCompileSuiteVariesEveryArrayItemForEnumOutsiders(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `type: array
+minItems: 2
+maxItems: 2
+items: {type: integer, enum: [0, 1]}
+enum: [[0, 0], [1, 0]]`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	found, err := hasExactRejectedCase(compiled, "enum", `[0,1]`)
+	require.NoError(t, err)
+	require.True(t, found, exactRejectedBodies(t, compiled, "enum"))
+}
+
+// TestCompileSuiteCombinesArrayItemsForEnumOutsiders verifies contextual
+// search reaches combinations after every single-position variant is an enum.
+func TestCompileSuiteCombinesArrayItemsForEnumOutsiders(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `type: array
+minItems: 2
+maxItems: 2
+items: {type: integer, enum: [0, 1]}
+enum: [[0, 0], [1, 0], [0, 1]]`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	found, err := hasExactRejectedCase(compiled, "enum", `[1,1]`)
+	require.NoError(t, err)
+	require.True(t, found, exactRejectedBodies(t, compiled, "enum"))
+}
+
+// TestCompileSuiteVariesOptionalPropertyValuesForEnumOutsiders verifies an
+// optional property's later values remain available to contextual enum search.
+func TestCompileSuiteVariesOptionalPropertyValuesForEnumOutsiders(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `type: object
+maxProperties: 1
+properties:
+  value: {type: integer, enum: [0, 1]}
+additionalProperties: false
+enum: [{}, {value: 0}]`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	found, err := hasExactRejectedCase(compiled, "enum", `{"value":1}`)
+	require.NoError(t, err)
+	require.True(t, found, exactRejectedBodies(t, compiled, "enum"))
+}
+
+// TestCompileSuiteCombinesOptionalPropertiesForEnumOutsiders verifies
+// contextual search reaches a multi-property shape after every singleton.
+func TestCompileSuiteCombinesOptionalPropertiesForEnumOutsiders(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `type: object
+maxProperties: 2
+properties:
+  a: {type: integer, enum: [0]}
+  b: {type: integer, enum: [0]}
+additionalProperties: false
+enum: [{}, {a: 0}, {b: 0}]`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	found, err := hasExactRejectedCase(compiled, "enum", `{"a":0,"b":0}`)
+	require.NoError(t, err)
+	require.True(t, found, exactRejectedBodies(t, compiled, "enum"))
+}
+
 // TestCasePlannerKeepsEmptyArrayContextWhenItemsAreUnconstructible verifies an
 // empty array remains a usable enum outsider without guessing an item value.
 func TestCasePlannerKeepsEmptyArrayContextWhenItemsAreUnconstructible(t *testing.T) {

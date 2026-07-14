@@ -542,18 +542,38 @@ func enumerateContextArrays(
 	maximumCount = min(maximumCount, exactStructuralCollectionLimit)
 
 	for count := minimumCount; count <= maximumCount && len(result) < limit; count++ {
-		for _, childValue := range children {
-			items := make([]jsonvalue.Value, count)
-			for index := range items {
-				items[index] = children[0]
-			}
+		result = append(result, contextArrayVariations(children, count, limit-len(result))...)
+	}
 
-			items[0] = childValue
+	return result
+}
 
-			result = append(result, jsonvalue.Array(items))
-			if len(result) == limit {
+// contextArrayVariations enumerates one fixed-size Cartesian item product.
+func contextArrayVariations(children []jsonvalue.Value, count int, limit int) []jsonvalue.Value {
+	indexes := make([]int, count)
+	result := make([]jsonvalue.Value, 0, limit)
+
+	for len(result) < limit {
+		items := make([]jsonvalue.Value, count)
+		for index, childIndex := range indexes {
+			items[index] = children[childIndex]
+		}
+
+		result = append(result, jsonvalue.Array(items))
+
+		position := 0
+		for position < len(indexes) {
+			indexes[position]++
+			if indexes[position] < len(children) {
 				break
 			}
+
+			indexes[position] = 0
+			position++
+		}
+
+		if position == len(indexes) {
+			break
 		}
 	}
 
@@ -826,6 +846,16 @@ func (planner *CasePlanner) contextObjectVariations(
 		return nil, err
 	}
 
+	result, err = appendRemainingOptionalContextObjects(result, shape)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err = appendCombinedOptionalContextObjects(result, shape)
+	if err != nil {
+		return nil, err
+	}
+
 	return appendContextObjectValueVariants(result, shape)
 }
 
@@ -839,12 +869,108 @@ func appendOptionalContextObjects(
 	}
 
 	for _, entry := range shape.optional {
-		if len(result) == shape.limit {
-			break
+		value, err := optionalContextObject(shape.members, entry, entry.values[0])
+		if err != nil {
+			return nil, err
 		}
 
+		result = append(result, value)
+		if len(result) == shape.limit {
+			return result, nil
+		}
+	}
+
+	return result, nil
+}
+
+// appendRemainingOptionalContextObjects adds later values after structural seams.
+func appendRemainingOptionalContextObjects(
+	result []jsonvalue.Value,
+	shape *contextObjectShape,
+) ([]jsonvalue.Value, error) {
+	if len(result) >= shape.limit ||
+		shape.constraints.MaxProps != nil && len(shape.members) >= *shape.constraints.MaxProps {
+		return result, nil
+	}
+
+	for _, entry := range shape.optional {
+		for _, propertyValue := range entry.values[1:] {
+			value, err := optionalContextObject(shape.members, entry, propertyValue)
+			if err != nil {
+				return nil, err
+			}
+
+			result = append(result, value)
+			if len(result) == shape.limit {
+				return result, nil
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// optionalContextObject builds one optional-property variation.
+func optionalContextObject(
+	members []jsonvalue.Member,
+	entry contextObjectChoice,
+	propertyValue jsonvalue.Value,
+) (jsonvalue.Value, error) {
+	candidate := append([]jsonvalue.Member(nil), members...)
+	candidate = append(candidate, jsonvalue.Member{Name: entry.property.Name, Value: propertyValue})
+
+	return jsonvalue.Object(candidate)
+}
+
+// appendCombinedOptionalContextObjects enumerates bounded multi-property products.
+func appendCombinedOptionalContextObjects(
+	result []jsonvalue.Value,
+	shape *contextObjectShape,
+) ([]jsonvalue.Value, error) {
+	maximum := min(len(shape.optional), exactStructuralCollectionLimit-len(shape.members))
+	if shape.constraints.MaxProps != nil {
+		maximum = min(maximum, *shape.constraints.MaxProps-len(shape.members))
+	}
+
+	for count := 2; count <= maximum && len(result) < shape.limit; count++ {
+		propertyIndexes := make([]int, count)
+		for index := range propertyIndexes {
+			propertyIndexes[index] = index
+		}
+
+		for {
+			var err error
+
+			result, err = appendOptionalContextProduct(result, shape, propertyIndexes)
+			if err != nil || len(result) == shape.limit {
+				return result, err
+			}
+
+			if !advanceContextCombination(propertyIndexes, len(shape.optional)) {
+				break
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// appendOptionalContextProduct enumerates the values for one property subset.
+func appendOptionalContextProduct(
+	result []jsonvalue.Value,
+	shape *contextObjectShape,
+	propertyIndexes []int,
+) ([]jsonvalue.Value, error) {
+	valueIndexes := make([]int, len(propertyIndexes))
+
+	for len(result) < shape.limit {
 		candidate := append([]jsonvalue.Member(nil), shape.members...)
-		candidate = append(candidate, jsonvalue.Member{Name: entry.property.Name, Value: entry.values[0]})
+		for index, propertyIndex := range propertyIndexes {
+			entry := shape.optional[propertyIndex]
+			candidate = append(candidate, jsonvalue.Member{
+				Name: entry.property.Name, Value: entry.values[valueIndexes[index]],
+			})
+		}
 
 		value, err := jsonvalue.Object(candidate)
 		if err != nil {
@@ -852,9 +978,44 @@ func appendOptionalContextObjects(
 		}
 
 		result = append(result, value)
+
+		position := 0
+		for position < len(valueIndexes) {
+			valueIndexes[position]++
+
+			entry := shape.optional[propertyIndexes[position]]
+			if valueIndexes[position] < len(entry.values) {
+				break
+			}
+
+			valueIndexes[position] = 0
+			position++
+		}
+
+		if position == len(valueIndexes) {
+			break
+		}
 	}
 
 	return result, nil
+}
+
+// advanceContextCombination advances one increasing property-index subset.
+func advanceContextCombination(indexes []int, total int) bool {
+	for position := len(indexes) - 1; position >= 0; position-- {
+		if indexes[position] >= total-len(indexes)+position {
+			continue
+		}
+
+		indexes[position]++
+		for next := position + 1; next < len(indexes); next++ {
+			indexes[next] = indexes[next-1] + 1
+		}
+
+		return true
+	}
+
+	return false
 }
 
 // appendAdditionalContextObjects adds distinct additional names and values.
