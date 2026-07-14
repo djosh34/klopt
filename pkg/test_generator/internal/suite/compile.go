@@ -272,7 +272,8 @@ func (compiler *Compiler) applyLocalOracles(
 		)
 	}
 
-	if !hasOpaqueStringDomain(*domain) || examples.ValidDeclared && len(examples.Valid) > 0 {
+	if !hasOpaqueStringDomain(*domain) || examples.ValidDeclared &&
+		(len(examples.Valid) > 0 || hasReachableNonStringKind(*domain)) {
 		return nil
 	}
 
@@ -1588,6 +1589,13 @@ func hasOpaqueStringRule(members map[string]json.RawMessage) bool {
 func hasOpaqueStringDomain(domain Domain) bool {
 	return domain.String.State != KindExcluded &&
 		(len(domain.String.Patterns) > 0 || len(domain.String.Formats) > 0)
+}
+
+// hasReachableNonStringKind reports whether generation has another kind to attempt.
+func hasReachableNonStringKind(domain Domain) bool {
+	return domain.Null != KindExcluded || domain.Boolean != KindExcluded ||
+		domain.Number.State != KindExcluded || domain.Array.State != KindExcluded ||
+		domain.Object.State != KindExcluded
 }
 
 // appendGenerationExample appends one semantically distinct exact case.

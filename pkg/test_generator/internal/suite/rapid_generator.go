@@ -180,6 +180,10 @@ func occurrenceOracleGenerator(
 	}
 
 	if useOracle && use.examples.ValidDeclared && hasOpaqueStringConstraints(domain.String) {
+		if len(use.examples.Valid) == 0 {
+			return nil, false, nil
+		}
+
 		generator, err := generationExampleGenerator(use.examples.Valid)
 
 		return generator, true, err

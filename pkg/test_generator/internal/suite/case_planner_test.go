@@ -285,20 +285,42 @@ x-invalid-examples: [wrong]`, "", "create"))
 }
 
 // TestCompileSuiteHandlesEmptyEvidenceArrays verifies empty declarations retain
-// their declared-set meaning without fabricating exact cases.
+// their declared-set meaning without blocking constructible non-string kinds or
+// fabricating exact cases.
 func TestCompileSuiteHandlesEmptyEvidenceArrays(t *testing.T) {
 	t.Parallel()
 
 	compiler := NewCompiler(parseSchemaSource(t, `pattern: '^x$'
 x-valid-examples: []`, "", "create"))
-	_, err := compiler.CompileSuite()
-	require.ErrorContains(t, err, "no trusted valid example")
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	accepted := 0
+
+	for _, plannedCase := range compiled.Cases {
+		if plannedCase.Source.Keyword == "x-valid-examples" {
+			require.Fail(t, "empty evidence declaration produced an exact case")
+		}
+
+		if plannedCase.Expect != ExpectAccepted {
+			continue
+		}
+
+		accepted++
+
+		rapid.Check(t, func(rt *rapid.T) {
+			value := plannedCase.Generator.Draw(rt, "value")
+			require.NotEqual(rt, jsonvalue.KindString, value.Kind)
+		})
+	}
+
+	require.Positive(t, accepted)
 
 	compiler = NewCompiler(parseSchemaSource(t, `pattern: '^x$'
 enum: [x]
 x-valid-examples: []
 x-invalid-examples: []`, "", "create"))
-	compiled, err := compiler.CompileSuite()
+	compiled, err = compiler.CompileSuite()
 	require.NoError(t, err)
 	require.NotEmpty(t, compiled.Cases)
 
