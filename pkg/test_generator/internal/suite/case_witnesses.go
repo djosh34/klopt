@@ -393,22 +393,19 @@ func contextStrings(constraints StringConstraints, limit int) []string {
 	}
 
 	length := constraints.MinLength
-	if length == 0 && (constraints.MaxLength == nil || *constraints.MaxLength > 0) {
-		length = 1
-	}
-
 	if length == 0 {
-		return []string{""}
+		if constraints.MaxLength != nil && *constraints.MaxLength == 0 {
+			return []string{""}
+		}
+
+		length = 1
 	}
 
 	result := make([]string, 0, limit)
 
 	const preferred = "abcdefghijklmnopqrstuvwxyz0123456789"
-	for _, character := range preferred {
+	for _, character := range preferred[:min(limit, len(preferred))] {
 		result = append(result, strings.Repeat(string(character), length))
-		if len(result) == limit {
-			return result
-		}
 	}
 
 	for character := rune(0); character <= utf8.MaxRune && len(result) < limit; character++ {
@@ -1308,7 +1305,7 @@ func numberViolatesRule(
 	multipleOf *jsonvalue.Number,
 ) (bool, error) {
 	if integerFailure {
-		return value.Rational != nil && !value.Rational.IsInt(), nil
+		return !fitsIntegerConstraint(value, NumberConstraints{IntegersOnly: true}), nil
 	}
 
 	if !multipleFailure {

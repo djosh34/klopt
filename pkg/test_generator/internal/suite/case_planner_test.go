@@ -1,11 +1,13 @@
 package suite
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
 	"decode_and_validate_generator/pkg/test_generator/internal/jsonvalue"
+	"decode_and_validate_generator/pkg/test_generator/internal/oas"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -432,6 +434,46 @@ func TestCasePlannerIsolatesBoundedIntegerMultipleAndEnumFailures(t *testing.T) 
 
 		require.True(t, found, keyword)
 	}
+}
+
+// TestCompileSuiteGeneratesNonRationalIntegerEnumTypeFailure verifies an exact
+// finite enum member remains a type witness when its exponent is too large to
+// materialize as a rational number.
+func TestCompileSuiteGeneratesNonRationalIntegerEnumTypeFailure(t *testing.T) {
+	t.Parallel()
+
+	const lexeme = "1e-100001"
+
+	schemaSource := oas.Source{RequestSchema: oas.LocatedSchema{
+		Raw:     json.RawMessage(`{"allOf":[{"type":"integer"},{"enum":[0,1e-100001]}]}`),
+		Pointer: "#/schema",
+	}}
+	compiler := NewCompiler(schemaSource)
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	source := ConstraintSource{
+		Pointer: compiler.Source.RequestSchema.Pointer + "/allOf/0",
+		Keyword: "type",
+	}
+	require.Equal(t, ObligationPlanned, constraintPlanAt(t, compiled.Constraints, source).Outcome)
+
+	for _, plannedCase := range compiled.Cases {
+		if plannedCase.Expect != ExpectRejected || plannedCase.Source != source {
+			continue
+		}
+
+		rapid.Check(t, func(rt *rapid.T) {
+			value := plannedCase.Generator.Draw(rt, "value")
+			body, marshalErr := value.MarshalJSON()
+			require.NoError(rt, marshalErr)
+			require.Equal(rt, lexeme, string(body))
+		})
+
+		return
+	}
+
+	require.Fail(t, "exact non-rational integer type witness not found")
 }
 
 // TestCasePlannerNestedAllOfUsesEachLocalConstraint verifies nested allOf source selection.
