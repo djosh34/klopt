@@ -1,0 +1,26 @@
+{{define "validate.go.tmpl"}}// Package {{.Package}} contains generated request-body validations.
+//
+//nolint:dupl,lll // Generated validation graphs may contain repeated schemas and long pointers.
+package {{.Package}}
+
+import (
+	{{if .UsesJSON}}"encoding/json"{{end}}
+	{{if .UsesRegexp}}"regexp"{{end}}
+
+	{{if .UsesValue}}"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"{{end}}
+	"github.com/djosh34/decode_and_validate_generator/pkg/validation"
+)
+
+{{range .Assignments}}// {{.Name}} is a compiled request-body validation.
+var {{.Name}} = func() *validation.Validation {
+	validations := []*validation.Validation{
+		{{range .Nodes}}{{.}},
+		{{end}}
+	}
+
+	{{range .Links}}{{.}}
+	{{end}}
+	return validations[0]
+}()
+
+{{end}}{{end}}

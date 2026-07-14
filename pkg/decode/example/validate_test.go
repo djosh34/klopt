@@ -1,3 +1,4 @@
+//nolint:lll // Generated tests embed the complete source document.
 package example
 
 import (
@@ -7,805 +8,31 @@ import (
 	testgenerator "github.com/djosh34/decode_and_validate_generator/pkg/test_generator"
 )
 
-// exampleOpenAPI is the source document for generated model tests.
-var exampleOpenAPI = []byte(`
-openapi: 3.0.3
-info:
-  title: Request Body Shape Test
-  version: 1.0.0
+// openAPI is the source document used to compile the generated validations.
+var openAPI = []byte("openapi: 3.0.3\ninfo:\n  title: Request Body Shape Test\n  version: 1.0.0\n\npaths:\n  /all-of-object:\n    post:\n      operationId: allOfObject\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              allOf:\n                - type: object\n                  required:\n                    - first\n                  properties:\n                    first:\n                      type: string\n                      nullable: false\n                - type: object\n                  required:\n                    - second\n                  properties:\n                    second:\n                      type: boolean\n                      nullable: false\n                - type: object\n                  required:\n                    - last\n                  properties:\n                    last:\n                      type: number\n                      nullable: false\n      responses:\n        '204':\n          description: No Content\n\n  /composite-object:\n    post:\n      operationId: compositeObject\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              type: object\n              nullable: false\n              required:\n                - arrayNullableItemsNullable\n                - arrayNullableItemsNotNullable\n                - arrayNotNullableItemsNullable\n                - arrayNotNullableItemsNotNullable\n                - objectAdditionalPropertiesTrue\n                - objectAdditionalPropertiesSchema\n                - objectAdditionalPropertiesImplicit\n                - stringFormatNullable\n                - stringFormatNotNullable\n                - numberNullable\n                - numberNotNullable\n                - boolNullable\n                - boolNotNullable\n              additionalProperties: false\n              properties:\n                arrayNullableItemsNullable:\n                  type: array\n                  nullable: true\n                  items:\n                    type: string\n                    nullable: true\n                arrayNullableItemsNotNullable:\n                  type: array\n                  nullable: true\n                  items:\n                    type: string\n                    nullable: false\n                arrayNotNullableItemsNullable:\n                  type: array\n                  nullable: false\n                  items:\n                    type: string\n                    nullable: true\n                arrayNotNullableItemsNotNullable:\n                  type: array\n                  nullable: false\n                  items:\n                    type: string\n                    nullable: false\n                objectAdditionalPropertiesTrue:\n                  type: object\n                  nullable: false\n                  additionalProperties: true\n                  properties:\n                    known:\n                      type: string\n                      nullable: false\n                objectAdditionalPropertiesSchema:\n                  type: object\n                  nullable: false\n                  additionalProperties:\n                    type: string\n                    nullable: false\n                  properties:\n                    known:\n                      type: string\n                      nullable: false\n                objectAdditionalPropertiesImplicit:\n                  type: object\n                  nullable: false\n                  properties:\n                    known:\n                      type: string\n                      nullable: false\n                stringFormatNullable:\n                  type: string\n                  format: date-time\n                  nullable: true\n                  x-valid-examples: ['2024-01-02T03:04:05Z']\n                  x-invalid-examples: [not-a-date-time]\n                stringFormatNotNullable:\n                  type: string\n                  format: date-time\n                  nullable: false\n                  x-valid-examples: ['2024-01-02T03:04:05Z']\n                  x-invalid-examples: [not-a-date-time]\n                numberNullable:\n                  type: number\n                  nullable: true\n                numberNotNullable:\n                  type: number\n                  nullable: false\n                boolNullable:\n                  type: boolean\n                  nullable: true\n                boolNotNullable:\n                  type: boolean\n                  nullable: false\n      responses:\n        '204':\n          description: No Content\n  /optional-array-nullable:\n    post:\n      operationId: optionalArrayNullable\n      requestBody:\n        required: false\n        content:\n          application/json:\n            schema:\n              type: array\n              nullable: true\n              items:\n                type: string\n                nullable: false\n      responses:\n        '204':\n          description: No Content\n\n  /array-nullable:\n    post:\n      operationId: arrayNullable\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              type: array\n              nullable: true\n              items:\n                type: string\n                nullable: false\n      responses:\n        '204':\n          description: No Content\n\n  /array-not-nullable:\n    post:\n      operationId: arrayNotNullable\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              type: array\n              nullable: false\n              items:\n                type: string\n                nullable: false\n      responses:\n        '204':\n          description: No Content\n\n  /object-keys-additional-properties-false:\n    post:\n      operationId: objectKeysAdditionalPropertiesFalse\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              type: object\n              nullable: false\n              required:\n                - requiredNullableString\n                - requiredNotNullableString\n              additionalProperties: false\n              properties:\n                requiredNullableString:\n                  type: string\n                  nullable: true\n                requiredNotNullableString:\n                  type: string\n                  nullable: false\n                optionalNullableString:\n                  type: string\n                  nullable: true\n                optionalNotNullableString:\n                  type: string\n                  nullable: false\n      responses:\n        '204':\n          description: No Content\n\n  /nullable-object-keys-additional-properties-false:\n    post:\n      operationId: nullableObjectKeysAdditionalPropertiesFalse\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              type: object\n              nullable: true\n              required:\n                - requiredNullableString\n                - requiredNotNullableString\n              additionalProperties: false\n              properties:\n                requiredNullableString:\n                  type: string\n                  nullable: true\n                requiredNotNullableString:\n                  type: string\n                  nullable: false\n                optionalNullableString:\n                  type: string\n                  nullable: true\n                optionalNotNullableString:\n                  type: string\n                  nullable: false\n      responses:\n        '204':\n          description: No Content\n\n  /string-no-format-nullable:\n    post:\n      operationId: stringNoFormatNullable\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              type: string\n              nullable: true\n      responses:\n        '204':\n          description: No Content\n\n  /string-no-format-not-nullable:\n    post:\n      operationId: stringNoFormatNotNullable\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              type: string\n              nullable: false\n      responses:\n        '204':\n          description: No Content\n\n  /ref-object:\n    post:\n      operationId: refObject\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              $ref: '#/components/schemas/RefObjectRequest'\n      responses:\n        '204':\n          description: No Content\n\n  /ref-stress-object:\n    post:\n      operationId: refStressObject\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              allOf:\n                - $ref: '#/components/schemas/RefStressFirstAllOf'\n                - $ref: '#/components/schemas/RefStressSecondAllOf'\n                - type: object\n                  nullable: false\n                  required:\n                    - finalCode\n                    - sharedName\n                    - middleFlag\n                    - rootFlag\n                    - count\n                    - nested\n                    - final\n                    - finals\n                    - metadata\n                    - nullableRequired\n                  additionalProperties: false\n                  properties:\n                    finalCode:\n                      type: string\n                      nullable: false\n                    sharedName:\n                      type: string\n                      nullable: false\n                    middleFlag:\n                      type: boolean\n                      nullable: false\n                    rootFlag:\n                      type: boolean\n                      nullable: false\n                    count:\n                      type: number\n                      nullable: false\n                    nested:\n                      $ref: '#/components/schemas/RefStressNestedCombined'\n                    final:\n                      $ref: '#/components/schemas/RefStressFinalAlias'\n                    finals:\n                      type: array\n                      nullable: false\n                      items:\n                        $ref: '#/components/schemas/RefStressFinalAlias'\n                    metadata:\n                      type: object\n                      nullable: false\n                      additionalProperties:\n                        $ref: '#/components/schemas/RefStressMetadataValueAlias'\n                    nullableRequired:\n                      type: string\n                      nullable: true\n                    optionalShared:\n                      type: string\n                      nullable: true\n                    optionalCode:\n                      type: string\n                      nullable: false\n      responses:\n        '204':\n          description: No Content\n\n  /ref-stress-object-put:\n    put:\n      operationId: refStressObjectPut\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              allOf:\n                - $ref: '#/components/schemas/RefStressFirstAllOf'\n                - $ref: '#/components/schemas/RefStressSecondAllOf'\n                - type: object\n                  nullable: false\n                  required:\n                    - finalCode\n                    - sharedName\n                    - middleFlag\n                    - rootFlag\n                    - count\n                    - nested\n                    - final\n                    - finals\n                    - metadata\n                    - nullableRequired\n                  additionalProperties: false\n                  properties:\n                    finalCode:\n                      type: string\n                      nullable: false\n                    sharedName:\n                      type: string\n                      nullable: false\n                    middleFlag:\n                      type: boolean\n                      nullable: false\n                    rootFlag:\n                      type: boolean\n                      nullable: false\n                    count:\n                      type: number\n                      nullable: false\n                    nested:\n                      $ref: '#/components/schemas/RefStressNestedCombined'\n                    final:\n                      $ref: '#/components/schemas/RefStressFinalAlias'\n                    finals:\n                      type: array\n                      nullable: false\n                      items:\n                        $ref: '#/components/schemas/RefStressFinalAlias'\n                    metadata:\n                      type: object\n                      nullable: false\n                      additionalProperties:\n                        $ref: '#/components/schemas/RefStressMetadataValueAlias'\n                    nullableRequired:\n                      type: string\n                      nullable: true\n                    optionalShared:\n                      type: string\n                      nullable: true\n                    optionalCode:\n                      type: string\n                      nullable: false\n      responses:\n        '204':\n          description: No Content\ncomponents:\n  schemas:\n    RefObjectRequest:\n      type: object\n      nullable: false\n      required:\n        - refRequiredString\n      additionalProperties: false\n      properties:\n        refRequiredString:\n          type: string\n          nullable: false\n        refOptionalBool:\n          type: boolean\n          nullable: true\n\n    RefStressFinalAlias:\n      $ref: '#/components/schemas/RefStressFinal'\n\n    RefStressMetadataValueAlias:\n      $ref: '#/components/schemas/RefStressMetadataValue'\n\n    RefStressFirstAllOf:\n      allOf:\n        - $ref: '#/components/schemas/RefStressFinal'\n        - $ref: '#/components/schemas/RefStressViaMiddle'\n        - type: object\n          nullable: false\n          required:\n            - final\n            - nested\n            - nullableRequired\n          properties:\n            sharedName:\n              type: string\n              nullable: true\n            final:\n              $ref: '#/components/schemas/RefStressFinalAlias'\n            nested:\n              $ref: '#/components/schemas/RefStressNestedCombined'\n            nullableRequired:\n              type: string\n              nullable: true\n            optionalShared:\n              type: string\n              nullable: true\n\n    RefStressViaMiddle:\n      allOf:\n        - $ref: '#/components/schemas/RefStressMiddleRef'\n        - type: object\n          nullable: false\n          required:\n            - middleFlag\n            - sharedName\n          properties:\n            middleFlag:\n              type: boolean\n              nullable: false\n            sharedName:\n              type: string\n              nullable: true\n            nested:\n              $ref: '#/components/schemas/RefStressNestedAlias'\n\n    RefStressMiddleRef:\n      $ref: '#/components/schemas/RefStressMiddleAllOf'\n\n    RefStressMiddleAllOf:\n      allOf:\n        - $ref: '#/components/schemas/RefStressFinalAlias'\n        - type: object\n          nullable: true\n          required:\n            - sharedName\n          properties:\n            sharedName:\n              type: string\n              nullable: false\n            optionalCode:\n              type: string\n              nullable: false\n\n    RefStressSecondAllOf:\n      allOf:\n        - $ref: '#/components/schemas/RefStressOtherMiddle'\n        - type: object\n          nullable: false\n          required:\n            - rootFlag\n            - count\n            - finals\n            - metadata\n          properties:\n            rootFlag:\n              type: boolean\n              nullable: false\n            count:\n              type: number\n              nullable: false\n            sharedName:\n              type: string\n              nullable: false\n            finals:\n              type: array\n              nullable: false\n              items:\n                $ref: '#/components/schemas/RefStressFinalAlias'\n            metadata:\n              type: object\n              nullable: false\n              additionalProperties:\n                $ref: '#/components/schemas/RefStressMetadataValue'\n\n    RefStressOtherMiddle:\n      allOf:\n        - $ref: '#/components/schemas/RefStressFinalAlias'\n        - type: object\n          nullable: false\n          required:\n            - rootFlag\n            - metadata\n          properties:\n            rootFlag:\n              type: boolean\n              nullable: false\n            metadata:\n              type: object\n              nullable: false\n              additionalProperties:\n                $ref: '#/components/schemas/RefStressMetadataValueAlias'\n            final:\n              $ref: '#/components/schemas/RefStressFinalAlias'\n\n    RefStressFinal:\n      type: object\n      nullable: false\n      required:\n        - finalCode\n        - sharedName\n      properties:\n        finalCode:\n          type: string\n          nullable: false\n        sharedName:\n          type: string\n          nullable: false\n        nested:\n          $ref: '#/components/schemas/RefStressNestedBase'\n        optionalShared:\n          type: string\n          nullable: true\n\n    RefStressNestedAlias:\n      $ref: '#/components/schemas/RefStressNestedCombined'\n\n    RefStressNestedCombined:\n      allOf:\n        - $ref: '#/components/schemas/RefStressNestedBase'\n        - $ref: '#/components/schemas/RefStressNestedOverlay'\n        - type: object\n          nullable: false\n          required:\n            - sameName\n            - sealed\n          properties:\n            sameName:\n              type: string\n              nullable: false\n            sealed:\n              type: object\n              nullable: false\n              required:\n                - locked\n              additionalProperties: false\n              properties:\n                locked:\n                  type: boolean\n                  nullable: false\n\n    RefStressNestedBase:\n      type: object\n      nullable: true\n      required:\n        - sameName\n      properties:\n        sameName:\n          type: string\n          nullable: true\n        leaf:\n          $ref: '#/components/schemas/RefStressMetadataValue'\n\n    RefStressNestedOverlay:\n      type: object\n      nullable: false\n      required:\n        - sameName\n      properties:\n        sameName:\n          type: string\n          nullable: false\n        leaf:\n          $ref: '#/components/schemas/RefStressMetadataValueAlias'\n\n    RefStressMetadataValue:\n      type: string\n      nullable: false\n")
 
-paths:
-  /all-of-object:
-    post:
-      operationId: allOfObject
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              allOf:
-                - type: object
-                  required:
-                    - first
-                  properties:
-                    first:
-                      type: string
-                      nullable: false
-                - type: object
-                  required:
-                    - second
-                  properties:
-                    second:
-                      type: boolean
-                      nullable: false
-                - type: object
-                  required:
-                    - last
-                  properties:
-                    last:
-                      type: number
-                      nullable: false
-      responses:
-        '204':
-          description: No Content
-
-  /composite-object:
-    post:
-      operationId: compositeObject
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              nullable: false
-              required:
-                - arrayNullableItemsNullable
-                - arrayNullableItemsNotNullable
-                - arrayNotNullableItemsNullable
-                - arrayNotNullableItemsNotNullable
-                - objectAdditionalPropertiesTrue
-                - objectAdditionalPropertiesSchema
-                - objectAdditionalPropertiesImplicit
-                - stringFormatNullable
-                - stringFormatNotNullable
-                - numberNullable
-                - numberNotNullable
-                - boolNullable
-                - boolNotNullable
-              additionalProperties: false
-              properties:
-                arrayNullableItemsNullable:
-                  type: array
-                  nullable: true
-                  items:
-                    type: string
-                    nullable: true
-                arrayNullableItemsNotNullable:
-                  type: array
-                  nullable: true
-                  items:
-                    type: string
-                    nullable: false
-                arrayNotNullableItemsNullable:
-                  type: array
-                  nullable: false
-                  items:
-                    type: string
-                    nullable: true
-                arrayNotNullableItemsNotNullable:
-                  type: array
-                  nullable: false
-                  items:
-                    type: string
-                    nullable: false
-                objectAdditionalPropertiesTrue:
-                  type: object
-                  nullable: false
-                  additionalProperties: true
-                  properties:
-                    known:
-                      type: string
-                      nullable: false
-                objectAdditionalPropertiesSchema:
-                  type: object
-                  nullable: false
-                  additionalProperties:
-                    type: string
-                    nullable: false
-                  properties:
-                    known:
-                      type: string
-                      nullable: false
-                objectAdditionalPropertiesImplicit:
-                  type: object
-                  nullable: false
-                  properties:
-                    known:
-                      type: string
-                      nullable: false
-                stringFormatNullable:
-                  type: string
-                  format: date-time
-                  nullable: true
-                  x-valid-examples: ['2024-01-02T03:04:05Z']
-                  x-invalid-examples: [not-a-date-time]
-                stringFormatNotNullable:
-                  type: string
-                  format: date-time
-                  nullable: false
-                  x-valid-examples: ['2024-01-02T03:04:05Z']
-                  x-invalid-examples: [not-a-date-time]
-                numberNullable:
-                  type: number
-                  nullable: true
-                numberNotNullable:
-                  type: number
-                  nullable: false
-                boolNullable:
-                  type: boolean
-                  nullable: true
-                boolNotNullable:
-                  type: boolean
-                  nullable: false
-      responses:
-        '204':
-          description: No Content
-  /optional-array-nullable:
-    post:
-      operationId: optionalArrayNullable
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: array
-              nullable: true
-              items:
-                type: string
-                nullable: false
-      responses:
-        '204':
-          description: No Content
-
-  /array-nullable:
-    post:
-      operationId: arrayNullable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: array
-              nullable: true
-              items:
-                type: string
-                nullable: false
-      responses:
-        '204':
-          description: No Content
-
-  /array-not-nullable:
-    post:
-      operationId: arrayNotNullable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: array
-              nullable: false
-              items:
-                type: string
-                nullable: false
-      responses:
-        '204':
-          description: No Content
-
-  /object-keys-additional-properties-false:
-    post:
-      operationId: objectKeysAdditionalPropertiesFalse
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              nullable: false
-              required:
-                - requiredNullableString
-                - requiredNotNullableString
-              additionalProperties: false
-              properties:
-                requiredNullableString:
-                  type: string
-                  nullable: true
-                requiredNotNullableString:
-                  type: string
-                  nullable: false
-                optionalNullableString:
-                  type: string
-                  nullable: true
-                optionalNotNullableString:
-                  type: string
-                  nullable: false
-      responses:
-        '204':
-          description: No Content
-
-  /nullable-object-keys-additional-properties-false:
-    post:
-      operationId: nullableObjectKeysAdditionalPropertiesFalse
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              nullable: true
-              required:
-                - requiredNullableString
-                - requiredNotNullableString
-              additionalProperties: false
-              properties:
-                requiredNullableString:
-                  type: string
-                  nullable: true
-                requiredNotNullableString:
-                  type: string
-                  nullable: false
-                optionalNullableString:
-                  type: string
-                  nullable: true
-                optionalNotNullableString:
-                  type: string
-                  nullable: false
-      responses:
-        '204':
-          description: No Content
-
-  /string-no-format-nullable:
-    post:
-      operationId: stringNoFormatNullable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: string
-              nullable: true
-      responses:
-        '204':
-          description: No Content
-
-  /string-no-format-not-nullable:
-    post:
-      operationId: stringNoFormatNotNullable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: string
-              nullable: false
-      responses:
-        '204':
-          description: No Content
-
-  /ref-object:
-    post:
-      operationId: refObject
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RefObjectRequest'
-      responses:
-        '204':
-          description: No Content
-
-  /ref-stress-object:
-    post:
-      operationId: refStressObject
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '#/components/schemas/RefStressFirstAllOf'
-                - $ref: '#/components/schemas/RefStressSecondAllOf'
-                - type: object
-                  nullable: false
-                  required:
-                    - finalCode
-                    - sharedName
-                    - middleFlag
-                    - rootFlag
-                    - count
-                    - nested
-                    - final
-                    - finals
-                    - metadata
-                    - nullableRequired
-                  additionalProperties: false
-                  properties:
-                    finalCode:
-                      type: string
-                      nullable: false
-                    sharedName:
-                      type: string
-                      nullable: false
-                    middleFlag:
-                      type: boolean
-                      nullable: false
-                    rootFlag:
-                      type: boolean
-                      nullable: false
-                    count:
-                      type: number
-                      nullable: false
-                    nested:
-                      $ref: '#/components/schemas/RefStressNestedCombined'
-                    final:
-                      $ref: '#/components/schemas/RefStressFinalAlias'
-                    finals:
-                      type: array
-                      nullable: false
-                      items:
-                        $ref: '#/components/schemas/RefStressFinalAlias'
-                    metadata:
-                      type: object
-                      nullable: false
-                      additionalProperties:
-                        $ref: '#/components/schemas/RefStressMetadataValueAlias'
-                    nullableRequired:
-                      type: string
-                      nullable: true
-                    optionalShared:
-                      type: string
-                      nullable: true
-                    optionalCode:
-                      type: string
-                      nullable: false
-      responses:
-        '204':
-          description: No Content
-
-  /ref-stress-object-put:
-    put:
-      operationId: refStressObjectPut
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '#/components/schemas/RefStressFirstAllOf'
-                - $ref: '#/components/schemas/RefStressSecondAllOf'
-                - type: object
-                  nullable: false
-                  required:
-                    - finalCode
-                    - sharedName
-                    - middleFlag
-                    - rootFlag
-                    - count
-                    - nested
-                    - final
-                    - finals
-                    - metadata
-                    - nullableRequired
-                  additionalProperties: false
-                  properties:
-                    finalCode:
-                      type: string
-                      nullable: false
-                    sharedName:
-                      type: string
-                      nullable: false
-                    middleFlag:
-                      type: boolean
-                      nullable: false
-                    rootFlag:
-                      type: boolean
-                      nullable: false
-                    count:
-                      type: number
-                      nullable: false
-                    nested:
-                      $ref: '#/components/schemas/RefStressNestedCombined'
-                    final:
-                      $ref: '#/components/schemas/RefStressFinalAlias'
-                    finals:
-                      type: array
-                      nullable: false
-                      items:
-                        $ref: '#/components/schemas/RefStressFinalAlias'
-                    metadata:
-                      type: object
-                      nullable: false
-                      additionalProperties:
-                        $ref: '#/components/schemas/RefStressMetadataValueAlias'
-                    nullableRequired:
-                      type: string
-                      nullable: true
-                    optionalShared:
-                      type: string
-                      nullable: true
-                    optionalCode:
-                      type: string
-                      nullable: false
-      responses:
-        '204':
-          description: No Content
-components:
-  schemas:
-    RefObjectRequest:
-      type: object
-      nullable: false
-      required:
-        - refRequiredString
-      additionalProperties: false
-      properties:
-        refRequiredString:
-          type: string
-          nullable: false
-        refOptionalBool:
-          type: boolean
-          nullable: true
-
-    RefStressFinalAlias:
-      $ref: '#/components/schemas/RefStressFinal'
-
-    RefStressMetadataValueAlias:
-      $ref: '#/components/schemas/RefStressMetadataValue'
-
-    RefStressFirstAllOf:
-      allOf:
-        - $ref: '#/components/schemas/RefStressFinal'
-        - $ref: '#/components/schemas/RefStressViaMiddle'
-        - type: object
-          nullable: false
-          required:
-            - final
-            - nested
-            - nullableRequired
-          properties:
-            sharedName:
-              type: string
-              nullable: true
-            final:
-              $ref: '#/components/schemas/RefStressFinalAlias'
-            nested:
-              $ref: '#/components/schemas/RefStressNestedCombined'
-            nullableRequired:
-              type: string
-              nullable: true
-            optionalShared:
-              type: string
-              nullable: true
-
-    RefStressViaMiddle:
-      allOf:
-        - $ref: '#/components/schemas/RefStressMiddleRef'
-        - type: object
-          nullable: false
-          required:
-            - middleFlag
-            - sharedName
-          properties:
-            middleFlag:
-              type: boolean
-              nullable: false
-            sharedName:
-              type: string
-              nullable: true
-            nested:
-              $ref: '#/components/schemas/RefStressNestedAlias'
-
-    RefStressMiddleRef:
-      $ref: '#/components/schemas/RefStressMiddleAllOf'
-
-    RefStressMiddleAllOf:
-      allOf:
-        - $ref: '#/components/schemas/RefStressFinalAlias'
-        - type: object
-          nullable: true
-          required:
-            - sharedName
-          properties:
-            sharedName:
-              type: string
-              nullable: false
-            optionalCode:
-              type: string
-              nullable: false
-
-    RefStressSecondAllOf:
-      allOf:
-        - $ref: '#/components/schemas/RefStressOtherMiddle'
-        - type: object
-          nullable: false
-          required:
-            - rootFlag
-            - count
-            - finals
-            - metadata
-          properties:
-            rootFlag:
-              type: boolean
-              nullable: false
-            count:
-              type: number
-              nullable: false
-            sharedName:
-              type: string
-              nullable: false
-            finals:
-              type: array
-              nullable: false
-              items:
-                $ref: '#/components/schemas/RefStressFinalAlias'
-            metadata:
-              type: object
-              nullable: false
-              additionalProperties:
-                $ref: '#/components/schemas/RefStressMetadataValue'
-
-    RefStressOtherMiddle:
-      allOf:
-        - $ref: '#/components/schemas/RefStressFinalAlias'
-        - type: object
-          nullable: false
-          required:
-            - rootFlag
-            - metadata
-          properties:
-            rootFlag:
-              type: boolean
-              nullable: false
-            metadata:
-              type: object
-              nullable: false
-              additionalProperties:
-                $ref: '#/components/schemas/RefStressMetadataValueAlias'
-            final:
-              $ref: '#/components/schemas/RefStressFinalAlias'
-
-    RefStressFinal:
-      type: object
-      nullable: false
-      required:
-        - finalCode
-        - sharedName
-      properties:
-        finalCode:
-          type: string
-          nullable: false
-        sharedName:
-          type: string
-          nullable: false
-        nested:
-          $ref: '#/components/schemas/RefStressNestedBase'
-        optionalShared:
-          type: string
-          nullable: true
-
-    RefStressNestedAlias:
-      $ref: '#/components/schemas/RefStressNestedCombined'
-
-    RefStressNestedCombined:
-      allOf:
-        - $ref: '#/components/schemas/RefStressNestedBase'
-        - $ref: '#/components/schemas/RefStressNestedOverlay'
-        - type: object
-          nullable: false
-          required:
-            - sameName
-            - sealed
-          properties:
-            sameName:
-              type: string
-              nullable: false
-            sealed:
-              type: object
-              nullable: false
-              required:
-                - locked
-              additionalProperties: false
-              properties:
-                locked:
-                  type: boolean
-                  nullable: false
-
-    RefStressNestedBase:
-      type: object
-      nullable: true
-      required:
-        - sameName
-      properties:
-        sameName:
-          type: string
-          nullable: true
-        leaf:
-          $ref: '#/components/schemas/RefStressMetadataValue'
-
-    RefStressNestedOverlay:
-      type: object
-      nullable: false
-      required:
-        - sameName
-      properties:
-        sameName:
-          type: string
-          nullable: false
-        leaf:
-          $ref: '#/components/schemas/RefStressMetadataValueAlias'
-
-    RefStressMetadataValue:
-      type: string
-      nullable: false
-`)
-
-// TestStringNoFormatNullable checks the generated decoder.
-func TestStringNoFormatNullable(t *testing.T) {
+// TestAllOfObject checks allOfObject.
+func TestAllOfObject(t *testing.T) {
 	t.Parallel()
 
 	testgenerator.CheckJSONRequestBody(
 		t,
-		exampleOpenAPI,
-		"stringNoFormatNullable",
+		openAPI,
+		"allOfObject",
 		func(data []byte) error {
-			return errors.Join(stringNoFormatNullable.Validate(data)...)
+			return errors.Join(allOfObject.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)
 }
 
-// TestStringNoFormatNotNullable checks the generated decoder.
-func TestStringNoFormatNotNullable(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"stringNoFormatNotNullable",
-		func(data []byte) error {
-			return errors.Join(stringNoFormatNotNullable.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestRefStressObjectPut checks the generated decoder.
-func TestRefStressObjectPut(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"refStressObjectPut",
-		func(data []byte) error {
-			return errors.Join(refStressObjectPut.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestRefStressObject checks the generated decoder.
-func TestRefStressObject(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"refStressObject",
-		func(data []byte) error {
-			return errors.Join(refStressObject.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestRefObject checks the generated decoder.
-func TestRefObject(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"refObject",
-		func(data []byte) error {
-			return errors.Join(refObject.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestOptionalArrayNullable checks the generated decoder.
-func TestOptionalArrayNullable(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"optionalArrayNullable",
-		func(data []byte) error {
-			return errors.Join(optionalArrayNullable.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestObjectKeysAdditionalPropertiesFalse checks the generated decoder.
-func TestObjectKeysAdditionalPropertiesFalse(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"objectKeysAdditionalPropertiesFalse",
-		func(data []byte) error {
-			return errors.Join(objectKeysAdditionalPropertiesFalse.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestNullableObjectKeysAdditionalPropertiesFalse checks the generated decoder.
-func TestNullableObjectKeysAdditionalPropertiesFalse(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"nullableObjectKeysAdditionalPropertiesFalse",
-		func(data []byte) error {
-			return errors.Join(nullableObjectKeysAdditionalPropertiesFalse.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestCompositeObject checks the generated decoder.
-func TestCompositeObject(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"compositeObject",
-		func(data []byte) error {
-			return errors.Join(compositeObject.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestArrayNullable checks the generated decoder.
-func TestArrayNullable(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBody(
-		t,
-		exampleOpenAPI,
-		"arrayNullable",
-		func(data []byte) error {
-			return errors.Join(arrayNullable.Validate(data)...)
-		},
-		testgenerator.DefaultOption,
-	)
-}
-
-// TestArrayNotNullable checks the generated decoder.
+// TestArrayNotNullable checks arrayNotNullable.
 func TestArrayNotNullable(t *testing.T) {
 	t.Parallel()
 
 	testgenerator.CheckJSONRequestBody(
 		t,
-		exampleOpenAPI,
+		openAPI,
 		"arrayNotNullable",
 		func(data []byte) error {
 			return errors.Join(arrayNotNullable.Validate(data)...)
@@ -814,16 +41,151 @@ func TestArrayNotNullable(t *testing.T) {
 	)
 }
 
-// TestAllOfObject checks the generated decoder.
-func TestAllOfObject(t *testing.T) {
+// TestArrayNullable checks arrayNullable.
+func TestArrayNullable(t *testing.T) {
 	t.Parallel()
 
 	testgenerator.CheckJSONRequestBody(
 		t,
-		exampleOpenAPI,
-		"allOfObject",
+		openAPI,
+		"arrayNullable",
 		func(data []byte) error {
-			return errors.Join(allOfObject.Validate(data)...)
+			return errors.Join(arrayNullable.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestCompositeObject checks compositeObject.
+func TestCompositeObject(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"compositeObject",
+		func(data []byte) error {
+			return errors.Join(compositeObject.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestNullableObjectKeysAdditionalPropertiesFalse checks nullableObjectKeysAdditionalPropertiesFalse.
+func TestNullableObjectKeysAdditionalPropertiesFalse(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"nullableObjectKeysAdditionalPropertiesFalse",
+		func(data []byte) error {
+			return errors.Join(nullableObjectKeysAdditionalPropertiesFalse.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestObjectKeysAdditionalPropertiesFalse checks objectKeysAdditionalPropertiesFalse.
+func TestObjectKeysAdditionalPropertiesFalse(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"objectKeysAdditionalPropertiesFalse",
+		func(data []byte) error {
+			return errors.Join(objectKeysAdditionalPropertiesFalse.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestOptionalArrayNullable checks optionalArrayNullable.
+func TestOptionalArrayNullable(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"optionalArrayNullable",
+		func(data []byte) error {
+			return errors.Join(optionalArrayNullable.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestRefObject checks refObject.
+func TestRefObject(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"refObject",
+		func(data []byte) error {
+			return errors.Join(refObject.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestRefStressObject checks refStressObject.
+func TestRefStressObject(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"refStressObject",
+		func(data []byte) error {
+			return errors.Join(refStressObject.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestRefStressObjectPut checks refStressObjectPut.
+func TestRefStressObjectPut(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"refStressObjectPut",
+		func(data []byte) error {
+			return errors.Join(refStressObjectPut.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestStringNoFormatNotNullable checks stringNoFormatNotNullable.
+func TestStringNoFormatNotNullable(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"stringNoFormatNotNullable",
+		func(data []byte) error {
+			return errors.Join(stringNoFormatNotNullable.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+// TestStringNoFormatNullable checks stringNoFormatNullable.
+func TestStringNoFormatNullable(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		"stringNoFormatNullable",
+		func(data []byte) error {
+			return errors.Join(stringNoFormatNullable.Validate(data)...)
 		},
 		testgenerator.DefaultOption,
 	)

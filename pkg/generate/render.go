@@ -1,3 +1,4 @@
+//nolint:godoclint // The private template contexts are local implementation details.
 package generate
 
 import (
@@ -5,131 +6,86 @@ import (
 	"embed"
 	"fmt"
 	"go/format"
-	"sync"
+	"strconv"
 	"text/template"
+
+	"github.com/djosh34/decode_and_validate_generator/pkg/validation"
 )
 
-// templateFS contains every generator template.
-//
 //go:embed templates/*.go.tmpl
-var templateFS embed.FS
+var templateFiles embed.FS
 
-// templatePattern selects every embedded generator template.
-const templatePattern = "templates/*.go.tmpl"
-
-var (
-	// generateTemplatesOnce ensures templates are parsed once.
-	generateTemplatesOnce sync.Once
-	// generateTemplates contains the parsed templates.
-	generateTemplates *template.Template
-	// errGenerateTemplates records a template parsing failure.
-	errGenerateTemplates error
-)
-
-// fileTemplateContext contains data rendered into models.go.
-type fileTemplateContext struct {
-	Schemas     []Schema
-	UsesRFC3339 bool
+type sourceTemplate struct {
+	Package     string
+	Assignments []assignmentTemplate
+	UsesJSON    bool
+	UsesRegexp  bool
+	UsesValue   bool
 }
 
-// modelsTestTemplateContext contains data rendered into models_test.go.
-type modelsTestTemplateContext struct {
+type assignmentTemplate struct {
+	Name  string
+	Nodes []string
+	Links []string
+}
+
+type testTemplate struct {
+	Package    string
 	OpenAPI    string
-	Operations []JSONRequestBodyOperation
+	Operations []Operation
 }
 
-// renderModelsFile renders and formats models.go.
-func renderModelsFile(schemas []Schema) ([]byte, error) {
-	templates, err := parsedGenerateTemplates()
+func render(
+	packageName string,
+	openAPI []byte,
+	operations []Operation,
+	parsed []*validation.Validation,
+) (map[string][]byte, error) {
+	templates, err := template.ParseFS(templateFiles, "templates/*.go.tmpl")
+	if err != nil {
+		return nil, fmt.Errorf("parse templates: %w", err)
+	}
+
+	source := sourceTemplate{Package: packageName}
+
+	for index, compiled := range parsed {
+		assignment, imports := renderAssignment(operations[index].Variable, compiled)
+		source.Assignments = append(source.Assignments, assignment)
+		source.UsesJSON = source.UsesJSON || imports.json
+		source.UsesRegexp = source.UsesRegexp || imports.regexp
+		source.UsesValue = source.UsesValue || imports.value
+	}
+
+	validate, err := executeTemplate(templates, "validate.go.tmpl", source)
 	if err != nil {
 		return nil, err
 	}
 
-	var out bytes.Buffer
-
-	err = templates.ExecuteTemplate(&out, "file.go.tmpl", fileTemplateContext{
-		Schemas:     schemas,
-		UsesRFC3339: usesRFC3339(schemas),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	formatted, err := format.Source(out.Bytes())
-	if err != nil {
-		return nil, fmt.Errorf("format generated models.go: %w", err)
-	}
-
-	return formatted, nil
-}
-
-// usesRFC3339 reports whether generated models need the time package.
-func usesRFC3339(schemas []Schema) bool {
-	for _, schema := range schemas {
-		stringSchema, ok := schema.(*StringSchema)
-		if ok && stringSchema.Format == "date-time" {
-			return true
-		}
-	}
-
-	return false
-}
-
-// renderModelsTestFile renders and formats models_test.go.
-func renderModelsTestFile(openAPI []byte, operations []JSONRequestBodyOperation) ([]byte, error) {
-	if bytes.Contains(openAPI, []byte("`")) {
-		return nil, fmt.Errorf("openapi source contains backtick")
-	}
-
-	templates, err := parsedGenerateTemplates()
-	if err != nil {
-		return nil, err
-	}
-
-	var out bytes.Buffer
-
-	err = templates.ExecuteTemplate(&out, "models_test.go.tmpl", modelsTestTemplateContext{
-		OpenAPI:    string(openAPI),
+	validateTest, err := executeTemplate(templates, "validate_test.go.tmpl", testTemplate{
+		Package:    packageName,
+		OpenAPI:    strconv.Quote(string(openAPI)),
 		Operations: operations,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	formatted, err := format.Source(out.Bytes())
+	return map[string][]byte{
+		"validate.go":      validate,
+		"validate_test.go": validateTest,
+	}, nil
+}
+
+func executeTemplate(templates *template.Template, name string, data any) ([]byte, error) {
+	var output bytes.Buffer
+	if err := templates.ExecuteTemplate(&output, name, data); err != nil {
+		return nil, fmt.Errorf("execute %s: %w", name, err)
+	}
+
+	formatted, err := format.Source(output.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("format generated models_test.go: %w", err)
+		return nil, fmt.Errorf("format %s: %w", name, err)
 	}
 
 	return formatted, nil
-}
-
-// executeGoTemplate executes one named generator template.
-func executeGoTemplate(name string, data any) (string, error) {
-	templates, err := parsedGenerateTemplates()
-	if err != nil {
-		return "", err
-	}
-
-	var out bytes.Buffer
-
-	err = templates.ExecuteTemplate(&out, name, data)
-	if err != nil {
-		return "", err
-	}
-
-	return out.String(), nil
-}
-
-// parsedGenerateTemplates returns the shared parsed templates.
-func parsedGenerateTemplates() (*template.Template, error) {
-	generateTemplatesOnce.Do(func() {
-		generateTemplates, errGenerateTemplates = template.ParseFS(templateFS, templatePattern)
-	})
-
-	if errGenerateTemplates != nil {
-		return nil, fmt.Errorf("parse generate templates: %w", errGenerateTemplates)
-	}
-
-	return generateTemplates, nil
 }

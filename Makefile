@@ -19,6 +19,5 @@ test: ## Run tests
 
 t: test ## Run tests
 
-regen: ## Regen example fixture and run object keys additionalProperties=false tests
-	go test decode_and_validate_generator/pkg/generate -count=1 -v -run "^\QTestGenerateExampleMatchesFixture_Regen\E$$"
-	go test ./pkg/decode/example/decode_tests -count=1 -v
+regen: ## Regenerate the example validation fixture
+	REGENERATE=1 go test ./pkg/generate -count=1 -run '^TestRegenerateExample$$'

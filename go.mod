@@ -3,7 +3,6 @@ module github.com/djosh34/decode_and_validate_generator
 go 1.26.4
 
 require (
-	github.com/arran4/golang-diff v0.0.5
 	github.com/getkin/kin-openapi v0.140.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/pb33f/libopenapi v0.38.3

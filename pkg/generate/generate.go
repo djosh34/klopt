@@ -1,106 +1,53 @@
+// Package generate writes compiled request-body validations as Go source.
 package generate
 
 import (
-	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/djosh34/decode_and_validate_generator/pkg/validation"
 )
 
 const (
-	// directoryMode configures generator behavior.
+	// directoryMode is used for the generated directory.
 	directoryMode = 0o755
-	// fileMode configures generator behavior.
+	// fileMode is used for generated Go files.
 	fileMode = 0o644
 )
 
-// FileSet maps generated relative paths to their contents.
-type FileSet map[string][]byte
+// Operation names one validation and its generated test.
+type Operation struct {
+	OperationID string
+	Variable    string
+	Test        string
+}
 
-// WriteToDir writes every generated file below dir.
-func (fs FileSet) WriteToDir(dir string) error {
-	for name, contents := range fs {
-		path := filepath.Join(dir, filepath.FromSlash(name))
-
-		err := os.MkdirAll(filepath.Dir(path), directoryMode)
+// Generate parses every operation and writes validate.go and validate_test.go.
+func Generate(dir string, packageName string, openAPI []byte, operations []Operation) error {
+	parsed := make([]*validation.Validation, len(operations))
+	for index, operation := range operations {
+		compiled, err := validation.Parse(openAPI, operation.OperationID)
 		if err != nil {
+			return fmt.Errorf("parse operation %q: %w", operation.OperationID, err)
+		}
+
+		parsed[index] = compiled
+	}
+
+	files, err := render(packageName, openAPI, operations, parsed)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(dir, directoryMode); err != nil {
+		return err
+	}
+
+	for name, contents := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), contents, fileMode); err != nil {
 			return err
 		}
-
-		err = os.WriteFile(path, contents, fileMode)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// GenerateInMemory renders the configured models without writing files.
-func (c *GenerateContext) GenerateInMemory() (FileSet, error) {
-	schemas, err := c.JSONRequestBodyModelSchemas()
-	if err != nil {
-		return nil, err
-	}
-
-	models, err := renderModelsFile(schemas)
-	if err != nil {
-		return nil, err
-	}
-
-	fileSet := make(FileSet)
-	fileSet["models.go"] = models
-
-	if len(c.JSONRequestBodyOperations) != 0 {
-		openAPI, err := c.openAPISourceForTests()
-		if err != nil {
-			return nil, err
-		}
-
-		modelTests, err := renderModelsTestFile(openAPI, c.JSONRequestBodyOperations)
-		if err != nil {
-			return nil, err
-		}
-
-		fileSet["models_test.go"] = modelTests
-	}
-
-	return fileSet, nil
-}
-
-// openAPISourceForTests returns the source embedded in generated tests.
-func (c *GenerateContext) openAPISourceForTests() ([]byte, error) {
-	if len(c.OpenAPISource) != 0 {
-		return c.OpenAPISource, nil
-	}
-
-	openAPI, err := json.MarshalIndent(c.Document, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-
-	return append(openAPI, '\n'), nil
-}
-
-// Generate replaces dir with the generated model files.
-func (c *GenerateContext) Generate(dir string) error {
-	err := os.RemoveAll(dir)
-	if err != nil {
-		return err
-	}
-
-	err = os.MkdirAll(dir, directoryMode)
-	if err != nil {
-		return err
-	}
-
-	fileSet, err := c.GenerateInMemory()
-	if err != nil {
-		return err
-	}
-
-	err = fileSet.WriteToDir(dir)
-	if err != nil {
-		return err
 	}
 
 	return nil

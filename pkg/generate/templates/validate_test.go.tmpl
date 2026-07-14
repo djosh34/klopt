@@ -1,0 +1,29 @@
+{{define "validate_test.go.tmpl"}}//nolint:lll // Generated tests embed the complete source document.
+package {{.Package}}
+
+import (
+	"errors"
+	"testing"
+
+	testgenerator "github.com/djosh34/decode_and_validate_generator/pkg/test_generator"
+)
+
+// openAPI is the source document used to compile the generated validations.
+var openAPI = []byte({{.OpenAPI}})
+
+{{range .Operations}}// {{.Test}} checks {{.OperationID}}.
+func {{.Test}}(t *testing.T) {
+	t.Parallel()
+
+	testgenerator.CheckJSONRequestBody(
+		t,
+		openAPI,
+		{{printf "%q" .OperationID}},
+		func(data []byte) error {
+			return errors.Join({{.Variable}}.Validate(data)...)
+		},
+		testgenerator.DefaultOption,
+	)
+}
+
+{{end}}{{end}}
