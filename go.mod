@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	github.com/getkin/kin-openapi v0.140.0
+	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68
 	github.com/goccy/go-yaml v1.19.2
 	github.com/pb33f/libopenapi v0.38.3
 	github.com/pb33f/libopenapi-validator v0.13.13

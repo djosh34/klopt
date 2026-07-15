@@ -128,7 +128,36 @@
 	{{end}}
 }{{end}}
 
-{{define "validate.go.tmpl"}}// Package {{.Package}} contains generated request-body validations.
+{{define "queryProperty"}}validation.QueryPropertyDefinition{
+	Name: {{printf "%q" .Name}},
+	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
+	{{if .Array}}Array: true,{{end}}
+}{{end}}
+
+{{define "queryParameter"}}validation.QueryParameterDefinition{
+	Name: {{printf "%q" .Name}},
+	Wire: {{.Wire}},
+	{{with .Separator}}Separator: {{printf "%q" .}},{{end}}
+	{{if .Required}}Required: true,{{end}}
+	{{if .AllowEmpty}}AllowEmpty: true,{{end}}
+	Validation: {{template "validation" .Validation}},
+	{{with .DefaultValue}}DefaultValue: json.RawMessage({{printf "%q" .}}),{{end}}
+	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
+	{{with .Properties}}
+	Properties: []validation.QueryPropertyDefinition{
+		{{range .}}{{template "queryProperty" .}},{{end}}
+	},
+	{{end}}
+}{{end}}
+
+{{define "queryDecoder"}}validation.QueryDecoderDefinition{
+	OperationID: {{printf "%q" .OperationID}},
+	Parameters: []validation.QueryParameterDefinition{
+		{{range .Parameters}}{{template "queryParameter" .}},{{end}}
+	},
+}{{end}}
+
+{{define "validate.go.tmpl"}}// Package {{.Package}} contains generated request-body validations and query decoders.
 //
 //nolint:dupl,godoclint,lll // Generated validation trees use operation IDs and may contain repeated schemas.
 package {{.Package}}
@@ -151,4 +180,21 @@ var validations = map[string]*validation.Validation{
 	{{printf "%q" $operationID}}: {{$operationID}},
 	{{end}}
 }
+
+{{if .QueryDecoders}}
+// queryDecoders contains every compiled query decoder by exact operation ID.
+var queryDecoders = map[string]*validation.QueryDecoder{
+	{{range $operationID, $decoder := .QueryDecoders}}
+	{{printf "%q" $operationID}}: mustQueryDecoder({{template "queryDecoder" $decoder.Definition}}),
+	{{end}}
+}
+
+func mustQueryDecoder(definition validation.QueryDecoderDefinition) *validation.QueryDecoder {
+	decoder, err := validation.NewQueryDecoderFromGenerated(definition)
+	if err != nil {
+		panic(err)
+	}
+	return decoder
+}
+{{end}}
 {{end}}

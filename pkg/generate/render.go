@@ -19,6 +19,7 @@ func render(
 	packageName string,
 	openAPI []byte,
 	parsed map[string]*validation.Validation,
+	queryDecoders map[string]*validation.QueryDecoder,
 ) (map[string][]byte, error) {
 	templates, err := template.ParseFS(templateFiles, "templates/*.go.tmpl")
 	if err != nil {
@@ -26,13 +27,15 @@ func render(
 	}
 
 	data := struct {
-		Package     string
-		OpenAPI     string
-		Validations map[string]*validation.Validation
+		Package       string
+		OpenAPI       string
+		Validations   map[string]*validation.Validation
+		QueryDecoders map[string]*validation.QueryDecoder
 	}{
-		Package:     packageName,
-		OpenAPI:     strconv.Quote(string(openAPI)),
-		Validations: parsed,
+		Package:       packageName,
+		OpenAPI:       strconv.Quote(string(openAPI)),
+		Validations:   parsed,
+		QueryDecoders: queryDecoders,
 	}
 
 	validate, err := executeTemplate(templates, "validate.go.tmpl", data)

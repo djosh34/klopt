@@ -1,4 +1,4 @@
-// Package generate writes compiled request-body validations as Go source.
+// Package generate writes compiled request-body validations and query decoders as Go source.
 package generate
 
 import (
@@ -19,7 +19,7 @@ const (
 
 // Generate parses one OpenAPI document and writes validate.go and validate_test.go.
 func Generate(dir string, packageName string, openAPI []byte) error {
-	parsed, err := validation.Parse(openAPI)
+	parsed, queryDecoders, err := validation.Parse(openAPI)
 	if err != nil {
 		return err
 	}
@@ -30,7 +30,7 @@ func Generate(dir string, packageName string, openAPI []byte) error {
 		}
 	}
 
-	files, err := render(packageName, openAPI, parsed)
+	files, err := render(packageName, openAPI, parsed, queryDecoders)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func isSafeOperationIdentifier(operationID string) bool {
 
 	switch operationID {
 	case "byte", "error", "errors", "json", "jsonvalue", "openAPI", "regexp", "string", "testing",
-		"testgenerator", "TestValidations", "true", "validation", "validations":
+		"testgenerator", "TestValidations", "true", "validation", "validations", "queryDecoders", "mustQueryDecoder":
 		return false
 	default:
 		return true

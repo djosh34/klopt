@@ -121,7 +121,7 @@ func TestParseExposesCompiledGraphAndCopiesInput(t *testing.T) {
 		"additionalProperties":false,
 		"allOf":[{"maxProperties":1}]
 	}`, "", true)
-	parsedByOperation, err := Parse(spec)
+	parsedByOperation, _, err := Parse(spec)
 	require.NoError(t, err)
 
 	parsed := parsedByOperation["checkThing"]
@@ -162,7 +162,7 @@ func TestParseCompilesIndependentOperationGraphs(t *testing.T) {
 		"components":{"schemas":{"Body":{"type":"string"}}}
 	}`)
 
-	parsed, err := Parse(spec)
+	parsed, _, err := Parse(spec)
 	require.NoError(t, err)
 	require.Equal(t, []string{"RequiredBody", "optionalBody"}, slices.Sorted(maps.Keys(parsed)))
 	require.True(t, parsed["RequiredBody"].BodyRequired)
@@ -182,7 +182,7 @@ func TestParseCompilesIndependentOperationGraphs(t *testing.T) {
 func TestParseCompilesOperationsInSortedIDOrder(t *testing.T) {
 	t.Parallel()
 
-	_, err := Parse([]byte(`{
+	_, _, err := Parse([]byte(`{
 		"openapi":"3.0.3",
 		"paths":{
 			"/first":{"post":{"operationId":"zulu","requestBody":{"content":{"application/json":{"schema":{"not":{}}}}}}},
@@ -352,12 +352,12 @@ func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := Parse(openAPISpec(test.schema, test.components, false))
+			_, _, err := Parse(openAPISpec(test.schema, test.components, false))
 			require.ErrorContains(t, err, test.want)
 		})
 	}
 
-	parsed, err := Parse([]byte(`{"openapi":"3.0.3","paths":{"/a":{"post":{"operationId":"unused"}}}}`))
+	parsed, _, err := Parse([]byte(`{"openapi":"3.0.3","paths":{"/a":{"post":{"operationId":"unused"}}}}`))
 	require.NoError(t, err)
 	require.Empty(t, parsed)
 }
@@ -401,7 +401,7 @@ func TestParseRejectsRecursiveSchemas(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := Parse(openAPISpec(`{"$ref":"#/components/schemas/Loop"}`, test.components, false))
+			_, _, err := Parse(openAPISpec(`{"$ref":"#/components/schemas/Loop"}`, test.components, false))
 			require.ErrorContains(t, err, `compile operationId "checkThing"`)
 			require.ErrorContains(t, err, "recursive schema is unsupported")
 			require.ErrorContains(t, err, "#/components/schemas/Loop")
@@ -477,12 +477,12 @@ func TestParseRejectsUnsupportedOpenAPIVersions(t *testing.T) {
 	valid := openAPISpec(`{}`, "", false)
 	for _, replacement := range []string{`"3.0.2"`, `"3.1.0"`, `3.0`, `null`} {
 		spec := strings.Replace(string(valid), `"3.0.3"`, replacement, 1)
-		_, err := Parse([]byte(spec))
+		_, _, err := Parse([]byte(spec))
 		require.ErrorContains(t, err, `version must be "3.0.3"`)
 	}
 
 	missing := strings.Replace(string(valid), `"openapi":"3.0.3",`, "", 1)
-	_, err := Parse([]byte(missing))
+	_, _, err := Parse([]byte(missing))
 	require.ErrorContains(t, err, `version must be "3.0.3"`)
 }
 
@@ -502,7 +502,7 @@ func TestParseRejectsFirstMalformedOperationDeterministically(t *testing.T) {
 		}
 	}`)
 
-	_, err := Parse(spec)
+	_, _, err := Parse(spec)
 	require.ErrorContains(t, err, "#/paths/~1broken-operation/post")
 }
 
@@ -626,7 +626,7 @@ func mustParseSchema(t *testing.T, schema string, components string) *Validation
 func mustParseSchemaWithRequired(t *testing.T, schema string, components string, required bool) *Validation {
 	t.Helper()
 
-	parsedByOperation, err := Parse(openAPISpec(schema, components, required))
+	parsedByOperation, _, err := Parse(openAPISpec(schema, components, required))
 	require.NoError(t, err)
 
 	return parsedByOperation["checkThing"]

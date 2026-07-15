@@ -34,6 +34,7 @@ linters:
             - $gostd
             - github.com/stretchr/testify/require
             - github.com/goccy/go-yaml
+            - github.com/go-json-experiment/json/jsontext
             - pgregory.net/rapid
             - github.com/getkin/kin-openapi
             - github.com/djosh34/decode_and_validate_generator/pkg/peekjson

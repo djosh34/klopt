@@ -18,7 +18,7 @@ type runtimeValidationAdapter struct {
 
 // newRuntimeValidationRequestBodyValidator parses the document once per fixture.
 func newRuntimeValidationRequestBodyValidator(spec []byte) (validatorAdapter, error) {
-	parsed, err := validation.Parse(spec)
+	parsed, _, err := validation.Parse(spec)
 	if err != nil {
 		return validatorAdapter{}, err
 	}
