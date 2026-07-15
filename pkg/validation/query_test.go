@@ -90,6 +90,63 @@ func TestQueryDecoderStyleMatrix(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderLiteralBracketNamesAcrossNonDeepStyles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		parameter string
+		rawQuery  string
+		expected  string
+	}{
+		{name: "primitive", parameter: `{name: 'q[key]', in: query, schema: {type: string}}`, rawQuery: `q%5Bkey%5D=value`, expected: `{"q[key]":"value"}`},
+		{name: "form array repeated", parameter: `{name: 'q[key]', in: query, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a&q%5Bkey%5D=b`, expected: `{"q[key]":["a","b"]}`},
+		{name: "form array delimited", parameter: `{name: 'q[key]', in: query, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a,b`, expected: `{"q[key]":["a","b"]}`},
+		{name: "space array", parameter: `{name: 'q[key]', in: query, style: spaceDelimited, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a+b`, expected: `{"q[key]":["a","b"]}`},
+		{name: "pipe array", parameter: `{name: 'q[key]', in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q%5Bkey%5D=a|b`, expected: `{"q[key]":["a","b"]}`},
+		{name: "form object named", parameter: bracketObjectParameter("q[key]", "form", false, "child"), rawQuery: `q[key]=child,value`, expected: `{"q[key]":{"child":"value"}}`},
+		{name: "form object exploded", parameter: bracketObjectParameter("q", "form", true, "child[key]"), rawQuery: `child%5Bkey%5D=value`, expected: `{"q":{"child[key]":"value"}}`},
+		{name: "space object", parameter: bracketObjectParameter("q[key]", "spaceDelimited", false, "child"), rawQuery: `q%5Bkey%5D=child+value`, expected: `{"q[key]":{"child":"value"}}`},
+		{name: "pipe object", parameter: bracketObjectParameter("q[key]", "pipeDelimited", false, "child"), rawQuery: `q[key]=child|value`, expected: `{"q[key]":{"child":"value"}}`},
+		{name: "JSON content", parameter: `name: 'q[key]'
+      in: query
+      content: {application/json: {schema: {type: object}}}`, rawQuery: `q%5Bkey%5D=%7B%22child%22%3Atrue%7D`, expected: `{"q[key]":{"child":true}}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, test.parameter)
+			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderNamesAreCaseSensitive(t *testing.T) {
+	t.Parallel()
+
+	primitive := parseQueryDecoder(t, `{name: q, in: query, schema: {type: string}}`)
+	actual, err := primitive.Decode(&url.URL{RawQuery: `Q=value`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{}`, string(actual))
+
+	exploded := parseQueryDecoder(t, objectParameter("form", true))
+	actual, err = exploded.Decode(&url.URL{RawQuery: `Lat=1&Long=2`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{}`, string(actual))
+
+	deep := parseQueryDecoder(t, deepParameter(`role: {type: string}`))
+	actual, err = deep.Decode(&url.URL{RawQuery: `Filter[role]=admin`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{}`, string(actual))
+
+	_, err = deep.Decode(&url.URL{RawQuery: `filter[Role]=admin`})
+	require.ErrorContains(t, err, "malformed or unknown deepObject child")
+}
+
 func TestQueryDecoderDeepObjectArrayExtension(t *testing.T) {
 	t.Parallel()
 
@@ -118,6 +175,8 @@ func TestQueryDecoderDeepObjectArrayExtension(t *testing.T) {
 	_, err = decoder.Decode(&url.URL{RawQuery: `filter[unknown]=x`})
 	require.ErrorContains(t, err, "malformed or unknown deepObject child")
 	_, err = decoder.Decode(&url.URL{RawQuery: `filter[key][]=x`})
+	require.ErrorContains(t, err, "malformed or unknown deepObject child")
+	_, err = decoder.Decode(&url.URL{RawQuery: `filter[]=x`})
 	require.ErrorContains(t, err, "malformed or unknown deepObject child")
 	_, err = decoder.Decode(&url.URL{RawQuery: `filter[user][role]=x`})
 	require.ErrorContains(t, err, "malformed or unknown deepObject child")
@@ -261,7 +320,15 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
 		{name: "style shape", parameters: `- {name: q, in: query, style: 1, schema: {type: string}}`, contains: "style"},
 		{name: "explode shape", parameters: `- {name: q, in: query, explode: nope, schema: {type: string}}`, contains: "explode"},
 		{name: "form exploded open", parameters: `- {name: q, in: query, schema: {type: object, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
+		{name: "form named open", parameters: `- {name: q, in: query, explode: false, schema: {type: object, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
+		{name: "form named explicit open", parameters: `- {name: q, in: query, explode: false, schema: {type: object, additionalProperties: true, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
+		{name: "space named open", parameters: `- {name: q, in: query, style: spaceDelimited, explode: false, schema: {type: object, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
+		{name: "pipe named schema open", parameters: `- {name: q, in: query, style: pipeDelimited, explode: false, schema: {type: object, additionalProperties: {type: string}, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
 		{name: "deep open", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
+		{name: "deep bracket base", parameters: `- {name: 'q[x]', in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {y: {type: string}}}}`, contains: "parameter name"},
+		{name: "deep empty property", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'': {type: string}}}}`, contains: "property name"},
+		{name: "deep left bracket property", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'x[y': {type: string}}}}`, contains: "property name"},
+		{name: "deep right bracket property", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'x]y': {type: string}}}}`, contains: "property name"},
 		{name: "object style", parameters: `- {name: q, in: query, style: matrix, explode: false, schema: {type: object, additionalProperties: false, properties: {x: {type: string}}}}`, contains: "unsupported"},
 		{name: "properties shape", parameters: `- {name: q, in: query, style: form, explode: false, schema: {type: object, properties: []}}`, contains: "properties"},
 		{name: "property typeless", parameters: `- {name: q, in: query, style: form, explode: false, schema: {type: object, properties: {x: {allOf: [{type: string}]}}}}`, contains: "direct type"},
@@ -412,6 +479,18 @@ func deepParameter(properties string) string {
         additionalProperties: false
         properties:
           ` + properties
+}
+
+func bracketObjectParameter(name string, style string, explode bool, property string) string {
+	return fmt.Sprintf(`name: %q
+      in: query
+      style: %s
+      explode: %t
+      schema:
+        type: object
+        additionalProperties: false
+        properties:
+          %q: {type: string}`, name, style, explode, property)
 }
 
 func mapKeys[V any](values map[string]V) []string {

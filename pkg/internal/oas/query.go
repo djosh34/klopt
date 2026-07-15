@@ -126,5 +126,14 @@ func parameterObjectIdentity(parameter LocatedSchema) (parameterIdentity, error)
 		return parameterIdentity{}, fmt.Errorf("parameter at %s in must be a non-empty string", parameter.Pointer)
 	}
 
+	switch identity.location {
+	case "query", "header", "path", "cookie":
+	default:
+		return parameterIdentity{}, fmt.Errorf(
+			"parameter at %s in must be one of query, header, path, or cookie",
+			parameter.Pointer,
+		)
+	}
+
 	return identity, nil
 }

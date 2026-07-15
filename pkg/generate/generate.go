@@ -56,7 +56,7 @@ func isSafeOperationIdentifier(operationID string) bool {
 
 	switch operationID {
 	case "byte", "error", "errors", "json", "jsonvalue", "openAPI", "regexp", "string", "testing",
-		"testgenerator", "TestValidations", "true", "validation", "validations":
+		"testgenerator", "TestValidations", "true", "validation", "validations", "queryDecoders", "mustQueryDecoder":
 		return false
 	default:
 		return true

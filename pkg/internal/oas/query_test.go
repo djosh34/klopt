@@ -66,6 +66,8 @@ func TestParseRejectsMalformedParameterListsAndIdentities(t *testing.T) {
 		{name: "parameter scalar", opParams: `[1]`, contains: "must be an object"},
 		{name: "name absent", opParams: `[{in: query, schema: {type: string}}]`, contains: "name must be"},
 		{name: "in absent", opParams: `[{name: q, schema: {type: string}}]`, contains: "in must be"},
+		{name: "in invalid", opParams: `[{name: q, in: matrix, schema: {type: string}}]`, contains: "in must be one of"},
+		{name: "in wrong shape", opParams: `[{name: q, in: 1, schema: {type: string}}]`, contains: "in must be"},
 	}
 
 	for _, test := range tests {

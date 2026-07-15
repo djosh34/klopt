@@ -242,6 +242,164 @@ func TestGeneratedQueryDecoder(t *testing.T) {
 	require.NoError(t, err, string(result))
 }
 
+// TestGeneratedQueryDecoderMatchesRuntimeForEveryWireKind checks generated Decode parity for the full style matrix.
+//
+//nolint:funlen // The embedded OpenAPI document keeps every wire case visible beside its generated-package probe.
+func TestGeneratedQueryDecoderMatchesRuntimeForEveryWireKind(t *testing.T) {
+	t.Parallel()
+
+	repo := repoRoot(t)
+	output, err := os.MkdirTemp(filepath.Join(repo, "pkg"), "generate-query-parity-fixture-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(output)) })
+
+	spec := []byte(`openapi: 3.0.3
+paths:
+  /primitive:
+    get:
+      operationId: primitive
+      parameters:
+        - {name: q, in: query, schema: {type: string}}
+  /form-array-repeated:
+    get:
+      operationId: formArrayRepeated
+      parameters:
+        - {name: q, in: query, schema: {type: array, items: {type: string}}}
+  /form-array-delimited:
+    get:
+      operationId: formArrayDelimited
+      parameters:
+        - {name: q, in: query, explode: false, schema: {type: array, items: {type: string}}}
+  /space-array:
+    get:
+      operationId: spaceArray
+      parameters:
+        - {name: q, in: query, style: spaceDelimited, explode: false, schema: {type: array, items: {type: string}}}
+  /pipe-array:
+    get:
+      operationId: pipeArray
+      parameters:
+        - {name: q, in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: string}}}
+  /form-object-named:
+    get:
+      operationId: formObjectNamed
+      parameters:
+        - name: q
+          in: query
+          explode: false
+          schema: {type: object, additionalProperties: false, properties: {x: {type: string}}}
+  /form-object-exploded:
+    get:
+      operationId: formObjectExploded
+      parameters:
+        - {name: q, in: query, schema: {type: object, additionalProperties: false, properties: {x: {type: string}}}}
+  /space-object:
+    get:
+      operationId: spaceObject
+      parameters:
+        - name: q
+          in: query
+          style: spaceDelimited
+          explode: false
+          schema: {type: object, additionalProperties: false, properties: {x: {type: string}}}
+  /pipe-object:
+    get:
+      operationId: pipeObject
+      parameters:
+        - name: q
+          in: query
+          style: pipeDelimited
+          explode: false
+          schema: {type: object, additionalProperties: false, properties: {x: {type: string}}}
+  /deep-object:
+    get:
+      operationId: deepObject
+      parameters:
+        - name: filter
+          in: query
+          style: deepObject
+          explode: true
+          schema: {type: object, additionalProperties: false, properties: {x: {type: string}}}
+  /deep-array:
+    get:
+      operationId: deepArray
+      parameters:
+        - name: filter
+          in: query
+          style: deepObject
+          explode: true
+          schema:
+            type: object
+            additionalProperties: false
+            properties: {x: {type: array, items: {type: string}}}
+  /json-content:
+    get:
+      operationId: jsonContent
+      parameters:
+        - {name: q, in: query, content: {application/json: {schema: {type: object, properties: {x: {type: boolean}}}}}}
+`)
+	require.NoError(t, Generate(output, "generatequeryparityfixture", spec))
+
+	probe := []byte(`package generatequeryparityfixture
+
+import (
+	"fmt"
+	"net/url"
+	"testing"
+
+	"github.com/djosh34/decode_and_validate_generator/pkg/validation"
+)
+
+func TestGeneratedRuntimeParity(t *testing.T) {
+	_, runtimeDecoders, err := validation.Parse(openAPI)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		operationID string
+		rawQuery    string
+		expected    string
+	}{
+		{operationID: "primitive", rawQuery: "q=value", expected: "{\"q\":\"value\"}"},
+		{operationID: "formArrayRepeated", rawQuery: "q=a&q=b", expected: "{\"q\":[\"a\",\"b\"]}"},
+		{operationID: "formArrayDelimited", rawQuery: "q=a,b", expected: "{\"q\":[\"a\",\"b\"]}"},
+		{operationID: "spaceArray", rawQuery: "q=a+b", expected: "{\"q\":[\"a\",\"b\"]}"},
+		{operationID: "pipeArray", rawQuery: "q=a|b", expected: "{\"q\":[\"a\",\"b\"]}"},
+		{operationID: "formObjectNamed", rawQuery: "q=x,a", expected: "{\"q\":{\"x\":\"a\"}}"},
+		{operationID: "formObjectExploded", rawQuery: "x=a", expected: "{\"q\":{\"x\":\"a\"}}"},
+		{operationID: "spaceObject", rawQuery: "q=x+a", expected: "{\"q\":{\"x\":\"a\"}}"},
+		{operationID: "pipeObject", rawQuery: "q=x|a", expected: "{\"q\":{\"x\":\"a\"}}"},
+		{operationID: "deepObject", rawQuery: "filter[x]=a", expected: "{\"filter\":{\"x\":\"a\"}}"},
+		{operationID: "deepArray", rawQuery: "filter[x]=a&filter%5Bx%5D=b", expected: "{\"filter\":{\"x\":[\"a\",\"b\"]}}"},
+		{operationID: "jsonContent", rawQuery: "q=%7B%22x%22%3Atrue%7D", expected: "{\"q\":{\"x\":true}}"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.operationID, func(t *testing.T) {
+			input := &url.URL{RawQuery: test.rawQuery}
+			generated, generatedErr := queryDecoders[test.operationID].Decode(input)
+			runtime, runtimeErr := runtimeDecoders[test.operationID].Decode(input)
+			if fmt.Sprint(generatedErr) != fmt.Sprint(runtimeErr) {
+				t.Fatalf("error mismatch: generated %v runtime %v", generatedErr, runtimeErr)
+			}
+			if string(generated) != string(runtime) || string(generated) != test.expected {
+				t.Fatalf("result mismatch: generated %s runtime %s expected %s", generated, runtime, test.expected)
+			}
+		})
+	}
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(output, "probe_test.go"), probe, 0o644))
+
+	command := exec.CommandContext(
+		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "TestGeneratedRuntimeParity",
+	)
+	command.Dir = repo
+	result, err := command.CombinedOutput()
+	require.NoError(t, err, string(result))
+}
+
 // TestGenerateRejectsUnsafeOperationIdentifiers checks generated package-scope name conflicts.
 func TestGenerateRejectsUnsafeOperationIdentifiers(t *testing.T) {
 	t.Parallel()
@@ -252,6 +410,8 @@ func TestGenerateRejectsUnsafeOperationIdentifiers(t *testing.T) {
 		"_",
 		"validation",
 		"openAPI",
+		"queryDecoders",
+		"mustQueryDecoder",
 		"TestValidations",
 		"request/path",
 		"type",
