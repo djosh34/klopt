@@ -388,6 +388,13 @@ func TestParseRejectsRecursiveSchemas(t *testing.T) {
 				{"$ref":"#/components/schemas/Loop"}
 			]}}}`,
 		},
+		{
+			name: "mutual",
+			components: `,"components":{"schemas":{
+				"Loop":{"type":"object","properties":{"other":{"$ref":"#/components/schemas/Other"}}},
+				"Other":{"type":"object","properties":{"loop":{"$ref":"#/components/schemas/Loop"}}}
+			}}`,
+		},
 	}
 
 	for _, test := range tests {

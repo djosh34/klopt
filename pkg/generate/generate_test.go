@@ -127,7 +127,7 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 	require.NotContains(t, generatedSource, "func")
 	require.NotContains(t, generatedSource, "nodes :=")
 	require.NotContains(t, generatedSource, ".Validation =")
-	require.Equal(t, 3, strings.Count(generatedSource, " = "))
+	require.Equal(t, 3, strings.Count(generatedSource, "\nvar "))
 	require.Less(
 		t,
 		strings.Index(generatedSource, "var alphaRequest"),
