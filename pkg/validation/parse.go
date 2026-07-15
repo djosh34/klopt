@@ -16,14 +16,16 @@ import (
 	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
 )
 
-// Parse compiles every JSON request-body schema in one OpenAPI document.
-func Parse(spec []byte) (map[string]*Validation, error) {
+// Parse compiles every JSON request-body validation and query decoder in one OpenAPI document.
+func Parse(spec []byte) (map[string]*Validation, map[string]*QueryDecoder, error) {
 	sources, err := oas.Parse(spec)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	parsed := make(map[string]*Validation, len(sources))
+	validations := make(map[string]*Validation, len(sources))
+
+	queryDecoders := make(map[string]*QueryDecoder, len(sources))
 	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
 		source := sources[operationID]
 		compiler := schemaCompiler{
@@ -32,16 +34,27 @@ func Parse(spec []byte) (map[string]*Validation, error) {
 			active:   make(map[string]struct{}),
 		}
 
-		root, err := compiler.compile(source.RequestSchema)
-		if err != nil {
-			return nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
+		if len(source.RequestSchema.Raw) != 0 {
+			root, err := compiler.compile(source.RequestSchema)
+			if err != nil {
+				return nil, nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
+			}
+
+			root.BodyRequired = source.RequestBodyRequired
+			validations[operationID] = root
 		}
 
-		root.BodyRequired = source.RequestBodyRequired
-		parsed[operationID] = root
+		if len(source.QueryParameters) != 0 {
+			decoder, err := compileQueryDecoder(operationID, source, &compiler)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			queryDecoders[operationID] = decoder
+		}
 	}
 
-	return parsed, nil
+	return validations, queryDecoders, nil
 }
 
 // schemaCompiler owns compilation state for one operation.

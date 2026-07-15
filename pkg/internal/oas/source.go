@@ -21,6 +21,7 @@ type Source struct {
 	Document            json.RawMessage
 	RequestSchema       LocatedSchema
 	RequestBodyRequired bool
+	QueryParameters     []LocatedSchema
 }
 
 // LocatedSchema is raw JSON together with its canonical document pointer.
@@ -206,7 +207,7 @@ func (source Source) collectRequests(pathsRaw json.RawMessage) (map[string]Sourc
 		}
 
 		for _, operation := range operations {
-			operationSource, operationID, included, err := source.requestSource(operation.Schema)
+			operationSource, operationID, included, err := source.requestSource(resolved, operation.Schema)
 			if err != nil {
 				return nil, err
 			}
@@ -237,8 +238,8 @@ func (source Source) collectRequests(pathsRaw json.RawMessage) (map[string]Sourc
 
 // requestSource returns one operation's JSON request-body source when it qualifies.
 //
-//nolint:cyclop // Each request-body field needs its own malformed-input diagnostic or skip decision.
-func (source Source) requestSource(operation LocatedSchema) (Source, string, bool, error) {
+//nolint:cyclop,nestif // Each request-body field needs its own malformed-input diagnostic or skip decision.
+func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSchema) (Source, string, bool, error) {
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(operation.Raw, &members); err != nil {
 		return Source{}, "", false, fmt.Errorf("parse operation at %s: %w", operation.Pointer, err)
@@ -262,62 +263,83 @@ func (source Source) requestSource(operation LocatedSchema) (Source, string, boo
 		operationID = ""
 	}
 
-	requestBodyRaw, hasRequestBody := members["requestBody"]
-	if !hasRequestBody {
-		return Source{}, operationID, false, nil
-	}
-
-	requestBody := LocatedSchema{Raw: requestBodyRaw, Pointer: appendPointer(operation.Pointer, "requestBody")}
-
-	requestBody, resolveErr := source.Resolve(requestBody)
-	if resolveErr != nil {
-		return Source{}, "", false, fmt.Errorf("operation at %s request body: %w", operation.Pointer, resolveErr)
-	}
-
-	var body map[string]json.RawMessage
-	if unmarshalErr := json.Unmarshal(requestBody.Raw, &body); unmarshalErr != nil {
-		return Source{}, "", false, fmt.Errorf(
-			"parse operation at %s request body: %w",
-			operation.Pointer,
-			unmarshalErr,
-		)
-	}
-
-	if body == nil {
-		return Source{}, "", false, fmt.Errorf("parse operation at %s request body: must be an object", operation.Pointer)
-	}
-
-	required, err := optionalBoolean(body["required"], "required")
+	queryParameters, err := source.mergedQueryParameters(pathItem, operation)
 	if err != nil {
-		return Source{}, "", false, fmt.Errorf("parse operation at %s request body: %w", operation.Pointer, err)
+		return Source{}, "", false, fmt.Errorf("operation at %s query parameters: %w", operation.Pointer, err)
 	}
 
-	contentRaw, hasContent := body["content"]
-	if !hasContent {
-		return Source{}, "", false, fmt.Errorf(
-			"parse operation at %s request body: content does not exist",
-			operation.Pointer,
-		)
+	result := Source{Document: source.Document, QueryParameters: queryParameters}
+
+	requestBodyRaw, hasRequestBody := members["requestBody"]
+	if hasRequestBody {
+		requestBody := LocatedSchema{Raw: requestBodyRaw, Pointer: appendPointer(operation.Pointer, "requestBody")}
+
+		requestBody, resolveErr := source.Resolve(requestBody)
+		if resolveErr != nil {
+			return Source{}, "", false, fmt.Errorf("operation at %s request body: %w", operation.Pointer, resolveErr)
+		}
+
+		var body map[string]json.RawMessage
+		if unmarshalErr := json.Unmarshal(requestBody.Raw, &body); unmarshalErr != nil {
+			return Source{}, "", false, fmt.Errorf(
+				"parse operation at %s request body: %w",
+				operation.Pointer,
+				unmarshalErr,
+			)
+		}
+
+		if body == nil {
+			return Source{}, "", false, fmt.Errorf("parse operation at %s request body: must be an object", operation.Pointer)
+		}
+
+		required, requiredErr := optionalBoolean(body["required"], "required")
+		if requiredErr != nil {
+			return Source{}, "", false, fmt.Errorf("parse operation at %s request body: %w", operation.Pointer, requiredErr)
+		}
+
+		contentRaw, hasContent := body["content"]
+		if !hasContent {
+			return Source{}, "", false, fmt.Errorf(
+				"parse operation at %s request body: content does not exist",
+				operation.Pointer,
+			)
+		}
+
+		var content map[string]json.RawMessage
+		if unmarshalErr := json.Unmarshal(contentRaw, &content); unmarshalErr != nil {
+			return Source{}, "", false, fmt.Errorf(
+				"parse operation at %s request body content: %w",
+				operation.Pointer,
+				unmarshalErr,
+			)
+		}
+
+		if content == nil {
+			return Source{}, "", false, fmt.Errorf(
+				"parse operation at %s request body: content must be an object",
+				operation.Pointer,
+			)
+		}
+
+		mediaTypeName, mediaTypeRaw, ok := applicationJSONMediaType(content)
+		if ok {
+			mediaType := LocatedSchema{
+				Raw:     append(json.RawMessage(nil), mediaTypeRaw...),
+				Pointer: appendPointer(requestBody.Pointer, "content", mediaTypeName),
+			}
+
+			schema, schemaErr := source.requiredChild(mediaType, "schema")
+			if schemaErr != nil {
+				return Source{}, "", false, fmt.Errorf("operationId %q application/json schema: %w", operationID, schemaErr)
+			}
+
+			result.RequestSchema = schema
+			result.RequestBodyRequired = required
+		}
 	}
 
-	var content map[string]json.RawMessage
-	if unmarshalErr := json.Unmarshal(contentRaw, &content); unmarshalErr != nil {
-		return Source{}, "", false, fmt.Errorf(
-			"parse operation at %s request body content: %w",
-			operation.Pointer,
-			unmarshalErr,
-		)
-	}
-
-	if content == nil {
-		return Source{}, "", false, fmt.Errorf(
-			"parse operation at %s request body: content must be an object",
-			operation.Pointer,
-		)
-	}
-
-	mediaTypeName, mediaTypeRaw, ok := applicationJSONMediaType(content)
-	if !ok {
+	included := len(result.RequestSchema.Raw) != 0 || len(result.QueryParameters) != 0
+	if !included {
 		return Source{}, operationID, false, nil
 	}
 
@@ -337,21 +359,7 @@ func (source Source) requestSource(operation LocatedSchema) (Source, string, boo
 		return Source{}, "", false, fmt.Errorf("operation at %s: operationId must be a non-empty string", operation.Pointer)
 	}
 
-	mediaType := LocatedSchema{
-		Raw:     append(json.RawMessage(nil), mediaTypeRaw...),
-		Pointer: appendPointer(requestBody.Pointer, "content", mediaTypeName),
-	}
-
-	schema, err := source.requiredChild(mediaType, "schema")
-	if err != nil {
-		return Source{}, "", false, fmt.Errorf("operationId %q application/json schema: %w", operationID, err)
-	}
-
-	return Source{
-		Document:            source.Document,
-		RequestSchema:       schema,
-		RequestBodyRequired: required,
-	}, operationID, true, nil
+	return result, operationID, true, nil
 }
 
 // optionalBoolean decodes an absent-or-boolean field without accepting null.

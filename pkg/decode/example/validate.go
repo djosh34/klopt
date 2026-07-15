@@ -1,4 +1,4 @@
-// Package example contains generated request-body validations.
+// Package example contains generated request-body validations and query decoders.
 //
 //nolint:dupl,godoclint,lll // Generated validation trees use operation IDs and may contain repeated schemas.
 package example

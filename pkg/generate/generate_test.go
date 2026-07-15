@@ -189,6 +189,59 @@ func TestGeneratedValidation(t *testing.T) {
 	require.NoError(t, err, string(result))
 }
 
+// TestGenerateWritesCompiledQueryDecoder verifies generated metadata avoids runtime spec compilation.
+func TestGenerateWritesCompiledQueryDecoder(t *testing.T) {
+	t.Parallel()
+
+	repo := repoRoot(t)
+	output, err := os.MkdirTemp(filepath.Join(repo, "pkg"), "generate-query-fixture-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(output)) })
+
+	spec := []byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: listItems
+      parameters:
+        - {name: tags, in: query, schema: {type: array, items: {type: string}}}
+        - {name: limit, in: query, schema: {type: integer, default: 25}}
+`)
+	require.NoError(t, Generate(output, "generatequeryfixture", spec))
+
+	generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(generated), "QueryDecoderDefinition")
+	require.Contains(t, string(generated), "NewQueryDecoderFromGenerated")
+	require.NotContains(t, string(generated), "validation.Parse")
+
+	probe := []byte(`package generatequeryfixture
+
+import (
+	"net/url"
+	"testing"
+)
+
+func TestGeneratedQueryDecoder(t *testing.T) {
+	got, err := queryDecoders["listItems"].Decode(&url.URL{RawQuery: "tags=go&tags=api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "{\"tags\":[\"go\",\"api\"],\"limit\":25}" {
+		t.Fatalf("got %s", got)
+	}
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(output, "probe_test.go"), probe, 0o644))
+
+	command := exec.CommandContext(
+		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "TestGeneratedQueryDecoder",
+	)
+	command.Dir = repo
+	result, err := command.CombinedOutput()
+	require.NoError(t, err, string(result))
+}
+
 // TestGenerateRejectsUnsafeOperationIdentifiers checks generated package-scope name conflicts.
 func TestGenerateRejectsUnsafeOperationIdentifiers(t *testing.T) {
 	t.Parallel()

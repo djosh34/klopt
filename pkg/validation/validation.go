@@ -1,5 +1,4 @@
-// Package validation parses one OpenAPI 3.0.3 JSON request schema and validates
-// raw JSON request bodies against an immutable compiled graph.
+// Package validation compiles OpenAPI 3.0.3 request-body validations and query decoders.
 //
 // Parse is the OpenAPI constructor. Callers may also construct a compiled graph
 // directly by populating every exported textual and exact field consistently.
