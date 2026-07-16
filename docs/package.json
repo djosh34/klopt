@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
+    "dev": "astro dev --open /openapi-validate/",
     "build": "astro build"
   },
   "dependencies": {

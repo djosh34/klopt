@@ -23,4 +23,4 @@ regen: ## Regenerate the example validation fixture
 	REGENERATE=1 go test ./pkg/generate -count=1 -run '^TestRegenerateExample$$'
 
 docs: ## Preview docs
-	npm --prefix docs install && npm --prefix docs run dev
+	npm --prefix docs ci && npm --prefix docs run dev
