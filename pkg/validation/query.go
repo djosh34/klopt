@@ -63,6 +63,8 @@ type queryClaim struct {
 
 // QueryDecoderDefinition is the generation-only compiled form of a QueryDecoder.
 // Callers should normally use Parse instead.
+// Validation pointers in definitions passed to NewQueryDecoderFromGenerated or
+// returned by Definition are shared with the decoder.
 // Do not mutate a definition while a decoder sharing it is in use;
 // concurrent mutation has undefined behavior.
 type QueryDecoderDefinition struct {
@@ -91,6 +93,7 @@ type QueryPropertyDefinition struct {
 }
 
 // Definition returns the generation-only compiled form of decoder.
+// Its Validation pointers remain shared; see QueryDecoderDefinition.
 func (decoder *QueryDecoder) Definition() QueryDecoderDefinition {
 	definition := QueryDecoderDefinition{
 		OperationID: decoder.operationID,
@@ -117,7 +120,7 @@ func (decoder *QueryDecoder) Definition() QueryDecoderDefinition {
 
 // NewQueryDecoderFromGenerated restores a generator-produced decoder definition.
 //
-//nolint:funcorder // The snapshot method sits beside its public definition types above this restoring constructor.
+//nolint:funcorder // The definition method sits beside its public types above this restoring constructor.
 func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDecoder, error) {
 	parameters := make([]queryParameter, len(definition.Parameters))
 	for index, compiled := range definition.Parameters {
