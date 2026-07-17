@@ -16,22 +16,18 @@ import (
 func TestCompileSuiteKeepsOracleCasesOccurrenceScoped(t *testing.T) {
 	t.Parallel()
 
-	t.Run("same occurrence enum certifies opaque and modeled siblings without validation", func(t *testing.T) {
+	t.Run("same occurrence enum cannot override a pattern", func(t *testing.T) {
 		t.Parallel()
 
 		compiler := NewCompiler(parseSchemaSource(t, `type: string
 pattern: '^never$'
 format: email
 enum: [trusted]`, "", "create"))
-		compiled, err := compiler.CompileSuite(MustHaveAllXValidCases)
-		require.NoError(t, err)
-
-		checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
-			require.JSONEq(t, `"trusted"`, string(body))
-		})
+		_, err := compiler.CompileSuite(MustHaveAllXValidCases)
+		require.ErrorContains(t, err, "unconstructible")
 	})
 
-	t.Run("local enum and valid examples are equivalent case sources", func(t *testing.T) {
+	t.Run("local enum and valid examples cannot override a pattern", func(t *testing.T) {
 		t.Parallel()
 
 		compiler := NewCompiler(parseSchemaSource(t, `allOf:
@@ -42,12 +38,8 @@ enum: [trusted]`, "", "create"))
   - type: string
     format: email
     x-valid-examples: [from-example]`, "", "create"))
-		compiled, err := compiler.CompileSuite(MustHaveAllXValidCases)
-		require.NoError(t, err)
-
-		checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
-			require.JSONEq(t, `"from-example"`, string(body))
-		})
+		_, err := compiler.CompileSuite(MustHaveAllXValidCases)
+		require.ErrorContains(t, err, "unconstructible")
 	})
 
 	t.Run("separate opaque branches require their own shared evidence", func(t *testing.T) {
@@ -59,9 +51,6 @@ enum: [trusted]`, "", "create"))
     x-valid-examples: [A1]
   - format: email`,
 			`allOf:
-  - enum: [A1]
-  - pattern: '^A'`,
-			`allOf:
   - pattern: '^A'
     x-valid-examples: [A1]
   - format: email
@@ -70,6 +59,11 @@ enum: [trusted]`, "", "create"))
 			_, err := NewCompiler(parseSchemaSource(t, schema, "", "create")).CompileSuite(MustHaveAllXValidCases)
 			require.ErrorContains(t, err, "unconstructible")
 		}
+
+		_, err := NewCompiler(parseSchemaSource(t, `allOf:
+  - enum: [A1]
+  - pattern: '^A'`, "", "create")).CompileSuite(MustHaveAllXValidCases)
+		require.NoError(t, err)
 	})
 
 	t.Run("three branch intersection is semantic and order independent", func(t *testing.T) {
@@ -277,10 +271,8 @@ func TestCompileSuiteIgnoresTrustedPatternStrings(t *testing.T) {
 minLength: 10
 pattern: '^never$'
 x-valid-examples: [short]`, "", "create"))
-		compiled, err := compiler.CompileSuite(MustHaveAllXValidCases)
-		require.NoError(t, err)
-
-		require.False(t, hasAcceptedCase(compiled.Cases))
+		_, err := compiler.CompileSuite(MustHaveAllXValidCases)
+		require.ErrorContains(t, err, "no trusted valid example")
 	})
 
 	t.Run("separate modeled sibling filters", func(t *testing.T) {
@@ -298,10 +290,9 @@ x-valid-examples: [short]`, "", "create"))
 		require.True(t, compiler.rootUse.examples.ValidDeclared)
 		require.Empty(t, compiler.rootUse.examples.Valid)
 
-		compiled, err := NewCompiler(parseSchemaSource(t, schema, "", "create")).
+		_, err = NewCompiler(parseSchemaSource(t, schema, "", "create")).
 			CompileSuite(MustHaveAllXValidCases)
-		require.NoError(t, err)
-		require.False(t, hasAcceptedCase(compiled.Cases))
+		require.ErrorContains(t, err, "no trusted valid example")
 	})
 }
 
@@ -606,8 +597,8 @@ properties:
 	require.False(t, generationExamplesContain(second.examples.Valid, mustJSONValue(t, `"first-only"`)))
 }
 
-// TestCompileSuiteUnionsLocalEnumAndValidExamples verifies both local oracle
-// keywords contribute exact accepted cases before a later occurrence intersection.
+// TestCompileSuiteRejectsPatternEnumOracleContradictions verifies trusted
+// strings cannot override the constructive pattern-and-enum conjunction.
 func TestCompileSuiteUnionsLocalEnumAndValidExamples(t *testing.T) {
 	t.Parallel()
 
@@ -619,24 +610,8 @@ func TestCompileSuiteUnionsLocalEnumAndValidExamples(t *testing.T) {
   - type: string
     pattern: '^second$'
     x-valid-examples: [shared]`, "", "create"))
-	compiled, err := compiler.CompileSuite(MustHaveAllXValidCases)
-	require.NoError(t, err)
-
-	checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
-		require.JSONEq(t, `"shared"`, string(body))
-	})
-
-	foundSource := false
-
-	for _, plannedCase := range compiled.Cases {
-		if plannedCase.Expect == ExpectAccepted && plannedCase.Source.Keyword == "x-valid-examples" {
-			require.Contains(t, plannedCase.Source.Pointer, "/allOf/0")
-
-			foundSource = true
-		}
-	}
-
-	require.True(t, foundSource)
+	_, err := compiler.CompileSuite(MustHaveAllXValidCases)
+	require.ErrorContains(t, err, "no trusted valid example")
 }
 
 // TestCompilerRejectsInvalidOraclePlacementAndOverlap verifies the extension contract is
@@ -1174,7 +1149,7 @@ func TestCompilerDoesNotUseEnumBranchExamplesAsPatternProof(t *testing.T) {
 	source := parseSchemaSource(t, `allOf:
   - enum: [bad]
   - pattern: '^ok$'`, "", "create")
-	_, err := NewCompiler(source).Compile()
+	_, err := NewCompiler(source).CompileSuite()
 	require.ErrorContains(t, err, "unconstructible")
 }
 

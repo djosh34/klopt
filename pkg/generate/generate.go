@@ -2,6 +2,7 @@
 package generate
 
 import (
+	"errors"
 	"fmt"
 	"go/token"
 	"os"
@@ -25,6 +26,10 @@ func Generate(
 	openAPI []byte,
 	patternOption patternvalidator.Option,
 ) error {
+	if patternOption == nil {
+		return errors.New("generate: nil pattern option")
+	}
+
 	parsed, queryDecoders, err := validation.Parse(openAPI, patternOption)
 	if err != nil {
 		return err

@@ -175,6 +175,8 @@ func (state *parser) parseAtom() (NodeID, error) {
 		return state.parseEscapeNode()
 	case ')':
 		return 0, syntaxError(start, "unmatched closing parenthesis")
+	case ']':
+		return 0, syntaxError(start, "unescaped closing bracket is not allowed here")
 	}
 
 	character, size := utf8.DecodeRuneInString(state.source[state.position:])
@@ -297,12 +299,15 @@ func (state *parser) parseEscapeNode() (NodeID, error) {
 
 		return state.parseHexEscapeNode(start, 4)
 	case 'c':
-		if state.position == len(state.source) || state.source[state.position] < 'A' ||
-			state.source[state.position] > 'Z' {
-			return 0, syntaxError(start, "control escape must be followed by A through Z")
+		if state.position == len(state.source) {
+			return 0, syntaxError(start, "control escape must be followed by a letter")
 		}
 
-		value := rune(state.source[state.position] - 'A' + 1)
+		value, ok := controlEscapeValue(state.source[state.position])
+		if !ok {
+			return 0, syntaxError(start, "control escape must be followed by a letter")
+		}
+
 		state.position++
 
 		return state.escapeLiteralNode(start, value)
@@ -506,12 +511,15 @@ func (state *parser) parseClassAtom(first bool) (classAtom, error) {
 
 		return state.checkedClassEscape(start, value)
 	case 'c':
-		if state.position == len(state.source) || state.source[state.position] < 'A' ||
-			state.source[state.position] > 'Z' {
-			return classAtom{}, syntaxError(start, "control escape must be followed by A through Z")
+		if state.position == len(state.source) {
+			return classAtom{}, syntaxError(start, "control escape must be followed by a letter")
 		}
 
-		value := rune(state.source[state.position] - 'A' + 1)
+		value, ok := controlEscapeValue(state.source[state.position])
+		if !ok {
+			return classAtom{}, syntaxError(start, "control escape must be followed by a letter")
+		}
+
 		state.position++
 
 		return singletonClassAtom(value, start, state.position), nil
@@ -537,6 +545,17 @@ func (state *parser) parseClassAtom(first bool) (classAtom, error) {
 	}
 
 	return singletonClassAtom(character, start, state.position), nil
+}
+
+func controlEscapeValue(value byte) (rune, bool) {
+	switch {
+	case value >= 'A' && value <= 'Z':
+		return rune(value - 'A' + 1), true
+	case value >= 'a' && value <= 'z':
+		return rune(value - 'a' + 1), true
+	default:
+		return 0, false
+	}
 }
 
 func (state *parser) checkedClassEscape(start int, value uint64) (classAtom, error) {

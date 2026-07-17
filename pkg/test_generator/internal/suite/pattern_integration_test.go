@@ -223,6 +223,52 @@ allOf:
 	}
 }
 
+// TestPatternSuiteIntersectsEnumCandidatesAndKeepsPatternProvenance covers finite siblings.
+func TestPatternSuiteIntersectsEnumCandidatesAndKeepsPatternProvenance(t *testing.T) {
+	t.Parallel()
+
+	for _, schema := range []string{
+		"type: string\npattern: '^A$'\nenum: [A, b]",
+		"type: string\npattern: '^A$'\nallOf:\n  - enum: [A, b]",
+		"type: string\nenum: [A, b]\nallOf:\n  - pattern: '^A$'",
+	} {
+		compiler := NewCompiler(parseSchemaSource(t, schema, "", "create"))
+		compiled, err := compiler.CompileSuite()
+		require.NoError(t, err)
+		require.Len(t, compiler.rootUse.patterns, 1)
+
+		accepted := 0
+		rejected := 0
+
+		for _, plannedCase := range compiled.Cases {
+			for seed := range 10 {
+				value := plannedCase.Generator.Example(seed)
+				if value.Kind != jsonvalue.KindString {
+					continue
+				}
+
+				if plannedCase.Expect == ExpectAccepted {
+					accepted++
+
+					require.Equal(t, "A", value.String)
+				} else if plannedCase.Source.Keyword == "pattern" {
+					rejected++
+
+					require.Equal(t, "b", value.String)
+				}
+			}
+		}
+
+		require.Positive(t, accepted)
+		require.Positive(t, rejected)
+	}
+
+	compiler := NewCompiler(parseSchemaSource(t, "type: string\npattern: '^A$'\nenum: [b]", "", "create"))
+	_, err := compiler.CompileSuite()
+	require.ErrorContains(t, err, "no trusted valid example")
+	require.Len(t, compiler.rootUse.patterns, 1)
+}
+
 // TestPatternSuiteHandlesImplicationDisjointAndUniversalLanguages covers reachability edge cases.
 func TestPatternSuiteHandlesImplicationDisjointAndUniversalLanguages(t *testing.T) {
 	t.Parallel()
@@ -258,20 +304,16 @@ allOf:
   - pattern: '^a$'
   - pattern: '^b$'
 `, "", "create"))
-		compiled, err := compiler.CompileSuite()
-		require.NoError(t, err)
-		require.False(t, hasAcceptedCase(compiled.Cases))
-		require.Equal(t, 1, countCases(compiled.Unavailable, ExpectAccepted, ""))
+		_, err := compiler.CompileSuite()
+		require.ErrorContains(t, err, "no trusted valid example")
+	})
 
-		patternCases := 0
+	t.Run("non-ASCII-only accepted language", func(t *testing.T) {
+		t.Parallel()
 
-		for _, plannedCase := range compiled.Cases {
-			if plannedCase.Expect == ExpectRejected && plannedCase.Source.Keyword == "pattern" {
-				patternCases++
-			}
-		}
-
-		require.Equal(t, 2, patternCases)
+		compiler := NewCompiler(parseSchemaSource(t, "type: string\npattern: '^é$'", "", "create"))
+		_, err := compiler.CompileSuite()
+		require.ErrorContains(t, err, "no trusted valid example")
 	})
 
 	t.Run("universal", func(t *testing.T) {

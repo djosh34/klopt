@@ -553,8 +553,9 @@ func TestPatternSettings(t *testing.T) {
 func TestGenerateRejectsNilPatternOptionBeforeWriting(t *testing.T) {
 	t.Parallel()
 
-	output := filepath.Join(t.TempDir(), "output")
-	err := Generate(output, "example", []byte(`openapi: 3.0.3
+	for _, schema := range []string{"{type: string, pattern: a}", "{type: string}"} {
+		output := filepath.Join(t.TempDir(), "output")
+		err := Generate(output, "example", []byte(`openapi: 3.0.3
 info: {title: nil option, version: "1"}
 paths:
   /request:
@@ -563,12 +564,13 @@ paths:
       requestBody:
         content:
           application/json:
-            schema: {type: string, pattern: a}
+            schema: `+schema+`
 `), nil)
-	require.ErrorContains(t, err, "nil option")
+		require.ErrorContains(t, err, "nil pattern option")
 
-	_, statErr := os.Stat(output)
-	require.ErrorIs(t, statErr, os.ErrNotExist)
+		_, statErr := os.Stat(output)
+		require.ErrorIs(t, statErr, os.ErrNotExist)
+	}
 }
 
 // TestGenerateWritesEmptyValidationMap verifies documents without JSON request bodies still generate valid tests.

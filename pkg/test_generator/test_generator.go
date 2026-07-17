@@ -40,6 +40,10 @@ func CheckJSONRequestBodies(
 		t.Fatal("validator is nil")
 	}
 
+	if patternOption == nil {
+		t.Fatal("pattern option is nil")
+	}
+
 	sources, err := oas.Parse(openAPIYAML)
 	if err != nil {
 		t.Fatal(err)

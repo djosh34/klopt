@@ -142,6 +142,39 @@ func (set *Set) Strings(
 	return graph.generator(set.limits)
 }
 
+// Matches reports whether one ASCII value satisfies the requested membership
+// vector. Non-ASCII values are outside this generator's language.
+func (set *Set) Matches(value string, wantMatches []bool) (bool, error) {
+	if set == nil {
+		return false, errors.New("patterngenerator: nil compiled pattern set")
+	}
+
+	if len(wantMatches) != len(set.sources) {
+		return false, fmt.Errorf(
+			"patterngenerator: got %d signed requirements for %d compiled patterns",
+			len(wantMatches),
+			len(set.sources),
+		)
+	}
+
+	if firstNonASCII(value) >= 0 {
+		return false, nil
+	}
+
+	for index, machine := range set.machines {
+		state := uint32(0)
+		for offset := range len(value) {
+			state = machine.states[state].transitions[value[offset]]
+		}
+
+		if machine.states[state].accepting != wantMatches[index] {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
 func stringsWithLimits(
 	requirements []Requirement,
 	minLength int,

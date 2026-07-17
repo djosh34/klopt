@@ -10,6 +10,9 @@ package patternvalidator
 import (
 	"errors"
 	"regexp"
+	regexpsyntax "regexp/syntax"
+	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/djosh34/klopt/pkg/internal/patternsyntax"
@@ -90,7 +93,9 @@ func Parse(source string, options ...Option) (*PatternValidation, error) {
 	if validation.useRE2 {
 		compiled, err := regexp.Compile(source)
 		if err != nil {
-			return nil, &ParseError{Kind: ParseErrorRawGoSyntax, Cause: err}
+			return nil, &ParseError{
+				Kind: ParseErrorRawGoSyntax, Offset: rawGoErrorOffset(source, err), Cause: err,
+			}
 		}
 
 		checks = []check{{regexp: compiled, wantMatch: true}}
@@ -155,6 +160,10 @@ func (validation *PatternValidation) Validate(value string) bool {
 		return false
 	}
 
+	if !validation.useRE2 {
+		value = encodeUTF16CodeUnits(value)
+	}
+
 	for _, compiled := range validation.checks {
 		if compiled.regexp.MatchString(value) != compiled.wantMatch {
 			return false
@@ -162,6 +171,49 @@ func (validation *PatternValidation) Validate(value string) bool {
 	}
 
 	return true
+}
+
+// encodeUTF16CodeUnits maps every ECMAScript 16-bit string element to one Go
+// regexp rune. Surrogates use a disjoint valid-rune block because Go regexp
+// cannot consume surrogate code points directly.
+func encodeUTF16CodeUnits(value string) string {
+	const (
+		firstSurrogate = 0xd800
+		lastSurrogate  = 0xdfff
+		mappedBase     = 0x10000
+	)
+
+	units := utf16.Encode([]rune(value))
+
+	encoded := make([]rune, len(units))
+	for index, unit := range units {
+		if unit >= firstSurrogate && unit <= lastSurrogate {
+			encoded[index] = mappedBase + rune(unit-firstSurrogate)
+		} else {
+			encoded[index] = rune(unit)
+		}
+	}
+
+	return string(encoded)
+}
+
+func rawGoErrorOffset(source string, err error) int {
+	var syntaxError *regexpsyntax.Error
+	if !errors.As(err, &syntaxError) {
+		return 0
+	}
+
+	if syntaxError.Code == regexpsyntax.ErrTrailingBackslash && len(source) > 0 {
+		return len(source) - 1
+	}
+
+	if syntaxError.Expr != "" {
+		if offset := strings.Index(source, syntaxError.Expr); offset >= 0 {
+			return offset
+		}
+	}
+
+	return 0
 }
 
 // RejectsNonASCII reports the effective strict-ASCII setting.

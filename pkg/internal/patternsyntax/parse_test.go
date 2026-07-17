@@ -15,9 +15,9 @@ func TestParseAcceptsClosedGrammar(t *testing.T) {
 	patterns := []string{
 		"", "|", "a|", "|a", "()", "(?:)", "(a|b)c", ".", "^a$", `\bword\B`,
 		"a*", "a+?", "a??", "a{0}", "a{2,3}?", "a{2,}",
-		`\f\n\r\t\v\0\x41\u0061\cA`, `\/\-\#\,\.\$`,
+		`\f\n\r\t\v\0\x41\u0061\cA\ca`, `\/\-\#\,\.\$`,
 		`\d\D\s\S\w\W`, "[]", "[^]", "[-a]", "[a-]", `[a-z]`,
-		`[^\d\sA-Z]`, `[\b\x41\u0062\cC]`, "[^^]",
+		`[^\d\sA-Z]`, `[\b\x41\u0062\cC\cz]`, "[^^]",
 		"^(?=a)(?!ab)a", "^(?=a|b)",
 		"é", `\é`,
 	}
@@ -46,6 +46,7 @@ func TestParseClassifiesRejectionsAtOriginalByte(t *testing.T) {
 	}{
 		{name: "dangling escape", pattern: `a\`, kind: ErrorInvalidSyntax, offset: 1},
 		{name: "unmatched group", pattern: ")", kind: ErrorInvalidSyntax, offset: 0},
+		{name: "bare closing bracket", pattern: "]", kind: ErrorInvalidSyntax, offset: 0},
 		{name: "open group", pattern: "(a", kind: ErrorInvalidSyntax, offset: 0},
 		{name: "reversed range", pattern: "[z-a]", kind: ErrorInvalidSyntax, offset: 2},
 		{name: "set endpoint", pattern: `[\d-a]`, kind: ErrorInvalidSyntax, offset: 3},

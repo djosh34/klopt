@@ -220,6 +220,32 @@ func TestDFAExactlyMatchesIndependentValidatorForAllShortASCIIValues(t *testing.
 	}
 }
 
+func TestCompiledSetMatchesSignedASCIIValues(t *testing.T) {
+	t.Parallel()
+
+	set, err := Compile([]string{"^[A-Z]+$", "^A"}, defaultPatternOption)
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		value string
+		want  []bool
+		match bool
+	}{
+		{value: "ABC", want: []bool{true, true}, match: true},
+		{value: "A1", want: []bool{false, true}, match: true},
+		{value: "BCD", want: []bool{true, false}, match: true},
+		{value: "ABC", want: []bool{false, true}},
+		{value: "É", want: []bool{false, false}},
+	} {
+		matched, matchErr := set.Matches(test.value, test.want)
+		require.NoError(t, matchErr)
+		require.Equal(t, test.match, matched)
+	}
+
+	_, err = set.Matches("ABC", []bool{true})
+	require.ErrorContains(t, err, "signed requirements")
+}
+
 func TestCertifiedProductMatchesExhaustiveShortLanguage(t *testing.T) {
 	t.Parallel()
 

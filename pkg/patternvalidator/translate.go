@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 
 	"github.com/djosh34/klopt/pkg/internal/patternsyntax"
 )
@@ -40,6 +41,7 @@ var (
 		{low: 0x20, high: 0x20},
 		{low: 0x00a0, high: 0x00a0},
 		{low: 0x1680, high: 0x1680},
+		{low: 0x180e, high: 0x180e},
 		{low: 0x2000, high: 0x200b},
 		{low: 0x2028, high: 0x2029},
 		{low: 0x202f, high: 0x202f},
@@ -163,7 +165,7 @@ func (translation *translator) writeNode(nodeID patternsyntax.NodeID) {
 			translation.writeNode(child)
 		}
 	case patternsyntax.KindLiteral:
-		translation.write(fmt.Sprintf("\\x{%x}", node.Value), node.Span)
+		translation.writeLiteral(node.Value, node.Span)
 	case patternsyntax.KindDot:
 		translation.write("[^\\r\\n\\x{2028}\\x{2029}]", node.Span)
 	case patternsyntax.KindClass:
@@ -203,6 +205,21 @@ func (translation *translator) writeNode(nodeID patternsyntax.NodeID) {
 			Cause: fmt.Errorf("unexpected lookahead node in ordinary translation"),
 		}
 	}
+}
+
+func (translation *translator) writeLiteral(value rune, span patternsyntax.Span) {
+	if value <= 0xffff {
+		translation.write(fmt.Sprintf("\\x{%x}", value), span)
+
+		return
+	}
+
+	high, low := utf16.EncodeRune(value)
+	translation.write(fmt.Sprintf("\\x{%x}\\x{%x}", mapSurrogate(high), mapSurrogate(low)), span)
+}
+
+func mapSurrogate(value rune) rune {
+	return 0x10000 + value - 0xd800
 }
 
 func (translation *translator) writeClass(node patternsyntax.Node) {

@@ -843,7 +843,7 @@ func stringCorpus() []validatorCorpusFixture {
 		{id: "escaped-dot", value: `^[0-9]{2}\.[0-9]{2}$`, valid: "\"12.34\"", invalid: "\"1234\""},
 		{id: "alternation", value: "^(red|blue)$", valid: "red", invalid: "green"},
 		{id: "letters-digits", value: "^[A-Z]{2}-[0-9]{2}$", valid: "AB-12", invalid: "ab-12"},
-		{id: "unicode", value: "^λ[0-9]$", valid: "λ7", invalid: "λ"},
+		{id: "unicode", value: "^(λ[0-9]|A)$", valid: "λ7", invalid: "λ"},
 		{id: "lowercase", value: "^[a-z]+$", valid: "word", invalid: "WORD"},
 		{id: "escaped-plus", value: "^a[+]b$", valid: "a+b", invalid: "ab"},
 		{id: "optional-suffix", value: "^item(-[0-9]+)?$", valid: "item-2", invalid: "other"},
@@ -2029,7 +2029,7 @@ components:
           type: string
           minLength: 2
           maxLength: 3
-          pattern: '^λ[0-9]$'
+          pattern: '^(λ[0-9]|AA)$'
           x-valid-examples: [λ7]
           x-invalid-examples: [λ, xx]
         email:

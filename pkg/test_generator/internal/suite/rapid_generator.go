@@ -28,6 +28,7 @@ type RapidGeneratorBuilder struct {
 	domains       *DomainRegistry
 	patternOption patternvalidator.Option
 	pattern       *patternOccurrence
+	expect        ExpectedResult
 	generators    map[generatorKey]*rapid.Generator[jsonvalue.Value]
 	patternSets   map[patternSetKey]*patterngenerator.Set
 }
@@ -150,7 +151,12 @@ func (builder *RapidGeneratorBuilder) domainGenerator(
 	useOracle bool,
 	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if generator, handled, err := occurrenceOracleGenerator(domain, use, useOracle); handled {
+	if generator, handled, err := builder.occurrenceOracleGenerator(
+		domain,
+		use,
+		useOracle,
+		evidenceUse,
+	); handled {
 		return generator, err
 	}
 
@@ -203,13 +209,14 @@ func (builder *RapidGeneratorBuilder) domainGenerator(
 }
 
 // occurrenceOracleGenerator handles finite and opaque occurrence case sets.
-func occurrenceOracleGenerator(
+func (builder *RapidGeneratorBuilder) occurrenceOracleGenerator(
 	domain Domain,
 	use *schemaUse,
 	useOracle bool,
+	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], bool, error) {
 	if domain.Enum != nil {
-		generator, err := enumGenerator(domain.Enum, use, useOracle)
+		generator, err := builder.enumGenerator(domain, use, useOracle, evidenceUse)
 
 		return generator, true, err
 	}
@@ -245,25 +252,93 @@ func generationExampleGenerator(
 }
 
 // enumGenerator samples the effective occurrence cases without changing Domain identity.
-func enumGenerator(
-	enum *EnumSet,
+//
+//nolint:cyclop // Evidence, finite patterns, and empty intersections have distinct outcomes.
+func (builder *RapidGeneratorBuilder) enumGenerator(
+	domain Domain,
 	use *schemaUse,
 	useOracle bool,
+	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if !useOracle || !use.examples.ValidDeclared {
-		return rapid.SampledFrom(cloneJSONValues(enum.Values)), nil
+	values := cloneJSONValues(domain.Enum.Values)
+	if evidenceUse != nil && evidenceUse == use && builder.expect == ExpectRejected {
+		return rapid.SampledFrom(values), nil
 	}
 
-	values := make([]jsonvalue.Value, 0, len(use.examples.Valid))
-	for _, example := range use.examples.Valid {
-		values = append(values, cloneJSONValue(example.Value))
+	if useOracle && use != nil && use.examples.ValidDeclared {
+		values = generationExampleValues(use.examples.Valid)
 	}
 
-	if len(values) == 0 {
-		return nil, errors.New("enum conjunction has no trusted valid generation case")
+	patterns := occurrencePatterns(use, domain.String.Patterns)
+	if len(patterns) == 0 {
+		if len(values) == 0 {
+			return nil, errors.New("enum conjunction has no trusted valid generation case")
+		}
+
+		return rapid.SampledFrom(values), nil
 	}
 
-	return rapid.SampledFrom(values), nil
+	matching, err := builder.matchingPatternEnumValues(domain, use, patterns, values)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(matching) == 0 {
+		return nil, newPatternConstructionError(patterns, use, builder.pattern, patterngenerator.ErrNoValues)
+	}
+
+	return rapid.SampledFrom(matching), nil
+}
+
+// matchingPatternEnumValues computes the finite enum/pattern conjunction before drawing.
+func (builder *RapidGeneratorBuilder) matchingPatternEnumValues(
+	domain Domain,
+	use *schemaUse,
+	patterns []patternOccurrence,
+	values []jsonvalue.Value,
+) ([]jsonvalue.Value, error) {
+	set, err := builder.patternSet(patterns, use)
+	if err != nil {
+		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
+	}
+
+	wantMatches := make([]bool, 0, len(patterns))
+	for _, pattern := range patterns {
+		wantMatches = append(wantMatches, builder.pattern == nil || builder.pattern.id != pattern.id)
+	}
+
+	matching := make([]jsonvalue.Value, 0, len(values))
+	for _, value := range values {
+		matches, matchErr := builder.patternEnumValueMatches(domain.String, set, wantMatches, value)
+		if matchErr != nil {
+			return nil, newPatternConstructionError(patterns, use, builder.pattern, matchErr)
+		}
+
+		if matches {
+			matching = append(matching, value)
+		}
+	}
+
+	return matching, nil
+}
+
+// patternEnumValueMatches checks one finite candidate with the independent ASCII DFA.
+func (builder *RapidGeneratorBuilder) patternEnumValueMatches(
+	constraints StringConstraints,
+	set *patterngenerator.Set,
+	wantMatches []bool,
+	value jsonvalue.Value,
+) (bool, error) {
+	if value.Kind != jsonvalue.KindString {
+		return builder.pattern == nil, nil
+	}
+
+	length := utf8.RuneCountInString(value.String)
+	if length < constraints.MinLength || constraints.MaxLength != nil && length > *constraints.MaxLength {
+		return false, nil
+	}
+
+	return set.Matches(value.String, wantMatches)
 }
 
 // appendConstructiveGenerator records a reachable generator or preserves the first construction error.

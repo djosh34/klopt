@@ -134,9 +134,9 @@ func TestCompileSuiteKeepsEnumMembersAsExactAcceptedCases(t *testing.T) {
 	require.Equal(t, want, found)
 }
 
-// TestCompileSuiteDoesNotReplaceSingletonEvidenceWithTheOccurrenceOracle
-// covers equal Domain identities for a local singleton enum and its evidence.
-func TestCompileSuiteDoesNotReplaceSingletonEvidenceWithTheOccurrenceOracle(t *testing.T) {
+// TestCompileSuiteConstructsPatternEnumWithoutTrustedEvidence ensures the
+// finite conjunction, rather than x-valid-examples, owns accepted generation.
+func TestCompileSuiteConstructsPatternEnumWithoutTrustedEvidence(t *testing.T) {
 	t.Parallel()
 
 	compiler := NewCompiler(parseSchemaSource(t, `type: string
@@ -145,7 +145,14 @@ enum: [x]
 x-valid-examples: [x]`, "", "create"))
 	compiled, err := compiler.CompileSuite()
 	require.NoError(t, err)
-	assertExactEvidenceBody(t, compiled.Cases, "x-valid-examples", ExpectAccepted, `"x"`)
+
+	for _, plannedCase := range compiled.Cases {
+		require.NotEqual(t, "x-valid-examples", plannedCase.Source.Keyword)
+	}
+
+	checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
+		require.JSONEq(t, `"x"`, string(body))
+	})
 }
 
 // TestCompileSuiteConstructsEqualPatternChildrenIndependently verifies equal child languages keep exact occurrences.

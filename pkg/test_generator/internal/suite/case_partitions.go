@@ -66,7 +66,7 @@ func (planner *CasePlanner) addValidEvidenceCases(
 ) {
 	for _, example := range use.examples.Valid {
 		if example.Value.Kind == jsonvalue.KindString && len(use.patterns) > 0 &&
-			len(domain.String.Formats) == 0 && domain.Enum == nil {
+			len(domain.String.Formats) == 0 {
 			continue
 		}
 

@@ -169,7 +169,12 @@ func (compiler *Compiler) compileResolvedSchema(
 	use.domain = compiler.Domains.FindOrAddEquivalentDomain(domain)
 	use.localDomain = use.domain
 	use.constraints = constraints
-	use.patterns = compiler.localPatternOccurrences(resolved.Pointer, domain)
+
+	use.patterns, err = compiler.localPatternOccurrences(resolved.Pointer, members)
+	if err != nil {
+		return nil, compiler.failure("compile", "malformed", resolved.Pointer, "pattern", err)
+	}
+
 	use.examples = examples
 
 	use, err = compiler.compileAllOf(resolved, members, active, use)
@@ -183,25 +188,31 @@ func (compiler *Compiler) compileResolvedSchema(
 }
 
 // localPatternOccurrences records a direct declaration before allOf composition.
-func (compiler *Compiler) localPatternOccurrences(pointer string, domain Domain) []patternOccurrence {
-	if len(domain.String.Patterns) == 0 {
-		return nil
+func (compiler *Compiler) localPatternOccurrences(
+	pointer string,
+	members map[string]json.RawMessage,
+) ([]patternOccurrence, error) {
+	raw, ok := members["pattern"]
+	if !ok {
+		return nil, nil
 	}
 
-	patterns := make([]patternOccurrence, 0, len(domain.String.Patterns))
-	for _, pattern := range domain.String.Patterns {
-		patterns = append(patterns, patternOccurrence{
-			id: compiler.nextPatternID,
-			source: ConstraintSource{
-				Pointer: pointer,
-				Keyword: "pattern",
-			},
-			value: pattern,
-		})
-		compiler.nextPatternID++
+	pattern, err := parseString(raw, "pattern")
+	if err != nil {
+		return nil, err
 	}
 
-	return patterns
+	occurrence := patternOccurrence{
+		id: compiler.nextPatternID,
+		source: ConstraintSource{
+			Pointer: pointer,
+			Keyword: "pattern",
+		},
+		value: pattern,
+	}
+	compiler.nextPatternID++
+
+	return []patternOccurrence{occurrence}, nil
 }
 
 // unsupportedKeywordFailure reports a known Schema Object keyword not supported by this step.
@@ -353,7 +364,9 @@ func (compiler *Compiler) validateFormat(pointer string, members map[string]json
 	return nil
 }
 
-// applyEnum replaces a Domain with the unchecked local enum and valid-example oracle union.
+// applyEnum replaces a Domain with the local enum while retaining constructive patterns.
+//
+//nolint:cyclop // Enum decoding and occurrence-oracle bookkeeping stay in source order.
 func (compiler *Compiler) applyEnum(
 	domain *Domain,
 	use *schemaUse,
@@ -394,6 +407,13 @@ func (compiler *Compiler) applyEnum(
 	}
 
 	use.atomic["enum"] = compiler.Domains.FindOrAddEquivalentDomain(finiteDomain(atomicValues))
+	stringConstraints := domain.String
+
+	*domain = finiteDomain(atomicValues)
+	if domain.String.State != KindExcluded && len(stringConstraints.Patterns) > 0 {
+		domain.String = stringConstraints
+	}
+
 	for _, value := range atomicValues {
 		appendGenerationExample(&examples.Valid, GenerationExample{
 			Value:  value,
@@ -402,8 +422,6 @@ func (compiler *Compiler) applyEnum(
 	}
 
 	examples.ValidDeclared = true
-
-	*domain = finiteDomain(atomicValues)
 
 	return nil
 }

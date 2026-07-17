@@ -672,9 +672,45 @@ func (registry *DomainRegistry) intersectEnums(result *Domain, left *EnumSet, ri
 		return nil
 	}
 
-	*result = finiteDomain(values)
+	restrictDomainToEnum(result, values)
 
 	return nil
+}
+
+// restrictDomainToEnum retains the conjunctive keyword constraints while
+// excluding JSON kinds absent from the finite candidate set.
+func restrictDomainToEnum(result *Domain, values []jsonvalue.Value) {
+	finite := finiteDomain(values)
+	if finite.Status == DomainEmpty {
+		*result = finite
+
+		return
+	}
+
+	result.Enum = finite.Enum
+	if finite.Null == KindExcluded {
+		result.Null = KindExcluded
+	}
+
+	if finite.Boolean == KindExcluded {
+		result.Boolean = KindExcluded
+	}
+
+	if finite.Number.State == KindExcluded {
+		result.Number = NumberConstraints{State: KindExcluded}
+	}
+
+	if finite.String.State == KindExcluded {
+		result.String = StringConstraints{State: KindExcluded}
+	}
+
+	if finite.Array.State == KindExcluded {
+		result.Array = ArrayConstraints{State: KindExcluded}
+	}
+
+	if finite.Object.State == KindExcluded {
+		result.Object = ObjectConstraints{State: KindExcluded}
+	}
 }
 
 // enumCandidates returns the finite candidate set in stable left order.

@@ -48,7 +48,7 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 
 	planner.markUnconstructibleConstraints(linked, unavailable, unlinked)
 
-	if err := compiler.requireAcceptedCase(root, linked, unavailable); err != nil {
+	if err := compiler.requireAcceptedCase(root, linked); err != nil {
 		return nil, err
 	}
 
@@ -72,6 +72,7 @@ func (compiler *Compiler) linkCases(
 
 	for index := range cases {
 		generators.pattern = cases[index].pattern
+		generators.expect = cases[index].Expect
 
 		generator, generatorErr := generators.generator(
 			cases[index].Values,
@@ -177,7 +178,6 @@ func constraintSourceContains(sources []ConstraintSource, candidate ConstraintSo
 func (compiler *Compiler) requireAcceptedCase(
 	root DomainID,
 	cases []CasePlan,
-	unavailable []CasePlan,
 ) error {
 	rootDomain, ok := compiler.Domains.Domain(root)
 	if !ok {
@@ -198,10 +198,6 @@ func (compiler *Compiler) requireAcceptedCase(
 	}
 
 	if hasAcceptedCase(cases) {
-		return nil
-	}
-
-	if hasAcceptedCase(unavailable) {
 		return nil
 	}
 
