@@ -1,6 +1,6 @@
 ---
 title: Philosophy
-description: Why openapi-validate works on raw JSON and generates compiled data instead of validation code.
+description: Why klopt works on raw JSON and generates compiled data instead of validation code.
 ---
 
 ## Validate before unmarshalling

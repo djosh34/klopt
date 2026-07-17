@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
 // Validate validates one present or absent raw JSON request body.

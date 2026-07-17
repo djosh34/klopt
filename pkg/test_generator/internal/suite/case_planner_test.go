@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djosh34/decode_and_validate_generator/pkg/internal/oas"
-	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )

@@ -1,4 +1,4 @@
-module github.com/djosh34/decode_and_validate_generator
+module github.com/djosh34/klopt
 
 go 1.26.4
 

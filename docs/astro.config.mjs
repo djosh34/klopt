@@ -3,10 +3,10 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   site: 'https://djosh34.github.io',
-  base: '/openapi-validate',
+  base: '/klopt',
   integrations: [
     starlight({
-      title: 'openapi-validate',
+      title: 'klopt',
       sidebar: [
         { label: 'Getting started', link: '/' },
         { label: 'Philosophy', link: '/philosophy/' },

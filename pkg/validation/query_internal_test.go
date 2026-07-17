@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/djosh34/decode_and_validate_generator/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/stretchr/testify/require"
 )

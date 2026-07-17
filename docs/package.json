@@ -1,9 +1,9 @@
 {
-  "name": "openapi-validate-docs",
+  "name": "klopt-docs",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev --open /openapi-validate/",
+    "dev": "astro dev --open /klopt/",
     "build": "astro build"
   },
   "dependencies": {

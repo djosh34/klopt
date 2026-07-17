@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/djosh34/decode_and_validate_generator/pkg/internal/oas"
-	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
 // Compiler compiles located Schema Objects into canonical DomainIDs.

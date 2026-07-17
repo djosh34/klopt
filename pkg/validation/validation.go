@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"regexp"
 
-	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
 // Validation is one compiled OpenAPI Schema Object.

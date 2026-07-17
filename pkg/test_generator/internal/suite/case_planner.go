@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/djosh34/decode_and_validate_generator/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
 // CompileOption configures a Compiler.

@@ -8,7 +8,7 @@ description: Validate OpenAPI 3.0.3 JSON request bodies and decode query paramet
 ## Install
 
 ```sh
-go get github.com/djosh34/decode_and_validate_generator/pkg/validation
+go get github.com/djosh34/klopt/pkg/validation
 ```
 
 ## Parse once
@@ -67,4 +67,4 @@ func decodeListThings(r *http.Request, decoder *validation.QueryDecoder) (ListTh
 
 Call it with `queryDecoders["listThings"]`. The decoder handles the OpenAPI wire format and returns ordinary JSON, leaving the final Go type under your control.
 
-Next: [why validation happens before unmarshalling](/openapi-validate/philosophy/), [how query decoding works](/openapi-validate/query-decoding/), and [the architecture](/openapi-validate/architecture/).
+Next: [why validation happens before unmarshalling](/klopt/philosophy/), [how query decoding works](/klopt/query-decoding/), and [the architecture](/klopt/architecture/).

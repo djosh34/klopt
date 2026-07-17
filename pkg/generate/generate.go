@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/djosh34/decode_and_validate_generator/pkg/validation"
+	"github.com/djosh34/klopt/pkg/validation"
 )
 
 const (

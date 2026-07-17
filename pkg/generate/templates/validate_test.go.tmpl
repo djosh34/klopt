@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	testgenerator "github.com/djosh34/decode_and_validate_generator/pkg/test_generator"
+	testgenerator "github.com/djosh34/klopt/pkg/test_generator"
 )
 
 // openAPI is the source document used to compile the generated validations.
