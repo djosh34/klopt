@@ -320,7 +320,7 @@ func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
 		{name: "writeOnly", schema: `{"writeOnly":false}`, want: "writeOnly"},
 		{name: "discriminator", schema: `{"discriminator":{"propertyName":"kind"}}`, want: "discriminator"},
 		{name: "externalRef", schema: `{"$ref":"other.yaml#/Thing"}`, want: "external reference"},
-		{name: "unsupportedPattern", schema: `{"pattern":"^(?!bad$).+$"}`, want: "unsupported RE2 pattern"},
+		{name: "unsupportedPattern", schema: `{"pattern":"x(?=a)"}`, want: "unsupported"},
 		{name: "unknownKeyword", schema: `{"const":1}`, want: "unsupported Schema Object keyword"},
 		{name: "malformedBound", schema: `{"minItems":-1}`, want: "minItems"},
 		{name: "arrayWithoutItems", schema: `{"type":"array"}`, want: "items"},

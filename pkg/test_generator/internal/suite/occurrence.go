@@ -7,7 +7,7 @@ import (
 
 // meet pairs the canonical semantic intersection with the exact recursive occurrences that produced it.
 func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, error) {
-	leftDomain, rightDomain, _, domain, err := compiler.meetDomains(left, right)
+	leftDomain, rightDomain, resultDomain, domain, err := compiler.meetDomains(left, right)
 	if err != nil {
 		return nil, err
 	}
@@ -24,6 +24,7 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		arrayShape:  left.arrayShape,
 		objectShape: left.objectShape,
 		constraints: append(append([]ConstraintSource(nil), left.constraints...), right.constraints...),
+		patterns:    append(append([]patternOccurrence(nil), left.patterns...), right.patterns...),
 		examples:    examples,
 		atomic:      left.atomic,
 		allOf:       append(append([]*schemaUse(nil), left.allOf...), right),
@@ -38,11 +39,17 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		return nil, &generationOverlapError{Example: *overlap}
 	}
 
-	if compiler.mustHaveAllXValidCases && result.examples.ValidDeclared && len(result.examples.Valid) == 0 {
+	if compiler.mustHaveAllXValidCases && needsTrustedValidCases(resultDomain) &&
+		result.examples.ValidDeclared && len(result.examples.Valid) == 0 {
 		return nil, fmt.Errorf("%w: allOf merge has no trusted valid generation case", errUnconstructible)
 	}
 
 	return result, nil
+}
+
+// needsTrustedValidCases reports occurrence languages that remain oracle-backed.
+func needsTrustedValidCases(domain Domain) bool {
+	return domain.Enum != nil || domain.String.State != KindExcluded && len(domain.String.Formats) > 0
 }
 
 // meetDomains intersects semantic Domains and returns their canonical values.
@@ -443,7 +450,12 @@ func (compiler *Compiler) meetChild(
 	}
 
 	if result.domain != resultDomain {
-		return nil, false, fmt.Errorf("metadata Domain %d differs from semantic Domain %d", result.domain, resultDomain)
+		return nil, false, fmt.Errorf(
+			"%w: metadata Domain %d differs from semantic Domain %d",
+			errUnconstructible,
+			result.domain,
+			resultDomain,
+		)
 	}
 
 	result.preserveChildPlanningParity(left, right)
@@ -484,7 +496,12 @@ func (compiler *Compiler) meetEmptyChild(
 	}
 
 	if result.domain != EmptyDomainID {
-		return nil, false, fmt.Errorf("metadata Domain %d differs from semantic Domain %d", result.domain, EmptyDomainID)
+		return nil, false, fmt.Errorf(
+			"%w: metadata Domain %d differs from semantic Domain %d",
+			errUnconstructible,
+			result.domain,
+			EmptyDomainID,
+		)
 	}
 
 	result.preserveChildPlanningParity(left, right)

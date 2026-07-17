@@ -303,7 +303,7 @@ func (stringValidation StringValidation) validate(
 		)))
 	}
 
-	if stringValidation.CompiledPattern != nil && !stringValidation.CompiledPattern.MatchString(value.string) {
+	if stringValidation.CompiledPattern != nil && !stringValidation.CompiledPattern.Validate(value.string) {
 		errs = append(errs, newValidationError(validation, pointer, "pattern", fmt.Sprintf(
 			"string does not match %q", stringValidation.Pattern,
 		)))

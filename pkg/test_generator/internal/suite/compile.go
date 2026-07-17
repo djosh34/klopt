@@ -10,6 +10,7 @@ import (
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
 // Compiler compiles located Schema Objects into canonical DomainIDs.
@@ -19,14 +20,27 @@ type Compiler struct {
 	usesByPointer          map[string]*schemaUse
 	rootUse                *schemaUse
 	mustHaveAllXValidCases bool
+	patternOption          patternvalidator.Option
+	nextPatternID          uint64
 }
 
 // NewCompiler creates a Compiler for one located OpenAPI source.
-func NewCompiler(source oas.Source) *Compiler {
+func NewCompiler(source oas.Source, options ...patternvalidator.Option) *Compiler {
+	if len(options) > 1 {
+		panic("suite: NewCompiler accepts at most one pattern option")
+	}
+
+	patternOption := patternvalidator.Option(func(*patternvalidator.PatternValidation) {})
+	if len(options) == 1 {
+		patternOption = options[0]
+	}
+
 	return &Compiler{
 		Source:        source,
 		Domains:       NewDomainRegistry(),
 		usesByPointer: make(map[string]*schemaUse),
+		patternOption: patternOption,
+		nextPatternID: 1,
 	}
 }
 
@@ -95,6 +109,7 @@ func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *sch
 		arrayShape:  resolved.arrayShape,
 		objectShape: resolved.objectShape,
 		constraints: append([]ConstraintSource(nil), resolved.constraints...),
+		patterns:    append([]patternOccurrence(nil), resolved.patterns...),
 		examples: GenerationExamples{
 			Valid:         cloneGenerationExamples(resolved.examples.Valid),
 			Invalid:       cloneGenerationExamples(resolved.examples.Invalid),
@@ -154,6 +169,7 @@ func (compiler *Compiler) compileResolvedSchema(
 	use.domain = compiler.Domains.FindOrAddEquivalentDomain(domain)
 	use.localDomain = use.domain
 	use.constraints = constraints
+	use.patterns = compiler.localPatternOccurrences(resolved.Pointer, domain)
 	use.examples = examples
 
 	use, err = compiler.compileAllOf(resolved, members, active, use)
@@ -164,6 +180,28 @@ func (compiler *Compiler) compileResolvedSchema(
 	compiler.usesByPointer[resolved.Pointer] = use
 
 	return use, nil
+}
+
+// localPatternOccurrences records a direct declaration before allOf composition.
+func (compiler *Compiler) localPatternOccurrences(pointer string, domain Domain) []patternOccurrence {
+	if len(domain.String.Patterns) == 0 {
+		return nil
+	}
+
+	patterns := make([]patternOccurrence, 0, len(domain.String.Patterns))
+	for _, pattern := range domain.String.Patterns {
+		patterns = append(patterns, patternOccurrence{
+			id: compiler.nextPatternID,
+			source: ConstraintSource{
+				Pointer: pointer,
+				Keyword: "pattern",
+			},
+			value: pattern,
+		})
+		compiler.nextPatternID++
+	}
+
+	return patterns
 }
 
 // unsupportedKeywordFailure reports a known Schema Object keyword not supported by this step.
@@ -268,7 +306,7 @@ func (compiler *Compiler) applyLocalOracles(
 		)
 	}
 
-	if !hasOpaqueStringDomain(*domain) || examples.ValidDeclared &&
+	if !hasUnconstructibleStringDomain(*domain) || examples.ValidDeclared &&
 		(len(examples.Valid) > 0 || hasReachableNonStringKind(*domain)) {
 		return nil
 	}
@@ -1581,10 +1619,10 @@ func hasOpaqueStringRule(members map[string]json.RawMessage) bool {
 	return hasPattern || hasFormat
 }
 
-// hasOpaqueStringDomain reports whether a reachable string kind needs oracle evidence.
-func hasOpaqueStringDomain(domain Domain) bool {
+// hasUnconstructibleStringDomain reports whether a reachable string format needs oracle evidence.
+func hasUnconstructibleStringDomain(domain Domain) bool {
 	return domain.String.State != KindExcluded &&
-		(len(domain.String.Patterns) > 0 || len(domain.String.Formats) > 0)
+		len(domain.String.Formats) > 0
 }
 
 // hasReachableNonStringKind reports whether generation has another kind to attempt.

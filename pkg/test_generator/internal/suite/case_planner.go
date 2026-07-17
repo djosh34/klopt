@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/test_generator/internal/patterngenerator"
 )
 
 // CompileOption configures a Compiler.
@@ -40,14 +41,14 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 		return nil, err
 	}
 
-	linked, unlinked, err := compiler.linkCases(cases)
+	linked, unavailable, unlinked, err := compiler.linkCases(cases)
 	if err != nil {
 		return nil, err
 	}
 
-	planner.markUnconstructibleConstraints(linked, unlinked)
+	planner.markUnconstructibleConstraints(linked, unavailable, unlinked)
 
-	if err := compiler.requireAcceptedCase(root, linked); err != nil {
+	if err := compiler.requireAcceptedCase(root, linked, unavailable); err != nil {
 		return nil, err
 	}
 
@@ -56,21 +57,33 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 		Domains:     compiler.Domains,
 		Constraints: append([]ConstraintPlan(nil), planner.Constraints...),
 		Cases:       linked,
+		Unavailable: unavailable,
 	}, nil
 }
 
 // linkCases assigns a Rapid generator to each constructible CasePlan.
-func (compiler *Compiler) linkCases(cases []CasePlan) ([]CasePlan, []ConstraintSource, error) {
-	generators := NewRapidGeneratorBuilder(compiler.Domains)
+func (compiler *Compiler) linkCases(
+	cases []CasePlan,
+) ([]CasePlan, []CasePlan, []ConstraintSource, error) {
 	linked := make([]CasePlan, 0, len(cases))
+	unavailable := make([]CasePlan, 0)
 	unlinked := make([]ConstraintSource, 0)
+	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.patternOption)
 
 	for index := range cases {
+		generators.pattern = cases[index].pattern
+
 		generator, generatorErr := generators.generator(
 			cases[index].Values,
 			compiler.rootUse,
 			cases[index].evidenceUse,
 		)
+		if errors.Is(generatorErr, patterngenerator.ErrNoValues) {
+			unavailable = append(unavailable, cases[index])
+
+			continue
+		}
+
 		if errors.Is(generatorErr, errNoTrustedStringExample) &&
 			cases[index].Expect == ExpectRejected &&
 			cases[index].Source.Keyword != "x-invalid-examples" {
@@ -80,11 +93,18 @@ func (compiler *Compiler) linkCases(cases []CasePlan) ([]CasePlan, []ConstraintS
 		}
 
 		if generatorErr != nil {
-			return nil, nil, compiler.failure(
+			source := cases[index].Source
+
+			var constructionError *patternConstructionError
+			if errors.As(generatorErr, &constructionError) {
+				source = constructionError.source
+			}
+
+			return nil, nil, nil, compiler.failure(
 				"generate",
 				"unconstructible",
-				cases[index].Source.Pointer,
-				cases[index].Source.Keyword,
+				source.Pointer,
+				source.Keyword,
 				generatorErr,
 			)
 		}
@@ -93,12 +113,13 @@ func (compiler *Compiler) linkCases(cases []CasePlan) ([]CasePlan, []ConstraintS
 		linked = append(linked, cases[index])
 	}
 
-	return linked, unlinked, nil
+	return linked, unavailable, unlinked, nil
 }
 
 // markUnconstructibleConstraints records isolated failures without a linked generator.
 func (planner *CasePlanner) markUnconstructibleConstraints(
 	cases []CasePlan,
+	unavailable []CasePlan,
 	unlinked []ConstraintSource,
 ) {
 	for index := range planner.Constraints {
@@ -108,6 +129,13 @@ func (planner *CasePlanner) markUnconstructibleConstraints(
 		}
 
 		if hasRejectedCase(cases, constraint.Source) {
+			continue
+		}
+
+		if hasUnavailableRejectedCase(unavailable, constraint.Source) {
+			constraint.Outcome = ObligationDominated
+			constraint.Reason = "isolated signed pattern language is empty over ASCII"
+
 			continue
 		}
 
@@ -123,6 +151,17 @@ func (planner *CasePlanner) markUnconstructibleConstraints(
 	}
 }
 
+// hasUnavailableRejectedCase reports an exact signed request proven empty.
+func hasUnavailableRejectedCase(cases []CasePlan, source ConstraintSource) bool {
+	for _, plannedCase := range cases {
+		if plannedCase.Expect == ExpectRejected && plannedCase.Source == source {
+			return true
+		}
+	}
+
+	return false
+}
+
 // constraintSourceContains reports exact source membership.
 func constraintSourceContains(sources []ConstraintSource, candidate ConstraintSource) bool {
 	for _, source := range sources {
@@ -135,7 +174,11 @@ func constraintSourceContains(sources []ConstraintSource, candidate ConstraintSo
 }
 
 // requireAcceptedCase rejects a productive root that has no linked accepted case.
-func (compiler *Compiler) requireAcceptedCase(root DomainID, cases []CasePlan) error {
+func (compiler *Compiler) requireAcceptedCase(
+	root DomainID,
+	cases []CasePlan,
+	unavailable []CasePlan,
+) error {
 	rootDomain, ok := compiler.Domains.Domain(root)
 	if !ok {
 		return compiler.failure(
@@ -155,6 +198,10 @@ func (compiler *Compiler) requireAcceptedCase(root DomainID, cases []CasePlan) e
 	}
 
 	if hasAcceptedCase(cases) {
+		return nil
+	}
+
+	if hasAcceptedCase(unavailable) {
 		return nil
 	}
 
@@ -922,6 +969,10 @@ func (planner *CasePlanner) isolationBounds() ([]DomainID, []DomainID, error) {
 
 // addConstraintFailures creates isolated rejected cases and records their obligation outcome.
 func (planner *CasePlanner) addConstraintFailures(result *caseSet, constraint *ConstraintPlan, context DomainID) error {
+	if constraint.Source.Keyword == "pattern" {
+		return planner.addPatternFailure(result, constraint, context)
+	}
+
 	failures, contextualStart, err := planner.isolatedFailureDomains(*constraint, context)
 	if err != nil {
 		return err
@@ -953,6 +1004,86 @@ func (planner *CasePlanner) addConstraintFailures(result *caseSet, constraint *C
 	}
 
 	planner.finishUnplannedConstraint(constraint, context, failures)
+
+	return nil
+}
+
+// addPatternFailure plans one exact signed conjunction and defers emptiness proof to the pattern generator.
+func (planner *CasePlanner) addPatternFailure(
+	result *caseSet,
+	constraint *ConstraintPlan,
+	context DomainID,
+) error {
+	target := planner.patternOccurrence(constraint.Source)
+	if target == nil {
+		constraint.Outcome = ObligationUnconstructible
+		constraint.Reason = "pattern occurrence provenance is missing"
+
+		return nil
+	}
+
+	stringKind := planner.Domains.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindString))
+
+	values, err := planner.Domains.IntersectDomains(context, stringKind)
+	if err != nil {
+		return err
+	}
+
+	if values == EmptyDomainID {
+		constraint.Outcome = ObligationDominated
+		constraint.Reason = "pattern is inapplicable while sibling constraints pass"
+
+		return nil
+	}
+
+	domain, ok := planner.Domains.Domain(values)
+	if !ok {
+		return fmt.Errorf("isolated pattern failure Domain %d does not exist", values)
+	}
+
+	if len(domain.String.Formats) > 0 {
+		constraint.Outcome = ObligationUnconstructible
+		constraint.Reason = "isolated pattern failure cannot construct the sibling format"
+
+		return nil
+	}
+
+	if domain.Status != DomainProductive {
+		constraint.Outcome = ObligationUnconstructible
+		constraint.Reason = "isolated pattern failure Domain is unconstructible"
+
+		return nil
+	}
+
+	targetCopy := *target
+	result.add(CasePlan{
+		Name: caseName(
+			"invalid pattern 1",
+			constraint.Source.Pointer,
+			constraint.Source.Keyword,
+		),
+		Expect:  ExpectRejected,
+		Values:  values,
+		Source:  constraint.Source,
+		pattern: &targetCopy,
+	})
+	constraint.Outcome = ObligationPlanned
+	constraint.Reason = ""
+
+	return nil
+}
+
+// patternOccurrence returns the exact declaration associated with source.
+func (planner *CasePlanner) patternOccurrence(source ConstraintSource) *patternOccurrence {
+	if planner.rootUse == nil {
+		return nil
+	}
+
+	for index := range planner.rootUse.patterns {
+		if planner.rootUse.patterns[index].source == source {
+			return &planner.rootUse.patterns[index]
+		}
+	}
 
 	return nil
 }

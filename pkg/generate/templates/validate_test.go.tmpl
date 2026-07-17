@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	testgenerator "github.com/djosh34/klopt/pkg/test_generator"
+	"github.com/djosh34/klopt/pkg/validation"
 )
 
 // openAPI is the source document used to compile the generated validations.
@@ -21,6 +22,7 @@ func TestValidations(t *testing.T) {
 		func(operationID string, data []byte) error {
 			return errors.Join(validations[operationID].Validate(data)...)
 		},
+		validation.PatternOptions(),
 		testgenerator.DefaultOption,
 	)
 }

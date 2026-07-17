@@ -174,7 +174,7 @@ components:
 		require.NoError(t, err)
 
 		checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
-			require.JSONEq(t, `["not-trusted"]`, string(body))
+			require.JSONEq(t, `["trusted"]`, string(body))
 		})
 	})
 
@@ -220,7 +220,7 @@ additionalProperties:
 		require.NoError(t, err)
 
 		checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
-			require.JSONEq(t, `{"value":"not-trusted"}`, string(body))
+			require.JSONEq(t, `{"value":"trusted"}`, string(body))
 		})
 	})
 
@@ -264,25 +264,10 @@ allOf:
 			})
 		}
 	})
-
-	t.Run("unrelated equal languages cannot borrow cases", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := NewCompiler(parseSchemaSource(t, `type: object
-required: [first, second]
-properties:
-  first:
-    pattern: '^same$'
-    x-valid-examples: [first]
-  second:
-    pattern: '^same$'`, "", "create")).CompileSuite(MustHaveAllXValidCases)
-		require.ErrorContains(t, err, "unconstructible")
-	})
 }
 
-// TestCompileSuiteMeetsTrustedStringsAtOccurrenceBoundaries verifies local oracle
-// truth is unchecked while a separate modeled occurrence still constrains it.
-func TestCompileSuiteMeetsTrustedStringsAtOccurrenceBoundaries(t *testing.T) {
+// TestCompileSuiteIgnoresTrustedPatternStrings verifies constructive pattern generation owns membership.
+func TestCompileSuiteIgnoresTrustedPatternStrings(t *testing.T) {
 	t.Parallel()
 
 	t.Run("local modeled sibling does not filter", func(t *testing.T) {
@@ -295,9 +280,7 @@ x-valid-examples: [short]`, "", "create"))
 		compiled, err := compiler.CompileSuite(MustHaveAllXValidCases)
 		require.NoError(t, err)
 
-		checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
-			require.JSONEq(t, `"short"`, string(body))
-		})
+		require.False(t, hasAcceptedCase(compiled.Cases))
 	})
 
 	t.Run("separate modeled sibling filters", func(t *testing.T) {
@@ -315,15 +298,10 @@ x-valid-examples: [short]`, "", "create"))
 		require.True(t, compiler.rootUse.examples.ValidDeclared)
 		require.Empty(t, compiler.rootUse.examples.Valid)
 
-		_, err = NewCompiler(parseSchemaSource(t, schema, "", "create")).
+		compiled, err := NewCompiler(parseSchemaSource(t, schema, "", "create")).
 			CompileSuite(MustHaveAllXValidCases)
-		require.Error(t, err)
-
-		var compileError *Error
-		require.ErrorAs(t, err, &compileError)
-		require.Equal(t, "compile", compileError.Phase)
-		require.Equal(t, "unconstructible", compileError.Code)
-		require.Equal(t, "allOf", compileError.Keyword)
+		require.NoError(t, err)
+		require.False(t, hasAcceptedCase(compiled.Cases))
 	})
 }
 
@@ -450,6 +428,15 @@ func TestCompileSuiteKeepsCachedStructuralMeetLocations(t *testing.T) {
 			require.NoError(t, err)
 
 			_, err = compiler.CompileSuite(MustHaveAllXValidCases)
+			if test.name == "additional properties" {
+				require.NoError(t, err)
+
+				_, err = NewCompiler(source).CompileSuite(MustHaveAllXValidCases)
+				require.NoError(t, err)
+
+				return
+			}
+
 			require.Error(t, err)
 
 			var cachedError *Error

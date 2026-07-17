@@ -37,7 +37,7 @@ func (planner *CasePlanner) addValidPartitions(
 	}
 
 	source := ConstraintSource{Pointer: use.pointer}
-	planner.addExactEvidenceCases(result, use, use.examples.Valid, ExpectAccepted)
+	planner.addValidEvidenceCases(result, use, domain)
 
 	if err := planner.addKindPartitions(result, id, domain, source); err != nil {
 		return err
@@ -56,6 +56,22 @@ func (planner *CasePlanner) addValidPartitions(
 	}
 
 	return planner.addObjectPartitions(result, domain, use, active)
+}
+
+// addValidEvidenceCases excludes trusted strings now covered by constructive pattern generation.
+func (planner *CasePlanner) addValidEvidenceCases(
+	result *caseSet,
+	use *schemaUse,
+	domain Domain,
+) {
+	for _, example := range use.examples.Valid {
+		if example.Value.Kind == jsonvalue.KindString && len(use.patterns) > 0 &&
+			len(domain.String.Formats) == 0 && domain.Enum == nil {
+			continue
+		}
+
+		planner.addExactEvidenceCases(result, use, []GenerationExample{example}, ExpectAccepted)
+	}
 }
 
 // addKindPartitions adds one accepted partition per constructible JSON kind.
@@ -165,7 +181,7 @@ func (planner *CasePlanner) addStringValidPartitions(
 		return nil
 	}
 
-	if len(domain.String.Patterns) > 0 || len(domain.String.Formats) > 0 {
+	if len(domain.String.Formats) > 0 {
 		return nil
 	}
 
@@ -370,6 +386,7 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 			Values:      values,
 			Source:      child.Source,
 			evidenceUse: child.evidenceUse,
+			pattern:     child.pattern,
 		})
 	}
 }
@@ -664,6 +681,7 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 			Values:      values,
 			Source:      child.Source,
 			evidenceUse: child.evidenceUse,
+			pattern:     child.pattern,
 		})
 	}
 
@@ -764,6 +782,7 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 			Values:      values,
 			Source:      child.Source,
 			evidenceUse: child.evidenceUse,
+			pattern:     child.pattern,
 		})
 	}
 

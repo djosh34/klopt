@@ -166,6 +166,7 @@ type CasePlan struct {
 	Source      ConstraintSource
 	Generator   *rapid.Generator[jsonvalue.Value]
 	evidenceUse *schemaUse
+	pattern     *patternOccurrence
 }
 
 // CasePlanner builds canonical semantic partitions from a compiled Domain graph.
@@ -181,6 +182,7 @@ type CompiledSuite struct {
 	Domains     *DomainRegistry
 	Constraints []ConstraintPlan
 	Cases       []CasePlan
+	Unavailable []CasePlan
 }
 
 // DomainPair is an unordered pair used by the intersection cache.
@@ -216,6 +218,7 @@ type schemaUse struct {
 	arrayShape  DomainID
 	objectShape DomainID
 	constraints []ConstraintSource
+	patterns    []patternOccurrence
 	examples    GenerationExamples
 	atomic      map[string]DomainID
 	allOf       []*schemaUse
@@ -223,6 +226,13 @@ type schemaUse struct {
 	properties  []schemaPropertyUse
 	additional  *schemaUse
 	resolved    *schemaUse
+}
+
+// patternOccurrence preserves one original pattern declaration separately from canonical Domain identity.
+type patternOccurrence struct {
+	id     uint64
+	source ConstraintSource
+	value  string
 }
 
 // schemaPropertyUse pairs one property name with its exact schema occurrence.

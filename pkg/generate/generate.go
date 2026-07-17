@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
@@ -18,8 +19,13 @@ const (
 )
 
 // Generate parses one OpenAPI document and writes validate.go and validate_test.go.
-func Generate(dir string, packageName string, openAPI []byte) error {
-	parsed, queryDecoders, err := validation.Parse(openAPI)
+func Generate(
+	dir string,
+	packageName string,
+	openAPI []byte,
+	patternOption patternvalidator.Option,
+) error {
+	parsed, queryDecoders, err := validation.Parse(openAPI, patternOption)
 	if err != nil {
 		return err
 	}
@@ -55,7 +61,7 @@ func isSafeOperationIdentifier(operationID string) bool {
 	}
 
 	switch operationID {
-	case "byte", "error", "errors", "json", "jsonvalue", "openAPI", "regexp", "string", "testing",
+	case "byte", "error", "errors", "json", "jsonvalue", "openAPI", "patternvalidator", "string", "testing",
 		"testgenerator", "TestValidations", "true", "validation", "validations", "queryDecoders", "mustQueryDecoder":
 		return false
 	default:

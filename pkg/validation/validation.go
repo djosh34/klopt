@@ -8,9 +8,9 @@ package validation
 
 import (
 	"encoding/json"
-	"regexp"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
 // Validation is one compiled OpenAPI Schema Object.
@@ -77,7 +77,7 @@ type StringValidation struct {
 	Format    string
 
 	// CompiledPattern is the compiled form of Pattern used by Validate.
-	CompiledPattern *regexp.Regexp
+	CompiledPattern *patternvalidator.PatternValidation
 }
 
 // ArrayValidation holds array-specific constraints.

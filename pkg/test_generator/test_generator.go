@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/test_generator/internal/suite"
 	"pgregory.net/rapid"
 )
@@ -30,6 +31,7 @@ func CheckJSONRequestBodies(
 	t *testing.T,
 	openAPIYAML []byte,
 	validate func(operationID string, body []byte) error,
+	patternOption patternvalidator.Option,
 	options ...Option,
 ) {
 	t.Helper()
@@ -52,7 +54,7 @@ func CheckJSONRequestBodies(
 		t.Run(operationID, func(t *testing.T) {
 			t.Parallel()
 
-			compiled, err := suite.NewCompiler(sources[operationID]).CompileSuite(compileOptions...)
+			compiled, err := suite.NewCompiler(sources[operationID], patternOption).CompileSuite(compileOptions...)
 			if err != nil {
 				t.Fatal(err)
 			}
