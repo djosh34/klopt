@@ -25,7 +25,17 @@ type Input struct {
 
 After `json.Unmarshal`, `Name` is `nil` in both cases. An omitted field keeps its zero value; JSON `null` sets a pointer to `nil`. OpenAPI can independently say that `name` is required and whether it is nullable.
 
-That is why `Validation.Validate` reads the original JSON. It checks presence, nullability, exact numbers, duplicate names, and other schema rules before unmarshalling can discard information. See the standard library's [`json.Unmarshal` rules](https://pkg.go.dev/encoding/json#Unmarshal).
+Technically, unmarshalling into `map[string]any` preserves this particular distinction: a missing key is omitted from the map, while a key containing JSON `null` has a `nil` value. Some validation libraries use that representation. It works, and `json.Marshal` can encode the map again without custom marshaling code. The tradeoff appears when the application still wants `Input`: it must unmarshal the original body a second time, marshal and unmarshal the map, or walk nested maps with type assertions and conversions. The last option recreates parts of `encoding/json`'s typed decoding and becomes especially finicky around nested values, integer types, struct tags, and custom `UnmarshalJSON` methods. Custom presence wrappers have similar bookkeeping costs in every affected model.
+
+Generic unmarshalling can also discard information needed for validation. Given:
+
+```json
+{"sequence": 9007199254740993}
+```
+
+`json.Unmarshal` stores the number in an `any` as a `float64`, which rounds it to `9007199254740992`. `Decoder.UseNumber` avoids that particular conversion, but requires the whole generic-decoding path to use and interpret `json.Number` correctly.
+
+That is why `Validation.Validate` reads `json.RawMessage`. Raw decoding delays conversion and keeps the original JSON available while the schema is checked. The validator can check presence, nullability, exact numbers, duplicate names, and other schema rules before ordinary unmarshalling creates the application's typed value. See the standard library's [`json.Unmarshal` rules](https://pkg.go.dev/encoding/json#Unmarshal), [`Decoder.UseNumber`](https://pkg.go.dev/encoding/json#Decoder.UseNumber), and [`json.RawMessage`](https://pkg.go.dev/encoding/json#RawMessage).
 
 ## Dynamic validation, plain generated data
 
