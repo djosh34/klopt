@@ -15,11 +15,17 @@ import (
 //go:embed templates/*.go.tmpl
 var templateFiles embed.FS
 
+type patternSettings struct {
+	RejectNonASCII bool
+	UseRE2         bool
+}
+
 func render(
 	packageName string,
 	openAPI []byte,
 	parsed map[string]*validation.Validation,
 	queryDecoders map[string]*validation.QueryDecoder,
+	settings patternSettings,
 ) (map[string][]byte, error) {
 	templates, err := template.ParseFS(templateFiles, "templates/*.go.tmpl")
 	if err != nil {
@@ -31,11 +37,13 @@ func render(
 		OpenAPI       string
 		Validations   map[string]*validation.Validation
 		QueryDecoders map[string]*validation.QueryDecoder
+		Pattern       patternSettings
 	}{
 		Package:       packageName,
 		OpenAPI:       strconv.Quote(string(openAPI)),
 		Validations:   parsed,
 		QueryDecoders: queryDecoders,
+		Pattern:       settings,
 	}
 
 	validate, err := executeTemplate(templates, "validate.go.tmpl", data)

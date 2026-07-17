@@ -5,7 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	testgenerator "github.com/djosh34/klopt/pkg/test_generator"
+	"github.com/djosh34/klopt/pkg/validation"
 )
 
 // openAPI is the source document used to compile the generated validations.
@@ -21,6 +23,10 @@ func TestValidations(t *testing.T) {
 		func(operationID string, data []byte) error {
 			return errors.Join(validations[operationID].Validate(data)...)
 		},
+		validation.PatternOptions(
+			{{if .Pattern.RejectNonASCII}}patternvalidator.RejectNonASCII,{{end}}
+			{{if .Pattern.UseRE2}}patternvalidator.UseRE2,{{end}}
+		),
 		testgenerator.DefaultOption,
 	)
 }

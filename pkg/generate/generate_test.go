@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/djosh34/klopt/pkg/patternvalidator"
+	"github.com/djosh34/klopt/pkg/validation"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,7 +98,7 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 		"        '204': {description: empty}",
 	}, "\n"))
 
-	err = Generate(output, "generatefixture", spec)
+	err = Generate(output, "generatefixture", spec, validation.PatternOptions())
 	require.NoError(t, err)
 
 	generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
@@ -207,7 +210,7 @@ paths:
         - {name: tags, in: query, schema: {type: array, items: {type: string}}}
         - {name: limit, in: query, schema: {type: integer, default: 25}}
 `)
-	require.NoError(t, Generate(output, "generatequeryfixture", spec))
+	require.NoError(t, Generate(output, "generatequeryfixture", spec, validation.PatternOptions()))
 
 	generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
 	require.NoError(t, err)
@@ -338,7 +341,7 @@ paths:
       parameters:
         - {name: q, in: query, content: {application/json: {schema: {type: object, properties: {x: {type: boolean}}}}}}
 `)
-	require.NoError(t, Generate(output, "generatequeryparityfixture", spec))
+	require.NoError(t, Generate(output, "generatequeryparityfixture", spec, validation.PatternOptions()))
 
 	probe := []byte(`package generatequeryparityfixture
 
@@ -416,7 +419,7 @@ func TestGenerateRejectsUnsafeOperationIdentifiers(t *testing.T) {
 		"request/path",
 		"type",
 		"json",
-		"regexp",
+		"patternvalidator",
 		"jsonvalue",
 		"errors",
 		"testing",
@@ -442,12 +445,151 @@ paths:
           application/json:
             schema: {type: string}
 `, operationID)
-			err := Generate(output, "example", spec)
+			err := Generate(output, "example", spec, validation.PatternOptions())
 			require.ErrorContains(t, err, fmt.Sprintf("operation ID %q", operationID))
 
 			_, statErr := os.Stat(output)
 			require.ErrorIs(t, statErr, os.ErrNotExist)
 		})
+	}
+}
+
+// TestGeneratedPatternValidationMatchesRuntimeOptions covers all built-in setting combinations.
+func TestGeneratedPatternValidationMatchesRuntimeOptions(t *testing.T) {
+	t.Parallel()
+
+	repo := repoRoot(t)
+	specForPattern := func(pattern string) []byte {
+		return fmt.Appendf(nil, `openapi: 3.0.3
+info: {title: pattern parity, version: "1"}
+paths:
+  /request:
+    post:
+      operationId: patternRequest
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string, pattern: %q}
+      responses:
+        '204': {description: empty}
+`, pattern)
+	}
+
+	tests := []struct {
+		name    string
+		options []patternvalidator.Option
+		reject  bool
+		useRE2  bool
+	}{
+		{name: "default"},
+		{name: "strict", options: []patternvalidator.Option{patternvalidator.RejectNonASCII}, reject: true},
+		{name: "raw", options: []patternvalidator.Option{patternvalidator.UseRE2}, useRE2: true},
+		{
+			name: "strict raw",
+			options: []patternvalidator.Option{
+				patternvalidator.RejectNonASCII,
+				patternvalidator.UseRE2,
+			},
+			reject: true,
+			useRE2: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			pattern := "^.$"
+			probeBody := `"é"`
+
+			probeAccepted := !test.reject
+			if test.useRE2 {
+				pattern = `(?m)^a$`
+				probeBody = `"a"`
+				probeAccepted = true
+			}
+
+			spec := specForPattern(pattern)
+			composite := validation.PatternOptions(test.options...)
+			runtime, _, err := validation.Parse(spec, composite)
+			require.NoError(t, err)
+
+			runtimePattern := runtime["patternRequest"].StringValidation.CompiledPattern
+			require.Equal(t, test.reject, runtimePattern.RejectsNonASCII())
+			require.Equal(t, test.useRE2, runtimePattern.UsesRE2())
+
+			output, err := os.MkdirTemp(filepath.Join(repo, "pkg"), "generate-pattern-parity-")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, os.RemoveAll(output)) })
+
+			require.NoError(t, Generate(output, "generatepatternparity", spec, composite))
+
+			generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
+			require.NoError(t, err)
+			generatedTest, err := os.ReadFile(filepath.Join(output, "validate_test.go"))
+			require.NoError(t, err)
+
+			source := string(generated)
+			require.Contains(t, source, "patternvalidator.MustParse")
+			require.Equal(t, test.reject, strings.Contains(source, "patternvalidator.RejectNonASCII"))
+			require.Equal(t, test.useRE2, strings.Contains(source, "patternvalidator.UseRE2"))
+
+			testSource := string(generatedTest)
+			require.Equal(t, test.reject, strings.Contains(testSource, "patternvalidator.RejectNonASCII"))
+			require.Equal(t, test.useRE2, strings.Contains(testSource, "patternvalidator.UseRE2"))
+
+			probe := fmt.Appendf(nil, `package generatepatternparity
+
+import "testing"
+
+func TestPatternSettings(t *testing.T) {
+	compiled := patternRequest.StringValidation.CompiledPattern
+	if compiled.RejectsNonASCII() != %t {
+		t.Fatalf("RejectsNonASCII = %%t", compiled.RejectsNonASCII())
+	}
+	if compiled.UsesRE2() != %t {
+		t.Fatalf("UsesRE2 = %%t", compiled.UsesRE2())
+	}
+	accepted := len(patternRequest.Validate([]byte(%q))) == 0
+	if accepted != %t {
+		t.Fatalf("non-ASCII acceptance = %%t", accepted)
+	}
+}
+`, test.reject, test.useRE2, probeBody, probeAccepted)
+			require.NoError(t, os.WriteFile(filepath.Join(output, "pattern_probe_test.go"), probe, 0o644))
+
+			command := exec.CommandContext(
+				t.Context(), "go", "test", "./pkg/"+filepath.Base(output),
+				"-run", "^(TestPatternSettings|TestValidations)$",
+			)
+			command.Dir = repo
+			result, err := command.CombinedOutput()
+			require.NoError(t, err, string(result))
+		})
+	}
+}
+
+// TestGenerateRejectsNilPatternOptionBeforeWriting checks programmer misuse is safe.
+func TestGenerateRejectsNilPatternOptionBeforeWriting(t *testing.T) {
+	t.Parallel()
+
+	for _, schema := range []string{"{type: string, pattern: a}", "{type: string}"} {
+		output := filepath.Join(t.TempDir(), "output")
+		err := Generate(output, "example", []byte(`openapi: 3.0.3
+info: {title: nil option, version: "1"}
+paths:
+  /request:
+    post:
+      operationId: request
+      requestBody:
+        content:
+          application/json:
+            schema: `+schema+`
+`), nil)
+		require.ErrorContains(t, err, "nil pattern option")
+
+		_, statErr := os.Stat(output)
+		require.ErrorIs(t, statErr, os.ErrNotExist)
 	}
 }
 
@@ -474,7 +616,7 @@ paths:
         content:
           text/plain:
             schema: {type: string}
-`))
+`), validation.PatternOptions())
 	require.NoError(t, err)
 
 	command := exec.CommandContext(t.Context(), "go", "test", "./pkg/"+filepath.Base(output))
@@ -488,7 +630,7 @@ func TestGenerateStopsBeforeWritingOnParseError(t *testing.T) {
 	t.Parallel()
 
 	output := filepath.Join(t.TempDir(), "output")
-	err := Generate(output, "example", []byte("not openapi"))
+	err := Generate(output, "example", []byte("not openapi"), validation.PatternOptions())
 	require.Error(t, err)
 
 	_, statErr := os.Stat(output)
@@ -504,7 +646,7 @@ func TestGenerateExampleMatchesFixture(t *testing.T) {
 	require.NoError(t, err)
 
 	output := t.TempDir()
-	require.NoError(t, Generate(output, "example", openAPI))
+	require.NoError(t, Generate(output, "example", openAPI, validation.PatternOptions()))
 
 	for _, name := range []string{"validate.go", "validate_test.go"} {
 		actual, readErr := os.ReadFile(filepath.Join(output, name))
@@ -530,6 +672,7 @@ func TestRegenerateExample(t *testing.T) { //nolint:paralleltest // This test ex
 		filepath.Join(repo, "pkg", "decode", "example"),
 		"example",
 		openAPI,
+		validation.PatternOptions(),
 	))
 }
 

@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
+	"github.com/djosh34/klopt/pkg/test_generator/internal/patterngenerator"
 	"pgregory.net/rapid"
 )
 
@@ -23,8 +25,12 @@ var errNoTrustedStringExample = errors.New("pattern or format Domain has no trus
 
 // RapidGeneratorBuilder links canonical Domains to shared constructive Rapid generators.
 type RapidGeneratorBuilder struct {
-	domains    *DomainRegistry
-	generators map[generatorKey]*rapid.Generator[jsonvalue.Value]
+	domains       *DomainRegistry
+	patternOption patternvalidator.Option
+	pattern       *patternOccurrence
+	expect        ExpectedResult
+	generators    map[generatorKey]*rapid.Generator[jsonvalue.Value]
+	patternSets   map[patternSetKey]*patterngenerator.Set
 }
 
 // generatorKey identifies one Domain at one exact occurrence.
@@ -32,13 +38,34 @@ type generatorKey struct {
 	domain      DomainID
 	use         *schemaUse
 	evidenceUse *schemaUse
+	patternID   uint64
+}
+
+// patternSetKey identifies one ordered list of original pattern occurrences.
+type patternSetKey struct {
+	use       *schemaUse
+	signature string
 }
 
 // NewRapidGeneratorBuilder creates a generator builder for one compiled Domain graph.
-func NewRapidGeneratorBuilder(domains *DomainRegistry) *RapidGeneratorBuilder {
+func NewRapidGeneratorBuilder(
+	domains *DomainRegistry,
+	options ...patternvalidator.Option,
+) *RapidGeneratorBuilder {
+	if len(options) > 1 {
+		panic("suite: NewRapidGeneratorBuilder accepts at most one pattern option")
+	}
+
+	patternOption := patternvalidator.Option(func(*patternvalidator.PatternValidation) {})
+	if len(options) == 1 {
+		patternOption = options[0]
+	}
+
 	return &RapidGeneratorBuilder{
-		domains:    domains,
-		generators: make(map[generatorKey]*rapid.Generator[jsonvalue.Value]),
+		domains:       domains,
+		patternOption: patternOption,
+		generators:    make(map[generatorKey]*rapid.Generator[jsonvalue.Value]),
+		patternSets:   make(map[patternSetKey]*patterngenerator.Set),
 	}
 }
 
@@ -61,7 +88,7 @@ func (builder *RapidGeneratorBuilder) generator(
 		return nil, errors.New("build Rapid generator: Domain registry is nil")
 	}
 
-	key := generatorKey{domain: id, use: use, evidenceUse: evidenceUse}
+	key := generatorKey{domain: id, use: use, evidenceUse: evidenceUse, patternID: builder.patternID()}
 	if generator, ok := builder.generators[key]; ok {
 		return generator, nil
 	}
@@ -108,6 +135,15 @@ func (builder *RapidGeneratorBuilder) generator(
 	return generator, nil
 }
 
+// patternID returns the selected isolated pattern occurrence or the aggregate sentinel.
+func (builder *RapidGeneratorBuilder) patternID() uint64 {
+	if builder.pattern == nil {
+		return 0
+	}
+
+	return builder.pattern.id
+}
+
 // domainGenerator builds a generator from every reachable JSON kind in domain.
 func (builder *RapidGeneratorBuilder) domainGenerator(
 	domain Domain,
@@ -115,7 +151,12 @@ func (builder *RapidGeneratorBuilder) domainGenerator(
 	useOracle bool,
 	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if generator, handled, err := occurrenceOracleGenerator(domain, use, useOracle); handled {
+	if generator, handled, err := builder.occurrenceOracleGenerator(
+		domain,
+		use,
+		useOracle,
+		evidenceUse,
+	); handled {
 		return generator, err
 	}
 
@@ -168,18 +209,19 @@ func (builder *RapidGeneratorBuilder) domainGenerator(
 }
 
 // occurrenceOracleGenerator handles finite and opaque occurrence case sets.
-func occurrenceOracleGenerator(
+func (builder *RapidGeneratorBuilder) occurrenceOracleGenerator(
 	domain Domain,
 	use *schemaUse,
 	useOracle bool,
+	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], bool, error) {
 	if domain.Enum != nil {
-		generator, err := enumGenerator(domain.Enum, use, useOracle)
+		generator, err := builder.enumGenerator(domain, use, useOracle, evidenceUse)
 
 		return generator, true, err
 	}
 
-	if useOracle && use.examples.ValidDeclared && hasOpaqueStringConstraints(domain.String) {
+	if useOracle && use.examples.ValidDeclared && len(domain.String.Formats) > 0 {
 		if len(use.examples.Valid) == 0 {
 			return nil, false, nil
 		}
@@ -210,25 +252,93 @@ func generationExampleGenerator(
 }
 
 // enumGenerator samples the effective occurrence cases without changing Domain identity.
-func enumGenerator(
-	enum *EnumSet,
+//
+//nolint:cyclop // Evidence, finite patterns, and empty intersections have distinct outcomes.
+func (builder *RapidGeneratorBuilder) enumGenerator(
+	domain Domain,
 	use *schemaUse,
 	useOracle bool,
+	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if !useOracle || !use.examples.ValidDeclared {
-		return rapid.SampledFrom(cloneJSONValues(enum.Values)), nil
+	values := cloneJSONValues(domain.Enum.Values)
+	if evidenceUse != nil && evidenceUse == use && builder.expect == ExpectRejected {
+		return rapid.SampledFrom(values), nil
 	}
 
-	values := make([]jsonvalue.Value, 0, len(use.examples.Valid))
-	for _, example := range use.examples.Valid {
-		values = append(values, cloneJSONValue(example.Value))
+	if useOracle && use != nil && use.examples.ValidDeclared {
+		values = generationExampleValues(use.examples.Valid)
 	}
 
-	if len(values) == 0 {
-		return nil, errors.New("enum conjunction has no trusted valid generation case")
+	patterns := occurrencePatterns(use, domain.String.Patterns)
+	if len(patterns) == 0 {
+		if len(values) == 0 {
+			return nil, errors.New("enum conjunction has no trusted valid generation case")
+		}
+
+		return rapid.SampledFrom(values), nil
 	}
 
-	return rapid.SampledFrom(values), nil
+	matching, err := builder.matchingPatternEnumValues(domain, use, patterns, values)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(matching) == 0 {
+		return nil, newPatternConstructionError(patterns, use, builder.pattern, patterngenerator.ErrNoValues)
+	}
+
+	return rapid.SampledFrom(matching), nil
+}
+
+// matchingPatternEnumValues computes the finite enum/pattern conjunction before drawing.
+func (builder *RapidGeneratorBuilder) matchingPatternEnumValues(
+	domain Domain,
+	use *schemaUse,
+	patterns []patternOccurrence,
+	values []jsonvalue.Value,
+) ([]jsonvalue.Value, error) {
+	set, err := builder.patternSet(patterns, use)
+	if err != nil {
+		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
+	}
+
+	wantMatches := make([]bool, 0, len(patterns))
+	for _, pattern := range patterns {
+		wantMatches = append(wantMatches, builder.pattern == nil || builder.pattern.id != pattern.id)
+	}
+
+	matching := make([]jsonvalue.Value, 0, len(values))
+	for _, value := range values {
+		matches, matchErr := builder.patternEnumValueMatches(domain.String, set, wantMatches, value)
+		if matchErr != nil {
+			return nil, newPatternConstructionError(patterns, use, builder.pattern, matchErr)
+		}
+
+		if matches {
+			matching = append(matching, value)
+		}
+	}
+
+	return matching, nil
+}
+
+// patternEnumValueMatches checks one finite candidate with the independent ASCII DFA.
+func (builder *RapidGeneratorBuilder) patternEnumValueMatches(
+	constraints StringConstraints,
+	set *patterngenerator.Set,
+	wantMatches []bool,
+	value jsonvalue.Value,
+) (bool, error) {
+	if value.Kind != jsonvalue.KindString {
+		return builder.pattern == nil, nil
+	}
+
+	length := utf8.RuneCountInString(value.String)
+	if length < constraints.MinLength || constraints.MaxLength != nil && length > *constraints.MaxLength {
+		return false, nil
+	}
+
+	return set.Matches(value.String, wantMatches)
 }
 
 // appendConstructiveGenerator records a reachable generator or preserves the first construction error.
@@ -522,20 +632,135 @@ func mustGeneratedNumber(t *rapid.T, rational *big.Rat) jsonvalue.Value {
 	return jsonvalue.Value{Kind: jsonvalue.KindNumber, Number: *number}
 }
 
-// stringGenerator builds arbitrary strings or samples trusted pattern and format examples.
+// stringGenerator builds arbitrary strings, constructively satisfies patterns, or samples trusted formats.
 func (builder *RapidGeneratorBuilder) stringGenerator(
 	constraints StringConstraints,
 	use *schemaUse,
 	useOracle bool,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if len(constraints.Patterns) > 0 || len(constraints.Formats) > 0 {
+	if len(constraints.Formats) > 0 {
 		return trustedStringGenerator(constraints, use, useOracle)
+	}
+
+	if len(constraints.Patterns) > 0 || use != nil && len(use.patterns) > 0 {
+		return builder.patternStringGenerator(constraints, use)
 	}
 
 	maximum := generatedCollectionMaximum(constraints.MinLength, constraints.MaxLength)
 	generator := rapid.StringN(constraints.MinLength, maximum, -1)
 
 	return rapid.Map(generator, jsonvalue.String), nil
+}
+
+// patternStringGenerator constructs the exact signed conjunction for one schema occurrence.
+func (builder *RapidGeneratorBuilder) patternStringGenerator(
+	constraints StringConstraints,
+	use *schemaUse,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	patterns := occurrencePatterns(use, constraints.Patterns)
+	wantMatches := make([]bool, 0, len(patterns))
+
+	for _, pattern := range patterns {
+		wantMatches = append(wantMatches, builder.pattern == nil || builder.pattern.id != pattern.id)
+	}
+
+	set, err := builder.patternSet(patterns, use)
+	if err != nil {
+		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
+	}
+
+	generator, err := set.Strings(
+		wantMatches,
+		constraints.MinLength,
+		constraints.MaxLength,
+	)
+	if err != nil {
+		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
+	}
+
+	return rapid.Map(generator, jsonvalue.String), nil
+}
+
+// patternSet compiles each original occurrence once and reuses it for every signed request.
+func (builder *RapidGeneratorBuilder) patternSet(
+	patterns []patternOccurrence,
+	use *schemaUse,
+) (*patterngenerator.Set, error) {
+	sources := make([]string, len(patterns))
+	signature := ""
+
+	for index, pattern := range patterns {
+		sources[index] = pattern.value
+		signature += strconv.Itoa(len(pattern.value)) + ":" + pattern.value
+	}
+
+	key := patternSetKey{use: use, signature: signature}
+	if set, ok := builder.patternSets[key]; ok {
+		return set, nil
+	}
+
+	set, err := patterngenerator.Compile(sources, builder.patternOption)
+	if err != nil {
+		return nil, err
+	}
+
+	builder.patternSets[key] = set
+
+	return set, nil
+}
+
+// occurrencePatterns returns exact provenance when available and semantic patterns otherwise.
+func occurrencePatterns(use *schemaUse, patterns []string) []patternOccurrence {
+	if use != nil && len(use.patterns) > 0 {
+		return append([]patternOccurrence(nil), use.patterns...)
+	}
+
+	result := make([]patternOccurrence, 0, len(patterns))
+	for index, pattern := range patterns {
+		result = append(result, patternOccurrence{id: uint64(index + 1), value: pattern})
+	}
+
+	return result
+}
+
+// patternConstructionError retains the schema source responsible for construction failure.
+type patternConstructionError struct {
+	source ConstraintSource
+	cause  error
+}
+
+// Error reports the underlying pattern construction failure.
+func (constructionError *patternConstructionError) Error() string {
+	return constructionError.cause.Error()
+}
+
+// Unwrap exposes the pattern generator failure.
+func (constructionError *patternConstructionError) Unwrap() error {
+	return constructionError.cause
+}
+
+// newPatternConstructionError maps a backend requirement index to its exact schema declaration.
+func newPatternConstructionError(
+	patterns []patternOccurrence,
+	use *schemaUse,
+	target *patternOccurrence,
+	err error,
+) *patternConstructionError {
+	source := ConstraintSource{Keyword: "pattern"}
+	if use != nil {
+		source.Pointer = use.pointer
+	}
+
+	var requirementError *patterngenerator.RequirementError
+	if errors.As(err, &requirementError) && requirementError.Index >= 0 && requirementError.Index < len(patterns) {
+		source = patterns[requirementError.Index].source
+	} else if target != nil {
+		source = target.source
+	} else if len(patterns) > 0 {
+		source = patterns[0].source
+	}
+
+	return &patternConstructionError{source: source, cause: err}
 }
 
 // trustedStringGenerator samples exact occurrence cases, filtering only for an

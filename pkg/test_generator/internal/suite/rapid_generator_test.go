@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -138,29 +139,39 @@ maxLength: 1`, "", "create"))
 	require.ErrorContains(t, err, "accepts no JSON value")
 }
 
-// TestCompileSuiteRejectsMissingExamplesForAnyReachableStringKind verifies mixed schemas do not omit a partition.
-func TestCompileSuiteRejectsMissingExamplesForAnyReachableStringKind(t *testing.T) {
+// TestCompileSuiteConstructsPatternsWithoutExamples verifies pattern generation needs no oracle.
+func TestCompileSuiteConstructsPatternsWithoutExamples(t *testing.T) {
 	t.Parallel()
 
 	compiler := NewCompiler(parseSchemaSource(t, `pattern: '^ok$'`, "", "create"))
-	_, err := compiler.CompileSuite()
-	require.ErrorContains(t, err, "no trusted valid example")
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	for _, plannedCase := range compiled.Cases {
+		if plannedCase.Expect != ExpectAccepted {
+			continue
+		}
+
+		for seed := range 10 {
+			value := plannedCase.Generator.Example(seed)
+			if value.Kind == jsonvalue.KindString {
+				require.True(t, patternvalidator.MustParse(`^ok$`).Validate(value.String))
+			}
+		}
+	}
 }
 
-// TestCompileSuiteRequiresTrustedPatternAndFormatExamples verifies constrained strings need trusted examples.
-func TestCompileSuiteRequiresTrustedPatternAndFormatExamples(t *testing.T) {
+// TestCompileSuiteRequiresTrustedFormatButNotPatternExamples verifies only opaque formats need an oracle.
+func TestCompileSuiteRequiresTrustedFormatButNotPatternExamples(t *testing.T) {
 	t.Parallel()
 
-	for _, schema := range []string{
-		`type: string
-pattern: '^ok$'`,
-		`type: string
-format: email`,
-	} {
-		compiler := NewCompiler(parseSchemaSource(t, schema, "", "create"))
-		_, err := compiler.CompileSuite()
-		require.ErrorContains(t, err, "no trusted valid example")
-	}
+	patternCompiler := NewCompiler(parseSchemaSource(t, "type: string\npattern: '^ok$'", "", "create"))
+	_, err := patternCompiler.CompileSuite()
+	require.NoError(t, err)
+
+	formatCompiler := NewCompiler(parseSchemaSource(t, "type: string\nformat: email", "", "create"))
+	_, err = formatCompiler.CompileSuite()
+	require.ErrorContains(t, err, "no trusted valid example")
 }
 
 // TestCompileSuiteKeepsRequiredNamesSeparateFromDeclaredProperties verifies that required

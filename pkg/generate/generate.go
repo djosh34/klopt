@@ -2,11 +2,13 @@
 package generate
 
 import (
+	"errors"
 	"fmt"
 	"go/token"
 	"os"
 	"path/filepath"
 
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
@@ -18,8 +20,24 @@ const (
 )
 
 // Generate parses one OpenAPI document and writes validate.go and validate_test.go.
-func Generate(dir string, packageName string, openAPI []byte) error {
-	parsed, queryDecoders, err := validation.Parse(openAPI)
+func Generate(
+	dir string,
+	packageName string,
+	openAPI []byte,
+	patternOption patternvalidator.Option,
+) error {
+	if patternOption == nil {
+		return errors.New("generate: nil pattern option")
+	}
+
+	settings := patternSettings{}
+	captureSettings := patternvalidator.Option(func(compiled *patternvalidator.PatternValidation) {
+		patternOption(compiled)
+		settings.RejectNonASCII = compiled.RejectsNonASCII()
+		settings.UseRE2 = compiled.UsesRE2()
+	})
+
+	parsed, queryDecoders, err := validation.Parse(openAPI, captureSettings)
 	if err != nil {
 		return err
 	}
@@ -30,7 +48,7 @@ func Generate(dir string, packageName string, openAPI []byte) error {
 		}
 	}
 
-	files, err := render(packageName, openAPI, parsed, queryDecoders)
+	files, err := render(packageName, openAPI, parsed, queryDecoders, settings)
 	if err != nil {
 		return err
 	}
@@ -55,7 +73,7 @@ func isSafeOperationIdentifier(operationID string) bool {
 	}
 
 	switch operationID {
-	case "byte", "error", "errors", "json", "jsonvalue", "openAPI", "regexp", "string", "testing",
+	case "byte", "error", "errors", "json", "jsonvalue", "openAPI", "patternvalidator", "string", "testing",
 		"testgenerator", "TestValidations", "true", "validation", "validations", "queryDecoders", "mustQueryDecoder":
 		return false
 	default:

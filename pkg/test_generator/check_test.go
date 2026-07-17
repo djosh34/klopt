@@ -13,6 +13,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/djosh34/klopt/pkg/patternvalidator"
+	"github.com/djosh34/klopt/pkg/validation"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +48,7 @@ func TestCheckJSONRequestBodiesRunsCompiledPartitionsAsValidJSON(t *testing.T) {
 		}
 
 		return errors.New("not an enum member")
-	}, DefaultOption)
+	}, validation.PatternOptions(), DefaultOption)
 }
 
 // TestCheckJSONRequestBodiesRoutesEveryExactOperationID verifies one parse and document-wide dispatch.
@@ -109,7 +111,60 @@ paths:
 		}
 
 		return nil
-	}, DefaultOption)
+	}, validation.PatternOptions(), DefaultOption)
+}
+
+// TestCheckJSONRequestBodiesConstructsPatternCasesThroughCallback verifies the normal public callback path.
+func TestCheckJSONRequestBodiesConstructsPatternCasesThroughCallback(t *testing.T) {
+	t.Parallel()
+
+	spec := requestBodySpec(`
+      type: string
+      minLength: 2
+      maxLength: 4
+      allOf:
+        - pattern: '^[A-Z]+$'
+        - pattern: '^A'
+`)
+
+	var (
+		accepted atomic.Int64
+		rejected atomic.Int64
+	)
+
+	t.Cleanup(func() {
+		require.Positive(t, accepted.Load())
+		require.Positive(t, rejected.Load())
+	})
+
+	first := patternvalidator.MustParse(`^[A-Z]+$`)
+	second := patternvalidator.MustParse(`^A`)
+
+	CheckJSONRequestBodies(t, spec, func(operationID string, body []byte) error {
+		require.Equal(t, "checkThing", operationID)
+
+		var decoded any
+		require.NoError(t, json.Unmarshal(body, &decoded))
+
+		value, stringValue := decoded.(string)
+		if !stringValue {
+			rejected.Add(1)
+
+			return errors.New("type rejected")
+		}
+
+		valid := utf8.RuneCountInString(value) >= 2 && utf8.RuneCountInString(value) <= 4 &&
+			first.Validate(value) && second.Validate(value)
+		if valid {
+			accepted.Add(1)
+
+			return nil
+		}
+
+		rejected.Add(1)
+
+		return errors.New("pattern rejected")
+	}, validation.PatternOptions(), DefaultOption)
 }
 
 // TestCheckJSONRequestBodiesFindsBuggyValidatorsByKeywordFamily verifies that each keyword family detects a bug.
@@ -172,6 +227,7 @@ func TestCheckJSONRequestBodiesBuggyValidatorHelper(t *testing.T) {
 		func(_ string, body []byte) error {
 			return fixture.validate(body)
 		},
+		validation.PatternOptions(),
 		DefaultOption,
 	)
 }
@@ -251,10 +307,9 @@ func scalarValidatorBugFixtures() map[string]validatorBugFixture {
 			schema: `
       type: string
       pattern: '^OK$'
-      x-valid-examples: [OK]
-      x-invalid-examples: [bad]
 `,
 			failure:  "invalid JSON accepted",
+			caseName: "invalid_pattern_1",
 			validate: stringValidator(func(_ string) bool { return true }),
 		},
 		"format": {

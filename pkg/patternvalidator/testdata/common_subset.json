@@ -1,0 +1,111 @@
+{
+  "metadata": {
+    "seed": 5102026,
+    "nodeVersion": "v24.18.0",
+    "bunVersion": "1.3.11",
+    "generator": "generate_common_subset.mjs",
+    "disagreements": []
+  },
+  "cases": [
+    {
+      "pattern": "^[A-Z]+$",
+      "input": "OPENAPI",
+      "expected": true
+    },
+    {
+      "pattern": "^[A-Z]+$",
+      "input": "OpenAPI",
+      "expected": false
+    },
+    {
+      "pattern": "a",
+      "input": "cat",
+      "expected": true
+    },
+    {
+      "pattern": "",
+      "input": "anything",
+      "expected": true
+    },
+    {
+      "pattern": "^(ab|cd){1,2}$",
+      "input": "abcd",
+      "expected": true
+    },
+    {
+      "pattern": "^\\x41\\u0042$",
+      "input": "AB",
+      "expected": true
+    },
+    {
+      "pattern": "^.$",
+      "input": "x",
+      "expected": true
+    },
+    {
+      "pattern": "^a$",
+      "input": "a",
+      "expected": true
+    },
+    {
+      "pattern": "",
+      "input": "",
+      "expected": true
+    },
+    {
+      "pattern": "^\\d\\w\\s$",
+      "input": "7_ ",
+      "expected": true
+    },
+    {
+      "pattern": "^(ab|cd){1,2}$",
+      "input": "ababab",
+      "expected": false
+    },
+    {
+      "pattern": "^a{2,}$",
+      "input": "aaaa",
+      "expected": true
+    },
+    {
+      "pattern": "^\\d\\w\\s$",
+      "input": "x_ ",
+      "expected": false
+    },
+    {
+      "pattern": "^a$",
+      "input": "ba",
+      "expected": false
+    },
+    {
+      "pattern": "a",
+      "input": "BCD",
+      "expected": false
+    },
+    {
+      "pattern": "^[^0-9]+$",
+      "input": "letters-only",
+      "expected": true
+    },
+    {
+      "pattern": "^\\/\\-$",
+      "input": "/-",
+      "expected": true
+    },
+    {
+      "pattern": "^a{2,}$",
+      "input": "a",
+      "expected": false
+    },
+    {
+      "pattern": "^[^0-9]+$",
+      "input": "version3",
+      "expected": false
+    },
+    {
+      "pattern": "^.$",
+      "input": "\n",
+      "expected": false
+    }
+  ]
+}

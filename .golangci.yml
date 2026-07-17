@@ -41,6 +41,8 @@ linters:
             - github.com/djosh34/klopt/pkg/decode/example
             - github.com/djosh34/klopt/pkg/jsonvalue
             - github.com/djosh34/klopt/pkg/internal/oas
+            - github.com/djosh34/klopt/pkg/internal/patternsyntax
+            - github.com/djosh34/klopt/pkg/patternvalidator
             - github.com/djosh34/klopt/pkg/test_generator
             - github.com/djosh34/klopt/pkg/validation
             - github.com/arran4/golang-diff/pkg/diff

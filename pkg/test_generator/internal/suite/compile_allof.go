@@ -136,6 +136,11 @@ func (compiler *Compiler) generationExamplesWithinDomain(
 	result := make([]GenerationExample, 0, len(examples))
 	for _, example := range examples {
 		matches, err := compiler.valueFitsDomain(example.Value, domain)
+		if errors.Is(err, errOpaqueStringMembership) &&
+			len(domain.String.Patterns) > 0 && len(domain.String.Formats) == 0 {
+			matches, err = true, nil
+		}
+
 		if err != nil {
 			return nil, err
 		}

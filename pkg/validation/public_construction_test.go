@@ -2,10 +2,11 @@ package validation_test
 
 import (
 	"encoding/json"
-	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
 
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func TestPublicCompiledFieldsSupportDirectConstruction(t *testing.T) {
 			name: "pattern",
 			validation: &validation.Validation{StringValidation: validation.StringValidation{
 				Pattern:         "^a+$",
-				CompiledPattern: regexp.MustCompile("^a+$"),
+				CompiledPattern: patternvalidator.MustParse("^a+$"),
 			}},
 			valid: json.RawMessage(`"aa"`), invalid: json.RawMessage(`"b"`),
 		},
@@ -75,4 +76,50 @@ func TestPublicCompiledFieldsSupportDirectConstruction(t *testing.T) {
 			require.NotEmpty(t, test.validation.Validate(test.invalid))
 		})
 	}
+}
+
+// TestPatternOptionsComposeAndPreserveSealing verifies public option propagation.
+func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
+	t.Parallel()
+
+	composite := validation.PatternOptions(
+		patternvalidator.RejectNonASCII,
+		patternvalidator.UseRE2,
+	)
+
+	unsealed := new(patternvalidator.PatternValidation)
+	composite(unsealed)
+	require.True(t, unsealed.RejectsNonASCII())
+	require.True(t, unsealed.UsesRE2())
+
+	spec := []byte(`{
+		"openapi":"3.0.3",
+		"info":{"title":"options","version":"1"},
+		"paths":{"/request":{"post":{
+			"operationId":"request",
+			"requestBody":{"content":{"application/json":{"schema":{
+				"type":"string","pattern":"^[a-z]+$"
+			}}}},
+			"responses":{"204":{"description":"empty"}}
+		}}}
+	}`)
+
+	parsed, _, err := validation.Parse(spec, composite)
+	require.NoError(t, err)
+
+	compiled := parsed["request"].StringValidation.CompiledPattern
+	require.True(t, compiled.RejectsNonASCII())
+	require.True(t, compiled.UsesRE2())
+	require.Panics(t, func() { composite(compiled) })
+	require.True(t, compiled.RejectsNonASCII())
+	require.True(t, compiled.UsesRE2())
+
+	require.Panics(t, func() { validation.PatternOptions(nil) })
+
+	_, _, err = validation.Parse(spec, nil)
+	require.EqualError(t, err, strings.Join([]string{
+		"compile operationId \"request\": compile schema at ",
+		"#/paths/~1request/post/requestBody/content/application~1json/schema/pattern: ",
+		"patternvalidator: nil option",
+	}, ""))
 }

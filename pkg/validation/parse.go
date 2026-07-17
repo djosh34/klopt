@@ -7,17 +7,20 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
 // Parse compiles every JSON request-body validation and query decoder in one OpenAPI document.
-func Parse(spec []byte) (map[string]*Validation, map[string]*QueryDecoder, error) {
+func Parse(
+	spec []byte,
+	patternOptions ...patternvalidator.Option,
+) (map[string]*Validation, map[string]*QueryDecoder, error) {
 	sources, err := oas.Parse(spec)
 	if err != nil {
 		return nil, nil, err
@@ -29,9 +32,10 @@ func Parse(spec []byte) (map[string]*Validation, map[string]*QueryDecoder, error
 	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
 		source := sources[operationID]
 		compiler := schemaCompiler{
-			source:   source,
-			bySchema: make(map[string]*Validation),
-			active:   make(map[string]struct{}),
+			source:         source,
+			bySchema:       make(map[string]*Validation),
+			active:         make(map[string]struct{}),
+			patternOptions: patternOptions,
 		}
 
 		if len(source.RequestSchema.Raw) != 0 {
@@ -59,9 +63,25 @@ func Parse(spec []byte) (map[string]*Validation, map[string]*QueryDecoder, error
 
 // schemaCompiler owns compilation state for one operation.
 type schemaCompiler struct {
-	source   oas.Source
-	bySchema map[string]*Validation
-	active   map[string]struct{}
+	source         oas.Source
+	bySchema       map[string]*Validation
+	active         map[string]struct{}
+	patternOptions []patternvalidator.Option
+}
+
+// PatternOptions composes pattern options for APIs that accept exactly one option.
+func PatternOptions(options ...patternvalidator.Option) patternvalidator.Option {
+	for _, option := range options {
+		if option == nil {
+			panic("nil pattern option")
+		}
+	}
+
+	return func(validation *patternvalidator.PatternValidation) {
+		for _, option := range options {
+			option(validation)
+		}
+	}
 }
 
 // compile resolves and compiles one reachable schema occurrence.
@@ -167,7 +187,7 @@ func (compiler *schemaCompiler) compileKeywords(
 		return err
 	}
 
-	if err := compileString(validation, schema.Pointer, members); err != nil {
+	if err := compiler.compileString(validation, schema.Pointer, members); err != nil {
 		return err
 	}
 
@@ -459,7 +479,11 @@ func compileNumber(validation *Validation, pointer string, members map[string]js
 }
 
 // compileString compiles string length, pattern, and format constraints.
-func compileString(validation *Validation, pointer string, members map[string]json.RawMessage) error {
+func (compiler *schemaCompiler) compileString(
+	validation *Validation,
+	pointer string,
+	members map[string]json.RawMessage,
+) error {
 	minimum, err := decodeOptionalNonNegativeInteger(members, "minLength")
 	if err != nil {
 		return keywordError(pointer, "minLength", err)
@@ -479,9 +503,9 @@ func compileString(validation *Validation, pointer string, members map[string]js
 			return keywordError(pointer, "pattern", err)
 		}
 
-		compiled, err := regexp.Compile(pattern)
+		compiled, err := patternvalidator.Parse(pattern, compiler.patternOptions...)
 		if err != nil {
-			return keywordError(pointer, "pattern", fmt.Errorf("unsupported RE2 pattern: %w", err))
+			return keywordError(pointer, "pattern", err)
 		}
 
 		validation.StringValidation.Pattern = pattern

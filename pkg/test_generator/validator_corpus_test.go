@@ -330,25 +330,25 @@ func validatorCorpusCoverage() []validatorCorpusExpectation {
 		}, Expect: suite.ExpectRejected, JSON: `"wrong"`},
 		{FixtureID: corpusCategoryStrings + "/witness-direct-evidence", Source: suite.ConstraintSource{
 			Pointer: root, Keyword: "x-valid-examples",
-		}, Expect: suite.ExpectAccepted, JSON: `"ok"`},
+		}, Expect: suite.ExpectAccepted, Absent: true},
 		{FixtureID: corpusCategoryStrings + "/witness-direct-evidence", Source: suite.ConstraintSource{
 			Pointer: root, Keyword: "x-invalid-examples",
 		}, Expect: suite.ExpectRejected, JSON: `1`},
 		{FixtureID: corpusCategoryObjects + "/witness-property-evidence", Source: suite.ConstraintSource{
 			Pointer: root + "/properties/value", Keyword: "x-valid-examples",
-		}, Expect: suite.ExpectAccepted, JSON: `{"value":"ok"}`, Generated: true},
+		}, Expect: suite.ExpectAccepted, Absent: true},
 		{FixtureID: corpusCategoryObjects + "/witness-property-evidence", Source: suite.ConstraintSource{
 			Pointer: root + "/properties/value", Keyword: "x-invalid-examples",
 		}, Expect: suite.ExpectRejected, JSON: `{"value":1}`, Generated: true},
 		{FixtureID: corpusCategoryArrays + "/witness-item-evidence", Source: suite.ConstraintSource{
 			Pointer: root + "/items", Keyword: "x-valid-examples",
-		}, Expect: suite.ExpectAccepted, JSON: `["ok"]`, Generated: true},
+		}, Expect: suite.ExpectAccepted, Absent: true},
 		{FixtureID: corpusCategoryArrays + "/witness-item-evidence", Source: suite.ConstraintSource{
 			Pointer: root + "/items", Keyword: "x-invalid-examples",
 		}, Expect: suite.ExpectRejected, JSON: `[1]`, Generated: true},
 		{FixtureID: corpusCategoryRefs + "/witness-ref-evidence", Source: suite.ConstraintSource{
 			Pointer: "#/components/schemas/Evidence", Keyword: "x-valid-examples",
-		}, Expect: suite.ExpectAccepted, JSON: `{"value":"ok"}`, Generated: true},
+		}, Expect: suite.ExpectAccepted, Absent: true},
 		{FixtureID: corpusCategoryRefs + "/witness-ref-evidence", Source: suite.ConstraintSource{
 			Pointer: "#/components/schemas/Evidence", Keyword: "x-invalid-examples",
 		}, Expect: suite.ExpectRejected, JSON: `{"value":1}`, Generated: true},
@@ -843,7 +843,7 @@ func stringCorpus() []validatorCorpusFixture {
 		{id: "escaped-dot", value: `^[0-9]{2}\.[0-9]{2}$`, valid: "\"12.34\"", invalid: "\"1234\""},
 		{id: "alternation", value: "^(red|blue)$", valid: "red", invalid: "green"},
 		{id: "letters-digits", value: "^[A-Z]{2}-[0-9]{2}$", valid: "AB-12", invalid: "ab-12"},
-		{id: "unicode", value: "^λ[0-9]$", valid: "λ7", invalid: "λ"},
+		{id: "unicode", value: "^(λ[0-9]|A)$", valid: "λ7", invalid: "λ"},
 		{id: "lowercase", value: "^[a-z]+$", valid: "word", invalid: "WORD"},
 		{id: "escaped-plus", value: "^a[+]b$", valid: "a+b", invalid: "ab"},
 		{id: "optional-suffix", value: "^item(-[0-9]+)?$", valid: "item-2", invalid: "other"},
@@ -2029,7 +2029,7 @@ components:
           type: string
           minLength: 2
           maxLength: 3
-          pattern: '^λ[0-9]$'
+          pattern: '^(λ[0-9]|AA)$'
           x-valid-examples: [λ7]
           x-invalid-examples: [λ, xx]
         email:

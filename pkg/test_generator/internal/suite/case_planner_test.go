@@ -8,6 +8,7 @@ import (
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -68,7 +69,7 @@ x-invalid-examples: [true, 2, y, [2], {a: 2}]`, "", "create"))
 
 	want := map[string]ExpectedResult{
 		`null`: ExpectAccepted, `false`: ExpectAccepted, `1`: ExpectAccepted,
-		`"x"`: ExpectAccepted, `[1]`: ExpectAccepted, `{"a":1}`: ExpectAccepted,
+		`[1]`: ExpectAccepted, `{"a":1}`: ExpectAccepted,
 		`true`: ExpectRejected, `2`: ExpectRejected, `"y"`: ExpectRejected,
 		`[2]`: ExpectRejected, `{"a":2}`: ExpectRejected,
 	}
@@ -133,9 +134,9 @@ func TestCompileSuiteKeepsEnumMembersAsExactAcceptedCases(t *testing.T) {
 	require.Equal(t, want, found)
 }
 
-// TestCompileSuiteDoesNotReplaceSingletonEvidenceWithTheOccurrenceOracle
-// covers equal Domain identities for a local singleton enum and its evidence.
-func TestCompileSuiteDoesNotReplaceSingletonEvidenceWithTheOccurrenceOracle(t *testing.T) {
+// TestCompileSuiteConstructsPatternEnumWithoutTrustedEvidence ensures the
+// finite conjunction, rather than x-valid-examples, owns accepted generation.
+func TestCompileSuiteConstructsPatternEnumWithoutTrustedEvidence(t *testing.T) {
 	t.Parallel()
 
 	compiler := NewCompiler(parseSchemaSource(t, `type: string
@@ -144,12 +145,18 @@ enum: [x]
 x-valid-examples: [x]`, "", "create"))
 	compiled, err := compiler.CompileSuite()
 	require.NoError(t, err)
-	assertExactEvidenceBody(t, compiled.Cases, "x-valid-examples", ExpectAccepted, `"x"`)
+
+	for _, plannedCase := range compiled.Cases {
+		require.NotEqual(t, "x-valid-examples", plannedCase.Source.Keyword)
+	}
+
+	checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
+		require.JSONEq(t, `"x"`, string(body))
+	})
 }
 
-// TestCompileSuiteEvidenceMarkerIsOccurrenceLocal verifies targeting one child
-// does not suppress the oracle on an equal-Domain sibling occurrence.
-func TestCompileSuiteEvidenceMarkerIsOccurrenceLocal(t *testing.T) {
+// TestCompileSuiteConstructsEqualPatternChildrenIndependently verifies equal child languages keep exact occurrences.
+func TestCompileSuiteConstructsEqualPatternChildrenIndependently(t *testing.T) {
 	t.Parallel()
 
 	compiler := NewCompiler(parseSchemaSource(t, `type: object
@@ -162,23 +169,12 @@ additionalProperties: false`, "", "create"))
 	compiled, err := compiler.CompileSuite()
 	require.NoError(t, err)
 
-	for _, plannedCase := range compiled.Cases {
-		if plannedCase.Source.Keyword != "x-valid-examples" ||
-			!strings.HasSuffix(plannedCase.Source.Pointer, "/properties/left") {
-			continue
-		}
-
-		rapid.Check(t, func(rt *rapid.T) {
-			value := plannedCase.Generator.Draw(rt, "value")
-			body, marshalErr := value.MarshalJSON()
-			require.NoError(rt, marshalErr)
-			require.JSONEq(rt, `{"left":"left","right":"right"}`, string(body))
-		})
-
-		return
-	}
-
-	require.Fail(t, "left evidence case not found")
+	checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
+		var object map[string]string
+		require.NoError(t, json.Unmarshal(body, &object))
+		require.True(t, patternvalidator.MustParse(`^[a-z]+$`).Validate(object["left"]))
+		require.True(t, patternvalidator.MustParse(`^[a-z]+$`).Validate(object["right"]))
+	})
 }
 
 // TestCompileSuiteUsesWrongKindTrustedValueAsTheAggregate verifies a declared
@@ -310,7 +306,9 @@ x-valid-examples: []`, "", "create"))
 
 		rapid.Check(t, func(rt *rapid.T) {
 			value := plannedCase.Generator.Draw(rt, "value")
-			require.NotEqual(rt, jsonvalue.KindString, value.Kind)
+			if value.Kind == jsonvalue.KindString {
+				require.Equal(rt, "x", value.String)
+			}
 		})
 	}
 

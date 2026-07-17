@@ -23,7 +23,11 @@
 	{{with .MaxLength}}MaxLength: {{template "countBound" .}},{{end}}
 	{{with .Pattern}}Pattern: {{printf "%q" .}},{{end}}
 	{{with .Format}}Format: {{printf "%q" .}},{{end}}
-	{{if .CompiledPattern}}CompiledPattern: regexp.MustCompile({{printf "%q" .Pattern}}),{{end}}
+	{{if .CompiledPattern}}CompiledPattern: patternvalidator.MustParse(
+		{{printf "%q" .Pattern}},
+		{{if .CompiledPattern.RejectsNonASCII}}patternvalidator.RejectNonASCII,{{end}}
+		{{if .CompiledPattern.UsesRE2}}patternvalidator.UseRE2,{{end}}
+	),{{end}}
 }{{end}}
 
 {{define "arrayValidation"}}validation.ArrayValidation{
@@ -164,9 +168,9 @@ package {{.Package}}
 
 import (
 	"encoding/json"
-	"regexp"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
 )
 

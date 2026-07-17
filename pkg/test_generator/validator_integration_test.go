@@ -614,13 +614,13 @@ components:
       x-invalid-examples: [bad]
 `,
 			Body:                    []byte(`"bad"`),
-			Runtime:                 validatorSetupRejected,
-			RuntimeErrorContains:    "unsupported RE2 pattern",
+			Runtime:                 validatorBodyRejected,
+			RuntimeErrorContains:    "keyword pattern",
 			Libopenapi:              validatorSetupRejected,
 			LibopenapiErrorContains: "OpenAPI document is not valid according to the 3.0.3 specification",
 			Kinopenapi:              validatorSetupRejected,
 			KinopenapiErrorContains: "invalid or unsupported Perl syntax: `(?!`",
-			// ECMAScript 5.1 permits negative lookahead, but Go RE2 does not; both pinned adapters reject it during setup.
+			// The runtime supports this constrained ES5.1 leading lookahead; both pinned adapters reject it during setup.
 		},
 		{
 			ID: "request-read-only-property",
