@@ -95,7 +95,10 @@ func Parse(spec []byte) (map[string]Source, error) {
 
 	var version string
 	if err := json.Unmarshal(root["openapi"], &version); err != nil {
-		return nil, errors.New("OpenAPI document version must be a Semantic Versioning 2.0.0 version")
+		return nil, fmt.Errorf(
+			"OpenAPI document version must be a Semantic Versioning 2.0.0 version: %w",
+			err,
+		)
 	}
 
 	versionParts := semanticVersionPattern.FindStringSubmatch(version)

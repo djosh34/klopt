@@ -1,4 +1,4 @@
-// Package patternvalidator validates strings against OpenAPI 3.0 patterns.
+// Package patternvalidator validates strings against OpenAPI 3.0.x patterns.
 //
 // By default Parse accepts the documented ECMAScript 5.1 regular subset.
 // UseRE2 selects raw Go regexp syntax. RejectNonASCII makes the guaranteed

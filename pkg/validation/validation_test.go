@@ -532,6 +532,19 @@ func TestParseRejectsUnsupportedOpenAPIVersions(t *testing.T) {
 	require.ErrorContains(t, err, "Semantic Versioning 2.0.0")
 }
 
+// TestParsePreservesOpenAPIVersionDecodeError keeps invalid field-type context available to callers.
+func TestParsePreservesOpenAPIVersionDecodeError(t *testing.T) {
+	t.Parallel()
+
+	valid := openAPISpec(`{}`, "", false)
+	spec := strings.Replace(string(valid), `"3.0.3"`, `3.0`, 1)
+
+	_, _, err := Parse([]byte(spec))
+
+	var typeError *json.UnmarshalTypeError
+	require.ErrorAs(t, err, &typeError)
+}
+
 // TestParseRejectsFirstMalformedOperationDeterministically verifies the whole-document error boundary.
 func TestParseRejectsFirstMalformedOperationDeterministically(t *testing.T) {
 	t.Parallel()

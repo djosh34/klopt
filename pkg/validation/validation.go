@@ -1,4 +1,4 @@
-// Package validation compiles OpenAPI 3.0 request-body validations and query decoders.
+// Package validation compiles OpenAPI 3.0.x request-body validations and query decoders.
 //
 // Parse is the OpenAPI constructor. Callers may also construct a compiled graph
 // directly by populating every exported textual and exact field consistently.
