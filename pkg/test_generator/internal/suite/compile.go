@@ -191,8 +191,8 @@ func (compiler *Compiler) compileResolvedSchema(
 	return use, nil
 }
 
-// validateDiscriminator independently shape-checks an inert hint. Klopt
-// intentionally accepts it without composition and does not store its values.
+// validateDiscriminator independently shape-checks an inert hint. Klopt intentionally accepts
+// it without requiring oneOf, anyOf, or allOf and does not store its values.
 //
 //nolint:cyclop // Discriminator Object fixed fields and mapping values have distinct diagnostics.
 func (compiler *Compiler) validateDiscriminator(pointer string, members map[string]json.RawMessage) error {
