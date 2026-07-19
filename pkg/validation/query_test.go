@@ -434,8 +434,10 @@ func TestAllowedQueryExamplesRemainInert(t *testing.T) {
 	t.Parallel()
 
 	parameters := []string{
-		`{name: q, in: query, style: form, example: [], examples: false, schema: {type: boolean}}`,
-		`{name: q, in: query, content: {application/json: {example: false, examples: []}}}`,
+		`{name: q, in: query, style: form, example: false, schema: {type: boolean}}`,
+		`{name: q, in: query, style: form, examples: {parameter: {value: false}}, schema: {type: boolean}}`,
+		`{name: q, in: query, content: {application/json: {example: false}}}`,
+		`{name: q, in: query, content: {application/json: {examples: {media: {value: false}}}}}`,
 	}
 	for _, parameter := range parameters {
 		decoder := parseQueryDecoder(t, parameter)
