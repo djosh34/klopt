@@ -348,6 +348,7 @@ paths:
 import (
 	"fmt"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/validation"
@@ -360,19 +361,24 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 	}
 
 	tests := []struct {
-		operationID string
-		rawQuery    string
-		expected    string
+		operationID   string
+		rawQuery      string
+		expected      string
+		errorContains string
 	}{
 		{operationID: "primitive", rawQuery: "q=value", expected: "{\"q\":\"value\"}"},
 		{operationID: "formArrayRepeated", rawQuery: "q=a&q=b", expected: "{\"q\":[\"a\",\"b\"]}"},
-		{operationID: "formArrayDelimited", rawQuery: "q=a,b", expected: "{\"q\":[\"a\",\"b\"]}"},
+		{operationID: "formArrayDelimited", rawQuery: "q=a%2Cb,c", expected: "{\"q\":[\"a,b\",\"c\"]}"},
 		{operationID: "spaceArray", rawQuery: "q=a+b", expected: "{\"q\":[\"a\",\"b\"]}"},
-		{operationID: "pipeArray", rawQuery: "q=a|b", expected: "{\"q\":[\"a\",\"b\"]}"},
+		{operationID: "pipeArray", rawQuery: "q=a%7Cb", expected: "{\"q\":[\"a\",\"b\"]}"},
+		{operationID: "pipeArray", rawQuery: "q=a%257Cb%7Cc", expected: "{\"q\":[\"a%7Cb\",\"c\"]}"},
+		{operationID: "pipeArray", rawQuery: "q=a|b", errorContains: "pipeDelimited separator"},
 		{operationID: "formObjectNamed", rawQuery: "q=x,a", expected: "{\"q\":{\"x\":\"a\"}}"},
 		{operationID: "formObjectExploded", rawQuery: "x=a", expected: "{\"q\":{\"x\":\"a\"}}"},
 		{operationID: "spaceObject", rawQuery: "q=x+a", expected: "{\"q\":{\"x\":\"a\"}}"},
-		{operationID: "pipeObject", rawQuery: "q=x|a", expected: "{\"q\":{\"x\":\"a\"}}"},
+		{operationID: "pipeObject", rawQuery: "q=x%7Ca", expected: "{\"q\":{\"x\":\"a\"}}"},
+		{operationID: "pipeObject", rawQuery: "q=x|a", errorContains: "pipeDelimited separator"},
+		{operationID: "pipeObject", rawQuery: "q=x%7Ca%7Cx", errorContains: "name/value pairs"},
 		{operationID: "deepObject", rawQuery: "filter[x]=a", expected: "{\"filter\":{\"x\":\"a\"}}"},
 		{operationID: "deepArray", rawQuery: "filter[x]=a&filter%5Bx%5D=b", expected: "{\"filter\":{\"x\":[\"a\",\"b\"]}}"},
 		{operationID: "jsonContent", rawQuery: "q=%7B%22x%22%3Atrue%7D", expected: "{\"q\":{\"x\":true}}"},
@@ -385,6 +391,16 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 			runtime, runtimeErr := runtimeDecoders[test.operationID].Decode(input)
 			if fmt.Sprint(generatedErr) != fmt.Sprint(runtimeErr) {
 				t.Fatalf("error mismatch: generated %v runtime %v", generatedErr, runtimeErr)
+			}
+			if test.errorContains != "" {
+				if generatedErr == nil || !strings.Contains(generatedErr.Error(), test.errorContains) {
+					t.Fatalf("generated error %v does not contain %q", generatedErr, test.errorContains)
+				}
+
+				return
+			}
+			if generatedErr != nil {
+				t.Fatalf("unexpected matching errors: generated %v runtime %v", generatedErr, runtimeErr)
 			}
 			if string(generated) != string(runtime) || string(generated) != test.expected {
 				t.Fatalf("result mismatch: generated %s runtime %s expected %s", generated, runtime, test.expected)

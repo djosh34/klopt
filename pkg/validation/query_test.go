@@ -61,11 +61,11 @@ func TestQueryDecoderStyleMatrix(t *testing.T) {
 		{name: "form array exploded", parameter: `{name: tags, in: query, style: form, explode: true, schema: {type: array, items: {type: string}}}`, rawQuery: `tags=go&tags=red,blue`, expected: `{"tags":["go","red,blue"]}`},
 		{name: "form array", parameter: `{name: ids, in: query, style: form, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `ids=a%2Cb,c`, expected: `{"ids":["a,b","c"]}`},
 		{name: "space array", parameter: `{name: ids, in: query, style: spaceDelimited, explode: false, schema: {type: array, items: {type: integer}}}`, rawQuery: `ids=10+20%2030`, expected: `{"ids":[10,20,30]}`},
-		{name: "pipe array", parameter: `{name: flags, in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: boolean}}}`, rawQuery: `flags=true|false|true`, expected: `{"flags":[true,false,true]}`},
+		{name: "pipe array", parameter: `{name: flags, in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: boolean}}}`, rawQuery: `flags=true%7Cfalse%7Ctrue`, expected: `{"flags":[true,false,true]}`},
 		{name: "form object", parameter: objectParameter("form", false), rawQuery: `point=lat,52.1,long,4.3`, expected: `{"point":{"lat":52.1,"long":4.3}}`},
 		{name: "form object exploded", parameter: objectParameter("form", true), rawQuery: `long=4.3&lat=52.1`, expected: `{"point":{"lat":52.1,"long":4.3}}`},
 		{name: "space object", parameter: objectParameter("spaceDelimited", false), rawQuery: `point=lat%2052.1%20long%204.3`, expected: `{"point":{"lat":52.1,"long":4.3}}`},
-		{name: "pipe object", parameter: objectParameter("pipeDelimited", false), rawQuery: `point=lat|52.1|long|4.3`, expected: `{"point":{"lat":52.1,"long":4.3}}`},
+		{name: "pipe object", parameter: objectParameter("pipeDelimited", false), rawQuery: `point=lat%7C52.1%7Clong%7C4.3`, expected: `{"point":{"lat":52.1,"long":4.3}}`},
 		{name: "deep object", parameter: deepParameter(`role: {type: string}
           active: {type: boolean}`), rawQuery: `filter%5Brole%5D=admin&filter[active]=true`, expected: `{"filter":{"active":true,"role":"admin"}}`},
 		{name: "JSON content", parameter: `name: filter
@@ -88,6 +88,39 @@ func TestQueryDecoderStyleMatrix(t *testing.T) {
 			require.JSONEq(t, test.expected, string(actual))
 		})
 	}
+}
+
+func TestQueryDecoderRejectsRawPipeDelimitedArray(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: flags, in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: boolean}}}`)
+	_, err := decoder.Decode(&url.URL{RawQuery: `flags=true|false`})
+	require.ErrorContains(t, err, `pipeDelimited separator "|" must be percent-encoded as "%7C"`)
+}
+
+func TestQueryDecoderRejectsRawPipeDelimitedObject(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, objectParameter("pipeDelimited", false))
+	_, err := decoder.Decode(&url.URL{RawQuery: `point=lat|52.1|long|4.3`})
+	require.ErrorContains(t, err, `pipeDelimited separator "|" must be percent-encoded as "%7C"`)
+}
+
+func TestQueryDecoderRejectsOddPipeDelimitedObjectTuple(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, objectParameter("pipeDelimited", false))
+	_, err := decoder.Decode(&url.URL{RawQuery: `point=lat%7C52.1%7Clong`})
+	require.ErrorContains(t, err, "object serialization must contain name/value pairs")
+}
+
+func TestQueryDecoderUnescapesPipeDelimitedValueOnce(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: string}}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=left%257Cmiddle%7Cright`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":["left%7Cmiddle","right"]}`, string(actual))
 }
 
 func TestQueryDecoderAllowReservedIsInertForSchemaParameters(t *testing.T) {
@@ -130,11 +163,11 @@ func TestQueryDecoderLiteralBracketNamesAcrossNonDeepStyles(t *testing.T) {
 		{name: "form array repeated", parameter: `{name: 'q[key]', in: query, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a&q%5Bkey%5D=b`, expected: `{"q[key]":["a","b"]}`},
 		{name: "form array delimited", parameter: `{name: 'q[key]', in: query, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a,b`, expected: `{"q[key]":["a","b"]}`},
 		{name: "space array", parameter: `{name: 'q[key]', in: query, style: spaceDelimited, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a+b`, expected: `{"q[key]":["a","b"]}`},
-		{name: "pipe array", parameter: `{name: 'q[key]', in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q%5Bkey%5D=a|b`, expected: `{"q[key]":["a","b"]}`},
+		{name: "pipe array", parameter: `{name: 'q[key]', in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q%5Bkey%5D=a%7Cb`, expected: `{"q[key]":["a","b"]}`},
 		{name: "form object named", parameter: bracketObjectParameter("q[key]", "form", false, "child"), rawQuery: `q[key]=child,value`, expected: `{"q[key]":{"child":"value"}}`},
 		{name: "form object exploded", parameter: bracketObjectParameter("q", "form", true, "child[key]"), rawQuery: `child%5Bkey%5D=value`, expected: `{"q":{"child[key]":"value"}}`},
 		{name: "space object", parameter: bracketObjectParameter("q[key]", "spaceDelimited", false, "child"), rawQuery: `q%5Bkey%5D=child+value`, expected: `{"q[key]":{"child":"value"}}`},
-		{name: "pipe object", parameter: bracketObjectParameter("q[key]", "pipeDelimited", false, "child"), rawQuery: `q[key]=child|value`, expected: `{"q[key]":{"child":"value"}}`},
+		{name: "pipe object", parameter: bracketObjectParameter("q[key]", "pipeDelimited", false, "child"), rawQuery: `q[key]=child%7Cvalue`, expected: `{"q[key]":{"child":"value"}}`},
 		{name: "JSON content", parameter: `name: 'q[key]'
       in: query
       content: {application/json: {schema: {type: object}}}`, rawQuery: `q%5Bkey%5D=%7B%22child%22%3Atrue%7D`, expected: `{"q[key]":{"child":true}}`},

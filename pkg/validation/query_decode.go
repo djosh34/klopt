@@ -312,6 +312,14 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 }
 
 func splitStyleValue(pair rawPair, separator string) ([]string, error) {
+	if separator == "|" {
+		if strings.Contains(pair.rawValue, separator) {
+			return nil, errors.New(`pipeDelimited separator "|" must be percent-encoded as "%7C"`)
+		}
+
+		return strings.Split(pair.decodedValue, separator), nil
+	}
+
 	if separator == " " {
 		return strings.Split(pair.decodedValue, separator), nil
 	}
