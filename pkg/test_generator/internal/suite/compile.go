@@ -155,6 +155,10 @@ func (compiler *Compiler) compileResolvedSchema(
 		return nil, compiler.failure("compile", "malformed", resolved.Pointer, "", validationErr)
 	}
 
+	if discriminatorErr := compiler.validateDiscriminator(resolved.Pointer, members); discriminatorErr != nil {
+		return nil, discriminatorErr
+	}
+
 	if keyword := unsupportedKeyword(members); keyword != "" {
 		return nil, compiler.unsupportedKeywordFailure(resolved.Pointer, keyword)
 	}
@@ -185,6 +189,67 @@ func (compiler *Compiler) compileResolvedSchema(
 	compiler.usesByPointer[resolved.Pointer] = use
 
 	return use, nil
+}
+
+// validateDiscriminator independently shape-checks an inert hint. Klopt
+// intentionally accepts it without composition and does not store its values.
+//
+//nolint:cyclop // Discriminator Object fixed fields and mapping values have distinct diagnostics.
+func (compiler *Compiler) validateDiscriminator(pointer string, members map[string]json.RawMessage) error {
+	raw, ok := members["discriminator"]
+	if !ok {
+		return nil
+	}
+
+	discriminatorPointer := pointer + "/discriminator"
+
+	var discriminator map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &discriminator); err != nil || discriminator == nil {
+		return compiler.failure("compile", "malformed", discriminatorPointer, "", errors.New("must be an object"))
+	}
+
+	propertyName, ok := discriminator["propertyName"]
+	if !ok {
+		return compiler.failure(
+			"compile", "malformed", discriminatorPointer+"/propertyName", "", errors.New("is required"),
+		)
+	}
+
+	if _, err := parseString(propertyName, "propertyName"); err != nil {
+		return compiler.failure("compile", "malformed", discriminatorPointer+"/propertyName", "", err)
+	}
+
+	mappingRaw, ok := discriminator["mapping"]
+	if !ok {
+		return nil
+	}
+
+	var mapping map[string]json.RawMessage
+	if err := json.Unmarshal(mappingRaw, &mapping); err != nil || mapping == nil {
+		return compiler.failure(
+			"compile", "malformed", discriminatorPointer+"/mapping", "", errors.New("must be an object"),
+		)
+	}
+
+	names := make([]string, 0, len(mapping))
+	for name := range mapping {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names {
+		if _, err := parseString(mapping[name], "mapping value"); err != nil {
+			escaped := strings.ReplaceAll(name, "~", "~0")
+			escaped = strings.ReplaceAll(escaped, "/", "~1")
+
+			return compiler.failure(
+				"compile", "malformed", discriminatorPointer+"/mapping/"+escaped, "", err,
+			)
+		}
+	}
+
+	return nil
 }
 
 // localPatternOccurrences records a direct declaration before allOf composition.
@@ -493,7 +558,7 @@ func validateReadWriteOnlyShape(members map[string]json.RawMessage) error {
 
 // unsupportedKeyword returns the first recognized keyword unsupported by this step.
 func unsupportedKeyword(members map[string]json.RawMessage) string {
-	for _, keyword := range []string{"oneOf", "anyOf", "not", "discriminator"} {
+	for _, keyword := range []string{"oneOf", "anyOf", "not"} {
 		if _, ok := members[keyword]; ok {
 			return keyword
 		}

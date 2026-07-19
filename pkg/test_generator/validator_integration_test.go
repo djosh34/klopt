@@ -675,15 +675,15 @@ components:
 			Kinopenapi: validatorBodyAccepted,
 		},
 		{
-			ID: "unsupported-discriminator",
+			ID: "bare-discriminator-inert-hint",
 			Schema: "      type: object\n" +
 				"      discriminator: {propertyName: kind}\n",
 			Body:                    []byte(`{}`),
-			Runtime:                 validatorSetupRejected,
-			RuntimeErrorContains:    "discriminator",
+			Runtime:                 validatorBodyAccepted,
 			Libopenapi:              validatorBodyRejected,
 			LibopenapiErrorContains: "discriminator property 'kind' is missing",
 			Kinopenapi:              validatorBodyAccepted,
+			// Klopt intentionally accepts the spec-invalid bare placement and treats the shape-checked hint as inert.
 		},
 	}
 }

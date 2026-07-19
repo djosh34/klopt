@@ -927,6 +927,80 @@ components:
 	}
 }
 
+// TestCompilerAcceptsDiscriminatorAsAnInertHint verifies generated-suite
+// compilation matches runtime's intentional permissive placement deviation.
+func TestCompilerAcceptsDiscriminatorAsAnInertHint(t *testing.T) {
+	t.Parallel()
+
+	for _, discriminator := range []string{
+		"discriminator: {propertyName: kind}",
+		`discriminator: {propertyName: ""}`,
+		"discriminator:\n  propertyName: kind\n  mapping: {cat: 'missing.yaml#/Cat'}",
+	} {
+		t.Run(discriminator, func(t *testing.T) {
+			t.Parallel()
+
+			_, _ = compileSchemaYAML(t, "type: object\n"+discriminator, "")
+		})
+	}
+
+	compiler, rootID := compileSchemaYAML(t, `
+allOf:
+  - {type: string, minLength: 2}
+discriminator: {propertyName: kind}
+`, "")
+	root, ok := compiler.Domains.Domain(rootID)
+	require.True(t, ok)
+	require.Equal(t, 2, root.String.MinLength)
+}
+
+// TestCompilerRejectsMalformedDiscriminatorAtExactPointers verifies independent
+// generated-suite shape checking agrees with runtime compilation.
+func TestCompilerRejectsMalformedDiscriminatorAtExactPointers(t *testing.T) {
+	t.Parallel()
+
+	const root = "#/paths/~1things/post/requestBody/content/application~1json/schema/discriminator"
+
+	tests := []struct {
+		name    string
+		schema  string
+		extra   string
+		pointer string
+	}{
+		{name: "null", schema: "discriminator: null", pointer: root},
+		{name: "array", schema: "discriminator: []", pointer: root},
+		{name: "missing propertyName", schema: "discriminator: {}", pointer: root + "/propertyName"},
+		{name: "null propertyName", schema: "discriminator: {propertyName: null}", pointer: root + "/propertyName"},
+		{name: "non-string propertyName", schema: "discriminator: {propertyName: 1}", pointer: root + "/propertyName"},
+		{name: "null mapping", schema: "discriminator: {propertyName: kind, mapping: null}", pointer: root + "/mapping"},
+		{name: "non-object mapping", schema: "discriminator: {propertyName: kind, mapping: []}", pointer: root + "/mapping"},
+		{
+			name: "non-string mapping value", schema: "discriminator: {propertyName: kind, mapping: {'a/b~c': 1}}",
+			pointer: root + "/mapping/a~1b~0c",
+		},
+		{
+			name: "resolved reference", schema: "$ref: '#/components/schemas/Bad'",
+			extra:   "components:\n  schemas:\n    Bad:\n      discriminator: {propertyName: false}",
+			pointer: "#/components/schemas/Bad/discriminator/propertyName",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewCompiler(parseSchemaSource(t, test.schema, test.extra, "create")).Compile()
+			require.Error(t, err)
+
+			var compileError *Error
+			require.ErrorAs(t, err, &compileError)
+			require.Equal(t, "malformed", compileError.Code)
+			require.Equal(t, test.pointer, compileError.Pointer)
+			require.Empty(t, compileError.Keyword)
+		})
+	}
+}
+
 // TestCompilerDoesNotValidateEnumOraclesThroughNestedDomains verifies local enum values remain unchecked.
 func TestCompilerDoesNotValidateEnumOraclesThroughNestedDomains(t *testing.T) {
 	t.Parallel()
