@@ -1,70 +1,77 @@
 ---
-title: Getting started
-description: Validate OpenAPI 3.0.3 JSON request bodies and decode query parameters into JSON.
+title: Getting Started
+description: Install Klopt and choose runtime request handling or in-memory Go source generation.
 ---
 
-`pkg/validation` compiles an OpenAPI 3.0.3 document once. Use the result to validate raw JSON request bodies and decode query parameters into validated JSON.
-
-## Install
+Klopt requires Go 1.26.4 or newer and an OpenAPI 3.0.x document. Every operation Klopt compiles must have a non-empty `operationId`. Install the runtime package with:
 
 ```sh
 go get github.com/djosh34/klopt/pkg/validation
 ```
 
-## Parse once
+Choose runtime handling or in-memory generation. They are independent alternatives, not stages in one required pipeline. The reasons for that split are covered in [Philosophy](/klopt/philosophy/) and the boundaries are listed in [OpenAPI Compatibility](/klopt/openapi-compatibility/).
+
+## Runtime validation and query decoding
 
 ```go
-spec, err := os.ReadFile("openapi.yaml")
-if err != nil {
-	return err
-}
+package example
 
-validations, queryDecoders, err := validation.Parse(spec)
-if err != nil {
-	return err
-}
-```
+import (
+	"encoding/json"
+	"errors"
+	"net/url"
+	"os"
 
-Both maps are keyed by OpenAPI `operationId`. Parse at startup, then reuse the compiled values. Do not mutate them after parsing.
+	"github.com/djosh34/klopt/pkg/validation"
+)
 
-## Validate a request body
-
-```go
-func validateCreateThing(r *http.Request, requestValidation *validation.Validation) error {
-	body, err := io.ReadAll(r.Body)
+func useRuntime(body []byte, requestURL *url.URL) error {
+	spec, err := os.ReadFile("openapi.yaml")
 	if err != nil {
 		return err
 	}
 
-	return errors.Join(requestValidation.Validate(body)...)
+	validations, queryDecoders, err := validation.Parse(spec)
+	if err != nil {
+		return err
+	}
+
+	if err := errors.Join(validations["createThing"].Validate(body)...); err != nil {
+		return err
+	}
+
+	queryJSON, err := queryDecoders["listItems"].Decode(requestURL)
+	if err != nil {
+		return err
+	}
+
+	var query any
+	return json.Unmarshal(queryJSON, &query)
 }
 ```
 
-Call it with `validations["createThing"]`. Empty bytes mean the body is absent. JSON `null` is a present body and follows the schema's `type` and `nullable` rules.
+Both maps are keyed by `operationId`; this example uses the body operation `createThing` and the query operation `listItems`. Parse once at startup, reuse the immutable compiled values, and do not mutate them. Empty body bytes mean absence; JSON `null` is present. Query decoding returns validated JSON so the caller retains control of its Go types. See [Query Decoding](/klopt/query-decoding/) for wire styles and [Patterns](/klopt/patterns/) before choosing pattern options.
 
-## Decode a query
+## In-memory source generation
 
 ```go
-type ListThingsQuery struct {
-	Tags   []string `json:"tags"`
-	Limit  int      `json:"limit"`
-}
+package example
 
-func decodeListThings(r *http.Request, decoder *validation.QueryDecoder) (ListThingsQuery, error) {
-	raw, err := decoder.Decode(r.URL)
+import (
+	"github.com/djosh34/klopt/pkg/generate"
+	"github.com/djosh34/klopt/pkg/validation"
+)
+
+func generateSources(spec []byte) (map[string][]byte, error) {
+	files, err := generate.GenerateInMemory(
+		"api", spec, validation.PatternOptions(),
+	)
 	if err != nil {
-		return ListThingsQuery{}, err
+		return nil, err
 	}
 
-	var query ListThingsQuery
-	if err := json.Unmarshal(raw, &query); err != nil {
-		return ListThingsQuery{}, err
-	}
-
-	return query, nil
+	return files, nil
 }
 ```
 
-Call it with `queryDecoders["listThings"]`. The decoder handles the OpenAPI wire format and returns ordinary JSON, leaving the final Go type under your control.
-
-Next: [why validation happens before unmarshalling](/klopt/philosophy/), [how query decoding works](/klopt/query-decoding/), and [the architecture](/klopt/architecture/).
+Generation parses the OpenAPI document internally. On success it returns a caller-owned `map[string][]byte` with exactly `validate.go` and `validate_test.go`; each value is complete generated Go source, and the caller decides whether to write, inspect, transform, or embed it. On error the map is nil. Generation success and generated-test construction are separate boundaries; [Architecture](/klopt/architecture/) explains why a later generated `TestValidations` can still fail.

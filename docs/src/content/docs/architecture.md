@@ -1,98 +1,36 @@
 ---
 title: Architecture
-description: How OpenAPI schemas become runtime validations and targeted random JSON tests.
+description: The boundaries between OpenAPI compilation, request handling, generated source, and generated evidence.
 ---
 
-## Validation
+## Request pipeline boundaries
 
-`validation.Parse` selects JSON request bodies and query parameters by `operationId`, resolves reachable local references, and compiles each schema into a `Validation` tree.
+Klopt keeps five boundaries separate:
 
-For example:
+1. **OpenAPI parsing and compilation.** The document version, reachable local references, selected request media, query parameter serialization, and supported Schema Objects are checked. Unsupported behavior fails here instead of reaching a request.
+2. **Request-body validation.** A selected JSON body remains raw while strict JSON parsing, presence, type, exact-number, collection, object, composition, pattern, format, and request-direction rules run.
+3. **Query wire decoding.** `URL.RawQuery` is claimed by compiled parameters before percent decoding can erase delimiter information. Declared values become JSON scalars, arrays, or objects.
+4. **Final query schema validation.** The whole decoded query object is validated, including defaults and dynamic properties. Successful decoding therefore returns ordinary validated JSON.
+5. **Generated source and tests.** Generation renders the same compiled runtime model plus a `TestValidations` suite. Generated production source contains validation data and uses the same validator rather than reimplementing every rule.
 
-```yaml
-openapi: 3.0.3
-paths:
-  /things:
-    post:
-      operationId: createThing
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name]
-              additionalProperties: false
-              properties:
-                name:
-                  type: string
-```
+The [Query Decoding](/klopt/query-decoding/) and [Patterns](/klopt/patterns/) guides describe the two boundaries with additional policies.
 
-Compiles to data shaped like this:
+## Runtime Parse and source generation
 
-```go
-var createThing = &validation.Validation{
-	SchemaPointer: "#/paths/~1things/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
-	KindValidation: validation.KindValidation{
-		Type: "object",
-	},
-	ObjectValidation: validation.ObjectValidation{
-		Required: []string{"name"},
-		Properties: []validation.PropertyValidation{{
-			Name: "name",
-			Validation: &validation.Validation{
-				SchemaPointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/name",
-				KindValidation: validation.KindValidation{
-					Type: "string",
-				},
-				ObjectValidation: validation.ObjectValidation{
-					AdditionalPropertiesAllowed: true,
-				},
-			},
-		}},
-		AdditionalPropertiesAllowed: false,
-	},
-}
-```
+`validation.Parse` is the runtime constructor. It returns request-body validations and query decoders keyed by `operationId`; applications can compile once at startup and reuse them.
 
-Runtime parsing and generated literals produce the same compiled model. Generated source contains data, not generated validation functions. `Validate` walks that model while retaining raw JSON at every nested value.
+`generate.GenerateInMemory` is an alternative deployment boundary. It invokes parsing internally, verifies that request-body operation IDs can name generated Go state, renders and formats source, then returns `validate.go` and `validate_test.go` as bytes. The generated validation definitions restore the same runtime behavior without parsing the OpenAPI document in production. The caller owns publication of the returned bytes.
 
-For runtime validation, `allOf` stays as separate child validations. Each branch checks the same raw value, matching OpenAPI's rule that its schemas are [validated independently but together](https://spec.openapis.org/oas/v3.0.3.html#composition-and-inheritance-polymorphism).
+## Generated-test evidence
 
-## Test generation
+Generated tests construct accepted and rejected JSON around the effective schema. The optional `x-valid-examples` and `x-invalid-examples` extensions provide trusted local evidence for pattern or format occurrences that construction cannot otherwise prove. Evidence belongs to the whole Schema Object occurrence. An invalid example proves that the occurrence rejects that value; it does not prove that one isolated keyword alone caused the rejection.
 
-The test generator does more than draw arbitrary JSON:
+This provenance matters across `allOf`. Production validation applies every branch to the same value, while test generation intersects their constructive domains and retains the source of each obligation. Finite enums and locally usable evidence can provide concrete values for otherwise opaque string constraints.
 
-1. It compiles a schema into a constructive **Domain**: reachable JSON kinds plus exact constraints for numbers, strings, arrays, objects, and enums.
-2. It plans focused **cases** from that domain: an aggregate valid case, useful valid partitions such as boundaries, and rejected cases that fail one constraint while satisfying the others when possible.
-3. It attaches a Rapid generator to each case. The generator recursively draws random JSON values from that case's domain.
-4. Each case runs as a Rapid property. The value is marshalled as exact JSON and passed to the validator callback. The planned accepted or rejected result is checked against that callback.
+## Generation success is not test success
 
-The cases provide coverage intent; Rapid provides variation and shrinking inside each case. For the object schema above, planned cases cover valid objects, a missing required `name`, a wrong type for `name`, and an unknown property. Each property can produce many concrete JSON bodies rather than one fixed fixture.
+Successful source generation means parsing and rendering succeeded. It does not guarantee that the generated `TestValidations` will pass when `go test` runs.
 
-Schema parsing is fuzzed too. A separate Rapid generator builds supported OpenAPI documents, then makes independently mutated invalid copies. This tests both successful compilation and precise rejection of malformed schemas.
+Test construction has capabilities and budgets of its own. A valid production language can be outside the ASCII-only constructor, a raw Go regexp can use syntax the constructor cannot model, or construction can exceed its graph and search budgets. Contradictory constraints can describe an empty language with no accepted value. Declared string formats are opaque construction constraints: a finite enum or usable local trusted evidence may supply an accepted value, but unusable evidence can still produce an actionable generated-test failure.
 
-### Why `allOf` must merge before generating
-
-Consider a schema where neither branch describes the final valid values:
-
-```yaml
-allOf:
-  - type: integer
-    minimum: 4
-  - maximum: 10
-    multipleOf: 3
-```
-
-At the `allOf` level there is no ready-made value to draw. Choosing from either branch alone is unsafe: `4` satisfies the first branch but not `multipleOf: 3`; `3` satisfies the second branch but not `minimum: 4`.
-
-The generator handles it step by step:
-
-1. Compile the first branch as integers greater than or equal to `4`.
-2. Compile the second branch as all JSON kinds, with numbers no greater than `10` and restricted to multiples of `3`.
-3. Intersect both domains. The numeric result is integers from `4` through `10` that are multiples of `3`.
-4. Build the aggregate valid generator from that merged domain. It can draw `6` or `9`.
-5. Build isolated rejected cases from the same context. For example, `3` fails only the minimum, `12` fails only the maximum, and values such as `4` or `10` fail only `multipleOf`.
-
-The merge happens before Rapid generation. This is what lets random values remain meaningful: every accepted draw satisfies all branches, while rejected draws target a specific rule without accidentally failing unrelated siblings.
+These are generated-test execution failures, not changes to production validation and not reasons for `GenerateInMemory` to return an error. Keeping that boundary explicit avoids turning a constructor limitation into a false OpenAPI rejection.
