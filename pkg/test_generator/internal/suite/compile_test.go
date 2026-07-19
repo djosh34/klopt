@@ -1160,8 +1160,6 @@ func TestCompilerValidatesAdjustedOpenAPIFields(t *testing.T) {
 	for _, schema := range []string{
 		"type: array",
 		"type: boolean\nformat: 7",
-		"readOnly: yes",
-		"readOnly: true\nwriteOnly: true",
 	} {
 		t.Run(schema, func(t *testing.T) {
 			t.Parallel()
@@ -1176,19 +1174,180 @@ func TestCompilerValidatesAdjustedOpenAPIFields(t *testing.T) {
 	}
 }
 
+// TestCompilerRejectsMalformedReadOnlyAndWriteOnlyAtEverySchemaShape verifies recursive shape checking.
+func TestCompilerRejectsMalformedReadOnlyAndWriteOnlyAtEverySchemaShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		schema  string
+		extra   string
+		pointer string
+		keyword string
+	}{
+		{
+			name: "root readOnly", schema: "readOnly: yes",
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema", keyword: "readOnly",
+		},
+		{
+			name: "property writeOnly", schema: "properties:\n  value: {writeOnly: null}",
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value",
+			keyword: "writeOnly",
+		},
+		{
+			name: "resolved reference readOnly", schema: "$ref: '#/components/schemas/Value'",
+			extra:   "components:\n  schemas:\n    Value: {readOnly: []}",
+			pointer: "#/components/schemas/Value", keyword: "readOnly",
+		},
+		{
+			name: "allOf writeOnly", schema: "allOf:\n  - {writeOnly: 1}",
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/allOf/0",
+			keyword: "writeOnly",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewCompiler(parseSchemaSource(t, test.schema, test.extra, "create")).Compile()
+			require.Error(t, err)
+
+			var compileError *Error
+			require.ErrorAs(t, err, &compileError)
+			require.Equal(t, "compile", compileError.Phase)
+			require.Equal(t, "malformed", compileError.Code)
+			require.Equal(t, test.pointer, compileError.Pointer)
+			require.ErrorContains(t, err, test.keyword+" must be a boolean")
+		})
+	}
+}
+
+// TestCompilerIgnoresReadOnlyAndWriteOnlyOutsidePropertyContext verifies direction is property-only.
+func TestCompilerIgnoresReadOnlyAndWriteOnlyOutsidePropertyContext(t *testing.T) {
+	t.Parallel()
+
+	for _, schema := range []string{
+		"readOnly: true\nwriteOnly: true",
+		"allOf:\n  - {readOnly: true, writeOnly: true}",
+	} {
+		t.Run(schema, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewCompiler(parseSchemaSource(t, schema, "", "create")).Compile()
+			require.NoError(t, err)
+		})
+	}
+}
+
 // TestCompilerAppliesReadOnlyRequirednessForRequests verifies required read-only properties remain optional.
 func TestCompilerAppliesReadOnlyRequirednessForRequests(t *testing.T) {
 	t.Parallel()
 
-	compiler, id := compileSchemaYAML(t, `type: object
+	tests := []struct {
+		name     string
+		property string
+		extra    string
+	}{
+		{name: "direct", property: "{type: string, minLength: 2, readOnly: true}"},
+		{
+			name: "resolved reference", property: "{$ref: '#/components/schemas/Identifier'}",
+			extra: "components:\n  schemas:\n    Identifier: {type: string, minLength: 2, readOnly: true}",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			compiler, id := compileSchemaYAML(t, `type: object
 required: [id, name]
 properties:
-  id: {type: string, readOnly: true}
-  name: {type: string}`, "")
-	domain := mustDomain(t, compiler.Domains, id)
-	properties := propertiesByName(domain.Object.Properties)
-	require.False(t, properties["id"].Required)
-	require.True(t, properties["name"].Required)
+  id: `+test.property+`
+  name: {type: string}`, test.extra)
+			domain := mustDomain(t, compiler.Domains, id)
+			properties := propertiesByName(domain.Object.Properties)
+			require.False(t, properties["id"].Required)
+			require.True(t, properties["name"].Required)
+
+			identifier := mustDomain(t, compiler.Domains, properties["id"].Values)
+			require.Equal(t, 2, identifier.String.MinLength)
+		})
+	}
+}
+
+// TestCompilerKeepsWriteOnlyRequiredAndAllOfDirectionBranchLocal verifies non-transforming request cases.
+func TestCompilerKeepsWriteOnlyRequiredAndAllOfDirectionBranchLocal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		property string
+	}{
+		{name: "writeOnly", property: "{type: string, writeOnly: true}"},
+		{
+			name: "allOf",
+			property: `
+allOf:
+  - {type: string, readOnly: true}
+  - {minLength: 2, writeOnly: true}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			compiler, id := compileSchemaYAML(t, `type: object
+required: [value]
+properties:
+  value:
+`+indent(test.property, 4), "")
+			domain := mustDomain(t, compiler.Domains, id)
+			require.True(t, propertiesByName(domain.Object.Properties)["value"].Required)
+		})
+	}
+}
+
+// TestCompilerRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties verifies resolved property context.
+func TestCompilerRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		schema  string
+		extra   string
+		pointer string
+	}{
+		{
+			name:    "direct",
+			schema:  "properties:\n  value: {readOnly: true, writeOnly: true}",
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value",
+		},
+		{
+			name:    "resolved reference",
+			schema:  "properties:\n  value: {$ref: '#/components/schemas/Value'}",
+			extra:   "components:\n  schemas:\n    Value: {readOnly: true, writeOnly: true}",
+			pointer: "#/components/schemas/Value",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewCompiler(parseSchemaSource(t, test.schema, test.extra, "create")).Compile()
+			require.Error(t, err)
+
+			var compileError *Error
+			require.ErrorAs(t, err, &compileError)
+			require.Equal(t, "compile", compileError.Phase)
+			require.Equal(t, "malformed", compileError.Code)
+			require.Equal(t, test.pointer, compileError.Pointer)
+			require.Equal(t, "readOnly", compileError.Keyword)
+			require.ErrorContains(t, err, "readOnly and writeOnly must not both be true")
+		})
+	}
 }
 
 // TestDomainRegistryDeduplicatesSemanticEnumMembers verifies finite-set identity ignores duplicates.

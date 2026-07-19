@@ -443,7 +443,7 @@ func schemaMembers(schema oas.LocatedSchema) (map[string]json.RawMessage, error)
 
 // validateSchemaKeywords rejects unknown non-extension Schema Object keywords.
 func validateSchemaKeywords(members map[string]json.RawMessage) error {
-	if err := validateReadWriteOnly(members); err != nil {
+	if err := validateReadWriteOnlyShape(members); err != nil {
 		return err
 	}
 
@@ -479,23 +479,16 @@ func validateSchemaKeywords(members map[string]json.RawMessage) error {
 	return nil
 }
 
-// validateReadWriteOnly validates the request/response property annotations.
-func validateReadWriteOnly(members map[string]json.RawMessage) error {
-	readOnly, _, err := parseOptionalBool(members, "readOnly")
+// validateReadWriteOnlyShape validates the request/response annotation shapes.
+func validateReadWriteOnlyShape(members map[string]json.RawMessage) error {
+	_, _, err := parseOptionalBool(members, "readOnly")
 	if err != nil {
 		return err
 	}
 
-	writeOnly, _, err := parseOptionalBool(members, "writeOnly")
-	if err != nil {
-		return err
-	}
+	_, _, err = parseOptionalBool(members, "writeOnly")
 
-	if readOnly && writeOnly {
-		return errors.New("readOnly and writeOnly must not both be true")
-	}
-
-	return nil
+	return err
 }
 
 // unsupportedKeyword returns the first recognized keyword unsupported by this step.
@@ -1294,14 +1287,9 @@ func (compiler *Compiler) readOnlyProperties(
 			return nil, compiler.failure("compile", "unsupported", child.Pointer, "$ref", err)
 		}
 
-		childMembers, err := schemaMembers(resolved)
+		readOnly, err := compiler.propertyReadOnly(resolved)
 		if err != nil {
-			return nil, compiler.failure("compile", "malformed", resolved.Pointer, "", err)
-		}
-
-		readOnly, _, err := parseOptionalBool(childMembers, "readOnly")
-		if err != nil {
-			return nil, compiler.failure("compile", "malformed", resolved.Pointer, "readOnly", err)
+			return nil, err
 		}
 
 		if readOnly {
@@ -1310,6 +1298,33 @@ func (compiler *Compiler) readOnlyProperties(
 	}
 
 	return result, nil
+}
+
+// propertyReadOnly applies request direction rules to one resolved property Schema Object.
+func (compiler *Compiler) propertyReadOnly(resolved oas.LocatedSchema) (bool, error) {
+	members, err := schemaMembers(resolved)
+	if err != nil {
+		return false, compiler.failure("compile", "malformed", resolved.Pointer, "", err)
+	}
+
+	readOnly, _, err := parseOptionalBool(members, "readOnly")
+	if err != nil {
+		return false, compiler.failure("compile", "malformed", resolved.Pointer, "readOnly", err)
+	}
+
+	writeOnly, _, err := parseOptionalBool(members, "writeOnly")
+	if err != nil {
+		return false, compiler.failure("compile", "malformed", resolved.Pointer, "writeOnly", err)
+	}
+
+	if readOnly && writeOnly {
+		return false, compiler.failure(
+			"compile", "malformed", resolved.Pointer, "readOnly",
+			errors.New("readOnly and writeOnly must not both be true"),
+		)
+	}
+
+	return readOnly, nil
 }
 
 // applyRequiredProperties marks declared and implicit required properties.

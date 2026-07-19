@@ -317,8 +317,6 @@ func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
 		{name: "oneOf", schema: `{"oneOf":[{}]}`, want: "oneOf"},
 		{name: "anyOf", schema: `{"anyOf":[{}]}`, want: "anyOf"},
 		{name: "not", schema: `{"not":{}}`, want: "not"},
-		{name: "readOnly", schema: `{"readOnly":false}`, want: "readOnly"},
-		{name: "writeOnly", schema: `{"writeOnly":false}`, want: "writeOnly"},
 		{name: "discriminator", schema: `{"discriminator":{"propertyName":"kind"}}`, want: "discriminator"},
 		{name: "externalRef", schema: `{"$ref":"other.yaml#/Thing"}`, want: "external reference"},
 		{name: "unsupportedPattern", schema: `{"pattern":"x(?=a)"}`, want: "unsupported"},
@@ -361,6 +359,166 @@ func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
 	parsed, _, err := Parse([]byte(`{"openapi":"3.0.3","paths":{"/a":{"post":{"operationId":"unused"}}}}`))
 	require.NoError(t, err)
 	require.Empty(t, parsed)
+}
+
+// TestParseAcceptsBooleanReadOnlyAndWriteOnlyAtTheRoot verifies annotation shape without property semantics.
+func TestParseAcceptsBooleanReadOnlyAndWriteOnlyAtTheRoot(t *testing.T) {
+	t.Parallel()
+
+	for _, schema := range []string{
+		`{"readOnly":false}`,
+		`{"readOnly":true}`,
+		`{"writeOnly":false}`,
+		`{"writeOnly":true}`,
+		`{"readOnly":true,"writeOnly":true}`,
+		`{"allOf":[{"readOnly":true,"writeOnly":true}]}`,
+	} {
+		t.Run(schema, func(t *testing.T) {
+			t.Parallel()
+
+			mustParseSchema(t, schema, "")
+		})
+	}
+}
+
+// TestValidationKeepsRequiredWriteOnlyRequestPropertiesRequired verifies request requiredness is unchanged.
+func TestValidationKeepsRequiredWriteOnlyRequestPropertiesRequired(t *testing.T) {
+	t.Parallel()
+
+	validation := mustParseSchema(t, `{
+		"type":"object","required":["secret"],
+		"properties":{"secret":{"type":"string","writeOnly":true}}
+	}`, "")
+	errs := validation.Validate(json.RawMessage(`{}`))
+	require.NotEmpty(t, errs)
+	require.Contains(t, errors.Join(errs...).Error(), "keyword required")
+	require.Empty(t, validation.Validate(json.RawMessage(`{"secret":"kept"}`)))
+}
+
+// TestValidationDoesNotPropagateRequestDirectionAcrossAllOf verifies branch-local annotations remain inert.
+func TestValidationDoesNotPropagateRequestDirectionAcrossAllOf(t *testing.T) {
+	t.Parallel()
+
+	validation := mustParseSchema(t, `{
+		"type":"object","required":["value"],
+		"properties":{"value":{"allOf":[
+			{"type":"string","readOnly":true},
+			{"minLength":2,"writeOnly":true}
+		]}}
+	}`, "")
+	errs := validation.Validate(json.RawMessage(`{}`))
+	require.NotEmpty(t, errs)
+	require.Contains(t, errors.Join(errs...).Error(), "keyword required")
+	require.Empty(t, validation.Validate(json.RawMessage(`{"value":"ok"}`)))
+}
+
+// TestParseRejectsMalformedReadOnlyAndWriteOnlyAtEverySchemaShape verifies annotation shape recursively.
+func TestParseRejectsMalformedReadOnlyAndWriteOnlyAtEverySchemaShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		components string
+		pointer    string
+	}{
+		{
+			name: "root readOnly", schema: `{"readOnly":"yes"}`,
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/readOnly",
+		},
+		{
+			name: "property writeOnly", schema: `{"properties":{"value":{"writeOnly":null}}}`,
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value/writeOnly",
+		},
+		{
+			name: "resolved reference readOnly", schema: `{"$ref":"#/components/schemas/Value"}`,
+			components: `,"components":{"schemas":{"Value":{"readOnly":[]}}}`,
+			pointer:    "#/components/schemas/Value/readOnly",
+		},
+		{
+			name: "allOf writeOnly", schema: `{"allOf":[{"writeOnly":1}]}`,
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/allOf/0/writeOnly",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := Parse(openAPISpec(test.schema, test.components, false))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "compile schema at "+test.pointer)
+			require.ErrorContains(t, err, "must be a boolean")
+		})
+	}
+}
+
+// TestParseRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties verifies property-only direction semantics.
+func TestParseRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		components string
+		pointer    string
+	}{
+		{
+			name:    "direct",
+			schema:  `{"properties":{"value":{"readOnly":true,"writeOnly":true}}}`,
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value",
+		},
+		{
+			name:       "resolved reference",
+			schema:     `{"properties":{"value":{"$ref":"#/components/schemas/Value"}}}`,
+			components: `,"components":{"schemas":{"Value":{"readOnly":true,"writeOnly":true}}}`,
+			pointer:    "#/components/schemas/Value",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := Parse(openAPISpec(test.schema, test.components, false))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "compile schema at "+test.pointer)
+			require.ErrorContains(t, err, "readOnly and writeOnly must not both be true")
+		})
+	}
+}
+
+// TestValidationMakesRequiredReadOnlyRequestPropertiesOptional verifies omission and supplied-value validation.
+func TestValidationMakesRequiredReadOnlyRequestPropertiesOptional(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		property   string
+		components string
+	}{
+		{name: "direct", property: `{"type":"string","minLength":2,"readOnly":true}`},
+		{
+			name:       "resolved reference",
+			property:   `{"$ref":"#/components/schemas/Identifier"}`,
+			components: `,"components":{"schemas":{"Identifier":{"type":"string","minLength":2,"readOnly":true}}}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			validation := mustParseSchema(t, `{"type":"object","required":["id"],"properties":{"id":`+
+				test.property+`}}`, test.components)
+			require.Empty(t, validation.Validate(json.RawMessage(`{}`)))
+			require.Empty(t, validation.Validate(json.RawMessage(`{"id":"ok"}`)))
+
+			errs := validation.Validate(json.RawMessage(`{"id":"x"}`))
+			require.NotEmpty(t, errs)
+			require.Contains(t, errors.Join(errs...).Error(), "keyword minLength")
+		})
+	}
 }
 
 // TestParseRejectsRecursiveSchemas makes finite, acyclic Parse results an explicit contract.

@@ -138,7 +138,7 @@ func schemaMembers(schema oas.LocatedSchema) (map[string]json.RawMessage, error)
 
 // rejectUnsupportedKeywords rejects behavior outside the runtime validator contract.
 func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessage) error {
-	for _, keyword := range []string{"oneOf", "anyOf", "not", "readOnly", "writeOnly", "discriminator"} {
+	for _, keyword := range []string{"oneOf", "anyOf", "not", "discriminator"} {
 		if _, ok := members[keyword]; ok {
 			return fmt.Errorf("compile schema at %s/%s: unsupported keyword", pointer, keyword)
 		}
@@ -151,7 +151,7 @@ func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessag
 		"minItems": {}, "maxItems": {}, "items": {}, "uniqueItems": {},
 		"minProperties": {}, "maxProperties": {}, "required": {}, "properties": {}, "additionalProperties": {},
 		"allOf": {}, "title": {}, "description": {}, "default": {}, "example": {}, "deprecated": {},
-		"xml": {}, "externalDocs": {},
+		"readOnly": {}, "writeOnly": {}, "xml": {}, "externalDocs": {},
 	}
 
 	for keyword := range members {
@@ -214,9 +214,11 @@ func compileDocumentation(validation *Validation, pointer string, members map[st
 		}
 	}
 
-	if raw, ok := members["deprecated"]; ok {
-		if _, err := decodeBoolean(raw, "deprecated"); err != nil {
-			return keywordError(pointer, "deprecated", err)
+	for _, keyword := range []string{"readOnly", "writeOnly", "deprecated"} {
+		if raw, ok := members[keyword]; ok {
+			if _, err := decodeBoolean(raw, keyword); err != nil {
+				return keywordError(pointer, keyword, err)
+			}
 		}
 	}
 
@@ -601,35 +603,8 @@ func (compiler *schemaCompiler) compileObject(
 
 	validation.ObjectValidation.Required = required
 
-	if raw, ok := members["properties"]; ok {
-		var properties map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &properties); err != nil || properties == nil {
-			return keywordError(schema.Pointer, "properties", errors.New("must be an object"))
-		}
-
-		names := make([]string, 0, len(properties))
-		for name := range properties {
-			names = append(names, name)
-		}
-
-		sort.Strings(names)
-
-		validation.ObjectValidation.Properties = make([]PropertyValidation, 0, len(names))
-		for _, name := range names {
-			child, err := compiler.source.Child(schema, "properties", name)
-			if err != nil {
-				return keywordError(schema.Pointer, "properties", err)
-			}
-
-			parsed, err := compiler.compile(child)
-			if err != nil {
-				return err
-			}
-
-			validation.ObjectValidation.Properties = append(validation.ObjectValidation.Properties, PropertyValidation{
-				Name: name, Validation: parsed,
-			})
-		}
+	if err := compiler.compileObjectProperties(validation, schema, members); err != nil {
+		return err
 	}
 
 	//nolint:nestif // Boolean and schema forms need separate diagnostics and compilation paths.
@@ -656,6 +631,88 @@ func (compiler *schemaCompiler) compileObject(
 	}
 
 	return nil
+}
+
+// compileObjectProperties compiles named properties and applies request direction semantics.
+func (compiler *schemaCompiler) compileObjectProperties(
+	validation *Validation,
+	schema oas.LocatedSchema,
+	members map[string]json.RawMessage,
+) error {
+	raw, ok := members["properties"]
+	if !ok {
+		return nil
+	}
+
+	var properties map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &properties); err != nil || properties == nil {
+		return keywordError(schema.Pointer, "properties", errors.New("must be an object"))
+	}
+
+	names := slices.Sorted(maps.Keys(properties))
+
+	validation.ObjectValidation.Properties = make([]PropertyValidation, 0, len(names))
+	for _, name := range names {
+		child, err := compiler.source.Child(schema, "properties", name)
+		if err != nil {
+			return keywordError(schema.Pointer, "properties", err)
+		}
+
+		parsed, err := compiler.compile(child)
+		if err != nil {
+			return err
+		}
+
+		readOnly, err := compiler.requestPropertyReadOnly(child)
+		if err != nil {
+			return err
+		}
+
+		if readOnly {
+			validation.ObjectValidation.Required = slices.DeleteFunc(
+				validation.ObjectValidation.Required,
+				func(required string) bool { return required == name },
+			)
+		}
+
+		validation.ObjectValidation.Properties = append(validation.ObjectValidation.Properties, PropertyValidation{
+			Name: name, Validation: parsed,
+		})
+	}
+
+	return nil
+}
+
+// requestPropertyReadOnly applies request direction rules after local reference resolution.
+func (compiler *schemaCompiler) requestPropertyReadOnly(property oas.LocatedSchema) (bool, error) {
+	resolved, err := compiler.source.Resolve(property)
+	if err != nil {
+		return false, fmt.Errorf("resolve schema at %s: %w", property.Pointer, err)
+	}
+
+	members, err := schemaMembers(resolved)
+	if err != nil {
+		return false, err
+	}
+
+	readOnly, err := decodeOptionalBoolean(members, "readOnly")
+	if err != nil {
+		return false, keywordError(resolved.Pointer, "readOnly", err)
+	}
+
+	writeOnly, err := decodeOptionalBoolean(members, "writeOnly")
+	if err != nil {
+		return false, keywordError(resolved.Pointer, "writeOnly", err)
+	}
+
+	if readOnly && writeOnly {
+		return false, fmt.Errorf(
+			"compile schema at %s: readOnly and writeOnly must not both be true",
+			resolved.Pointer,
+		)
+	}
+
+	return readOnly, nil
 }
 
 // compileAllOf preserves composition source order without flattening.
