@@ -93,9 +93,12 @@ func TestQueryDecoderStyleMatrix(t *testing.T) {
 func TestQueryDecoderSchemaLessJSONContentKinds(t *testing.T) {
 	t.Parallel()
 
-	parameters := []string{
-		`{name: q, in: query, content: {application/json: {}}}`,
-		`{name: q, in: query, content: {application/json: {schema: {}}}}`,
+	parameters := []struct {
+		name      string
+		parameter string
+	}{
+		{name: "absent schema", parameter: `{name: q, in: query, content: {application/json: {}}}`},
+		{name: "empty schema", parameter: `{name: q, in: query, content: {application/json: {schema: {}}}}`},
 	}
 	tests := []struct {
 		name     string
@@ -111,16 +114,20 @@ func TestQueryDecoderSchemaLessJSONContentKinds(t *testing.T) {
 	}
 
 	for _, parameter := range parameters {
-		decoder := parseQueryDecoder(t, parameter)
-		for _, test := range tests {
-			t.Run(test.name, func(t *testing.T) {
-				t.Parallel()
+		t.Run(parameter.name, func(t *testing.T) {
+			t.Parallel()
 
-				actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
-				require.NoError(t, err)
-				require.JSONEq(t, test.expected, string(actual))
-			})
-		}
+			decoder := parseQueryDecoder(t, parameter.parameter)
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					t.Parallel()
+
+					actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+					require.NoError(t, err)
+					require.JSONEq(t, test.expected, string(actual))
+				})
+			}
+		})
 	}
 }
 
@@ -134,6 +141,7 @@ func TestQueryDecoderAcceptsParsedApplicationJSONMediaTypes(t *testing.T) {
 		{mediaType: "application/json", pointer: "application~1json"},
 		{mediaType: "Application/JSON", pointer: "Application~1JSON"},
 		{mediaType: "application/json; charset=utf-8", pointer: "application~1json; charset=utf-8"},
+		{mediaType: `Application/JSON; Charset="utf-8"`, pointer: `Application~1JSON; Charset="utf-8"`},
 	}
 	for _, test := range tests {
 		t.Run(test.mediaType, func(t *testing.T) {
@@ -295,6 +303,31 @@ func TestQueryJSONContentRejectsUnsupportedMediaTypes(t *testing.T) {
 			parameter := fmt.Sprintf(`- {name: q, in: query, content: {%q: {}}}`, test.mediaType)
 			_, _, err := validation.Parse(querySpec(parameter))
 			require.ErrorContains(t, err, test.contains)
+		})
+	}
+}
+
+func TestQueryJSONContentRejectsMalformedMediaTypesAtContentPointer(t *testing.T) {
+	t.Parallel()
+
+	const contentPointer = "#/paths/~1items/get/parameters/0/content"
+
+	mediaTypes := []string{
+		"application/json; charset =utf-8",
+		"application/json; charset= utf-8",
+		"application/json;",
+		"application/json; charset=utf-8; charset=utf-8",
+		"application/json; charset=utf-8; CHARSET=utf-8",
+	}
+	for _, mediaType := range mediaTypes {
+		t.Run(mediaType, func(t *testing.T) {
+			t.Parallel()
+
+			parameter := fmt.Sprintf(`- {name: q, in: query, content: {%q: {}}}`, mediaType)
+			_, _, err := validation.Parse(querySpec(parameter))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "malformed")
+			require.ErrorContains(t, err, contentPointer)
 		})
 	}
 }

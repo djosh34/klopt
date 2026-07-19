@@ -231,6 +231,84 @@ func (decoder *QueryDecoder) addOwner(name string, claim queryClaim) error {
 	return nil
 }
 
+func strictMediaTypeParameters(mediaType string) bool {
+	separator := strings.IndexByte(mediaType, ';')
+	if separator == -1 {
+		return true
+	}
+
+	seen := make(map[string]struct{})
+
+	for _, parameter := range mediaTypeParameterSegments(mediaType[separator+1:]) {
+		parameter = strings.TrimLeft(parameter, " \t")
+
+		equal := strings.IndexByte(parameter, '=')
+		if equal <= 0 {
+			return false
+		}
+
+		if equal+1 >= len(parameter) {
+			return false
+		}
+
+		if strings.ContainsRune(" \t", rune(parameter[equal-1])) {
+			return false
+		}
+
+		if strings.ContainsRune(" \t", rune(parameter[equal+1])) {
+			return false
+		}
+
+		name := strings.ToLower(parameter[:equal])
+		if _, duplicate := seen[name]; duplicate {
+			return false
+		}
+
+		seen[name] = struct{}{}
+	}
+
+	return true
+}
+
+func mediaTypeParameterSegments(parameters string) []string {
+	segments := make([]string, 0, strings.Count(parameters, ";")+1)
+	parameterStart := 0
+
+	quoted := false
+
+	escaped := false
+	for index := range len(parameters) {
+		if escaped {
+			escaped = false
+
+			continue
+		}
+
+		if quoted && parameters[index] == '\\' {
+			escaped = true
+
+			continue
+		}
+
+		if parameters[index] == '"' {
+			quoted = !quoted
+
+			continue
+		}
+
+		if parameters[index] != ';' || quoted {
+			continue
+		}
+
+		segments = append(segments, parameters[parameterStart:index])
+		parameterStart = index + 1
+	}
+
+	segments = append(segments, parameters[parameterStart:])
+
+	return segments
+}
+
 //nolint:cyclop,funlen,gocognit,gocyclo,maintidx,nestif // Parameter Object rules form one finite decision table.
 func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) (queryParameter, error) {
 	members, err := parameterMembers(located)
@@ -310,6 +388,12 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, fmt.Errorf(
 				"parameter %q content at %s media type %q is malformed: %w",
 				name, contentPointer, mediaTypeName, parseMediaTypeErr,
+			)
+		}
+
+		if !strictMediaTypeParameters(mediaTypeName) {
+			return queryParameter{}, fmt.Errorf(
+				"parameter %q content at %s media type %q is malformed", name, contentPointer, mediaTypeName,
 			)
 		}
 
