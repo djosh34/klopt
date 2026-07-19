@@ -332,14 +332,110 @@ func TestQueryJSONContentRejectsMalformedMediaTypesAtContentPointer(t *testing.T
 	}
 }
 
-func TestQueryJSONContentExamplesRemainInert(t *testing.T) {
+func TestQueryJSONContentRejectsParameterExampleByPresence(t *testing.T) {
+	t.Parallel()
+
+	const pointer = "#/paths/~1items/get/parameters/0/example"
+
+	for _, value := range []string{"null", "false", `''`, `{}`} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+
+			parameter := fmt.Sprintf(`- {name: q, in: query, example: %s, content: {application/json: {}}}`, value)
+			_, _, err := validation.Parse(querySpec(parameter))
+			require.Error(t, err)
+			require.ErrorContains(t, err, pointer)
+		})
+	}
+}
+
+func TestQueryJSONContentRejectsParameterExamplesByPresence(t *testing.T) {
+	t.Parallel()
+
+	const pointer = "#/paths/~1items/get/parameters/0/examples"
+
+	for _, value := range []string{"null", "false", `{}`} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+
+			parameter := fmt.Sprintf(`- {name: q, in: query, examples: %s, content: {application/json: {}}}`, value)
+			_, _, err := validation.Parse(querySpec(parameter))
+			require.Error(t, err)
+			require.ErrorContains(t, err, pointer)
+		})
+	}
+}
+
+func TestQueryJSONContentPlacementGuardPrecedence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		fields       string
+		wantContains string
+	}{
+		{
+			name:         "allowReserved before all later guards",
+			fields:       `allowReserved: false, style: form, explode: false, example: null, examples: null, `,
+			wantContains: "allowReserved",
+		},
+		{
+			name:         "style before explode and examples",
+			fields:       `style: form, explode: false, example: null, examples: null, `,
+			wantContains: "style",
+		},
+		{
+			name:         "explode before examples",
+			fields:       `explode: false, example: null, examples: null, `,
+			wantContains: "explode",
+		},
+		{
+			name:         "example before examples",
+			fields:       `example: null, examples: null, `,
+			wantContains: "#/paths/~1items/get/parameters/0/example",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parameter := "- {name: q, in: query, " + test.fields + "content: {application/json: {}}}"
+			_, _, err := validation.Parse(querySpec(parameter))
+			require.Error(t, err)
+			require.ErrorContains(t, err, test.wantContains)
+		})
+	}
+}
+
+func TestQueryJSONContentExampleGuardUsesResolvedEscapedPointer(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := validation.Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: query
+      parameters:
+        - {$ref: '#/components/parameters/query~1~0examples'}
+components:
+  parameters:
+    'query/~examples':
+      name: q
+      in: query
+      examples: false
+      content:
+        application/json: {}
+`))
+	require.Error(t, err)
+	require.ErrorContains(t, err, "#/components/parameters/query~1~0examples/examples")
+}
+
+func TestAllowedQueryExamplesRemainInert(t *testing.T) {
 	t.Parallel()
 
 	parameters := []string{
-		`{name: q, in: query, example: parameter, content: {application/json: {}}}`,
-		`{name: q, in: query, examples: {parameter: {value: ignored}}, content: {application/json: {}}}`,
-		`{name: q, in: query, content: {application/json: {example: media}}}`,
-		`{name: q, in: query, content: {application/json: {examples: {media: {value: ignored}}}}}`,
+		`{name: q, in: query, style: form, example: [], examples: false, schema: {type: boolean}}`,
+		`{name: q, in: query, content: {application/json: {example: false, examples: []}}}`,
 	}
 	for _, parameter := range parameters {
 		decoder := parseQueryDecoder(t, parameter)

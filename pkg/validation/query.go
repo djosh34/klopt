@@ -361,6 +361,22 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, fmt.Errorf("parameter %q at %s content cannot be combined with explode", name, located.Pointer)
 		}
 
+		if rawExample, ok := members["example"]; ok {
+			return queryParameter{}, fmt.Errorf(
+				"parameter %q content cannot be combined with example at %s",
+				name,
+				locatedRawChild(located, rawExample, "example").Pointer,
+			)
+		}
+
+		if rawExamples, ok := members["examples"]; ok {
+			return queryParameter{}, fmt.Errorf(
+				"parameter %q content cannot be combined with examples at %s",
+				name,
+				locatedRawChild(located, rawExamples, "examples").Pointer,
+			)
+		}
+
 		contentPointer := locatedRawChild(located, members["content"], "content").Pointer
 
 		var content map[string]json.RawMessage
