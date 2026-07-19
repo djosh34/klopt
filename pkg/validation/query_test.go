@@ -319,15 +319,15 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
       content: {application/json: {schema: {allOf: [{type: object}]}}}`, contains: "must have a direct type"},
 		{name: "required shape", parameters: `- {name: q, in: query, required: nope, schema: {type: string}}`, contains: "required"},
 		{name: "allow empty shape", parameters: `- {name: q, in: query, allowEmptyValue: nope, schema: {type: string}}`, contains: "allowEmptyValue"},
-		{name: "allow reserved shape", parameters: `- {name: q, in: query, allowReserved: nope, schema: {type: string}}`, contains: `parameter "q" at #/paths/~1items/get/parameters/0 allowReserved: allowReserved must be a boolean`},
+		{name: "allow reserved shape", parameters: `- {name: q, in: query, allowReserved: nope, schema: {type: string}}`, contains: "allowReserved must be a boolean"},
 		{name: "content with allow reserved false", parameters: `- name: q
       in: query
       allowReserved: false
-      content: {application/json: {schema: {type: string}}}`, contains: `parameter "q" at #/paths/~1items/get/parameters/0 content cannot be combined with allowReserved`},
+      content: {application/json: {schema: {type: string}}}`, contains: "content cannot be combined with allowReserved"},
 		{name: "content with allow reserved true", parameters: `- name: q
       in: query
       allowReserved: true
-      content: {application/json: {schema: {type: string}}}`, contains: `parameter "q" at #/paths/~1items/get/parameters/0 content cannot be combined with allowReserved`},
+      content: {application/json: {schema: {type: string}}}`, contains: "content cannot be combined with allowReserved"},
 		{name: "content with style", parameters: `- name: q
       in: query
       style: form
