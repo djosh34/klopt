@@ -208,19 +208,6 @@ paths:
 `,
 			wantError: `operationId "duplicate" is duplicated at #/paths/~1first/post and #/paths/~1second/post`,
 		},
-		"missing schema": {
-			spec: `
-openapi: 3.0.3
-paths:
-  /things:
-    post:
-      operationId: create
-      requestBody:
-        content:
-          application/json: {}
-`,
-			wantError: "schema does not exist",
-		},
 		"missing operation ID": {
 			spec: `
 openapi: 3.0.3
@@ -294,6 +281,70 @@ paths:
 `))
 	require.NoError(t, err)
 	require.Equal(t, []string{"exactID"}, slices.Sorted(maps.Keys(sources)))
+}
+
+// TestParseTreatsMissingRequestBodySchemaAsEmpty verifies optional Media Type schema parity.
+func TestParseTreatsMissingRequestBodySchemaAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	for name, mediaType := range map[string]string{
+		"absent":   "{}",
+		"explicit": "{schema: {}}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /things:
+    post:
+      operationId: create
+      requestBody:
+        content:
+          application/json: ` + mediaType))
+			require.NoError(t, err)
+
+			schema := sources["create"].RequestSchema
+			require.Equal(t, "#/paths/~1things/post/requestBody/content/application~1json/schema", schema.Pointer)
+			require.JSONEq(t, `{}`, string(schema.Raw))
+		})
+	}
+}
+
+// TestParseRejectsMalformedSelectedJSONMediaType verifies the actual selected media-key pointer.
+func TestParseRejectsMalformedSelectedJSONMediaType(t *testing.T) {
+	t.Parallel()
+
+	for name, mediaType := range map[string]string{
+		"null":    "null",
+		"boolean": "true",
+		"number":  "7",
+		"string":  `"invalid"`,
+		"array":   "[]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /things:
+    post:
+      operationId: create
+      requestBody:
+        content:
+          'application/json; charset=utf-8': ` + mediaType))
+			require.ErrorContains(
+				t,
+				err,
+				"parse operation at #/paths/~1things/post request body:",
+			)
+			require.ErrorContains(
+				t,
+				err,
+				"#/paths/~1things/post/requestBody/content/application~1json; charset=utf-8",
+			)
+		})
+	}
 }
 
 // TestParseSelectsApplicationJSONMediaRangesBySpecificity verifies request content matching.

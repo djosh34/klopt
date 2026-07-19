@@ -246,6 +246,163 @@ func TestValidationStrictJSONAndBodyPresence(t *testing.T) {
 	}
 }
 
+// TestParseRejectsMalformedJSONRequestMediaAndSchemasAtPointers covers selected content shapes.
+func TestParseRejectsMalformedJSONRequestMediaAndSchemasAtPointers(t *testing.T) {
+	t.Parallel()
+
+	const (
+		mediaPointer  = "#/paths/~1things/post/requestBody/content/application~1json; charset=utf-8"
+		schemaPointer = mediaPointer + "/schema"
+	)
+
+	tests := []struct {
+		name       string
+		mediaType  string
+		pointer    string
+		objectName string
+	}{
+		{name: "null media type", mediaType: `null`, pointer: mediaPointer, objectName: "Media Type Object"},
+		{name: "scalar media type", mediaType: `1`, pointer: mediaPointer, objectName: "Media Type Object"},
+		{name: "array media type", mediaType: `[]`, pointer: mediaPointer, objectName: "Media Type Object"},
+		{name: "null schema", mediaType: `{"schema":null}`, pointer: schemaPointer, objectName: "Schema Object"},
+		{name: "scalar schema", mediaType: `{"schema":1}`, pointer: schemaPointer, objectName: "Schema Object"},
+		{name: "array schema", mediaType: `{"schema":[]}`, pointer: schemaPointer, objectName: "Schema Object"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := fmt.Appendf(nil, `{
+				"openapi":"3.0.3",
+				"paths":{"/things":{"post":{
+					"operationId":"checkThing",
+					"requestBody":{"content":{"application/json; charset=utf-8":%s}}
+				}}}
+			}`, test.mediaType)
+			_, _, err := Parse(spec)
+			require.Error(t, err)
+			require.ErrorContains(t, err, test.objectName)
+			require.ErrorContains(t, err, test.pointer)
+		})
+	}
+}
+
+// TestSchemaLessJSONRequestBodyRuntimeSemantics covers JSON values, presence, and strict decoding.
+func TestSchemaLessJSONRequestBodyRuntimeSemantics(t *testing.T) {
+	t.Parallel()
+
+	validations, _, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /optional:
+    post:
+      operationId: optionalBody
+      requestBody:
+        content:
+          application/json: {}
+  /required:
+    post:
+      operationId: requiredBody
+      requestBody:
+        required: true
+        content:
+          application/json: {}
+  /defaulted-optional:
+    post:
+      operationId: defaultedOptionalBody
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string, minLength: 2, default: fallback}
+  /defaulted-required:
+    post:
+      operationId: defaultedRequiredBody
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: string, default: fallback}
+`))
+	require.NoError(t, err)
+
+	for _, body := range []json.RawMessage{
+		json.RawMessage(`null`),
+		json.RawMessage(`true`),
+		json.RawMessage(`1.25`),
+		json.RawMessage(`"value"`),
+		json.RawMessage(`[1,true]`),
+		json.RawMessage(`{"value":1}`),
+		json.RawMessage(" \n\tnull\r "),
+	} {
+		require.Empty(t, validations["optionalBody"].Validate(body), "%q", body)
+		require.Empty(t, validations["requiredBody"].Validate(body), "%q", body)
+	}
+
+	for _, absent := range []json.RawMessage{nil, {}} {
+		require.Empty(t, validations["optionalBody"].Validate(absent))
+		require.ErrorContains(t, errors.Join(validations["requiredBody"].Validate(absent)...), "required body is absent")
+	}
+
+	for _, invalid := range []json.RawMessage{
+		json.RawMessage(" \n\t "),
+		json.RawMessage(`{"value":`),
+		json.RawMessage(`true false`),
+	} {
+		require.NotEmpty(t, validations["optionalBody"].Validate(invalid), "%q", invalid)
+	}
+
+	require.Empty(t, validations["defaultedOptionalBody"].Validate(nil))
+	require.NotEmpty(t, validations["defaultedOptionalBody"].Validate(json.RawMessage(`"x"`)))
+	require.Empty(t, validations["defaultedOptionalBody"].Validate(json.RawMessage(`"ok"`)))
+	require.ErrorContains(
+		t,
+		errors.Join(validations["defaultedRequiredBody"].Validate(nil)...),
+		"required body is absent",
+	)
+}
+
+// TestSchemaLessJSONRequestBodyPreservesMediaSelection verifies specificity before schema compilation.
+func TestSchemaLessJSONRequestBodyPreservesMediaSelection(t *testing.T) {
+	t.Parallel()
+
+	validations, _, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /exact:
+    post:
+      operationId: exact
+      requestBody:
+        content:
+          '*/*': {schema: {type: number}}
+          application/*: {schema: {type: boolean}}
+          application/json: {}
+  /application-wildcard:
+    post:
+      operationId: applicationWildcard
+      requestBody:
+        content:
+          '*/*': {schema: {type: boolean}}
+          application/*: {}
+  /global-wildcard:
+    post:
+      operationId: globalWildcard
+      requestBody:
+        content:
+          '*/*': {}
+  /parameterized-exact:
+    post:
+      operationId: parameterizedExact
+      requestBody:
+        content:
+          application/*: {schema: {type: boolean}}
+          'application/json; charset=utf-8': {}
+`))
+	require.NoError(t, err)
+
+	for _, operationID := range []string{"exact", "applicationWildcard", "globalWildcard", "parameterizedExact"} {
+		require.Empty(t, validations[operationID].Validate(json.RawMessage(`"schema-less winner"`)))
+	}
+}
+
 // TestValidationExactNumbers covers values beyond float64 and arbitrary exponent materialization.
 func TestValidationExactNumbers(t *testing.T) {
 	t.Parallel()

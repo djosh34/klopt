@@ -517,6 +517,52 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 	require.NoError(t, err, string(result))
 }
 
+// TestGenerateSchemaLessJSONRequestBodySuite verifies generated all-JSON suite parity.
+func TestGenerateSchemaLessJSONRequestBodySuite(t *testing.T) {
+	t.Parallel()
+
+	repo := repoRoot(t)
+	output, err := os.MkdirTemp(filepath.Join(repo, "pkg"), "generate-schema-less-body-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(output)) })
+
+	spec := []byte(`openapi: 3.0.3
+paths:
+  /absent:
+    post:
+      operationId: absentSchema
+      requestBody:
+        content:
+          application/json: {}
+  /explicit:
+    post:
+      operationId: explicitEmptySchema
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+  /required:
+    post:
+      operationId: requiredAbsentSchema
+      requestBody:
+        required: true
+        content:
+          application/json: {}`)
+	require.NoError(t, Generate(output, "generateschemalessbody", spec, validation.PatternOptions()))
+
+	command := exec.CommandContext(
+		t.Context(),
+		"go",
+		"test",
+		"./pkg/"+filepath.Base(output),
+		"-run",
+		"^TestValidations$",
+	)
+	command.Dir = repo
+	result, err := command.CombinedOutput()
+	require.NoError(t, err, string(result))
+}
+
 // TestGenerateRejectsUnsafeOperationIdentifiers checks generated package-scope name conflicts.
 func TestGenerateRejectsUnsafeOperationIdentifiers(t *testing.T) {
 	t.Parallel()

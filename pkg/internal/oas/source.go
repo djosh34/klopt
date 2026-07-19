@@ -349,9 +349,13 @@ func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSche
 				Pointer: appendPointer(requestBody.Pointer, "content", mediaTypeName),
 			}
 
-			schema, schemaErr := source.requiredChild(mediaType, "schema")
+			schema, schemaErr := mediaTypeSchema(mediaType)
 			if schemaErr != nil {
-				return Source{}, "", false, fmt.Errorf("operationId %q application/json schema: %w", operationID, schemaErr)
+				return Source{}, "", false, fmt.Errorf(
+					"parse operation at %s request body: %w",
+					operation.Pointer,
+					schemaErr,
+				)
 			}
 
 			result.RequestSchema = schema
@@ -421,19 +425,33 @@ func applicationJSONMediaType(content map[string]json.RawMessage) (string, json.
 	return "", nil, false
 }
 
-// requiredChild returns a present, non-null object member.
-func (source Source) requiredChild(parent LocatedSchema, name string) (LocatedSchema, error) {
-	child, err := source.Child(parent, name)
-	if err != nil {
-		return LocatedSchema{}, fmt.Errorf("%s does not exist: %w", name, err)
+// mediaTypeSchema returns a selected Media Type Object's explicit or synthetic empty schema.
+func mediaTypeSchema(mediaType LocatedSchema) (LocatedSchema, error) {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(mediaType.Raw, &members); err != nil {
+		return LocatedSchema{}, fmt.Errorf(
+			"parse Media Type Object at %s: must be an object: %w",
+			mediaType.Pointer,
+			err,
+		)
 	}
 
-	trimmed := bytes.TrimSpace(child.Raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return LocatedSchema{}, fmt.Errorf("%s does not exist", name)
+	if members == nil {
+		return LocatedSchema{}, fmt.Errorf(
+			"parse Media Type Object at %s: must be an object",
+			mediaType.Pointer,
+		)
 	}
 
-	return child, nil
+	raw, ok := members["schema"]
+	if !ok {
+		raw = json.RawMessage(`{}`)
+	}
+
+	return LocatedSchema{
+		Raw:     append(json.RawMessage(nil), raw...),
+		Pointer: appendPointer(mediaType.Pointer, "schema"),
+	}, nil
 }
 
 // operationChild retains the resolved operation and its HTTP method.
