@@ -383,7 +383,22 @@ paths:
     get:
       operationId: jsonContent
       parameters:
-        - {name: q, in: query, content: {application/json: {schema: {type: object, properties: {x: {type: boolean}}}}}}
+        - {name: q, in: query, content: {'Application/JSON; charset=utf-8': {}}}
+  /json-content-explicit:
+    get:
+      operationId: jsonContentExplicit
+      parameters:
+        - {name: q, in: query, content: {application/json: {schema: {}}}}
+  /json-content-required:
+    get:
+      operationId: jsonContentRequired
+      parameters:
+        - {name: q, in: query, required: true, content: {application/json: {}}}
+  /json-content-constrained:
+    get:
+      operationId: jsonContentConstrained
+      parameters:
+        - {name: q, in: query, content: {application/json: {schema: {type: integer, minimum: 2}}}}
 `)
 	require.NoError(t, Generate(output, "generatequeryparityfixture", spec, validation.PatternOptions()))
 
@@ -447,7 +462,24 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 		{operationID: "dynamicDeep", rawQuery: "filter%5D=2", errorContains: "malformed"},
 		{operationID: "dynamicEmpty", rawQuery: "", expected: "{}"},
 		{operationID: "dynamicEmpty", rawQuery: "value=x", errorContains: "validate query"},
-		{operationID: "jsonContent", rawQuery: "q=%7B%22x%22%3Atrue%7D", expected: "{\"q\":{\"x\":true}}"},
+		{operationID: "jsonContent", rawQuery: "q=null", expected: "{\"q\":null}"},
+		{operationID: "jsonContent", rawQuery: "q=true", expected: "{\"q\":true}"},
+		{operationID: "jsonContent", rawQuery: "q=1.25", expected: "{\"q\":1.25}"},
+		{operationID: "jsonContent", rawQuery: "q=%22value%22", expected: "{\"q\":\"value\"}"},
+		{operationID: "jsonContent", rawQuery: "q=%5B1%2Ctrue%5D", expected: "{\"q\":[1,true]}"},
+		{operationID: "jsonContent", rawQuery: "q=%7B%22x%22%3A1%7D", expected: "{\"q\":{\"x\":1}}"},
+		{operationID: "jsonContent", rawQuery: "", expected: "{}"},
+		{operationID: "jsonContent", rawQuery: "q=true&q=true", errorContains: "duplicate JSON content"},
+		{operationID: "jsonContent", rawQuery: "q=true%20false", errorContains: "invalid character"},
+		{operationID: "jsonContentExplicit", rawQuery: "q=null", expected: "{\"q\":null}"},
+		{operationID: "jsonContentExplicit", rawQuery: "q=true", expected: "{\"q\":true}"},
+		{operationID: "jsonContentExplicit", rawQuery: "q=1.25", expected: "{\"q\":1.25}"},
+		{operationID: "jsonContentExplicit", rawQuery: "q=%22value%22", expected: "{\"q\":\"value\"}"},
+		{operationID: "jsonContentExplicit", rawQuery: "q=%5B1%2Ctrue%5D", expected: "{\"q\":[1,true]}"},
+		{operationID: "jsonContentExplicit", rawQuery: "q=%7B%22x%22%3A1%7D", expected: "{\"q\":{\"x\":1}}"},
+		{operationID: "jsonContentRequired", rawQuery: "", errorContains: "required parameter is absent"},
+		{operationID: "jsonContentConstrained", rawQuery: "q=2", expected: "{\"q\":2}"},
+		{operationID: "jsonContentConstrained", rawQuery: "q=1", errorContains: "minimum"},
 	}
 
 	for _, test := range tests {

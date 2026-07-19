@@ -90,6 +90,232 @@ func TestQueryDecoderStyleMatrix(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderSchemaLessJSONContentKinds(t *testing.T) {
+	t.Parallel()
+
+	parameters := []string{
+		`{name: q, in: query, content: {application/json: {}}}`,
+		`{name: q, in: query, content: {application/json: {schema: {}}}}`,
+	}
+	tests := []struct {
+		name     string
+		rawQuery string
+		expected string
+	}{
+		{name: "null", rawQuery: `q=null`, expected: `{"q":null}`},
+		{name: "boolean", rawQuery: `q=true`, expected: `{"q":true}`},
+		{name: "number", rawQuery: `q=1.25`, expected: `{"q":1.25}`},
+		{name: "string", rawQuery: `q=%22value%22`, expected: `{"q":"value"}`},
+		{name: "array", rawQuery: `q=%5B1%2Ctrue%5D`, expected: `{"q":[1,true]}`},
+		{name: "object", rawQuery: `q=%7B%22x%22%3A1%7D`, expected: `{"q":{"x":1}}`},
+	}
+
+	for _, parameter := range parameters {
+		decoder := parseQueryDecoder(t, parameter)
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				t.Parallel()
+
+				actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+				require.NoError(t, err)
+				require.JSONEq(t, test.expected, string(actual))
+			})
+		}
+	}
+}
+
+func TestQueryDecoderAcceptsParsedApplicationJSONMediaTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mediaType string
+		pointer   string
+	}{
+		{mediaType: "application/json", pointer: "application~1json"},
+		{mediaType: "Application/JSON", pointer: "Application~1JSON"},
+		{mediaType: "application/json; charset=utf-8", pointer: "application~1json; charset=utf-8"},
+	}
+	for _, test := range tests {
+		t.Run(test.mediaType, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, fmt.Sprintf(`{name: q, in: query, content: {%q: {}}}`, test.mediaType))
+			require.Equal(
+				t,
+				"#/paths/~1items/get/parameters/0/content/"+test.pointer+"/schema",
+				decoder.Definition().Parameters[0].Validation.SchemaPointer,
+			)
+			actual, err := decoder.Decode(&url.URL{RawQuery: `q=true`})
+			require.NoError(t, err)
+			require.JSONEq(t, `{"q":true}`, string(actual))
+		})
+	}
+}
+
+func TestQueryJSONContentAbsentAndExplicitEmptySchemasCompileEquivalently(t *testing.T) {
+	t.Parallel()
+
+	absent := parseQueryDecoder(t, `{name: q, in: query, content: {application/json: {}}}`)
+	explicit := parseQueryDecoder(t, `{name: q, in: query, content: {application/json: {schema: {}}}}`)
+	require.Equal(t, absent.Definition(), explicit.Definition())
+}
+
+func TestQueryJSONContentUsesOrdinarySchemaCompilation(t *testing.T) {
+	t.Parallel()
+
+	_, decoders, err := validation.Parse([]byte(`openapi: 3.0.3
+paths:
+  /direct:
+    get:
+      operationId: direct
+      parameters:
+        - {name: q, in: query, content: {application/json: {schema: {type: integer, minimum: 2}}}}
+  /reference:
+    get:
+      operationId: reference
+      parameters:
+        - {name: q, in: query, content: {application/json: {schema: {$ref: '#/components/schemas/Defaulted'}}}}
+  /typeless:
+    get:
+      operationId: typeless
+      parameters:
+        - {name: q, in: query, content: {application/json: {schema: {minLength: 2}}}}
+  /all-of:
+    get:
+      operationId: allOf
+      parameters:
+        - {name: q, in: query, content: {application/json: {schema: {allOf: [{type: string}, {minLength: 2}]}}}}
+components:
+  schemas:
+    Defaulted: {type: boolean, default: false}
+`))
+	require.NoError(t, err)
+
+	tests := []struct {
+		operationID string
+		rawQuery    string
+		expected    string
+		wantError   string
+	}{
+		{operationID: "direct", rawQuery: `q=2`, expected: `{"q":2}`},
+		{operationID: "direct", rawQuery: `q=1`, wantError: "minimum"},
+		{operationID: "reference", expected: `{"q":false}`},
+		{operationID: "reference", rawQuery: `q=true`, expected: `{"q":true}`},
+		{operationID: "typeless", rawQuery: `q=%22ok%22`, expected: `{"q":"ok"}`},
+		{operationID: "typeless", rawQuery: `q=%22x%22`, wantError: "minLength"},
+		{operationID: "allOf", rawQuery: `q=%22ok%22`, expected: `{"q":"ok"}`},
+		{operationID: "allOf", rawQuery: `q=%22x%22`, wantError: "minLength"},
+	}
+	for _, test := range tests {
+		t.Run(test.operationID+test.rawQuery, func(t *testing.T) {
+			t.Parallel()
+
+			actual, decodeErr := decoders[test.operationID].Decode(&url.URL{RawQuery: test.rawQuery})
+			if test.wantError != "" {
+				require.Nil(t, actual)
+				require.ErrorContains(t, decodeErr, test.wantError)
+
+				return
+			}
+
+			require.NoError(t, decodeErr)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryJSONContentAbsenceAndRequired(t *testing.T) {
+	t.Parallel()
+
+	optional := parseQueryDecoder(t, `{name: q, in: query, content: {application/json: {}}}`)
+	actual, err := optional.Decode(&url.URL{})
+	require.NoError(t, err)
+	require.JSONEq(t, `{}`, string(actual))
+
+	required := parseQueryDecoder(t, `{name: q, in: query, required: true, content: {application/json: {}}}`)
+	actual, err = required.Decode(&url.URL{})
+	require.Nil(t, actual)
+	require.ErrorContains(t, err, "required parameter is absent")
+}
+
+func TestQueryJSONContentRejectsInvalidShapesAtSourcePointers(t *testing.T) {
+	t.Parallel()
+
+	const parameterPointer = "#/paths/~1items/get/parameters/0"
+
+	tests := []struct {
+		name       string
+		parameter  string
+		pointer    string
+		objectName string
+	}{
+		{name: "null content", parameter: `{name: q, in: query, content: null}`, pointer: parameterPointer + "/content", objectName: "content"},
+		{name: "scalar content", parameter: `{name: q, in: query, content: 1}`, pointer: parameterPointer + "/content", objectName: "content"},
+		{name: "array content", parameter: `{name: q, in: query, content: []}`, pointer: parameterPointer + "/content", objectName: "content"},
+		{name: "empty content", parameter: `{name: q, in: query, content: {}}`, pointer: parameterPointer + "/content", objectName: "content"},
+		{name: "multiple content", parameter: `{name: q, in: query, content: {application/json: {}, text/plain: {}}}`, pointer: parameterPointer + "/content", objectName: "content"},
+		{name: "null media type", parameter: `{name: q, in: query, content: {application/json: null}}`, pointer: parameterPointer + "/content/application~1json", objectName: "Media Type Object"},
+		{name: "scalar media type", parameter: `{name: q, in: query, content: {application/json: 1}}`, pointer: parameterPointer + "/content/application~1json", objectName: "Media Type Object"},
+		{name: "array media type", parameter: `{name: q, in: query, content: {application/json: []}}`, pointer: parameterPointer + "/content/application~1json", objectName: "Media Type Object"},
+		{name: "null schema", parameter: `{name: q, in: query, content: {'Application/JSON; charset=utf-8': {schema: null}}}`, pointer: parameterPointer + "/content/Application~1JSON; charset=utf-8/schema", objectName: "Schema Object"},
+		{name: "scalar schema", parameter: `{name: q, in: query, content: {application/json: {schema: 1}}}`, pointer: parameterPointer + "/content/application~1json/schema", objectName: "Schema Object"},
+		{name: "array schema", parameter: `{name: q, in: query, content: {application/json: {schema: []}}}`, pointer: parameterPointer + "/content/application~1json/schema", objectName: "Schema Object"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := validation.Parse(querySpec("- " + test.parameter))
+			require.Error(t, err)
+			require.ErrorContains(t, err, `parameter "q"`)
+			require.ErrorContains(t, err, test.objectName)
+			require.ErrorContains(t, err, test.pointer)
+		})
+	}
+}
+
+func TestQueryJSONContentRejectsUnsupportedMediaTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		mediaType string
+		contains  string
+	}{
+		{name: "malformed", mediaType: "application", contains: "malformed"},
+		{name: "other", mediaType: "text/plain", contains: "only application/json"},
+		{name: "structured suffix", mediaType: "application/problem+json", contains: "only application/json"},
+		{name: "subtype wildcard", mediaType: "application/*", contains: "only application/json"},
+		{name: "full wildcard", mediaType: "*/*", contains: "only application/json"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parameter := fmt.Sprintf(`- {name: q, in: query, content: {%q: {}}}`, test.mediaType)
+			_, _, err := validation.Parse(querySpec(parameter))
+			require.ErrorContains(t, err, test.contains)
+		})
+	}
+}
+
+func TestQueryJSONContentExamplesRemainInert(t *testing.T) {
+	t.Parallel()
+
+	parameters := []string{
+		`{name: q, in: query, example: parameter, content: {application/json: {}}}`,
+		`{name: q, in: query, examples: {parameter: {value: ignored}}, content: {application/json: {}}}`,
+		`{name: q, in: query, content: {application/json: {example: media}}}`,
+		`{name: q, in: query, content: {application/json: {examples: {media: {value: ignored}}}}}`,
+	}
+	for _, parameter := range parameters {
+		decoder := parseQueryDecoder(t, parameter)
+		actual, err := decoder.Decode(&url.URL{RawQuery: `q=true`})
+		require.NoError(t, err)
+		require.JSONEq(t, `{"q":true}`, string(actual))
+	}
+}
+
 func TestQueryDecoderDynamicObjectStyleMatrixUsesStringFallback(t *testing.T) {
 	t.Parallel()
 
@@ -623,16 +849,18 @@ func TestQueryDecoderRejectsMalformedInput(t *testing.T) {
 		{name: "invalid object property", parameter: objectParameter("form", false), rawQuery: `point=lat,nope,long,2`, contains: "property \"lat\""},
 		{name: "invalid exploded property", parameter: objectParameter("form", true), rawQuery: `lat=nope&long=2`, contains: "property \"lat\""},
 		{name: "empty object", parameter: objectParameter("form", false), rawQuery: `point=`, contains: "empty value is not allowed"},
+		{name: "JSON empty", parameter: `{name: q, in: query, content: {application/json: {}}}`, rawQuery: `q=`, contains: "empty value is not allowed"},
+		{name: "JSON malformed", parameter: `{name: q, in: query, content: {application/json: {}}}`, rawQuery: `q=nope`, contains: "invalid character"},
 		{name: "JSON trailing", parameter: `name: q
       in: query
       content:
-        application/json:
-          schema: {type: object}`, rawQuery: `q=%7B%7Dx`, contains: "invalid character"},
+        application/json: {}`, rawQuery: `q=%7B%7Dx`, contains: "invalid character"},
+		{name: "JSON two values", parameter: `{name: q, in: query, content: {application/json: {}}}`, rawQuery: `q=true%20false`, contains: "invalid character"},
 		{name: "duplicate JSON", parameter: `name: q
       in: query
       content:
         application/json:
-          schema: {type: string}`, rawQuery: `q=%22a%22&q=%22b%22`, contains: "duplicate JSON content"},
+          schema: {type: string}`, rawQuery: `q=%22a%22&q=%22a%22`, contains: "duplicate JSON content"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -663,9 +891,6 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
       schema: {type: string}
       content: {application/json: {schema: {type: string}}}`, contains: "exactly one of schema or content"},
 		{name: "no direct type", parameters: `- {name: q, in: query, schema: {allOf: [{type: string}]}}`, contains: "must have a direct type"},
-		{name: "JSON no direct type", parameters: `- name: q
-      in: query
-      content: {application/json: {schema: {allOf: [{type: object}]}}}`, contains: "must have a direct type"},
 		{name: "required shape", parameters: `- {name: q, in: query, required: nope, schema: {type: string}}`, contains: "required"},
 		{name: "allow empty shape", parameters: `- {name: q, in: query, allowEmptyValue: nope, schema: {type: string}}`, contains: "allowEmptyValue"},
 		{name: "allow reserved shape", parameters: `- {name: q, in: query, allowReserved: nope, schema: {type: string}}`, contains: "allowReserved must be a boolean"},
@@ -687,8 +912,6 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
       content: {application/json: {schema: {type: string}}}`, contains: "content cannot be combined with explode"},
 		{name: "content count", parameters: `- {name: q, in: query, content: {}}`, contains: "exactly one media type"},
 		{name: "content media type", parameters: `- {name: q, in: query, content: {text/plain: {schema: {type: string}}}}`, contains: "only application/json"},
-		{name: "content schema missing", parameters: `- {name: q, in: query, content: {application/json: {}}}`, contains: "application/json schema"},
-		{name: "content media object shape", parameters: `- {name: q, in: query, content: {application/json: 1}}`, contains: "application/json schema"},
 		{name: "content schema unsupported", parameters: `- {name: q, in: query, content: {application/json: {schema: {type: string, oneOf: [{type: string}]}}}}`, contains: "unsupported keyword"},
 		{name: "nested array", parameters: `- {name: q, in: query, schema: {type: array, items: {type: array, items: {type: string}}}}`, contains: "primitive type"},
 		{name: "array items missing", parameters: `- {name: q, in: query, schema: {type: array}}`, contains: "array items"},
