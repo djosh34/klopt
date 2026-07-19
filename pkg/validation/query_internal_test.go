@@ -96,17 +96,17 @@ func TestQueryDecoderDefinitionSharesValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, definition.Parameters[0].Validation, decoder.Definition().Parameters[0].Validation)
 
-	actual, err := decoder.Decode(&url.URL{RawQuery: `filter[value]=ok`})
+	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5Bvalue%5D=ok`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"filter":{"value":"ok"}}`, string(actual))
 
 	definition.Parameters[0].Validation.ObjectValidation.Properties[0].Validation.KindValidation.Type = "number"
-	_, err = decoder.Decode(&url.URL{RawQuery: `filter[value]=ok`})
+	_, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bvalue%5D=ok`})
 	require.ErrorContains(t, err, "got string, want number")
 
 	decoder.Definition().Parameters[0].Validation.
 		ObjectValidation.Properties[0].Validation.KindValidation.Type = "string"
-	actual, err = decoder.Decode(&url.URL{RawQuery: `filter[value]=ok`})
+	actual, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bvalue%5D=ok`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"filter":{"value":"ok"}}`, string(actual))
 }
@@ -153,7 +153,7 @@ func TestQueryDecoderConcurrentDefinitionDecodeAndValidate(t *testing.T) {
 					return
 				}
 
-				actual, decodeErr := decoder.Decode(&url.URL{RawQuery: `filter[value]=ok`})
+				actual, decodeErr := decoder.Decode(&url.URL{RawQuery: `filter%5Bvalue%5D=ok`})
 				if decodeErr != nil || string(actual) != `{"filter":{"value":"ok"}}` {
 					errs <- fmt.Errorf("decode %s: %w", actual, decodeErr)
 

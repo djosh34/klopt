@@ -67,7 +67,7 @@ func TestQueryDecoderStyleMatrix(t *testing.T) {
 		{name: "space object", parameter: objectParameter("spaceDelimited", false), rawQuery: `point=lat%2052.1%20long%204.3`, expected: `{"point":{"lat":52.1,"long":4.3}}`},
 		{name: "pipe object", parameter: objectParameter("pipeDelimited", false), rawQuery: `point=lat%7C52.1%7Clong%7C4.3`, expected: `{"point":{"lat":52.1,"long":4.3}}`},
 		{name: "deep object", parameter: deepParameter(`role: {type: string}
-          active: {type: boolean}`), rawQuery: `filter%5Brole%5D=admin&filter[active]=true`, expected: `{"filter":{"active":true,"role":"admin"}}`},
+          active: {type: boolean}`), rawQuery: `filter%5Brole%5D=admin&filter%5Bactive%5D=true`, expected: `{"filter":{"active":true,"role":"admin"}}`},
 		{name: "JSON content", parameter: `name: filter
       in: query
       content:
@@ -88,6 +88,322 @@ func TestQueryDecoderStyleMatrix(t *testing.T) {
 			require.JSONEq(t, test.expected, string(actual))
 		})
 	}
+}
+
+func TestQueryDecoderDynamicObjectStyleMatrixUsesStringFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		parameter string
+		rawQuery  string
+	}{
+		{name: "form exploded", parameter: `{name: filter, in: query, style: form, explode: true, schema: {type: object}}`, rawQuery: `a=1&b=true&c=false&d=null`},
+		{name: "form named", parameter: `{name: filter, in: query, style: form, explode: false, schema: {type: object, additionalProperties: true}}`, rawQuery: `filter=a,1,b,true,c,false,d,null`},
+		{name: "space delimited", parameter: `{name: filter, in: query, style: spaceDelimited, explode: false, schema: {type: object, additionalProperties: {}}}`, rawQuery: `filter=a+1+b+true+c+false+d+null`},
+		{name: "pipe delimited", parameter: `{name: filter, in: query, style: pipeDelimited, explode: false, schema: {type: object}}`, rawQuery: `filter=a%7C1%7Cb%7Ctrue%7Cc%7Cfalse%7Cd%7Cnull`},
+		{name: "deep object", parameter: `{name: filter, in: query, style: deepObject, explode: true, schema: {type: object}}`, rawQuery: `filter%5Ba%5D=1&filter%5Bb%5D=true&filter%5Bc%5D=false&filter%5Bd%5D=null`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, test.parameter)
+			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.NoError(t, err)
+			require.JSONEq(t, `{"filter":{"a":"1","b":"true","c":"false","d":"null"}}`, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderDynamicObjectScalarTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		parameter string
+		rawQuery  string
+		expected  string
+	}{
+		{name: "form exploded boolean", parameter: `{name: filter, in: query, schema: {type: object, additionalProperties: {type: boolean}}}`, rawQuery: `active=true`, expected: `{"filter":{"active":true}}`},
+		{name: "form named integer", parameter: `{name: filter, in: query, explode: false, schema: {type: object, additionalProperties: {type: integer}}}`, rawQuery: `filter=count,2`, expected: `{"filter":{"count":2}}`},
+		{name: "space number", parameter: `{name: filter, in: query, style: spaceDelimited, explode: false, schema: {type: object, additionalProperties: {type: number}}}`, rawQuery: `filter=ratio+2.5`, expected: `{"filter":{"ratio":2.5}}`},
+		{name: "pipe string", parameter: `{name: filter, in: query, style: pipeDelimited, explode: false, schema: {type: object, additionalProperties: {type: string}}}`, rawQuery: `filter=value%7Ctrue`, expected: `{"filter":{"value":"true"}}`},
+		{name: "deep integer", parameter: `{name: filter, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: {type: integer}}}`, rawQuery: `filter%5Bcount%5D=2`, expected: `{"filter":{"count":2}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, test.parameter)
+			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderDynamicObjectAllOfTypeIntersection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                 string
+		additionalProperties string
+		components           string
+		rawQuery             string
+		expected             string
+		errorContains        string
+	}{
+		{name: "direct integer with constraints", additionalProperties: `{type: integer, allOf: [{minimum: 1}]}`, rawQuery: `value=2`, expected: `{"filter":{"value":2}}`},
+		{name: "allOf integer with constraints", additionalProperties: `{allOf: [{type: integer}, {minimum: 1}]}`, rawQuery: `value=2`, expected: `{"filter":{"value":2}}`},
+		{name: "nested referenced integer", additionalProperties: `{$ref: '#/components/schemas/Dynamic'}`, components: `
+components:
+  schemas:
+    Dynamic: {allOf: [{$ref: '#/components/schemas/Constraint'}, {minimum: 1}]}
+    Constraint: {allOf: [{type: integer}]}
+`, rawQuery: `value=2`, expected: `{"filter":{"value":2}}`},
+		{name: "number intersect integer", additionalProperties: `{type: number, allOf: [{type: integer}]}`, rawQuery: `value=2.0`, expected: `{"filter":{"value":2}}`},
+		{name: "constraint only uses string fallback", additionalProperties: `{allOf: [{format: email}]}`, rawQuery: `value=a%40example.com`, expected: `{"filter":{"value":"a@example.com"}}`},
+		{name: "constraint only final validation", additionalProperties: `{allOf: [{format: email}]}`, rawQuery: `value=invalid`, errorContains: "format"},
+		{name: "reference siblings ignored", additionalProperties: `{$ref: '#/components/schemas/Text', type: integer}`, components: `
+components:
+  schemas:
+    Text: {type: string}
+`, rawQuery: `value=2`, expected: `{"filter":{"value":"2"}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := []byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: query
+      parameters:
+        - name: filter
+          in: query
+          schema:
+            type: object
+            additionalProperties: ` + test.additionalProperties + "\n" + test.components)
+			_, decoders, err := validation.Parse(spec)
+			require.NoError(t, err)
+
+			actual, err := decoders["query"].Decode(&url.URL{RawQuery: test.rawQuery})
+			if test.errorContains != "" {
+				require.ErrorContains(t, err, test.errorContains)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderUntypedDynamicFormatsUseStringsAndFinalValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		format  string
+		valid   string
+		invalid string
+	}{
+		{format: "byte", valid: "YWJj", invalid: "%%%"},
+		{format: "date", valid: "2026-07-14", invalid: "2026-02-30"},
+		{format: "date-time", valid: "2026-07-14T12:30:00Z", invalid: "2026-07-14"},
+		{format: "email", valid: "a@example.com", invalid: "invalid"},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, fmt.Sprintf(
+				`{name: filter, in: query, schema: {type: object, additionalProperties: {format: %q}}}`,
+				test.format,
+			))
+			actual, err := decoder.Decode(&url.URL{RawQuery: "value=" + url.QueryEscape(test.valid)})
+			require.NoError(t, err)
+			require.JSONEq(t, fmt.Sprintf(`{"filter":{"value":%q}}`, test.valid), string(actual))
+			_, err = decoder.Decode(&url.URL{RawQuery: "value=" + url.QueryEscape(test.invalid)})
+			require.ErrorContains(t, err, "format")
+		})
+	}
+
+	for _, format := range []string{"binary", "password", "int32", "float", "vendor", ""} {
+		decoder := parseQueryDecoder(t, fmt.Sprintf(
+			`{name: filter, in: query, schema: {type: object, additionalProperties: {format: %q}}}`,
+			format,
+		))
+		actual, err := decoder.Decode(&url.URL{RawQuery: `value=1`})
+		require.NoError(t, err)
+		require.JSONEq(t, `{"filter":{"value":"1"}}`, string(actual))
+	}
+}
+
+func TestQueryDecoderDynamicScalarConstraintsAndVacuousApplicability(t *testing.T) {
+	t.Parallel()
+
+	minimum := parseQueryDecoder(t, `{name: filter, in: query, schema: {type: object, additionalProperties: {type: integer, minimum: 2}}}`)
+	_, err := minimum.Decode(&url.URL{RawQuery: `value=1`})
+	require.ErrorContains(t, err, "minimum")
+
+	vacuous := parseQueryDecoder(t, `{name: filter, in: query, schema: {type: object, additionalProperties: {type: number, minLength: 100}}}`)
+	actual, err := vacuous.Decode(&url.URL{RawQuery: `value=2`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"filter":{"value":2}}`, string(actual))
+}
+
+func TestQueryDecoderDynamicObjectEmptyIntersectionsFailFinalValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, additionalProperties := range []string{
+		`{type: integer, allOf: [{type: string}]}`,
+		`{type: string, allOf: [{type: integer}]}`,
+	} {
+		t.Run(additionalProperties, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, `{name: filter, in: query, schema: {type: object, additionalProperties: `+additionalProperties+`}}`)
+			actual, err := decoder.Decode(&url.URL{})
+			require.NoError(t, err)
+			require.JSONEq(t, `{}`, string(actual))
+
+			for _, rawQuery := range []string{`value=1`, `value=true`, `value=null`, `value=text`} {
+				_, err := decoder.Decode(&url.URL{RawQuery: rawQuery})
+				require.ErrorContains(t, err, "validate query")
+			}
+		})
+	}
+}
+
+func TestQueryCompileRejectsSatisfiableDynamicArrayAndObjectTypes(t *testing.T) {
+	t.Parallel()
+
+	for _, additionalProperties := range []string{
+		`{type: array, items: {type: string}}`,
+		`{allOf: [{type: object}]}`,
+	} {
+		t.Run(additionalProperties, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := validation.Parse(querySpec(`- {name: filter, in: query, schema: {type: object, additionalProperties: ` + additionalProperties + `}}`))
+			require.ErrorContains(t, err, "style-based dynamic properties cannot have satisfiable type")
+		})
+	}
+}
+
+func TestQueryDecoderDeepObjectDynamicWireContract(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: filter, in: query, allowEmptyValue: true, style: deepObject, explode: true, schema: {type: object}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5B%5D=x&filter%5Ba%255Bb%5D=y`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"filter":{"":"x","a%5Bb":"y"}}`, string(actual))
+
+	for _, rawQuery := range []string{
+		`filter[a]=x`,
+		`unrelated[raw]=x`,
+		`filter%5D=x`,
+		`filter%5Ba%5D=x&filter%5Ba%5D=y`,
+		`filter%5Ba%5Bb%5D%5D=x`,
+		`filter%5Ba%5D%5Bb%5D=x`,
+		`filter[a[b]]=x`,
+		`filter[a][b]=x`,
+		`filter%5ba%5d=x`,
+	} {
+		_, err := decoder.Decode(&url.URL{RawQuery: rawQuery})
+		require.Error(t, err, rawQuery)
+	}
+}
+
+func TestQueryDecoderDeepObjectDeclaredEmptyChild(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: filter, in: query, allowEmptyValue: true, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'': {type: string}}}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5B%5D=x`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"filter":{"":"x"}}`, string(actual))
+}
+
+func TestQueryDecoderDynamicOwnershipOrder(t *testing.T) {
+	t.Parallel()
+
+	_, decoders, err := validation.Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: query
+      security: [{apiKey: []}]
+      parameters:
+        - {name: filter, in: query, schema: {type: object}}
+        - {name: exact, in: query, schema: {type: integer}}
+        - name: declared
+          in: query
+          schema: {type: object, additionalProperties: false, properties: {owned: {type: boolean}}}
+        - name: options
+          in: query
+          style: deepObject
+          explode: true
+          schema: {type: object, additionalProperties: {type: integer}, properties: {fixed: {type: boolean}}}
+        - name: closed
+          in: query
+          style: deepObject
+          explode: true
+          schema: {type: object, additionalProperties: false, properties: {fixed: {type: string}}}
+components:
+  securitySchemes:
+    apiKey: {type: apiKey, in: query, name: api_key}
+`))
+	require.NoError(t, err)
+	actual, err := decoders["query"].Decode(&url.URL{RawQuery: `exact=2&owned=true&options%5Bfixed%5D=false&options%5Bdynamic%5D=3&free=true&bracket%5Bkey%5D=value&api_key=secret`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"filter":{"free":"true","bracket[key]":"value","api_key":"secret"},
+      "exact":2,
+      "declared":{"owned":true},
+      "options":{"fixed":false,"dynamic":3}
+    }`, string(actual))
+
+	_, err = decoders["query"].Decode(&url.URL{RawQuery: `options[malformed]=3`})
+	require.ErrorContains(t, err, "canonical")
+	_, err = decoders["query"].Decode(&url.URL{RawQuery: `closed%5Bunknown%5D=3`})
+	require.ErrorContains(t, err, "malformed or unknown deepObject child")
+}
+
+func TestQueryCompileRejectsTwoOpenExplodedFormMapsInEitherOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, parameters := range []string{
+		`- {name: filter, in: query, schema: {type: object}}
+    - {name: options, in: query, schema: {type: object}}`,
+		`- {name: options, in: query, schema: {type: object}}
+    - {name: filter, in: query, schema: {type: object}}`,
+	} {
+		_, _, err := validation.Parse(querySpec(parameters))
+		require.ErrorContains(t, err, `operationId "query"`)
+		require.ErrorContains(t, err, "filter")
+		require.ErrorContains(t, err, "options")
+		require.ErrorContains(t, err, "bare-key namespace")
+	}
+}
+
+func TestQueryDecoderExactLiteralOwnerWinsOverOpenDeepObject(t *testing.T) {
+	t.Parallel()
+
+	parameters := `- {name: 'filter[a]', in: query, schema: {type: string}}
+    - {name: filter, in: query, style: deepObject, explode: true, schema: {type: object}}`
+	_, decoders, err := validation.Parse(querySpec(parameters))
+	require.NoError(t, err)
+	actual, err := decoders["query"].Decode(&url.URL{RawQuery: `filter%5Ba%5D=x`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"filter[a]":"x"}`, string(actual))
+
+	required := strings.Replace(parameters, `{name: filter, in: query`, `{name: filter, in: query, required: true`, 1)
+	_, decoders, err = validation.Parse(querySpec(required))
+	require.NoError(t, err)
+	_, err = decoders["query"].Decode(&url.URL{RawQuery: `filter%5Ba%5D=x`})
+	require.ErrorContains(t, err, "required parameter is absent")
 }
 
 func TestQueryDecoderRejectsRawPipeDelimitedArray(t *testing.T) {
@@ -160,14 +476,14 @@ func TestQueryDecoderLiteralBracketNamesAcrossNonDeepStyles(t *testing.T) {
 		expected  string
 	}{
 		{name: "primitive", parameter: `{name: 'q[key]', in: query, schema: {type: string}}`, rawQuery: `q%5Bkey%5D=value`, expected: `{"q[key]":"value"}`},
-		{name: "form array repeated", parameter: `{name: 'q[key]', in: query, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a&q%5Bkey%5D=b`, expected: `{"q[key]":["a","b"]}`},
-		{name: "form array delimited", parameter: `{name: 'q[key]', in: query, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a,b`, expected: `{"q[key]":["a","b"]}`},
-		{name: "space array", parameter: `{name: 'q[key]', in: query, style: spaceDelimited, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q[key]=a+b`, expected: `{"q[key]":["a","b"]}`},
+		{name: "form array repeated", parameter: `{name: 'q[key]', in: query, schema: {type: array, items: {type: string}}}`, rawQuery: `q%5Bkey%5D=a&q%5Bkey%5D=b`, expected: `{"q[key]":["a","b"]}`},
+		{name: "form array delimited", parameter: `{name: 'q[key]', in: query, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q%5Bkey%5D=a,b`, expected: `{"q[key]":["a","b"]}`},
+		{name: "space array", parameter: `{name: 'q[key]', in: query, style: spaceDelimited, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q%5Bkey%5D=a+b`, expected: `{"q[key]":["a","b"]}`},
 		{name: "pipe array", parameter: `{name: 'q[key]', in: query, style: pipeDelimited, explode: false, schema: {type: array, items: {type: string}}}`, rawQuery: `q%5Bkey%5D=a%7Cb`, expected: `{"q[key]":["a","b"]}`},
-		{name: "form object named", parameter: bracketObjectParameter("q[key]", "form", false, "child"), rawQuery: `q[key]=child,value`, expected: `{"q[key]":{"child":"value"}}`},
+		{name: "form object named", parameter: bracketObjectParameter("q[key]", "form", false, "child"), rawQuery: `q%5Bkey%5D=child,value`, expected: `{"q[key]":{"child":"value"}}`},
 		{name: "form object exploded", parameter: bracketObjectParameter("q", "form", true, "child[key]"), rawQuery: `child%5Bkey%5D=value`, expected: `{"q":{"child[key]":"value"}}`},
 		{name: "space object", parameter: bracketObjectParameter("q[key]", "spaceDelimited", false, "child"), rawQuery: `q%5Bkey%5D=child+value`, expected: `{"q[key]":{"child":"value"}}`},
-		{name: "pipe object", parameter: bracketObjectParameter("q[key]", "pipeDelimited", false, "child"), rawQuery: `q[key]=child%7Cvalue`, expected: `{"q[key]":{"child":"value"}}`},
+		{name: "pipe object", parameter: bracketObjectParameter("q[key]", "pipeDelimited", false, "child"), rawQuery: `q%5Bkey%5D=child%7Cvalue`, expected: `{"q[key]":{"child":"value"}}`},
 		{name: "JSON content", parameter: `name: 'q[key]'
       in: query
       content: {application/json: {schema: {type: object}}}`, rawQuery: `q%5Bkey%5D=%7B%22child%22%3Atrue%7D`, expected: `{"q[key]":{"child":true}}`},
@@ -199,12 +515,12 @@ func TestQueryDecoderNamesAreCaseSensitive(t *testing.T) {
 	require.JSONEq(t, `{}`, string(actual))
 
 	deep := parseQueryDecoder(t, deepParameter(`role: {type: string}`))
-	actual, err = deep.Decode(&url.URL{RawQuery: `Filter[role]=admin`})
+	actual, err = deep.Decode(&url.URL{RawQuery: `Filter%5Brole%5D=admin`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{}`, string(actual))
 
 	_, err = deep.Decode(&url.URL{RawQuery: `filter[Role]=admin`})
-	require.ErrorContains(t, err, "malformed or unknown deepObject child")
+	require.ErrorContains(t, err, "canonical")
 }
 
 func TestQueryDecoderDeepObjectArrayExtension(t *testing.T) {
@@ -216,30 +532,30 @@ func TestQueryDecoderDeepObjectArrayExtension(t *testing.T) {
           ratio: {type: array, items: {type: number}}
           active: {type: boolean}`))
 
-	actual, err := decoder.Decode(&url.URL{RawQuery: `filter[key]=a%2Cb&filter%5Bkey2%5D=1&filter[key]=cd&filter[enabled]=false&filter[key2]=2&filter[ratio]=1.25&filter[active]=true`})
+	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5Bkey%5D=a%2Cb&filter%5Bkey2%5D=1&filter%5Bkey%5D=cd&filter%5Benabled%5D=false&filter%5Bkey2%5D=2&filter%5Bratio%5D=1.25&filter%5Bactive%5D=true`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"filter":{"active":true,"enabled":[false],"key":["a,b","cd"],"key2":[1,2],"ratio":[1.25]}}`, string(actual))
 
-	actual, err = decoder.Decode(&url.URL{RawQuery: `filter[key]=only`})
+	actual, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bkey%5D=only`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"filter":{"key":["only"]}}`, string(actual))
 
-	_, err = decoder.Decode(&url.URL{RawQuery: `filter[key]=x`})
+	_, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bkey%5D=x`})
 	require.ErrorContains(t, err, "minLength")
-	_, err = decoder.Decode(&url.URL{RawQuery: `filter[enabled]=1`})
+	_, err = decoder.Decode(&url.URL{RawQuery: `filter%5Benabled%5D=1`})
 	require.ErrorContains(t, err, "is not a boolean")
-	_, err = decoder.Decode(&url.URL{RawQuery: `filter[ratio]=nope`})
+	_, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bratio%5D=nope`})
 	require.Error(t, err)
-	_, err = decoder.Decode(&url.URL{RawQuery: `filter[active]=true&filter[active]=false`})
+	_, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bactive%5D=true&filter%5Bactive%5D=false`})
 	require.ErrorContains(t, err, "duplicate scalar object property")
-	_, err = decoder.Decode(&url.URL{RawQuery: `filter[unknown]=x`})
+	_, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bunknown%5D=x`})
 	require.ErrorContains(t, err, "malformed or unknown deepObject child")
 	_, err = decoder.Decode(&url.URL{RawQuery: `filter[key][]=x`})
-	require.ErrorContains(t, err, "malformed or unknown deepObject child")
+	require.ErrorContains(t, err, "canonical")
 	_, err = decoder.Decode(&url.URL{RawQuery: `filter[]=x`})
-	require.ErrorContains(t, err, "malformed or unknown deepObject child")
+	require.ErrorContains(t, err, "canonical")
 	_, err = decoder.Decode(&url.URL{RawQuery: `filter[user][role]=x`})
-	require.ErrorContains(t, err, "malformed or unknown deepObject child")
+	require.ErrorContains(t, err, "canonical")
 }
 
 func TestQueryDecoderMissingEmptyUnknownDuplicateAndBinding(t *testing.T) {
@@ -386,14 +702,7 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
 		{name: "scalar style", parameters: `- {name: q, in: query, style: pipeDelimited, explode: false, schema: {type: string}}`, contains: "unsupported"},
 		{name: "style shape", parameters: `- {name: q, in: query, style: 1, schema: {type: string}}`, contains: "style"},
 		{name: "explode shape", parameters: `- {name: q, in: query, explode: nope, schema: {type: string}}`, contains: "explode"},
-		{name: "form exploded open", parameters: `- {name: q, in: query, schema: {type: object, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
-		{name: "form named open", parameters: `- {name: q, in: query, explode: false, schema: {type: object, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
-		{name: "form named explicit open", parameters: `- {name: q, in: query, explode: false, schema: {type: object, additionalProperties: true, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
-		{name: "space named open", parameters: `- {name: q, in: query, style: spaceDelimited, explode: false, schema: {type: object, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
-		{name: "pipe named schema open", parameters: `- {name: q, in: query, style: pipeDelimited, explode: false, schema: {type: object, additionalProperties: {type: string}, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
-		{name: "deep open", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, properties: {x: {type: string}}}}`, contains: "additionalProperties false"},
 		{name: "deep bracket base", parameters: `- {name: 'q[x]', in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {y: {type: string}}}}`, contains: "parameter name"},
-		{name: "deep empty property", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'': {type: string}}}}`, contains: "property name"},
 		{name: "deep left bracket property", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'x[y': {type: string}}}}`, contains: "property name"},
 		{name: "deep right bracket property", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'x]y': {type: string}}}}`, contains: "property name"},
 		{name: "object style", parameters: `- {name: q, in: query, style: matrix, explode: false, schema: {type: object, additionalProperties: false, properties: {x: {type: string}}}}`, contains: "unsupported"},
@@ -421,16 +730,16 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
 	}
 
 	decoder := parseQueryDecoder(t, `{name: 'tags[key]', in: query, schema: {type: string}}`)
-	for _, rawQuery := range []string{`tags[key]=raw`, `tags%5Bkey%5D=encoded`} {
-		actual, err := decoder.Decode(&url.URL{RawQuery: rawQuery})
-		require.NoError(t, err)
-		require.JSONEq(t, `{"tags[key]":"`+map[string]string{`tags[key]=raw`: "raw", `tags%5Bkey%5D=encoded`: "encoded"}[rawQuery]+`"}`, string(actual))
-	}
+	actual, err := decoder.Decode(&url.URL{RawQuery: `tags%5Bkey%5D=encoded`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"tags[key]":"encoded"}`, string(actual))
+
+	_, err = decoder.Decode(&url.URL{RawQuery: `tags[key]=raw`})
+	require.ErrorContains(t, err, "canonical")
 
 	normal := parseQueryDecoder(t, `{name: tags, in: query, schema: {type: string}}`)
-	actual, err := normal.Decode(&url.URL{RawQuery: `tags[key]=ignored`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{}`, string(actual))
+	_, err = normal.Decode(&url.URL{RawQuery: `tags[key]=ignored`})
+	require.ErrorContains(t, err, "canonical")
 }
 
 func TestQueryDecoderConstraintsDefaultsAndConcurrency(t *testing.T) {

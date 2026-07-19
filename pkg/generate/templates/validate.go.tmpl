@@ -147,6 +147,7 @@
 	Validation: {{template "validation" .Validation}},
 	{{with .DefaultValue}}DefaultValue: json.RawMessage({{printf "%q" .}}),{{end}}
 	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
+	{{with .DynamicType}}DynamicType: {{printf "%q" .}},{{end}}
 	{{with .Properties}}
 	Properties: []validation.QueryPropertyDefinition{
 		{{range .}}{{template "queryProperty" .}},{{end}}

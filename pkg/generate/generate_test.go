@@ -335,6 +335,50 @@ paths:
             type: object
             additionalProperties: false
             properties: {x: {type: array, items: {type: string}}}
+  /dynamic-form:
+    get:
+      operationId: dynamicForm
+      parameters:
+        - {name: filter, in: query, schema: {type: object}}
+  /dynamic-form-named:
+    get:
+      operationId: dynamicFormNamed
+      parameters:
+        - {name: filter, in: query, explode: false, schema: {type: object, additionalProperties: true}}
+  /dynamic-space:
+    get:
+      operationId: dynamicSpace
+      parameters:
+        - name: filter
+          in: query
+          style: spaceDelimited
+          explode: false
+          schema: {type: object, additionalProperties: {}}
+  /dynamic-pipe:
+    get:
+      operationId: dynamicPipe
+      parameters:
+        - {name: filter, in: query, style: pipeDelimited, explode: false, schema: {type: object}}
+  /dynamic-deep:
+    get:
+      operationId: dynamicDeep
+      parameters:
+        - name: filter
+          in: query
+          style: deepObject
+          explode: true
+          schema:
+            type: object
+            additionalProperties: {allOf: [{type: number}, {type: integer, minimum: 2}]}
+  /dynamic-empty:
+    get:
+      operationId: dynamicEmpty
+      parameters:
+        - name: filter
+          in: query
+          schema:
+            type: object
+            additionalProperties: {type: string, allOf: [{type: integer}]}
   /json-content:
     get:
       operationId: jsonContent
@@ -379,8 +423,30 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 		{operationID: "pipeObject", rawQuery: "q=x%7Ca", expected: "{\"q\":{\"x\":\"a\"}}"},
 		{operationID: "pipeObject", rawQuery: "q=x|a", errorContains: "pipeDelimited separator"},
 		{operationID: "pipeObject", rawQuery: "q=x%7Ca%7Cx", errorContains: "name/value pairs"},
-		{operationID: "deepObject", rawQuery: "filter[x]=a", expected: "{\"filter\":{\"x\":\"a\"}}"},
-		{operationID: "deepArray", rawQuery: "filter[x]=a&filter%5Bx%5D=b", expected: "{\"filter\":{\"x\":[\"a\",\"b\"]}}"},
+		{operationID: "deepObject", rawQuery: "filter%5Bx%5D=a", expected: "{\"filter\":{\"x\":\"a\"}}"},
+		{
+			operationID: "deepArray", rawQuery: "filter%5Bx%5D=a&filter%5Bx%5D=b",
+			expected: "{\"filter\":{\"x\":[\"a\",\"b\"]}}",
+		},
+		{operationID: "dynamicForm", rawQuery: "a=1&b=true", expected: "{\"filter\":{\"a\":\"1\",\"b\":\"true\"}}"},
+		{operationID: "dynamicForm", rawQuery: "a%5Bb%5D=1", expected: "{\"filter\":{\"a[b]\":\"1\"}}"},
+		{
+			operationID: "dynamicFormNamed", rawQuery: "filter=a,1,b,true",
+			expected: "{\"filter\":{\"a\":\"1\",\"b\":\"true\"}}",
+		},
+		{operationID: "dynamicSpace", rawQuery: "filter=a+1+b+true", expected: "{\"filter\":{\"a\":\"1\",\"b\":\"true\"}}"},
+		{
+			operationID: "dynamicPipe", rawQuery: "filter=a%7C1%7Cb%7Ctrue",
+			expected: "{\"filter\":{\"a\":\"1\",\"b\":\"true\"}}",
+		},
+		{operationID: "dynamicDeep", rawQuery: "filter%5Bvalue%5D=2.0", expected: "{\"filter\":{\"value\":2}}"},
+		{operationID: "dynamicDeep", rawQuery: "filter%5Bvalue%5D=1", errorContains: "minimum"},
+		{operationID: "dynamicDeep", rawQuery: "filter%5Bvalue%5D=2&filter%5Bvalue%5D=3", errorContains: "duplicate"},
+		{operationID: "dynamicDeep", rawQuery: "filter[value]=2", errorContains: "canonical"},
+		{operationID: "dynamicDeep", rawQuery: "unrelated[raw]=2", errorContains: "canonical"},
+		{operationID: "dynamicDeep", rawQuery: "filter%5D=2", errorContains: "malformed"},
+		{operationID: "dynamicEmpty", rawQuery: "", expected: "{}"},
+		{operationID: "dynamicEmpty", rawQuery: "value=x", errorContains: "validate query"},
 		{operationID: "jsonContent", rawQuery: "q=%7B%22x%22%3Atrue%7D", expected: "{\"q\":{\"x\":true}}"},
 	}
 

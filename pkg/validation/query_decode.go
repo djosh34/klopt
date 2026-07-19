@@ -15,10 +15,12 @@ import (
 )
 
 type rawPair struct {
+	rawName      string
 	name         string
 	rawValue     string
 	decodedValue string
 	property     int
+	childName    string
 }
 
 // Decode converts one URL query into a validated JSON object.
@@ -35,18 +37,48 @@ func (decoder *QueryDecoder) Decode(input *url.URL) (json.RawMessage, error) {
 	}
 
 	claimed := make([][]rawPair, len(decoder.parameters))
+
 	for _, pair := range pairs {
+		if strings.ContainsAny(pair.rawName, "[]") {
+			return nil, fmt.Errorf(
+				"operationId %q claim query name %q: brackets must use canonical %%5B and %%5D encoding",
+				decoder.operationID,
+				pair.name,
+			)
+		}
+
 		claim, ok := decoder.owners[pair.name]
-		if !ok {
-			if err := decoder.rejectMalformedDeepName(pair.name); err != nil {
-				return nil, err
+		if ok {
+			if strings.ContainsAny(pair.name, "[]") && !canonicalBracketEncoding(pair) {
+				return nil, fmt.Errorf(
+					"operationId %q claim query name %q: brackets must use canonical %%5B and %%5D encoding",
+					decoder.operationID,
+					pair.name,
+				)
 			}
+
+			pair.property = claim.property
+			claimed[claim.parameter] = append(claimed[claim.parameter], pair)
 
 			continue
 		}
 
-		pair.property = claim.property
-		claimed[claim.parameter] = append(claimed[claim.parameter], pair)
+		deepParameter, child, deepErr := decoder.claimDeepName(pair)
+		if deepErr != nil {
+			return nil, deepErr
+		}
+
+		if deepParameter != -1 {
+			pair.childName = child
+			claimed[deepParameter] = append(claimed[deepParameter], pair)
+
+			continue
+		}
+
+		if decoder.openForm != -1 {
+			pair.childName = pair.name
+			claimed[decoder.openForm] = append(claimed[decoder.openForm], pair)
+		}
 	}
 
 	var output bytes.Buffer
@@ -134,25 +166,67 @@ func lexRawQuery(rawQuery string) ([]rawPair, error) {
 			return nil, fmt.Errorf("query value for %q is not valid UTF-8", name)
 		}
 
-		pairs = append(pairs, rawPair{name: name, rawValue: rawValue, decodedValue: value, property: -1})
+		pairs = append(pairs, rawPair{
+			rawName: rawName, name: name, rawValue: rawValue, decodedValue: value, property: -1,
+		})
 	}
 
 	return pairs, nil
 }
 
-func (decoder *QueryDecoder) rejectMalformedDeepName(name string) error {
-	for _, base := range decoder.deepBases {
-		if name == base || strings.HasPrefix(name, base+"[") {
-			return fmt.Errorf(
-				"operationId %q claim query parameter %q: malformed or unknown deepObject child %q",
+//nolint:cyclop // Canonical one-level deepObject grammar is checked at this ownership seam.
+func (decoder *QueryDecoder) claimDeepName(pair rawPair) (int, string, error) {
+	for index := range decoder.parameters {
+		parameter := &decoder.parameters[index]
+		if parameter.wire != wireDeepObject || pair.name != parameter.name &&
+			!strings.HasPrefix(pair.name, parameter.name+"[") &&
+			!strings.HasPrefix(pair.name, parameter.name+"]") {
+			continue
+		}
+
+		prefix := parameter.name + "["
+		if !strings.HasPrefix(pair.name, prefix) || !strings.HasSuffix(pair.name, "]") {
+			return -1, "", decoder.malformedDeepName(parameter.name, pair.name)
+		}
+
+		child := strings.TrimSuffix(strings.TrimPrefix(pair.name, prefix), "]")
+		if !canonicalBracketEncoding(pair) {
+			return -1, "", fmt.Errorf(
+				"operationId %q claim query parameter %q: deepObject brackets in %q must use canonical %%5B and %%5D encoding",
 				decoder.operationID,
-				base,
-				name,
+				parameter.name,
+				pair.name,
 			)
 		}
+
+		if strings.ContainsAny(child, "[]") ||
+			strings.Count(pair.rawName, "%5B") != 1 || strings.Count(pair.rawName, "%5D") != 1 {
+			return -1, "", decoder.malformedDeepName(parameter.name, pair.name)
+		}
+
+		if parameter.dynamicType == "" {
+			return -1, "", decoder.malformedDeepName(parameter.name, pair.name)
+		}
+
+		return index, child, nil
 	}
 
-	return nil
+	return -1, "", nil
+}
+
+func canonicalBracketEncoding(pair rawPair) bool {
+	return !strings.ContainsAny(pair.rawName, "[]") &&
+		strings.Count(pair.name, "[") == strings.Count(pair.rawName, "%5B") &&
+		strings.Count(pair.name, "]") == strings.Count(pair.rawName, "%5D")
+}
+
+func (decoder *QueryDecoder) malformedDeepName(base string, name string) error {
+	return fmt.Errorf(
+		"operationId %q claim query parameter %q: malformed or unknown deepObject child %q",
+		decoder.operationID,
+		base,
+		name,
+	)
 }
 
 //nolint:cyclop // The finite wire-kind switch is the decoder's central policy.
@@ -216,6 +290,7 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 	}
 }
 
+//nolint:cyclop // Declared and dynamic packed properties share duplicate detection and ordered emission.
 func (parameter *queryParameter) writeNamedObject(encoder *jsontext.Encoder, occurrence rawPair) error {
 	tokens, err := splitStyleValue(occurrence, parameter.separator)
 	if err != nil {
@@ -237,7 +312,7 @@ func (parameter *queryParameter) writeNamedObject(encoder *jsontext.Encoder, occ
 		name := tokens[index]
 
 		propertyIndex, ok := parameter.propertyByName[name]
-		if !ok {
+		if !ok && parameter.dynamicType == "" {
 			return fmt.Errorf("unknown object property %q", name)
 		}
 
@@ -250,7 +325,12 @@ func (parameter *queryParameter) writeNamedObject(encoder *jsontext.Encoder, occ
 			return err
 		}
 
-		if err := writeScalar(encoder, parameter.properties[propertyIndex].scalarType, tokens[index+1], parameter.allowEmpty); err != nil {
+		typeName := parameter.dynamicType
+		if ok {
+			typeName = parameter.properties[propertyIndex].scalarType
+		}
+
+		if err := writeScalar(encoder, typeName, tokens[index+1], parameter.allowEmpty); err != nil {
 			return fmt.Errorf("property %q: %w", name, err)
 		}
 	}
@@ -305,6 +385,27 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 			if err := encoder.WriteToken(jsontext.EndArray); err != nil {
 				return err
 			}
+		}
+	}
+
+	seen := make(map[string]struct{})
+
+	for _, occurrence := range occurrences {
+		if occurrence.property != -1 {
+			continue
+		}
+
+		if _, duplicate := seen[occurrence.childName]; duplicate {
+			return fmt.Errorf("duplicate scalar object property %q", occurrence.childName)
+		}
+
+		seen[occurrence.childName] = struct{}{}
+		if err := encoder.WriteToken(jsontext.String(occurrence.childName)); err != nil {
+			return err
+		}
+
+		if err := writeScalar(encoder, parameter.dynamicType, occurrence.decodedValue, parameter.allowEmpty); err != nil {
+			return fmt.Errorf("property %q: %w", occurrence.childName, err)
 		}
 	}
 

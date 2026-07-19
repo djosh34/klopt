@@ -33,7 +33,7 @@ type QueryDecoder struct {
 	operationID string
 	parameters  []queryParameter
 	owners      map[string]queryClaim
-	deepBases   []string
+	openForm    int
 	validation  *Validation
 }
 
@@ -46,6 +46,7 @@ type queryParameter struct {
 	validation     *Validation
 	defaultValue   jsontext.Value
 	scalarType     string
+	dynamicType    string
 	properties     []queryProperty
 	propertyByName map[string]int
 }
@@ -82,6 +83,7 @@ type QueryParameterDefinition struct {
 	Validation   *Validation
 	DefaultValue json.RawMessage
 	ScalarType   string
+	DynamicType  string
 	Properties   []QueryPropertyDefinition
 }
 
@@ -104,7 +106,8 @@ func (decoder *QueryDecoder) Definition() QueryDecoderDefinition {
 			Name: parameter.name, Wire: uint8(parameter.wire), Separator: parameter.separator,
 			Required: parameter.required, AllowEmpty: parameter.allowEmpty, Validation: parameter.validation,
 			DefaultValue: append(json.RawMessage(nil), parameter.defaultValue...), ScalarType: parameter.scalarType,
-			Properties: make([]QueryPropertyDefinition, len(parameter.properties)),
+			DynamicType: parameter.dynamicType,
+			Properties:  make([]QueryPropertyDefinition, len(parameter.properties)),
 		}
 		for propertyIndex, property := range parameter.properties {
 			compiled.Properties[propertyIndex] = QueryPropertyDefinition{
@@ -132,6 +135,7 @@ func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDeco
 			name: compiled.Name, wire: wireKind(compiled.Wire), separator: compiled.Separator,
 			required: compiled.Required, allowEmpty: compiled.AllowEmpty, validation: compiled.Validation,
 			defaultValue: append(jsontext.Value(nil), compiled.DefaultValue...), scalarType: compiled.ScalarType,
+			dynamicType:    compiled.DynamicType,
 			properties:     make([]queryProperty, len(compiled.Properties)),
 			propertyByName: make(map[string]int, len(compiled.Properties)),
 		}
@@ -162,24 +166,36 @@ func compileQueryDecoder(operationID string, source oas.Source, compiler *schema
 	return newQueryDecoder(operationID, parameters)
 }
 
+//nolint:cyclop // Exact owners and the one open-form namespace are registered in one finite pass.
 func newQueryDecoder(operationID string, parameters []queryParameter) (*QueryDecoder, error) {
 	decoder := &QueryDecoder{
 		operationID: operationID,
 		parameters:  parameters,
 		owners:      make(map[string]queryClaim),
+		openForm:    -1,
 	}
-	deepBases := make(map[string]struct{})
-
 	for index, parameter := range decoder.parameters {
 		switch parameter.wire {
 		case wireFormObjectExploded:
+			if parameter.dynamicType != "" {
+				if decoder.openForm != -1 {
+					return nil, fmt.Errorf(
+						"operationId %q compile query parameters %q and %q share an unsupported open form exploded bare-key namespace",
+						operationID,
+						decoder.parameters[decoder.openForm].name,
+						parameter.name,
+					)
+				}
+
+				decoder.openForm = index
+			}
+
 			for propertyIndex, property := range parameter.properties {
 				if err := decoder.addOwner(property.name, queryClaim{parameter: index, property: propertyIndex}); err != nil {
 					return nil, err
 				}
 			}
 		case wireDeepObject:
-			deepBases[parameter.name] = struct{}{}
 			for propertyIndex, property := range parameter.properties {
 				name := parameter.name + "[" + property.name + "]"
 				if err := decoder.addOwner(name, queryClaim{parameter: index, property: propertyIndex}); err != nil {
@@ -193,7 +209,6 @@ func newQueryDecoder(operationID string, parameters []queryParameter) (*QueryDec
 		}
 	}
 
-	decoder.deepBases = slices.Sorted(maps.Keys(deepBases))
 	decoder.validation = syntheticQueryValidation(operationID, decoder.parameters)
 
 	return decoder, nil
@@ -366,41 +381,29 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 
 		switch {
 		case style == "form" && explode:
-			if queryAdditionalPropertiesAllowed(directMembers) {
-				return queryParameter{}, fmt.Errorf("parameter %q form exploded object must set additionalProperties false", name)
-			}
-
 			parameter.wire = wireFormObjectExploded
 		case style == "form" && !explode:
-			if queryAdditionalPropertiesAllowed(directMembers) {
-				return queryParameter{}, fmt.Errorf("parameter %q form object must set additionalProperties false", name)
-			}
-
 			parameter.wire, parameter.separator = wireFormObjectNamed, ","
 		case style == "spaceDelimited" && !explode:
-			if queryAdditionalPropertiesAllowed(directMembers) {
-				return queryParameter{}, fmt.Errorf("parameter %q spaceDelimited object must set additionalProperties false", name)
-			}
-
 			parameter.wire, parameter.separator = wireDelimitedObject, " "
 		case style == "pipeDelimited" && !explode:
-			if queryAdditionalPropertiesAllowed(directMembers) {
-				return queryParameter{}, fmt.Errorf("parameter %q pipeDelimited object must set additionalProperties false", name)
-			}
-
 			parameter.wire, parameter.separator = wireDelimitedObject, "|"
 		case style == "deepObject" && explode:
-			if queryAdditionalPropertiesAllowed(directMembers) {
-				return queryParameter{}, fmt.Errorf("parameter %q deepObject must set additionalProperties false", name)
-			}
-
 			if strings.ContainsAny(name, "[]") {
-				return queryParameter{}, fmt.Errorf("deepObject parameter name %q cannot contain brackets", name)
+				return queryParameter{}, fmt.Errorf(
+					"deepObject parameter name %q has an unsupported non-reversible bracket wire boundary",
+					name,
+				)
 			}
 
 			parameter.wire = wireDeepObject
 		default:
 			return queryParameter{}, unsupportedQueryStyle(name, style, explode, directType)
+		}
+
+		parameter.dynamicType, err = queryAdditionalPropertiesType(resolved, directMembers, compiler.source)
+		if err != nil {
+			return queryParameter{}, fmt.Errorf("parameter %q additionalProperties: %w", name, err)
 		}
 	default:
 		return queryParameter{}, fmt.Errorf("parameter %q has unsupported direct type %q", name, directType)
@@ -414,10 +417,120 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 	return parameter, nil
 }
 
-func queryAdditionalPropertiesAllowed(members map[string]json.RawMessage) bool {
+func queryAdditionalPropertiesType(
+	schema oas.LocatedSchema,
+	members map[string]json.RawMessage,
+	source oas.Source,
+) (string, error) {
 	raw, ok := members["additionalProperties"]
+	if !ok || string(bytes.TrimSpace(raw)) == "true" {
+		return "string", nil
+	}
 
-	return !ok || string(bytes.TrimSpace(raw)) != "false"
+	if string(bytes.TrimSpace(raw)) == "false" {
+		return "", nil
+	}
+
+	additional := locatedRawChild(schema, raw, "additionalProperties")
+
+	types, err := explicitQuerySchemaTypes(source, additional, make(map[string]struct{}))
+	if err != nil {
+		return "", err
+	}
+
+	typeName := intersectQuerySchemaTypes(types)
+	if typeName == "" {
+		return "string", nil
+	}
+
+	if !isScalarType(typeName) {
+		return "", fmt.Errorf("style-based dynamic properties cannot have satisfiable type %q", typeName)
+	}
+
+	return typeName, nil
+}
+
+//nolint:cyclop // Root and allOf type restrictions need one recursive schema traversal.
+func explicitQuerySchemaTypes(
+	source oas.Source,
+	schema oas.LocatedSchema,
+	active map[string]struct{},
+) ([]string, error) {
+	resolved, err := source.Resolve(schema)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, cycle := active[resolved.Pointer]; cycle {
+		return nil, fmt.Errorf("schema at %s has a recursive allOf reference", resolved.Pointer)
+	}
+
+	active[resolved.Pointer] = struct{}{}
+	defer delete(active, resolved.Pointer)
+
+	members, err := schemaMembers(resolved)
+	if err != nil {
+		return nil, err
+	}
+
+	types := make([]string, 0, 1)
+
+	if raw, ok := members["type"]; ok {
+		typeName, typeErr := decodeString(raw, "type")
+		if typeErr != nil {
+			return nil, fmt.Errorf("query schema at %s type: %w", resolved.Pointer, typeErr)
+		}
+
+		types = append(types, typeName)
+	}
+
+	rawAllOf, ok := members["allOf"]
+	if !ok {
+		return types, nil
+	}
+
+	var allOf []json.RawMessage
+	if err := json.Unmarshal(rawAllOf, &allOf); err != nil || allOf == nil {
+		return nil, fmt.Errorf("query schema at %s allOf must be an array", resolved.Pointer)
+	}
+
+	for index, raw := range allOf {
+		childTypes, childErr := explicitQuerySchemaTypes(
+			source,
+			locatedRawChild(resolved, raw, "allOf", fmt.Sprint(index)),
+			active,
+		)
+		if childErr != nil {
+			return nil, childErr
+		}
+
+		types = append(types, childTypes...)
+	}
+
+	return types, nil
+}
+
+func intersectQuerySchemaTypes(types []string) string {
+	if len(types) == 0 {
+		return "string"
+	}
+
+	intersection := types[0]
+	for _, typeName := range types[1:] {
+		if intersection == typeName {
+			continue
+		}
+
+		if intersection == "number" && typeName == "integer" || intersection == "integer" && typeName == "number" {
+			intersection = "integer"
+
+			continue
+		}
+
+		return ""
+	}
+
+	return intersection
 }
 
 func parameterMembers(parameter oas.LocatedSchema) (map[string]json.RawMessage, error) {
@@ -481,8 +594,11 @@ func compileQueryProperties(
 
 	byName := make(map[string]int, len(rawProperties))
 	for _, name := range slices.Sorted(maps.Keys(rawProperties)) {
-		if allowPrimitiveArrays && (name == "" || strings.ContainsAny(name, "[]")) {
-			return nil, nil, fmt.Errorf("deepObject property name %q must be non-empty and cannot contain brackets", name)
+		if allowPrimitiveArrays && strings.ContainsAny(name, "[]") {
+			return nil, nil, fmt.Errorf(
+				"deepObject property name %q has an unsupported non-reversible bracket wire boundary",
+				name,
+			)
 		}
 
 		child := locatedRawChild(schema, rawProperties[name], "properties", name)
