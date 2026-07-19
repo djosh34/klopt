@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -470,20 +471,65 @@ func TestParseAcceptsArbitrarilyLargeCollectionBounds(t *testing.T) {
 	}
 }
 
-// TestParseRejectsUnsupportedOpenAPIVersions enforces this package's exact dialect contract.
+// TestParseAcceptsCompatibleOpenAPIVersions verifies patch-level compatibility.
+func TestParseAcceptsCompatibleOpenAPIVersions(t *testing.T) {
+	t.Parallel()
+
+	valid := openAPISpec(`{}`, "", false)
+
+	for _, version := range []string{
+		"3.0.0",
+		"3.0.4",
+		"3.0.10",
+		"3.0.4-rc.1",
+		"3.0.4+vendor",
+		"3.0.4-rc.1+vendor",
+	} {
+		t.Run(version, func(t *testing.T) {
+			t.Parallel()
+
+			spec := strings.Replace(string(valid), `"3.0.3"`, strconv.Quote(version), 1)
+			_, _, err := Parse([]byte(spec))
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestParseRejectsUnsupportedOpenAPIVersions enforces this package's feature-set contract.
 func TestParseRejectsUnsupportedOpenAPIVersions(t *testing.T) {
 	t.Parallel()
 
 	valid := openAPISpec(`{}`, "", false)
-	for _, replacement := range []string{`"3.0.2"`, `"3.1.0"`, `3.0`, `null`} {
-		spec := strings.Replace(string(valid), `"3.0.3"`, replacement, 1)
-		_, _, err := Parse([]byte(spec))
-		require.ErrorContains(t, err, `version must be "3.0.3"`)
+
+	for _, test := range []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{name: "leading zero major", replacement: `"03.0.4"`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "leading zero minor", replacement: `"3.00.4"`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "leading zero", replacement: `"3.0.04"`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "missing patch", replacement: `"3.0"`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "leading version marker", replacement: `"v3.0.4"`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "leading zero prerelease", replacement: `"3.0.4-01"`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "empty prerelease", replacement: `"3.0.4-"`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "empty build", replacement: `"3.0.4+"`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "unsupported feature set", replacement: `"3.1.0"`, wantError: "feature set must be 3.0"},
+		{name: "number", replacement: `3.0`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "null", replacement: `null`, wantError: "Semantic Versioning 2.0.0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := strings.Replace(string(valid), `"3.0.3"`, test.replacement, 1)
+			_, _, err := Parse([]byte(spec))
+			require.ErrorContains(t, err, test.wantError)
+		})
 	}
 
 	missing := strings.Replace(string(valid), `"openapi":"3.0.3",`, "", 1)
 	_, _, err := Parse([]byte(missing))
-	require.ErrorContains(t, err, `version must be "3.0.3"`)
+	require.ErrorContains(t, err, "Semantic Versioning 2.0.0")
 }
 
 // TestParseRejectsFirstMalformedOperationDeterministically verifies the whole-document error boundary.

@@ -9,11 +9,20 @@ import (
 	"maps"
 	"mime"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/goccy/go-yaml"
+)
+
+// semanticVersionPattern implements the Semantic Versioning 2.0.0 grammar.
+var semanticVersionPattern = regexp.MustCompile(
+	`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)` +
+		`(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)` +
+		`(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?` +
+		`(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$`,
 )
 
 // Source retains one parsed document and one request Schema Object.
@@ -85,8 +94,17 @@ func Parse(spec []byte) (map[string]Source, error) {
 	}
 
 	var version string
-	if err := json.Unmarshal(root["openapi"], &version); err != nil || version != "3.0.3" {
-		return nil, errors.New(`OpenAPI document version must be "3.0.3"`)
+	if err := json.Unmarshal(root["openapi"], &version); err != nil {
+		return nil, errors.New("OpenAPI document version must be a Semantic Versioning 2.0.0 version")
+	}
+
+	versionParts := semanticVersionPattern.FindStringSubmatch(version)
+	if len(versionParts) == 0 {
+		return nil, errors.New("OpenAPI document version must be a Semantic Versioning 2.0.0 version")
+	}
+
+	if versionParts[1] != "3" || versionParts[2] != "0" {
+		return nil, errors.New("OpenAPI document feature set must be 3.0")
 	}
 
 	source := Source{Document: append(json.RawMessage(nil), document...)}
