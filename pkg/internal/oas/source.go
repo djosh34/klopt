@@ -351,7 +351,11 @@ func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSche
 
 			schema, schemaErr := mediaTypeSchema(mediaType)
 			if schemaErr != nil {
-				return Source{}, "", false, schemaErr
+				return Source{}, "", false, fmt.Errorf(
+					"parse operation at %s request body: %w",
+					operation.Pointer,
+					schemaErr,
+				)
 			}
 
 			result.RequestSchema = schema

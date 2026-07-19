@@ -336,6 +336,11 @@ paths:
 			require.ErrorContains(
 				t,
 				err,
+				"parse operation at #/paths/~1things/post request body:",
+			)
+			require.ErrorContains(
+				t,
+				err,
 				"#/paths/~1things/post/requestBody/content/application~1json; charset=utf-8",
 			)
 		})
