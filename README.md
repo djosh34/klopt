@@ -2,66 +2,34 @@
 
 Klopt is a Go library and code generator that decodes and validates HTTP requests according to an OpenAPI 3.0.x document.
 
-“Klopt” is Dutch for “is correct,” reflecting the library's focus on validation. The name is inspired by the naming of Google's code search engine Zoekt, Dutch for “searches.”
+“Klopt” is Dutch for “is correct,” reflecting the library's focus on validation. The name is inspired by the naming of Google's code search engine zoekt, Dutch for “searches.”
 
 Read the [documentation](https://djosh34.github.io/klopt/) for the model, query decoding, and design rationale.
+
+## Getting started
+
+Install the runtime package:
 
 ```sh
 go get github.com/djosh34/klopt/pkg/validation
 ```
 
-## Getting started
-
-See this operation snippet:
+Given an OpenAPI operation like this:
 
 ```yaml
 post:
   operationId: createThing
   requestBody:
-    required: true
-    content:
-      application/json:
-        schema:
-          type: object
-          required: [name]
-          properties:
-            name:
-              type: string
-            # ...
+    # ...
   parameters:
     - name: filter
       in: query
-      required: true
-      style: deepObject
-      explode: true
-      schema:
-        type: object
-        required: [status]
-        additionalProperties: false
-        properties:
-          status:
-            type: string
-          limit:
-            type: integer
-          # ...
+      # ...
 ```
 
-Use your own Go types for the request data:
+The `operationId` connects the compiled validation and query decoder to your handler. With an object schema for `filter`, OpenAPI's default exploded form style means `?status=active` becomes `{"filter":{"status":"active"}}`. No explicit `style` or `explode` is needed.
 
-```go
-type CreateThing struct {
-	Name string `json:"name"`
-}
-
-type CreateThingQuery struct {
-	Filter struct {
-		Status string `json:"status"`
-		Limit  int    `json:"limit"`
-	} `json:"filter"`
-}
-```
-
-Parse the OpenAPI document once at startup, then use the matching request validation and query decoder for each request. The decoder interprets the OpenAPI query serialization, validates the resulting JSON, and returns it only after validation succeeds.
+Keep request data in your own Go types. The query result is ordinary JSON, so an inline nested struct and JSON tags work as expected:
 
 ```go
 import (
@@ -75,6 +43,20 @@ import (
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
+type CreateThing struct {
+	Name string `json:"name"`
+}
+
+type CreateThingQuery struct {
+	Filter struct {
+		Status string `json:"status"`
+	} `json:"filter"`
+}
+```
+
+Parse the OpenAPI document once at startup, then reuse the matching request validation and query decoder for every request. Validate the raw body before unmarshalling it. The query decoder interprets the OpenAPI wire format and returns JSON only after validation succeeds.
+
+```go
 func newCreateThingDecoder() (func(*http.Request) (CreateThing, CreateThingQuery, error), error) {
 	spec, err := os.ReadFile("openapi.yaml")
 	if err != nil {
@@ -130,18 +112,21 @@ func newCreateThingDecoder() (func(*http.Request) (CreateThing, CreateThingQuery
 
 ## Generate compiled data
 
-Use `GenerateInMemory` when you want to parse the specification ahead of time:
+Runtime parsing is useful while developing. When you want to parse the specification ahead of time, use `GenerateInMemory`:
 
 ```go
 generatedFiles, err := generate.GenerateInMemory("openapivalidation", spec, validation.PatternOptions())
 if err != nil {
 	return err
 }
-// generatedFiles is a map containing all needed generated files.
 ```
 
-The generated source is caller-owned. Generated maps are package-private. Generated tests cover JSON request bodies only.
+The returned map contains all needed generated files. The source is caller-owned, generated maps are package-private, and generated tests cover JSON request bodies only.
 
-## Contributions and license
+# Contributing
 
-Contributions are not accepted. This repository has no open-source license; all rights are reserved.
+klopt is currently a greenfield project, and contributions are not yet accepted. Creating issues is welcome.
+
+# License
+
+All rights reserved.
