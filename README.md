@@ -1,8 +1,9 @@
 # klopt
 
-Klopt is a Go library and code generator that decodes and validates HTTP requests according to an OpenAPI 3.0.x document.
+Klopt is a Go library and code generator that decodes and validates HTTP requests.
 
-“Klopt” is Dutch for “is correct,” reflecting the library's focus on validation. The name is inspired by the naming of Google's code search engine zoekt, Dutch for “searches.”
+> [!NOTE]
+> “Klopt” is Dutch for “is correct,” reflecting the library's focus on validation. The name is inspired by the naming of Google's code search engine zoekt, Dutch for “searches.”
 
 Read the [documentation](https://djosh34.github.io/klopt/) for the model, query decoding, and design rationale.
 
