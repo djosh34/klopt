@@ -28,7 +28,17 @@ post:
       # ...
 ```
 
-The `operationId` connects the compiled validation and query decoder to your handler. With an object schema for `filter`, OpenAPI's default exploded form style means `?status=active` becomes `{"filter":{"status":"active"}}`. No explicit `style` or `explode` is needed.
+The `operationId` connects the compiled validation and query decoder to your handler. With an object schema for `filter`, this URL:
+
+```text
+/things?status=active
+```
+
+is decoded and validated as:
+
+```json
+{"filter":{"status":"active"}}
+```
 
 Keep request data in your own Go types. The query result is ordinary JSON, so an inline nested struct and JSON tags work as expected:
 
@@ -123,6 +133,8 @@ if err != nil {
 ```
 
 The returned map contains all needed generated files. The source is caller-owned, generated maps are package-private, and generated tests cover JSON request bodies only.
+
+Klopt undergoes extensive fuzz testing using its own JSON test generator.
 
 # Contributing
 
