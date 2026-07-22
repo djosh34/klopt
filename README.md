@@ -1,91 +1,146 @@
 # klopt
 
-Klopt is a Go library and code generator for validating OpenAPI 3.0.x JSON request bodies and decoding OpenAPI query parameters into JSON.
+Klopt is a Go library and code generator that decodes and validates supported parts of HTTP requests according to an OpenAPI 3.0.x document. It validates JSON request bodies from their original bytes and converts OpenAPI query-parameter serialization into validated JSON before your application unmarshals it into its own Go types.
+
+You can compile the document at startup or generate the compiled data ahead of time. Unsupported OpenAPI behavior is rejected while parsing instead of being accepted with partial semantics.
+
+Read the [documentation](https://djosh34.github.io/klopt/) for the supported model, query decoding, and design rationale. Package APIs are on [pkg.go.dev](https://pkg.go.dev/github.com/djosh34/klopt/pkg/validation) and [the generator package](https://pkg.go.dev/github.com/djosh34/klopt/pkg/generate).
 
 ```sh
 go get github.com/djosh34/klopt/pkg/validation
 ```
 
-## Use at runtime
+## Getting started
 
-Parse the OpenAPI document once, normally when the process starts. The returned maps are keyed by `operationId`. Invalid documents and unsupported OpenAPI behavior return a parse error.
+This shortened operation omits the surrounding OpenAPI document and response:
+
+```yaml
+post:
+  operationId: createThing
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+            # ...
+  parameters:
+    - name: filter
+      in: query
+      required: true
+      style: deepObject
+      explode: true
+      schema:
+        type: object
+        required: [status]
+        additionalProperties: false
+        properties:
+          status:
+            type: string
+          limit:
+            type: integer
+          # ...
+```
+
+Use your own Go types for the request data:
 
 ```go
-spec, err := os.ReadFile("openapi.yaml")
-if err != nil {
-	return err
+type CreateThing struct {
+	Name string `json:"name"`
 }
 
-validations, queryDecoders, err := validation.Parse(spec)
-if err != nil {
-	return err
+type CreateThingQuery struct {
+	Filter struct {
+		Status string `json:"status"`
+		Limit  int    `json:"limit"`
+	} `json:"filter"`
 }
 ```
 
-Validate the original request bytes before decoding them into an application type:
+Parse the OpenAPI document once at startup, then use the matching request validation and query decoder for each request. The decoder interprets the OpenAPI query serialization, validates the resulting JSON, and returns it only after validation succeeds.
 
 ```go
-body, err := io.ReadAll(r.Body)
-if err != nil {
-	return err
-}
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
 
-requestValidation, ok := validations["createThing"]
-if !ok {
-	return fmt.Errorf("missing createThing validation")
-}
-if err := errors.Join(requestValidation.Validate(body)...); err != nil {
-	return err
-}
+	"github.com/djosh34/klopt/pkg/validation"
+)
 
-var input CreateThing
-if err := json.Unmarshal(body, &input); err != nil {
-	return err
-}
-```
+func newCreateThingDecoder() (func(*http.Request) (CreateThing, CreateThingQuery, error), error) {
+	spec, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		return nil, err
+	}
 
-Use the decoder from that same parsed result for a query. It applies the OpenAPI query serialization rules, validates the result, and returns JSON for your own Go type:
+	// Parse once at startup.
+	validations, queryDecoders, err := validation.Parse(spec)
+	if err != nil {
+		return nil, err
+	}
 
-```go
-queryDecoder, ok := queryDecoders["listThings"]
-if !ok {
-	return fmt.Errorf("missing listThings query decoder")
-}
+	requestValidation, ok := validations["createThing"]
+	if !ok {
+		return nil, fmt.Errorf("missing createThing validation")
+	}
+	queryDecoder, ok := queryDecoders["createThing"]
+	if !ok {
+		return nil, fmt.Errorf("missing createThing query decoder")
+	}
 
-rawQuery, err := queryDecoder.Decode(r.URL)
-if err != nil {
-	return err
-}
+	return func(r *http.Request) (CreateThing, CreateThingQuery, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return CreateThing{}, CreateThingQuery{}, err
+		}
 
-var query ListThingsQuery
-if err := json.Unmarshal(rawQuery, &query); err != nil {
-	return err
+		// Validate the raw body first.
+		if err := errors.Join(requestValidation.Validate(body)...); err != nil {
+			return CreateThing{}, CreateThingQuery{}, err
+		}
+
+		var input CreateThing
+		if err := json.Unmarshal(body, &input); err != nil {
+			return CreateThing{}, CreateThingQuery{}, err
+		}
+
+		// Decode query syntax and validate its JSON.
+		rawQuery, err := queryDecoder.Decode(r.URL)
+		if err != nil {
+			return CreateThing{}, CreateThingQuery{}, err
+		}
+
+		var query CreateThingQuery
+		if err := json.Unmarshal(rawQuery, &query); err != nil {
+			return CreateThing{}, CreateThingQuery{}, err
+		}
+
+		return input, query, nil
+	}, nil
 }
 ```
 
 ## Generate compiled data
 
-`pkg/generate` writes the parsed validation and query-decoder data as `validate.go`; it does not generate application structs or unmarshalling code. Use it when you want to avoid parsing the specification at runtime:
+Use `GenerateInMemory` when you want to parse the specification ahead of time:
 
 ```go
-err := generate.Generate(
-	"internal/openapivalidation",
-	"openapivalidation",
-	spec,
-	validation.PatternOptions(),
-)
+generatedFiles, err := generate.GenerateInMemory("openapivalidation", spec, validation.PatternOptions())
 if err != nil {
 	return err
 }
+// generatedFiles contains validate.go and validate_test.go.
 ```
 
-`generate.GenerateInMemory` returns the same `validate.go` and `validate_test.go` files as `map[string][]byte` when the caller owns writing them.
-
-The generated test file uses Rapid property tests to check JSON request-body validation against generated accepted and rejected cases. It does not generate query-decoder tests.
-
-## Documentation
-
-Read the [documentation](https://djosh34.github.io/klopt/) for query decoding, the supported model, and design rationale. Package APIs are on [pkg.go.dev](https://pkg.go.dev/github.com/djosh34/klopt/pkg/validation) and [the generator package](https://pkg.go.dev/github.com/djosh34/klopt/pkg/generate).
+The generated source is caller-owned. Generated maps are package-private. Generated tests cover JSON request bodies only.
 
 ## Contributions and license
 
