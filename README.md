@@ -1,10 +1,10 @@
 # klopt
 
-Klopt is a Go library and code generator that decodes and validates supported parts of HTTP requests according to an OpenAPI 3.0.x document. It validates JSON request bodies from their original bytes and converts OpenAPI query-parameter serialization into validated JSON before your application unmarshals it into its own Go types.
+Klopt is a Go library and code generator that decodes and validates HTTP requests according to an OpenAPI 3.0.x document.
 
-You can compile the document at startup or generate the compiled data ahead of time. Unsupported OpenAPI behavior is rejected while parsing instead of being accepted with partial semantics.
+“Klopt” is Dutch for “is correct,” reflecting the library's focus on validation. The name is inspired by the naming of Google's code search engine Zoekt, Dutch for “searches.”
 
-Read the [documentation](https://djosh34.github.io/klopt/) for the supported model, query decoding, and design rationale. Package APIs are on [pkg.go.dev](https://pkg.go.dev/github.com/djosh34/klopt/pkg/validation) and [the generator package](https://pkg.go.dev/github.com/djosh34/klopt/pkg/generate).
+Read the [documentation](https://djosh34.github.io/klopt/) for the model, query decoding, and design rationale.
 
 ```sh
 go get github.com/djosh34/klopt/pkg/validation
@@ -12,7 +12,7 @@ go get github.com/djosh34/klopt/pkg/validation
 
 ## Getting started
 
-This shortened operation omits the surrounding OpenAPI document and response:
+See this operation snippet:
 
 ```yaml
 post:
@@ -137,7 +137,7 @@ generatedFiles, err := generate.GenerateInMemory("openapivalidation", spec, vali
 if err != nil {
 	return err
 }
-// generatedFiles contains validate.go and validate_test.go.
+// generatedFiles is a map containing all needed generated files.
 ```
 
 The generated source is caller-owned. Generated maps are package-private. Generated tests cover JSON request bodies only.
@@ -145,7 +145,3 @@ The generated source is caller-owned. Generated maps are package-private. Genera
 ## Contributions and license
 
 Contributions are not accepted. This repository has no open-source license; all rights are reserved.
-
-## Name
-
-“Klopt” is Dutch for “is correct.” The name is inspired by [Zoekt](https://github.com/sourcegraph/zoekt), Dutch for “searches.”
