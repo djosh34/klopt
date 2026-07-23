@@ -21,6 +21,7 @@ Given an OpenAPI operation like this:
 post:
   operationId: createThing
   requestBody:
+    required: true
     # ...
   parameters:
     - name: filter
@@ -51,6 +52,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/djosh34/klopt/pkg/generate"
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
