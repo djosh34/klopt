@@ -85,20 +85,16 @@ func TestGeneratedPathDecoderUsesDeclaredShapeForEmptyCaptures(t *testing.T) {
 		{name: "simple exploded empty string", wire: 0, explode: true, path: "/", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 		{name: "simple empty array", wire: 1, path: "/", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
 		{name: "simple exploded empty array", wire: 1, explode: true, path: "/", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
-		{name: "label empty array", wire: 4, path: "/", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
-		{name: "label exploded empty array", wire: 4, explode: true, path: "/", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
-		{name: "label framed empty array", wire: 4, path: "/.", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[""]}`},
-		{name: "label exploded framed empty array", wire: 4, explode: true, path: "/.", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[""]}`},
-		{name: "matrix empty array", wire: 7, path: "/", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
-		{name: "matrix exploded empty array", wire: 7, explode: true, path: "/", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
-		{name: "matrix framed empty array", wire: 7, path: "/;p=", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[""]}`},
-		{name: "matrix exploded framed empty array", wire: 7, explode: true, path: "/;p", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[""]}`},
+		{name: "label framed empty array", wire: 4, path: "/.", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
+		{name: "label exploded framed empty array", wire: 4, explode: true, path: "/.", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
+		{name: "matrix framed empty array", wire: 7, path: "/;p", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
+		{name: "matrix exploded framed empty array", wire: 7, explode: true, path: "/;p", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
 		{name: "simple empty object", wire: 2, path: "/", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
 		{name: "simple exploded empty object", wire: 2, explode: true, path: "/", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "label empty object", wire: 5, path: "/", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "label exploded empty object", wire: 5, explode: true, path: "/", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "matrix empty object", wire: 8, path: "/", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "matrix exploded empty object", wire: 8, explode: true, path: "/", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
+		{name: "label framed empty object", wire: 5, path: "/.", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
+		{name: "label exploded framed empty object", wire: 5, explode: true, path: "/.", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
+		{name: "matrix framed empty object", wire: 8, path: "/;p", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
+		{name: "matrix exploded framed empty object", wire: 8, explode: true, path: "/;p", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
 		{name: "label framed empty string", wire: 3, path: "/.", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 		{name: "label exploded framed empty string", wire: 3, explode: true, path: "/.", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 		{name: "matrix framed empty string", wire: 6, path: "/;p=", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
@@ -122,6 +118,39 @@ func TestGeneratedPathDecoderUsesDeclaredShapeForEmptyCaptures(t *testing.T) {
 			require.NoError(t, err)
 			require.JSONEq(t, test.expected, string(actual))
 		})
+	}
+}
+
+func TestGeneratedPathDecoderRequiresStyleFramingForEmptyAggregates(t *testing.T) {
+	t.Parallel()
+
+	for _, wire := range []uint8{4, 5, 7, 8} {
+		for _, explode := range []bool{false, true} {
+			t.Run(fmt.Sprintf("wire %d explode %t", wire, explode), func(t *testing.T) {
+				t.Parallel()
+
+				parameterValidation := pathArrayValidation()
+				scalarType := "string"
+
+				if wire == 5 || wire == 8 {
+					parameterValidation = pathOpenObjectValidation()
+					scalarType = ""
+				}
+
+				decoder, err := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+					OperationID: "empty", PathTemplate: "/{p}",
+					Parameters: []validation.PathParameterDefinition{{
+						Name: "p", Wire: wire, Explode: explode,
+						Validation: parameterValidation, ScalarType: scalarType,
+					}},
+				})
+				require.NoError(t, err)
+
+				actual, err := decoder.DecodePathParams(&url.URL{Path: "/"})
+				require.Nil(t, actual)
+				require.Error(t, err)
+			})
+		}
 	}
 }
 
@@ -223,6 +252,19 @@ paths:
       operationId: enumObject
       parameters:
         - {name: value, in: path, required: true, explode: true, schema: {enum: [{count: 2, enabled: true}]}}
+  /partial-object/{value}:
+    get:
+      operationId: partialEnumObject
+      parameters:
+        - name: value
+          in: path
+          required: true
+          explode: true
+          schema:
+            type: object
+            properties:
+              count: {}
+            enum: [{count: 2}]
 `))
 	require.NoError(t, err)
 
@@ -235,6 +277,12 @@ paths:
 	)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"value":{"count":2,"enabled":true}}`, string(object))
+
+	partialObject, err := requests["partialEnumObject"].Path.DecodePathParams(
+		&url.URL{Path: "/partial-object/count=2"},
+	)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"value":{"count":2}}`, string(partialObject))
 }
 
 func TestGeneratedPathDecoderDefinitionRoundTripAndCopiesMetadata(t *testing.T) {

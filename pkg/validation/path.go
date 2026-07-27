@@ -434,16 +434,16 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 	byName := make(map[string][]*Validation)
 	collectCompiledObjectProperties(validation, byName)
 
-	if len(byName) == 0 {
-		return compiledEnumObjectProperties(validation)
+	valuesByName := make(map[string][]jsonvalue.Value)
+	collectEnumObjectProperties(validation, valuesByName)
+
+	for name := range valuesByName {
+		if _, declared := byName[name]; !declared {
+			byName[name] = nil
+		}
 	}
 
-	names := make([]string, 0, len(byName))
-	for name := range byName {
-		names = append(names, name)
-	}
-
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(byName))
 
 	properties := make([]pathProperty, 0, len(names))
 
@@ -453,7 +453,7 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 			return nil, nil, fmt.Errorf("declared style-object property name must not be empty")
 		}
 
-		typeName, err := compiledPathScalarType(byName[name]...)
+		typeName, err := compiledPathPropertyScalarType(byName[name], valuesByName[name])
 		if err != nil {
 			return nil, nil, fmt.Errorf("property %q: %w", name, err)
 		}
@@ -465,29 +465,25 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 	return properties, propertyByName, nil
 }
 
-func compiledEnumObjectProperties(validation *Validation) ([]pathProperty, map[string]int, error) {
-	valuesByName := make(map[string][]jsonvalue.Value)
-	collectEnumObjectProperties(validation, valuesByName)
-
-	names := slices.Sorted(maps.Keys(valuesByName))
-	properties := make([]pathProperty, 0, len(names))
-
-	propertyByName := make(map[string]int, len(names))
-	for _, name := range names {
-		if name == "" {
-			return nil, nil, fmt.Errorf("declared style-object property name must not be empty")
-		}
-
-		typeName := homogeneousEnumType(valuesByName[name])
-		if !isScalarType(typeName) {
-			return nil, nil, fmt.Errorf("enum object property %q does not have one primitive type", name)
-		}
-
-		propertyByName[name] = len(properties)
-		properties = append(properties, pathProperty{name: name, scalarType: styleScalarType(typeName)})
+func compiledPathPropertyScalarType(
+	validations []*Validation,
+	enumValues []jsonvalue.Value,
+) (styleScalarType, error) {
+	types := make([]string, 0)
+	for _, validation := range validations {
+		collectCompiledValidationTypes(validation, &types)
 	}
 
-	return properties, propertyByName, nil
+	if len(types) == 0 && len(enumValues) != 0 {
+		types = append(types, homogeneousEnumType(enumValues))
+	}
+
+	typeName := intersectQuerySchemaTypes(types)
+	if !isScalarType(typeName) {
+		return "", fmt.Errorf("style scalar slot has unsupported compiled type %q", typeName)
+	}
+
+	return styleScalarType(typeName), nil
 }
 
 func collectEnumObjectProperties(validation *Validation, valuesByName map[string][]jsonvalue.Value) {

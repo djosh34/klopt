@@ -78,15 +78,33 @@ func (decoder *PathDecoder) decodePathParams(input *url.URL) (json.RawMessage, e
 //nolint:cyclop // The complete-capture empty policy and finite wire-shape dispatch are one codec boundary.
 func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, error) {
 	if raw == "" {
-		switch pathShape(parameter.wire % pathWireKind(pathShapeCount)) {
-		case pathShapeArray:
+		switch parameter.wire {
+		case pathWireSimpleArray:
 			return jsontext.Value(`[]`), nil
-		case pathShapeObject:
+		case pathWireSimpleObject:
 			return jsontext.Value(`{}`), nil
-		case pathShapePrimitive:
-			if parameter.wire == pathWireSimplePrimitive && parameter.scalarType == "string" {
+		case pathWireSimplePrimitive:
+			if parameter.scalarType == "string" {
 				return jsontext.Value(`""`), nil
 			}
+		}
+	}
+
+	if raw == "." {
+		switch parameter.wire {
+		case pathWireLabelArray:
+			return jsontext.Value(`[]`), nil
+		case pathWireLabelObject:
+			return jsontext.Value(`{}`), nil
+		}
+	}
+
+	if raw == ";"+parameter.name {
+		switch parameter.wire {
+		case pathWireMatrixArray:
+			return jsontext.Value(`[]`), nil
+		case pathWireMatrixObject:
+			return jsontext.Value(`{}`), nil
 		}
 	}
 

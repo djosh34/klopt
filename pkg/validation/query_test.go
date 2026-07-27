@@ -453,22 +453,22 @@ func TestQueryJSONContentPlacementGuardPrecedence(t *testing.T) {
 	}{
 		{
 			name:         "allowReserved before all later guards",
-			fields:       `allowReserved: false, style: form, explode: false, example: null, examples: null, `,
+			fields:       `allowReserved: false, style: form, explode: false, example: null, `,
 			wantContains: "allowReserved",
 		},
 		{
 			name:         "style before explode and examples",
-			fields:       `style: form, explode: false, example: null, examples: null, `,
+			fields:       `style: form, explode: false, examples: null, `,
 			wantContains: "style",
 		},
 		{
 			name:         "explode before examples",
-			fields:       `explode: false, example: null, examples: null, `,
+			fields:       `explode: false, examples: null, `,
 			wantContains: "explode",
 		},
 		{
-			name:         "example before examples",
-			fields:       `example: null, examples: null, `,
+			name:         "example guard",
+			fields:       `example: null, `,
 			wantContains: "#/paths/~1items/get/parameters/0/example",
 		},
 	}
@@ -511,8 +511,10 @@ func TestAllowedQueryExamplesRemainInert(t *testing.T) {
 	t.Parallel()
 
 	parameters := []string{
-		`{name: q, in: query, style: form, example: [], examples: false, schema: {type: boolean}}`,
-		`{name: q, in: query, content: {application/json: {example: false, examples: []}}}`,
+		`{name: q, in: query, style: form, example: [], schema: {type: boolean}}`,
+		`{name: q, in: query, style: form, examples: {sample: {value: false}}, schema: {type: boolean}}`,
+		`{name: q, in: query, content: {application/json: {example: false}}}`,
+		`{name: q, in: query, content: {application/json: {examples: {sample: {value: false}}}}}`,
 	}
 	for _, parameter := range parameters {
 		decoder := parseQueryDecoder(t, parameter)

@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"mime"
+	"slices"
 	"strings"
 )
 
@@ -187,6 +189,10 @@ func validateParameterFields(
 	identity parameterIdentity,
 	pointer string,
 ) error {
+	if err := validateParameterFieldNames(members, identity, pointer); err != nil {
+		return err
+	}
+
 	for _, field := range []string{"required", "deprecated", "allowEmptyValue", "allowReserved", "explode"} {
 		if _, err := optionalBoolean(members[field], field); err != nil {
 			return fmt.Errorf(
@@ -216,6 +222,17 @@ func validateParameterFields(
 				field,
 			)
 		}
+	}
+
+	_, hasExample := members["example"]
+
+	_, hasExamples := members["examples"]
+	if hasExample && hasExamples {
+		return fmt.Errorf(
+			"parameter %q at %s example and examples are mutually exclusive",
+			identity.name,
+			pointer,
+		)
 	}
 
 	contentRaw, hasContent := members["content"]
@@ -280,6 +297,33 @@ func validateParameterFields(
 				schemaRaw,
 			)
 		}
+	}
+
+	return nil
+}
+
+func validateParameterFieldNames(
+	members map[string]json.RawMessage,
+	identity parameterIdentity,
+	pointer string,
+) error {
+	allowed := map[string]struct{}{
+		"name": {}, "in": {}, "description": {}, "required": {}, "deprecated": {}, "allowEmptyValue": {},
+		"style": {}, "explode": {}, "allowReserved": {}, "schema": {}, "example": {}, "examples": {}, "content": {},
+	}
+
+	for _, field := range slices.Sorted(maps.Keys(members)) {
+		if _, ok := allowed[field]; ok || strings.HasPrefix(field, "x-") {
+			continue
+		}
+
+		return fmt.Errorf(
+			"%s parameter %q at %s has unknown field %q",
+			identity.location,
+			identity.name,
+			pointer,
+			field,
+		)
 	}
 
 	return nil

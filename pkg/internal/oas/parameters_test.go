@@ -194,6 +194,53 @@ paths:
 	require.NotContains(t, err.Error(), "invalid operation ID")
 }
 
+func TestParseRejectsMutuallyExclusiveParameterExamples(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - name: q
+          in: query
+          schema: {type: string}
+          example: value
+          examples: {named: {value: value}}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `parameter "q"`)
+	require.ErrorContains(t, err, "example and examples are mutually exclusive")
+}
+
+func TestParseRejectsUnknownParameterFieldsAndAllowsExtensions(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - {name: q, in: query, unexpected: true, schema: {type: string}}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `parameter "q"`)
+	require.ErrorContains(t, err, `unknown field "unexpected"`)
+
+	sources, err = Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - {name: q, in: query, x-owner: team, schema: {type: string}}
+`))
+	require.NoError(t, err)
+	require.Contains(t, sources, "getItems")
+}
+
 func TestParseRejectsMalformedParameterListsAndIdentities(t *testing.T) {
 	t.Parallel()
 
