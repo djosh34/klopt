@@ -208,7 +208,7 @@ func compileSchemaPathMetadata(
 	case "array":
 		parameter.wire = styleOffset + pathWireKind(pathShapeArray)
 
-		parameter.scalarType, err = compiledPathArrayScalarType(validation)
+		parameter.scalarType, err = compiledArrayScalarType(validation)
 		if err != nil {
 			return pathParameter{}, fmt.Errorf("path parameter %q array items: %w", name, err)
 		}
@@ -374,13 +374,13 @@ func compiledPathScalarType(validations ...*Validation) (styleScalarType, error)
 	}
 
 	if !isScalarType(typeName) {
-		return "", fmt.Errorf("style scalar slot has unsupported compiled type %q", typeName)
+		return "", fmt.Errorf("style scalar slot must have a primitive type; unsupported compiled type %q", typeName)
 	}
 
 	return styleScalarType(typeName), nil
 }
 
-func compiledPathArrayScalarType(validation *Validation) (styleScalarType, error) {
+func compiledArrayScalarType(validation *Validation) (styleScalarType, error) {
 	items := compiledArrayItems(validation)
 	if len(items) != 0 {
 		return compiledPathScalarType(items...)

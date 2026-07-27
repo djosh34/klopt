@@ -121,6 +121,15 @@ func TestQueryDecoderUnknownScalarSlotsUseStrings(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderInfersEnumOnlyArrayScalarSlots(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {enum: [[1, 2]]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=1&q=2`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":[1,2]}`, string(actual))
+}
+
 func TestQueryDecoderDerivesObjectMetadataThroughReferencedAllOf(t *testing.T) {
 	t.Parallel()
 

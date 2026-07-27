@@ -474,10 +474,12 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		parameter.wire = wirePrimitive
 		parameter.scalarType = directType
 	case "array":
-		parameter.scalarType, err = compiledQueryScalarType(compiledArrayItems(parameter.validation)...)
-		if err != nil {
-			return queryParameter{}, fmt.Errorf("parameter %q style-based array items: %w", name, err)
+		arrayScalarType, typeErr := compiledArrayScalarType(parameter.validation)
+		if typeErr != nil {
+			return queryParameter{}, fmt.Errorf("parameter %q style-based array items: %w", name, typeErr)
 		}
+
+		parameter.scalarType = string(arrayScalarType)
 
 		switch {
 		case style == "form" && explode:
