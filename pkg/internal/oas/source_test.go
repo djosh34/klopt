@@ -7,7 +7,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/djosh34/klopt/pkg/names"
 	"github.com/stretchr/testify/require"
 )
 
@@ -495,7 +494,7 @@ paths:
       operationId: bad.operation
 `))
 	require.Nil(t, sources)
-	require.ErrorIs(t, err, names.ErrInvalidOperationID)
+	require.ErrorIs(t, err, ErrInvalidOperationID)
 }
 
 // TestParseRejectsPathKeyWithoutLeadingSlashBeforeAcquisition covers zero-operation Paths members.

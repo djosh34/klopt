@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
-	"github.com/djosh34/klopt/pkg/names"
 	"github.com/djosh34/klopt/pkg/validation"
 	"github.com/stretchr/testify/require"
 )
@@ -208,6 +208,35 @@ func TestGeneratedPathDecoderDecodesJSONContent(t *testing.T) {
 	}
 }
 
+func TestParsedPathDecoderInfersEnumOnlyContainerScalarSlots(t *testing.T) {
+	t.Parallel()
+
+	requests, err := validation.Parse([]byte(`openapi: 3.0.3
+paths:
+  /array/{value}:
+    get:
+      operationId: enumArray
+      parameters:
+        - {name: value, in: path, required: true, schema: {enum: [[1, 2]]}}
+  /object/{value}:
+    get:
+      operationId: enumObject
+      parameters:
+        - {name: value, in: path, required: true, explode: true, schema: {enum: [{count: 2, enabled: true}]}}
+`))
+	require.NoError(t, err)
+
+	array, err := requests["enumArray"].Path.DecodePathParams(&url.URL{Path: "/array/1,2"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"value":[1,2]}`, string(array))
+
+	object, err := requests["enumObject"].Path.DecodePathParams(
+		&url.URL{Path: "/object/count=2,enabled=true"},
+	)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"value":{"count":2,"enabled":true}}`, string(object))
+}
+
 func TestGeneratedPathDecoderDefinitionRoundTripAndCopiesMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -308,7 +337,7 @@ func TestGeneratedPathDecoderRejectsInvalidDefinitions(t *testing.T) {
 	_, err = validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
 		OperationID: "not valid", PathTemplate: "/{p}", Parameters: []validation.PathParameterDefinition{validStyle},
 	})
-	require.True(t, errors.Is(err, names.ErrInvalidOperationID))
+	require.True(t, errors.Is(err, oas.ErrInvalidOperationID))
 }
 
 func TestGeneratedPathDecoderSplitsBeforeUnescaping(t *testing.T) {

@@ -21,7 +21,20 @@ func Parse(
 	spec []byte,
 	patternOptions ...patternvalidator.Option,
 ) (map[string]RequestValidation, error) {
-	sources, err := oas.Parse(spec)
+	rawCompiler := schemaCompiler{
+		bySchema:       make(map[string]*Validation),
+		active:         make(map[string]struct{}),
+		patternOptions: patternOptions,
+	}
+
+	sources, err := oas.ParseWithParameterValidation(
+		spec,
+		func(source oas.Source, parameter oas.LocatedSchema) error {
+			rawCompiler.source = source
+
+			return validateRawParameter(parameter, &rawCompiler)
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +82,125 @@ func Parse(
 	}
 
 	return requestValidations, nil
+}
+
+// validateRawParameter compiles one declaration before acquisition can override or ignore it.
+func validateRawParameter(parameter oas.LocatedSchema, compiler *schemaCompiler) error {
+	members, err := parameterMembers(parameter)
+	if err != nil {
+		return err
+	}
+
+	location, err := decodeString(members["in"], "in")
+	if err != nil {
+		return fmt.Errorf("parameter at %s in: %w", parameter.Pointer, err)
+	}
+
+	switch location {
+	case "query":
+		_, err = compileQueryParameter(parameter, compiler)
+	case "path":
+		_, err = compilePathParameter(parameter, compiler)
+	case "header", "cookie":
+		err = compileIgnoredParameterSchema(parameter, members, compiler)
+	default:
+		return fmt.Errorf("parameter at %s has unsupported location %q", parameter.Pointer, location)
+	}
+
+	return err
+}
+
+// compileIgnoredParameterSchema compiles the schema of a valid but unsupported parameter location.
+func compileIgnoredParameterSchema(
+	parameter oas.LocatedSchema,
+	members map[string]json.RawMessage,
+	compiler *schemaCompiler,
+) error {
+	name, err := decodeString(members["name"], "name")
+	if err != nil {
+		return fmt.Errorf("parameter at %s name: %w", parameter.Pointer, err)
+	}
+
+	schema, err := ignoredParameterSchema(parameter, members)
+	if err != nil {
+		return fmt.Errorf("parameter %q: %w", name, err)
+	}
+
+	if _, compileErr := compiler.compile(schema); compileErr != nil {
+		return fmt.Errorf("parameter %q schema: %w", name, compileErr)
+	}
+
+	location, err := decodeString(members["in"], "in")
+	if err != nil {
+		return fmt.Errorf("parameter %q in: %w", name, err)
+	}
+
+	return validateIgnoredParameterSerialization(name, location, members)
+}
+
+// ignoredParameterSchema locates the schema used by one header or cookie declaration.
+func ignoredParameterSchema(
+	parameter oas.LocatedSchema,
+	members map[string]json.RawMessage,
+) (oas.LocatedSchema, error) {
+	rawContent, hasContent := members["content"]
+	if !hasContent {
+		return locatedRawChild(parameter, members["schema"], "schema"), nil
+	}
+
+	var content map[string]json.RawMessage
+	if err := json.Unmarshal(rawContent, &content); err != nil {
+		return oas.LocatedSchema{}, fmt.Errorf("content: %w", err)
+	}
+
+	mediaTypeName := slices.Sorted(maps.Keys(content))[0]
+
+	var mediaType map[string]json.RawMessage
+	if err := json.Unmarshal(content[mediaTypeName], &mediaType); err != nil {
+		return oas.LocatedSchema{}, fmt.Errorf("media type object: %w", err)
+	}
+
+	rawSchema, ok := mediaType["schema"]
+	if !ok {
+		rawSchema = json.RawMessage(`{}`)
+	}
+
+	return locatedRawChild(parameter, rawSchema, "content", mediaTypeName, "schema"), nil
+}
+
+// validateIgnoredParameterSerialization enforces location-specific Parameter Object fields.
+func validateIgnoredParameterSerialization(
+	name string,
+	location string,
+	members map[string]json.RawMessage,
+) error {
+	for _, field := range []string{"allowEmptyValue", "allowReserved"} {
+		if _, present := members[field]; present {
+			return fmt.Errorf("%s parameter %q cannot declare %s", location, name, field)
+		}
+	}
+
+	expectedStyle := "simple"
+	if location == "cookie" {
+		expectedStyle = "form"
+	}
+
+	style := expectedStyle
+
+	if raw, present := members["style"]; present {
+		parsedStyle, err := decodeString(raw, "style")
+		if err != nil {
+			return fmt.Errorf("%s parameter %q style: %w", location, name, err)
+		}
+
+		style = parsedStyle
+	}
+
+	if style != expectedStyle {
+		return fmt.Errorf("%s parameter %q style %q is invalid", location, name, style)
+	}
+
+	return nil
 }
 
 // schemaCompiler owns compilation state for one operation.

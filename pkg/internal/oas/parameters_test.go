@@ -3,6 +3,7 @@ package oas
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -62,6 +63,25 @@ paths:
 	require.Nil(t, sources)
 	require.ErrorContains(t, err, `path parameter "id"`)
 	require.ErrorContains(t, err, `required must be true`)
+}
+
+func TestParseValidatesPathItemParameterCorrespondenceWithoutOperations(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"other", "a/b"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sources, err := Parse(fmt.Appendf(nil, `openapi: 3.0.3
+paths:
+  /items/{id}:
+    parameters:
+      - {name: %q, in: path, required: true, schema: {type: string}}
+`, name))
+			require.Nil(t, sources)
+			require.ErrorContains(t, err, `path parameter "`+name+`"`)
+		})
+	}
 }
 
 func TestParseRejectsPathParameterWithoutMatchingExpression(t *testing.T) {
@@ -155,6 +175,23 @@ paths:
 	require.Nil(t, sources)
 	require.ErrorContains(t, err, `path parameter "id"`)
 	require.ErrorContains(t, err, "required must be true")
+}
+
+func TestParseValidatesOperationParametersBeforeOperationID(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: not-valid-
+      parameters:
+        - {name: q, in: query, required: nope, schema: {type: string}}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `query parameter "q"`)
+	require.ErrorContains(t, err, "required must be a boolean")
+	require.NotContains(t, err.Error(), "invalid operation ID")
 }
 
 func TestParseRejectsMalformedParameterListsAndIdentities(t *testing.T) {

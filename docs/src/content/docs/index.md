@@ -53,8 +53,8 @@ type GetThingPath struct {
 	ThingID int `json:"thingID"`
 }
 
-func decodeGetThingPath(r *http.Request, decoder *validation.PathDecoder) (GetThingPath, error) {
-	raw, err := decoder.DecodePathParams(r.URL)
+func decodeGetThingPath(operationURL *url.URL, decoder *validation.PathDecoder) (GetThingPath, error) {
+	raw, err := decoder.DecodePathParams(operationURL)
 	if err != nil {
 		return GetThingPath{}, err
 	}
@@ -68,7 +68,7 @@ func decodeGetThingPath(r *http.Request, decoder *validation.PathDecoder) (GetTh
 }
 ```
 
-Call it with `requestValidations["getThing"].Path`. The URL must be operation-relative: remove any effective OpenAPI server URL path prefix before calling the decoder. The decoder matches the selected operation's exact path template; it does not route requests or resolve servers.
+Call it with the router's operation-relative URL and `requestValidations["getThing"].Path`. Remove any effective OpenAPI server URL path prefix before calling the decoder. The decoder matches the selected operation's exact path template; it does not route requests or resolve servers.
 
 ## Decode a query
 

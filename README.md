@@ -55,6 +55,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/djosh34/klopt/pkg/generate"
@@ -79,7 +80,10 @@ type CreateThingPath struct {
 Parse the OpenAPI document once at startup, then reuse the matching body validation and parameter decoders for every request. Validate the raw body before unmarshalling it. Path and query decoders interpret the OpenAPI wire formats and return JSON only after validation succeeds.
 
 ```go
-func newCreateThingDecoder() (func(*http.Request) (CreateThing, CreateThingQuery, CreateThingPath, error), error) {
+func newCreateThingDecoder() (
+	func(*http.Request, *url.URL) (CreateThing, CreateThingQuery, CreateThingPath, error),
+	error,
+) {
 	spec, err := os.ReadFile("openapi.yaml")
 	if err != nil {
 		return nil, err
@@ -99,7 +103,7 @@ func newCreateThingDecoder() (func(*http.Request) (CreateThing, CreateThingQuery
 		return nil, fmt.Errorf("incomplete createThing validation")
 	}
 
-	return func(r *http.Request) (CreateThing, CreateThingQuery, CreateThingPath, error) {
+	return func(r *http.Request, operationURL *url.URL) (CreateThing, CreateThingQuery, CreateThingPath, error) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			return CreateThing{}, CreateThingQuery{}, CreateThingPath{}, err
@@ -126,8 +130,8 @@ func newCreateThingDecoder() (func(*http.Request) (CreateThing, CreateThingQuery
 			return CreateThing{}, CreateThingQuery{}, CreateThingPath{}, err
 		}
 
-		// Supply an operation-relative URL after removing any effective server path prefix.
-		rawPath, err := requestValidation.Path.DecodePathParams(r.URL)
+		// operationURL is supplied by the router after removing any effective server path prefix.
+		rawPath, err := requestValidation.Path.DecodePathParams(operationURL)
 		if err != nil {
 			return CreateThing{}, CreateThingQuery{}, CreateThingPath{}, err
 		}

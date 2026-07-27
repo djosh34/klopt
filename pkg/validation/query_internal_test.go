@@ -183,12 +183,7 @@ func TestPrivateQueryHelpersRejectImpossibleCompiledInputs(t *testing.T) {
 	_, err = compileQueryParameter(oas.LocatedSchema{Raw: json.RawMessage(`{"name":null,"in":"query","schema":{"type":"string"}}`), Pointer: "#/parameter"}, &compiler)
 	require.Error(t, err)
 
-	source := oas.Source{Document: json.RawMessage(`{"schema":{"$ref":"#/missing"}}`)}
-	_, _, err = compileQueryProperties(
-		oas.LocatedSchema{Raw: json.RawMessage(`null`), Pointer: "#/schema"},
-		&schemaCompiler{source: source, bySchema: make(map[string]*Validation), active: make(map[string]struct{})},
-		false,
-	)
+	_, _, err = compileQueryProperties(nil, false)
 	require.Error(t, err)
 
 	var output bytes.Buffer

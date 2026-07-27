@@ -31,7 +31,7 @@ decodes to:
 Use the decoder from the operation's request validation:
 
 ```go
-raw, err := requestValidations["getFile"].Path.DecodePathParams(r.URL)
+raw, err := requestValidations["getFile"].Path.DecodePathParams(operationURL)
 if err != nil {
 	return err
 }

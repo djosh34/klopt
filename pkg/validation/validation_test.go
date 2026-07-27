@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/stretchr/testify/require"
 )
 
@@ -212,6 +213,145 @@ paths:
 	path, err := requests["all"].Path.DecodePathParams(&url.URL{Path: "/all/42"})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"id":42}`, string(path))
+}
+
+// TestParseRejectsInvalidOverriddenParameterDeclarations keeps invalid Path Item input visible through overrides.
+func TestParseRejectsInvalidOverriddenParameterDeclarations(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		parameter string
+		contains  string
+	}{
+		{
+			name: "schema", parameter: `{name: id, in: path, required: true, schema: {oneOf: [{type: string}]}}`,
+			contains: "/parameters/0/schema/oneOf",
+		},
+		{
+			name: "content", parameter: `{name: id, in: path, required: true, content: {text/plain: {}}}`,
+			contains: "only application/json",
+		},
+		{
+			name: "style", parameter: `{name: id, in: path, required: true, style: form, schema: {type: string}}`,
+			contains: `style "form" is unsupported`,
+		},
+		{
+			name: "path field", parameter: `{name: id, in: path, required: true, allowReserved: false, schema: {type: string}}`,
+			contains: "cannot declare allowReserved",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items/{id}:
+    parameters:
+      - ` + test.parameter + `
+    get:
+      operationId: getItem
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+`))
+			require.Nil(t, requests)
+			require.ErrorContains(t, err, test.contains)
+		})
+	}
+}
+
+// TestParseRejectsInvalidIgnoredParameterDeclarations validates header and cookie inputs before filtering.
+func TestParseRejectsInvalidIgnoredParameterDeclarations(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		parameter string
+		contains  string
+	}{
+		{
+			name: "header schema reference", parameter: `{name: X-Filter, in: header, schema: {$ref: '#/missing'}}`,
+			contains: "resolve reference",
+		},
+		{
+			name: "header style", parameter: `{name: X-Filter, in: header, style: matrix, schema: {type: string}}`,
+			contains: `header parameter "X-Filter" style "matrix" is invalid`,
+		},
+		{
+			name:      "header allow reserved",
+			parameter: `{name: X-Filter, in: header, allowReserved: false, schema: {type: string}}`,
+			contains:  `header parameter "X-Filter" cannot declare allowReserved`,
+		},
+		{
+			name: "cookie style", parameter: `{name: session, in: cookie, style: simple, schema: {type: string}}`,
+			contains: `cookie parameter "session" style "simple" is invalid`,
+		},
+		{
+			name: "cookie allow empty", parameter: `{name: session, in: cookie, allowEmptyValue: false, schema: {type: string}}`,
+			contains: `cookie parameter "session" cannot declare allowEmptyValue`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - ` + test.parameter + `
+`))
+			require.Nil(t, requests)
+			require.ErrorContains(t, err, test.contains)
+		})
+	}
+}
+
+// TestParseReportsPathSchemaErrorsBeforePathFieldMisuse preserves compiler error precedence.
+func TestParseReportsPathSchemaErrorsBeforePathFieldMisuse(t *testing.T) {
+	t.Parallel()
+
+	for _, field := range []string{"allowEmptyValue", "allowReserved"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+
+			requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items/{id}:
+    get:
+      operationId: getItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          ` + field + `: false
+          schema: {oneOf: [{type: string}]}
+`))
+			require.Nil(t, requests)
+			require.ErrorContains(t, err, "/schema/oneOf")
+			require.ErrorContains(t, err, "unsupported keyword")
+			require.NotContains(t, err.Error(), "cannot declare "+field)
+		})
+	}
+}
+
+// TestParseCompilesRawOperationParametersBeforeOperationID preserves full acquisition precedence.
+func TestParseCompilesRawOperationParametersBeforeOperationID(t *testing.T) {
+	t.Parallel()
+
+	requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: not-valid-
+      parameters:
+        - {name: q, in: query, schema: {oneOf: [{type: string}]}}
+`))
+	require.Nil(t, requests)
+	require.ErrorContains(t, err, "/parameters/0/schema/oneOf")
+	require.ErrorContains(t, err, "unsupported keyword")
+	require.NotErrorIs(t, err, oas.ErrInvalidOperationID)
 }
 
 // TestParseCompilesOperationsInSortedIDOrder verifies deterministic atomic failure selection.

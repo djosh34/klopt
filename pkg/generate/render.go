@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"text/template"
 
-	"github.com/djosh34/klopt/pkg/names"
+	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/validation"
 	"golang.org/x/tools/imports"
 )
@@ -47,7 +47,7 @@ func render(
 	hasPath := false
 
 	for _, operationID := range slices.Sorted(maps.Keys(parsed)) {
-		name, nameErr := names.RequestValidation(operationID)
+		name, nameErr := oas.RequestValidationName(operationID)
 		if nameErr != nil {
 			return nil, fmt.Errorf("render operation ID %q: %w", operationID, nameErr)
 		}

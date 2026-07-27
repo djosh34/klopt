@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"mime"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
-	"github.com/djosh34/klopt/pkg/names"
 )
 
 type pathWireKind uint8
@@ -112,14 +113,6 @@ func pathParameterDeclaration(
 		return "", false, fmt.Errorf("path parameter %q required must be true", name)
 	}
 
-	if _, present := members["allowEmptyValue"]; present {
-		return "", false, fmt.Errorf("path parameter %q cannot declare allowEmptyValue", name)
-	}
-
-	if _, present := members["allowReserved"]; present {
-		return "", false, fmt.Errorf("path parameter %q cannot declare allowReserved", name)
-	}
-
 	_, hasSchema := members["schema"]
 
 	_, hasContent := members["content"]
@@ -141,6 +134,10 @@ func compileSchemaPathParameter(
 	validation, err := compiler.compile(schema)
 	if err != nil {
 		return pathParameter{}, fmt.Errorf("path parameter %q schema: %w", name, err)
+	}
+
+	if policyErr := rejectPathOnlyFields(name, members); policyErr != nil {
+		return pathParameter{}, policyErr
 	}
 
 	if len(validation.Validate(json.RawMessage("null"))) == 0 {
@@ -211,7 +208,7 @@ func compileSchemaPathMetadata(
 	case "array":
 		parameter.wire = styleOffset + pathWireKind(pathShapeArray)
 
-		parameter.scalarType, err = compiledPathScalarType(compiledArrayItems(validation)...)
+		parameter.scalarType, err = compiledPathArrayScalarType(validation)
 		if err != nil {
 			return pathParameter{}, fmt.Errorf("path parameter %q array items: %w", name, err)
 		}
@@ -245,12 +242,6 @@ func compileJSONPathParameter(
 	members map[string]json.RawMessage,
 	compiler *schemaCompiler,
 ) (pathParameter, error) {
-	for _, field := range []string{"style", "explode"} {
-		if _, present := members[field]; present {
-			return pathParameter{}, fmt.Errorf("path parameter %q content cannot be combined with %s", name, field)
-		}
-	}
-
 	schema, err := pathJSONContentSchema(name, located, members["content"])
 	if err != nil {
 		return pathParameter{}, err
@@ -261,11 +252,31 @@ func compileJSONPathParameter(
 		return pathParameter{}, fmt.Errorf("path parameter %q schema: %w", name, err)
 	}
 
+	if policyErr := rejectPathOnlyFields(name, members); policyErr != nil {
+		return pathParameter{}, policyErr
+	}
+
+	for _, field := range []string{"style", "explode"} {
+		if _, present := members[field]; present {
+			return pathParameter{}, fmt.Errorf("path parameter %q content cannot be combined with %s", name, field)
+		}
+	}
+
 	if binaryErr := rejectPathBinary(validation); binaryErr != nil {
 		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, binaryErr)
 	}
 
 	return pathParameter{name: name, wire: pathWireJSONContent, validation: validation}, nil
+}
+
+func rejectPathOnlyFields(name string, members map[string]json.RawMessage) error {
+	for _, field := range []string{"allowEmptyValue", "allowReserved"} {
+		if _, present := members[field]; present {
+			return fmt.Errorf("path parameter %q cannot declare %s", name, field)
+		}
+	}
+
+	return nil
 }
 
 func pathJSONContentSchema(
@@ -369,6 +380,39 @@ func compiledPathScalarType(validations ...*Validation) (styleScalarType, error)
 	return styleScalarType(typeName), nil
 }
 
+func compiledPathArrayScalarType(validation *Validation) (styleScalarType, error) {
+	items := compiledArrayItems(validation)
+	if len(items) != 0 {
+		return compiledPathScalarType(items...)
+	}
+
+	enumItems := make([]jsonvalue.Value, 0)
+	collectEnumArrayItems(validation, &enumItems)
+
+	if len(enumItems) == 0 {
+		return "string", nil
+	}
+
+	typeName := homogeneousEnumType(enumItems)
+	if !isScalarType(typeName) {
+		return "", fmt.Errorf("enum array items do not have one primitive type")
+	}
+
+	return styleScalarType(typeName), nil
+}
+
+func collectEnumArrayItems(validation *Validation, items *[]jsonvalue.Value) {
+	for _, value := range validation.EnumValidation.ExactValues {
+		if value.Kind == jsonvalue.KindArray {
+			*items = append(*items, value.Array...)
+		}
+	}
+
+	for _, child := range validation.AllOfValidations {
+		collectEnumArrayItems(child, items)
+	}
+}
+
 func compiledArrayItems(validation *Validation) []*Validation {
 	items := make([]*Validation, 0)
 	collectCompiledArrayItems(validation, &items)
@@ -389,6 +433,10 @@ func collectCompiledArrayItems(validation *Validation, items *[]*Validation) {
 func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]int, error) {
 	byName := make(map[string][]*Validation)
 	collectCompiledObjectProperties(validation, byName)
+
+	if len(byName) == 0 {
+		return compiledEnumObjectProperties(validation)
+	}
 
 	names := make([]string, 0, len(byName))
 	for name := range byName {
@@ -415,6 +463,47 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 	}
 
 	return properties, propertyByName, nil
+}
+
+func compiledEnumObjectProperties(validation *Validation) ([]pathProperty, map[string]int, error) {
+	valuesByName := make(map[string][]jsonvalue.Value)
+	collectEnumObjectProperties(validation, valuesByName)
+
+	names := slices.Sorted(maps.Keys(valuesByName))
+	properties := make([]pathProperty, 0, len(names))
+
+	propertyByName := make(map[string]int, len(names))
+	for _, name := range names {
+		if name == "" {
+			return nil, nil, fmt.Errorf("declared style-object property name must not be empty")
+		}
+
+		typeName := homogeneousEnumType(valuesByName[name])
+		if !isScalarType(typeName) {
+			return nil, nil, fmt.Errorf("enum object property %q does not have one primitive type", name)
+		}
+
+		propertyByName[name] = len(properties)
+		properties = append(properties, pathProperty{name: name, scalarType: styleScalarType(typeName)})
+	}
+
+	return properties, propertyByName, nil
+}
+
+func collectEnumObjectProperties(validation *Validation, valuesByName map[string][]jsonvalue.Value) {
+	for _, value := range validation.EnumValidation.ExactValues {
+		if value.Kind != jsonvalue.KindObject {
+			continue
+		}
+
+		for _, member := range value.Object {
+			valuesByName[member.Name] = append(valuesByName[member.Name], member.Value)
+		}
+	}
+
+	for _, child := range validation.AllOfValidations {
+		collectEnumObjectProperties(child, valuesByName)
+	}
 }
 
 func collectCompiledObjectProperties(validation *Validation, byName map[string][]*Validation) {
@@ -582,7 +671,7 @@ func (decoder *PathDecoder) Definition() PathDecoderDefinition {
 //
 //nolint:funcorder // Definition transport types and Definition stay together above the restoring constructor.
 func NewPathDecoderFromGenerated(definition PathDecoderDefinition) (*PathDecoder, error) {
-	if _, err := names.RequestValidation(definition.OperationID); err != nil {
+	if _, err := oas.RequestValidationName(definition.OperationID); err != nil {
 		return nil, fmt.Errorf("generated path decoder operation ID: %w", err)
 	}
 
@@ -694,7 +783,7 @@ func isPathScalarType(typeName styleScalarType) bool {
 
 //nolint:cyclop // Constructor validation, declaration ordering, and segment compilation form one fixed pipeline.
 func newPathDecoder(operationID string, pathTemplate string, parameters []pathParameter) (*PathDecoder, error) {
-	if _, err := names.RequestValidation(operationID); err != nil {
+	if _, err := oas.RequestValidationName(operationID); err != nil {
 		return nil, fmt.Errorf("path decoder operation ID: %w", err)
 	}
 
@@ -712,7 +801,7 @@ func newPathDecoder(operationID string, pathTemplate string, parameters []pathPa
 		byName[parameter.name] = parameter
 	}
 
-	expressions, err := pathTemplateExpressions(pathTemplate)
+	_, expressions, err := oas.ParsePathTemplate(pathTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -769,58 +858,6 @@ func clonePathParameter(parameter pathParameter) pathParameter {
 	}
 
 	return cloned
-}
-
-//nolint:cyclop // Every malformed brace form has a distinct constructor diagnostic.
-func pathTemplateExpressions(pathTemplate string) ([]string, error) {
-	if !strings.HasPrefix(pathTemplate, "/") {
-		return nil, fmt.Errorf("path template %q must begin with /", pathTemplate)
-	}
-
-	expressions := make([]string, 0)
-	seen := make(map[string]struct{})
-	previousExpression := false
-
-	for index := 0; index < len(pathTemplate); {
-		switch pathTemplate[index] {
-		case '}':
-			return nil, fmt.Errorf("path template %q has an unmatched }", pathTemplate)
-		case '{':
-			if previousExpression {
-				return nil, fmt.Errorf("path template %q has adjacent expressions", pathTemplate)
-			}
-
-			closing := strings.IndexByte(pathTemplate[index+1:], '}')
-			if closing == -1 {
-				return nil, fmt.Errorf("path template %q has an unmatched {", pathTemplate)
-			}
-
-			closing += index + 1
-
-			name := pathTemplate[index+1 : closing]
-			if name == "" {
-				return nil, fmt.Errorf("path template %q has an empty expression", pathTemplate)
-			}
-
-			if strings.ContainsRune(name, '{') {
-				return nil, fmt.Errorf("path template %q has a nested expression", pathTemplate)
-			}
-
-			if _, duplicate := seen[name]; duplicate {
-				return nil, fmt.Errorf("path template %q repeats expression %q", pathTemplate, name)
-			}
-
-			seen[name] = struct{}{}
-			expressions = append(expressions, name)
-			index = closing + 1
-			previousExpression = true
-		default:
-			index++
-			previousExpression = false
-		}
-	}
-
-	return expressions, nil
 }
 
 func compilePathSegment(segment string) (*regexp.Regexp, error) {

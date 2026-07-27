@@ -1,5 +1,4 @@
-// Package names converts OpenAPI names to generated Go identifiers.
-package names
+package oas
 
 import (
 	"errors"
@@ -24,8 +23,8 @@ var requestValidationConflicts = map[string]struct{}{
 // ErrInvalidOperationID reports an operation ID outside the supported grammar.
 var ErrInvalidOperationID = errors.New("invalid operation ID")
 
-// RequestValidation converts an exact operation ID to its generated backing identifier.
-func RequestValidation(operationID string) (string, error) {
+// RequestValidationName converts an exact operation ID to its generated backing identifier.
+func RequestValidationName(operationID string) (string, error) {
 	if !operationIDPattern.MatchString(operationID) {
 		return "", fmt.Errorf("%w: %q", ErrInvalidOperationID, operationID)
 	}

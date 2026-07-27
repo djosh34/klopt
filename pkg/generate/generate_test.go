@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
-	"github.com/djosh34/klopt/pkg/names"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
 
@@ -387,6 +386,16 @@ paths:
         content:
           application/json:
             schema: {type: boolean}
+  /enum-array/{value}:
+    get:
+      operationId: enumArray
+      parameters:
+        - {name: value, in: path, required: true, schema: {enum: [[1, 2]]}}
+  /enum-object/{value}:
+    get:
+      operationId: enumObject
+      parameters:
+        - {name: value, in: path, required: true, explode: true, schema: {enum: [{count: 2, enabled: true}]}}
 `)
 	require.NoError(t, Generate(output, "generaterequestfixture", spec, validation.PatternOptions()))
 
@@ -448,6 +457,29 @@ func TestGeneratedRequestValidation(t *testing.T) {
 				generatedErr,
 				runtimeJSON,
 				runtimeErr,
+			)
+		}
+	}
+
+	for operationID, test := range map[string]struct {
+		path     string
+		expected string
+	}{
+		"enumArray":  {path: "/enum-array/1,2", expected: "{\"value\":[1,2]}"},
+		"enumObject": {path: "/enum-object/count=2,enabled=true", expected: "{\"value\":{\"count\":2,\"enabled\":true}}"},
+	} {
+		generated, generatedErr := RequestValidations[operationID].Path.DecodePathParams(&url.URL{Path: test.path})
+		runtime, runtimeErr := runtimeRequests[operationID].Path.DecodePathParams(&url.URL{Path: test.path})
+		if generatedErr != nil || runtimeErr != nil ||
+			string(generated) != test.expected || string(runtime) != test.expected {
+			t.Fatalf(
+				"%s generated (%s, %v), runtime (%s, %v), expected %s",
+				operationID,
+				generated,
+				generatedErr,
+				runtime,
+				runtimeErr,
+				test.expected,
 			)
 		}
 	}
@@ -597,6 +629,24 @@ paths:
           schema:
             type: object
             additionalProperties: {type: string, allOf: [{type: integer}]}
+  /all-of-declared:
+    get:
+      operationId: allOfDeclared
+      parameters:
+        - name: filter
+          in: query
+          style: deepObject
+          explode: true
+          schema: {allOf: [{$ref: '#/components/schemas/Declared'}]}
+  /all-of-dynamic:
+    get:
+      operationId: allOfDynamic
+      parameters:
+        - name: filter
+          in: query
+          style: deepObject
+          explode: true
+          schema: {allOf: [{$ref: '#/components/schemas/Dynamic'}]}
   /json-content:
     get:
       operationId: jsonContent
@@ -617,6 +667,17 @@ paths:
       operationId: jsonContentConstrained
       parameters:
         - {name: q, in: query, content: {application/json: {schema: {type: integer, minimum: 2}}}}
+components:
+  schemas:
+    Declared:
+      allOf:
+        - type: object
+          additionalProperties: false
+          properties: {count: {type: integer}}
+    Dynamic:
+      allOf:
+        - type: object
+          additionalProperties: {type: integer}
 `)
 	require.NoError(t, Generate(output, "generatequeryparityfixture", spec, validation.PatternOptions()))
 
@@ -680,6 +741,14 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 		{operationID: "dynamicDeep", rawQuery: "filter%5D=2", errorContains: "malformed"},
 		{operationID: "dynamicEmpty", rawQuery: "", expected: "{}"},
 		{operationID: "dynamicEmpty", rawQuery: "value=x", errorContains: "validate query"},
+		{
+			operationID: "allOfDeclared", rawQuery: "filter%5Bcount%5D=2",
+			expected: "{\"filter\":{\"count\":2}}",
+		},
+		{
+			operationID: "allOfDynamic", rawQuery: "filter%5Bcount%5D=2",
+			expected: "{\"filter\":{\"count\":2}}",
+		},
 		{operationID: "jsonContent", rawQuery: "q=null", expected: "{\"q\":null}"},
 		{operationID: "jsonContent", rawQuery: "q=true", expected: "{\"q\":true}"},
 		{operationID: "jsonContent", rawQuery: "q=1.25", expected: "{\"q\":1.25}"},
@@ -827,10 +896,10 @@ paths:
 `, operationID)
 			files, err := GenerateInMemory("example", spec, validation.PatternOptions())
 			require.Nil(t, files)
-			require.ErrorIs(t, err, names.ErrInvalidOperationID)
+			require.ErrorIs(t, err, oas.ErrInvalidOperationID)
 
 			err = Generate(output, "example", spec, validation.PatternOptions())
-			require.ErrorIs(t, err, names.ErrInvalidOperationID)
+			require.ErrorIs(t, err, oas.ErrInvalidOperationID)
 
 			_, statErr := os.Stat(output)
 			require.ErrorIs(t, statErr, os.ErrNotExist)

@@ -23,13 +23,8 @@ func (source Source) mergedParameters(
 	pathTemplate string,
 	pathExpressions []string,
 	pathParameters []locatedParameter,
-	operation LocatedSchema,
+	operationParameters []locatedParameter,
 ) ([]LocatedSchema, []LocatedSchema, error) {
-	operationParameters, err := source.parameterList(operation)
-	if err != nil {
-		return nil, nil, fmt.Errorf("operation parameters: %w", err)
-	}
-
 	merged := append([]locatedParameter(nil), pathParameters...)
 
 	positions := make(map[parameterIdentity]int, len(merged))

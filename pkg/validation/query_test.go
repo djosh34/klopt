@@ -121,6 +121,52 @@ func TestQueryDecoderUnknownScalarSlotsUseStrings(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderDerivesObjectMetadataThroughReferencedAllOf(t *testing.T) {
+	t.Parallel()
+
+	requests, err := validation.Parse([]byte(`openapi: 3.0.3
+paths:
+  /declared:
+    get:
+      operationId: declared
+      parameters:
+        - name: filter
+          in: query
+          style: deepObject
+          explode: true
+          schema: {allOf: [{$ref: '#/components/schemas/Declared'}]}
+  /dynamic:
+    get:
+      operationId: dynamic
+      parameters:
+        - name: filter
+          in: query
+          style: deepObject
+          explode: true
+          schema: {allOf: [{$ref: '#/components/schemas/Dynamic'}]}
+components:
+  schemas:
+    Declared:
+      allOf:
+        - type: object
+          additionalProperties: false
+          properties: {count: {type: integer}}
+    Dynamic:
+      allOf:
+        - type: object
+          additionalProperties: {type: integer}
+`))
+	require.NoError(t, err)
+
+	declared, err := requests["declared"].Query.Decode(&url.URL{RawQuery: `filter%5Bcount%5D=2`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"filter":{"count":2}}`, string(declared))
+
+	dynamic, err := requests["dynamic"].Query.Decode(&url.URL{RawQuery: `filter%5Bcount%5D=2`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"filter":{"count":2}}`, string(dynamic))
+}
+
 func TestQueryDecoderSchemaLessJSONContentKinds(t *testing.T) {
 	t.Parallel()
 
