@@ -475,13 +475,28 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		return parameter, nil
 	}
 
-	resolved, directMembers, directType, err := directSchemaType(compiler.source, schema)
+	parameter.validation, err = compiler.compile(schema)
+	if err != nil {
+		return queryParameter{}, fmt.Errorf("parameter %q schema: %w", name, err)
+	}
+
+	resolved, err := compiler.source.Resolve(schema)
+	if err != nil {
+		return queryParameter{}, fmt.Errorf("parameter %q: resolve schema at %s: %w", name, schema.Pointer, err)
+	}
+
+	directMembers, err := schemaMembers(resolved)
 	if err != nil {
 		return queryParameter{}, fmt.Errorf("parameter %q: %w", name, err)
 	}
 
 	if raw, ok := directMembers["default"]; ok {
 		parameter.defaultValue = append(jsontext.Value(nil), raw...)
+	}
+
+	directType := compiledValidationType(parameter.validation)
+	if directType == "" {
+		directType = "string"
 	}
 
 	style := "form"
@@ -509,14 +524,9 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		parameter.wire = wirePrimitive
 		parameter.scalarType = directType
 	case "array":
-		item, childErr := compiler.source.Child(resolved, "items")
-		if childErr != nil {
-			return queryParameter{}, fmt.Errorf("parameter %q array items: %w", name, childErr)
-		}
-
-		_, _, parameter.scalarType, childErr = directSchemaType(compiler.source, item)
-		if childErr != nil || !isScalarType(parameter.scalarType) {
-			return queryParameter{}, fmt.Errorf("parameter %q style-based array items must have a direct primitive type", name)
+		parameter.scalarType, err = compiledQueryScalarType(compiledArrayItems(parameter.validation)...)
+		if err != nil {
+			return queryParameter{}, fmt.Errorf("parameter %q style-based array items: %w", name, err)
 		}
 
 		switch {
@@ -532,7 +542,11 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, unsupportedQueryStyle(name, style, explode, directType)
 		}
 	case "object":
-		parameter.properties, parameter.propertyByName, err = compileQueryProperties(resolved, compiler.source, style == "deepObject")
+		parameter.properties, parameter.propertyByName, err = compileQueryProperties(
+			resolved,
+			compiler,
+			style == "deepObject",
+		)
 		if err != nil {
 			return queryParameter{}, fmt.Errorf("parameter %q: %w", name, err)
 		}
@@ -559,7 +573,7 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, unsupportedQueryStyle(name, style, explode, directType)
 		}
 
-		parameter.dynamicType, err = queryAdditionalPropertiesType(resolved, directMembers, compiler.source)
+		parameter.dynamicType, err = queryAdditionalPropertiesType(directMembers, parameter.validation)
 		if err != nil {
 			return queryParameter{}, fmt.Errorf("parameter %q additionalProperties: %w", name, err)
 		}
@@ -567,18 +581,25 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		return queryParameter{}, fmt.Errorf("parameter %q has unsupported direct type %q", name, directType)
 	}
 
-	parameter.validation, err = compiler.compile(schema)
-	if err != nil {
-		return queryParameter{}, fmt.Errorf("parameter %q schema: %w", name, err)
-	}
-
 	return parameter, nil
 }
 
+func compiledQueryScalarType(validations ...*Validation) (string, error) {
+	typeName := compiledValidationType(validations...)
+	if typeName == "" {
+		typeName = "string"
+	}
+
+	if !isScalarType(typeName) {
+		return "", fmt.Errorf("must have a primitive type, got compiled type %q", typeName)
+	}
+
+	return typeName, nil
+}
+
 func queryAdditionalPropertiesType(
-	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
-	source oas.Source,
+	validation *Validation,
 ) (string, error) {
 	raw, ok := members["additionalProperties"]
 	if !ok || string(bytes.TrimSpace(raw)) == "true" {
@@ -589,14 +610,12 @@ func queryAdditionalPropertiesType(
 		return "", nil
 	}
 
-	additional := locatedRawChild(schema, raw, "additionalProperties")
-
-	types, err := explicitQuerySchemaTypes(source, additional, make(map[string]struct{}))
-	if err != nil {
-		return "", err
+	additional := validation.ObjectValidation.AdditionalPropertiesValidation
+	if additional == nil {
+		return "", fmt.Errorf("compiled additionalProperties schema is missing")
 	}
 
-	typeName := intersectQuerySchemaTypes(types)
+	typeName := compiledValidationType(additional)
 	if typeName == "" {
 		return "string", nil
 	}
@@ -606,66 +625,6 @@ func queryAdditionalPropertiesType(
 	}
 
 	return typeName, nil
-}
-
-//nolint:cyclop // Root and allOf type restrictions need one recursive schema traversal.
-func explicitQuerySchemaTypes(
-	source oas.Source,
-	schema oas.LocatedSchema,
-	active map[string]struct{},
-) ([]string, error) {
-	resolved, err := source.Resolve(schema)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, cycle := active[resolved.Pointer]; cycle {
-		return nil, fmt.Errorf("schema at %s has a recursive allOf reference", resolved.Pointer)
-	}
-
-	active[resolved.Pointer] = struct{}{}
-	defer delete(active, resolved.Pointer)
-
-	members, err := schemaMembers(resolved)
-	if err != nil {
-		return nil, err
-	}
-
-	types := make([]string, 0, 1)
-
-	if raw, ok := members["type"]; ok {
-		typeName, typeErr := decodeString(raw, "type")
-		if typeErr != nil {
-			return nil, fmt.Errorf("query schema at %s type: %w", resolved.Pointer, typeErr)
-		}
-
-		types = append(types, typeName)
-	}
-
-	rawAllOf, ok := members["allOf"]
-	if !ok {
-		return types, nil
-	}
-
-	var allOf []json.RawMessage
-	if err := json.Unmarshal(rawAllOf, &allOf); err != nil || allOf == nil {
-		return nil, fmt.Errorf("query schema at %s allOf must be an array", resolved.Pointer)
-	}
-
-	for index, raw := range allOf {
-		childTypes, childErr := explicitQuerySchemaTypes(
-			source,
-			locatedRawChild(resolved, raw, "allOf", fmt.Sprint(index)),
-			active,
-		)
-		if childErr != nil {
-			return nil, childErr
-		}
-
-		types = append(types, childTypes...)
-	}
-
-	return types, nil
 }
 
 func intersectQuerySchemaTypes(types []string) string {
@@ -700,39 +659,10 @@ func parameterMembers(parameter oas.LocatedSchema) (map[string]json.RawMessage, 
 	return members, nil
 }
 
-func directSchemaType(source oas.Source, schema oas.LocatedSchema) (
-	oas.LocatedSchema,
-	map[string]json.RawMessage,
-	string,
-	error,
-) {
-	resolved, err := source.Resolve(schema)
-	if err != nil {
-		return oas.LocatedSchema{}, nil, "", fmt.Errorf("resolve schema at %s: %w", schema.Pointer, err)
-	}
-
-	members, err := schemaMembers(resolved)
-	if err != nil {
-		return oas.LocatedSchema{}, nil, "", err
-	}
-
-	raw, ok := members["type"]
-	if !ok {
-		return oas.LocatedSchema{}, nil, "", fmt.Errorf("query schema at %s must have a direct type", resolved.Pointer)
-	}
-
-	typeName, err := decodeString(raw, "type")
-	if err != nil {
-		return oas.LocatedSchema{}, nil, "", fmt.Errorf("query schema at %s type: %w", resolved.Pointer, err)
-	}
-
-	return resolved, members, typeName, nil
-}
-
 //nolint:cyclop // Direct property and narrow array-extension checks form one compile decision.
 func compileQueryProperties(
 	schema oas.LocatedSchema,
-	source oas.Source,
+	compiler *schemaCompiler,
 	allowPrimitiveArrays bool,
 ) ([]queryProperty, map[string]int, error) {
 	var rawProperties map[string]json.RawMessage
@@ -763,21 +693,21 @@ func compileQueryProperties(
 
 		var childErr error
 
-		resolved, _, typeName, childErr := directSchemaType(source, child)
+		validation, childErr := compiler.compile(child)
 		if childErr != nil {
 			return nil, nil, childErr
 		}
 
+		typeName := compiledValidationType(validation)
+		if typeName == "" {
+			typeName = "string"
+		}
+
 		property := queryProperty{name: name, scalarType: typeName}
 		if typeName == "array" && allowPrimitiveArrays {
-			items, itemsErr := source.Child(resolved, "items")
-			if itemsErr != nil {
-				return nil, nil, fmt.Errorf("deepObject array property %q items: %w", name, itemsErr)
-			}
-
-			_, _, property.scalarType, itemsErr = directSchemaType(source, items)
-			if itemsErr != nil || !isScalarType(property.scalarType) {
-				return nil, nil, fmt.Errorf("deepObject array property %q items must have a direct primitive type", name)
+			property.scalarType, childErr = compiledQueryScalarType(compiledArrayItems(validation)...)
+			if childErr != nil {
+				return nil, nil, fmt.Errorf("deepObject array property %q items: %w", name, childErr)
 			}
 
 			property.array = true

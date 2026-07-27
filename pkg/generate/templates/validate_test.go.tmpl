@@ -10,7 +10,7 @@ import (
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
-// openAPI is the source document used to compile the generated validations.
+// openAPI is the source document used to compile the generated request validations.
 var openAPI = []byte({{.OpenAPI}})
 
 // TestValidations checks every generated request-body validation.
@@ -21,7 +21,7 @@ func TestValidations(t *testing.T) {
 		t,
 		openAPI,
 		func(operationID string, data []byte) error {
-			return errors.Join(validations[operationID].Validate(data)...)
+			return errors.Join(RequestValidations[operationID].Body.Validate(data)...)
 		},
 		validation.PatternOptions(
 			{{if .Pattern.RejectNonASCII}}patternvalidator.RejectNonASCII,{{end}}

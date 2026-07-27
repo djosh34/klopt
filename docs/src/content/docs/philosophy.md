@@ -42,12 +42,12 @@ That is why `Validation.Validate` reads `json.RawMessage`. Raw decoding delays c
 At runtime, the library works like a dynamic Go validator:
 
 ```go
-validations, _, err := validation.Parse(spec)
+requestValidations, err := validation.Parse(spec)
 if err != nil {
 	return err
 }
 
-errs := validations["createThing"].Validate(body)
+errs := requestValidations["createThing"].Body.Validate(body)
 ```
 
 The compiled result is also plain Go data that can be generated ahead of time:

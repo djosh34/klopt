@@ -1,4 +1,4 @@
-// Package example contains generated request-body validations and query decoders.
+// Package example contains generated request validations.
 //
 //nolint:dupl,godoclint,lll // Generated validation trees use operation IDs and may contain repeated schemas.
 package example
@@ -7,3195 +7,1256 @@ import (
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
-var allOfObject = &validation.Validation{
-	SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
+var allOfObject = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
 
-	ObjectValidation: validation.ObjectValidation{
+		ObjectValidation: validation.ObjectValidation{
 
-		AdditionalPropertiesAllowed: true,
-	},
+			AdditionalPropertiesAllowed: true,
+		},
 
-	AllOfValidations: []*validation.Validation{
-		&validation.Validation{
-			SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/0",
+		AllOfValidations: []*validation.Validation{
+			&validation.Validation{
+				SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/0",
 
-			KindValidation: validation.KindValidation{
-				Type: "object",
-			},
+				KindValidation: validation.KindValidation{
+					Type: "object",
+				},
 
-			ObjectValidation: validation.ObjectValidation{
+				ObjectValidation: validation.ObjectValidation{
 
-				Required: []string{"first"},
+					Required: []string{"first"},
 
-				Properties: []validation.PropertyValidation{
-					{
-						Name: "first",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/0/properties/first",
+					Properties: []validation.PropertyValidation{
+						{
+							Name: "first",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/0/properties/first",
 
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
 
-							ObjectValidation: validation.ObjectValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-								AdditionalPropertiesAllowed: true,
+									AdditionalPropertiesAllowed: true,
+								},
 							},
 						},
 					},
+
+					AdditionalPropertiesAllowed: true,
+				},
+			}, &validation.Validation{
+				SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/1",
+
+				KindValidation: validation.KindValidation{
+					Type: "object",
 				},
 
-				AdditionalPropertiesAllowed: true,
-			},
-		}, &validation.Validation{
-			SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/1",
+				ObjectValidation: validation.ObjectValidation{
 
-			KindValidation: validation.KindValidation{
-				Type: "object",
-			},
+					Required: []string{"second"},
 
-			ObjectValidation: validation.ObjectValidation{
+					Properties: []validation.PropertyValidation{
+						{
+							Name: "second",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/1/properties/second",
 
-				Required: []string{"second"},
+								KindValidation: validation.KindValidation{
+									Type: "boolean",
+								},
 
-				Properties: []validation.PropertyValidation{
-					{
-						Name: "second",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/1/properties/second",
+								ObjectValidation: validation.ObjectValidation{
 
-							KindValidation: validation.KindValidation{
-								Type: "boolean",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
+									AdditionalPropertiesAllowed: true,
+								},
 							},
 						},
 					},
+
+					AdditionalPropertiesAllowed: true,
+				},
+			}, &validation.Validation{
+				SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/2",
+
+				KindValidation: validation.KindValidation{
+					Type: "object",
 				},
 
-				AdditionalPropertiesAllowed: true,
-			},
-		}, &validation.Validation{
-			SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/2",
+				ObjectValidation: validation.ObjectValidation{
 
-			KindValidation: validation.KindValidation{
-				Type: "object",
-			},
+					Required: []string{"last"},
 
-			ObjectValidation: validation.ObjectValidation{
+					Properties: []validation.PropertyValidation{
+						{
+							Name: "last",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/2/properties/last",
 
-				Required: []string{"last"},
+								KindValidation: validation.KindValidation{
+									Type: "number",
+								},
 
-				Properties: []validation.PropertyValidation{
-					{
-						Name: "last",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/2/properties/last",
+								ObjectValidation: validation.ObjectValidation{
 
-							KindValidation: validation.KindValidation{
-								Type: "number",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
+									AdditionalPropertiesAllowed: true,
+								},
 							},
 						},
 					},
-				},
 
-				AdditionalPropertiesAllowed: true,
+					AdditionalPropertiesAllowed: true,
+				},
 			},
 		},
 	},
 }
 
-var arrayNotNullable = &validation.Validation{
-	SchemaPointer: "#/paths/~1array-not-nullable/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
+var arrayNotNullable = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1array-not-nullable/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
 
-	KindValidation: validation.KindValidation{
-		Type: "array",
-	},
+		KindValidation: validation.KindValidation{
+			Type: "array",
+		},
 
-	ArrayValidation: validation.ArrayValidation{
+		ArrayValidation: validation.ArrayValidation{
 
-		Items: &validation.Validation{
-			SchemaPointer: "#/paths/~1array-not-nullable/post/requestBody/content/application~1json/schema/items",
+			Items: &validation.Validation{
+				SchemaPointer: "#/paths/~1array-not-nullable/post/requestBody/content/application~1json/schema/items",
 
-			KindValidation: validation.KindValidation{
-				Type: "string",
-			},
+				KindValidation: validation.KindValidation{
+					Type: "string",
+				},
 
-			ObjectValidation: validation.ObjectValidation{
+				ObjectValidation: validation.ObjectValidation{
 
-				AdditionalPropertiesAllowed: true,
+					AdditionalPropertiesAllowed: true,
+				},
 			},
 		},
-	},
 
-	ObjectValidation: validation.ObjectValidation{
+		ObjectValidation: validation.ObjectValidation{
 
-		AdditionalPropertiesAllowed: true,
+			AdditionalPropertiesAllowed: true,
+		},
 	},
 }
 
-var arrayNullable = &validation.Validation{
-	SchemaPointer: "#/paths/~1array-nullable/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
+var arrayNullable = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1array-nullable/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
 
-	KindValidation: validation.KindValidation{
-		Type:     "array",
-		Nullable: true,
-	},
+		KindValidation: validation.KindValidation{
+			Type:     "array",
+			Nullable: true,
+		},
 
-	ArrayValidation: validation.ArrayValidation{
+		ArrayValidation: validation.ArrayValidation{
 
-		Items: &validation.Validation{
-			SchemaPointer: "#/paths/~1array-nullable/post/requestBody/content/application~1json/schema/items",
+			Items: &validation.Validation{
+				SchemaPointer: "#/paths/~1array-nullable/post/requestBody/content/application~1json/schema/items",
 
-			KindValidation: validation.KindValidation{
-				Type: "string",
-			},
+				KindValidation: validation.KindValidation{
+					Type: "string",
+				},
 
-			ObjectValidation: validation.ObjectValidation{
+				ObjectValidation: validation.ObjectValidation{
 
-				AdditionalPropertiesAllowed: true,
+					AdditionalPropertiesAllowed: true,
+				},
 			},
 		},
-	},
 
-	ObjectValidation: validation.ObjectValidation{
+		ObjectValidation: validation.ObjectValidation{
 
-		AdditionalPropertiesAllowed: true,
+			AdditionalPropertiesAllowed: true,
+		},
 	},
 }
 
-var compositeObject = &validation.Validation{
-	SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
+var compositeObject = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
 
-	KindValidation: validation.KindValidation{
-		Type: "object",
-	},
+		KindValidation: validation.KindValidation{
+			Type: "object",
+		},
 
-	ObjectValidation: validation.ObjectValidation{
+		ObjectValidation: validation.ObjectValidation{
 
-		Required: []string{"arrayNotNullableItemsNotNullable", "arrayNotNullableItemsNullable", "arrayNullableItemsNotNullable", "arrayNullableItemsNullable", "boolNotNullable", "boolNullable", "numberNotNullable", "numberNullable", "objectAdditionalPropertiesImplicit", "objectAdditionalPropertiesSchema", "objectAdditionalPropertiesTrue", "stringFormatNotNullable", "stringFormatNullable"},
+			Required: []string{"arrayNotNullableItemsNotNullable", "arrayNotNullableItemsNullable", "arrayNullableItemsNotNullable", "arrayNullableItemsNullable", "boolNotNullable", "boolNullable", "numberNotNullable", "numberNullable", "objectAdditionalPropertiesImplicit", "objectAdditionalPropertiesSchema", "objectAdditionalPropertiesTrue", "stringFormatNotNullable", "stringFormatNullable"},
 
-		Properties: []validation.PropertyValidation{
-			{
-				Name: "arrayNotNullableItemsNotNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNotNullable",
+			Properties: []validation.PropertyValidation{
+				{
+					Name: "arrayNotNullableItemsNotNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNotNullable",
 
-					KindValidation: validation.KindValidation{
-						Type: "array",
-					},
-
-					ArrayValidation: validation.ArrayValidation{
-
-						Items: &validation.Validation{
-							SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNotNullable/items",
-
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
+						KindValidation: validation.KindValidation{
+							Type: "array",
 						},
-					},
 
-					ObjectValidation: validation.ObjectValidation{
+						ArrayValidation: validation.ArrayValidation{
 
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "arrayNotNullableItemsNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNullable",
+							Items: &validation.Validation{
+								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNotNullable/items",
 
-					KindValidation: validation.KindValidation{
-						Type: "array",
-					},
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
 
-					ArrayValidation: validation.ArrayValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-						Items: &validation.Validation{
-							SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNullable/items",
-
-							KindValidation: validation.KindValidation{
-								Type:     "string",
-								Nullable: true,
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "arrayNullableItemsNotNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNotNullable",
-
-					KindValidation: validation.KindValidation{
-						Type:     "array",
-						Nullable: true,
-					},
-
-					ArrayValidation: validation.ArrayValidation{
-
-						Items: &validation.Validation{
-							SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNotNullable/items",
-
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "arrayNullableItemsNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNullable",
-
-					KindValidation: validation.KindValidation{
-						Type:     "array",
-						Nullable: true,
-					},
-
-					ArrayValidation: validation.ArrayValidation{
-
-						Items: &validation.Validation{
-							SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNullable/items",
-
-							KindValidation: validation.KindValidation{
-								Type:     "string",
-								Nullable: true,
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "boolNotNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/boolNotNullable",
-
-					KindValidation: validation.KindValidation{
-						Type: "boolean",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "boolNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/boolNullable",
-
-					KindValidation: validation.KindValidation{
-						Type:     "boolean",
-						Nullable: true,
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "numberNotNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/numberNotNullable",
-
-					KindValidation: validation.KindValidation{
-						Type: "number",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "numberNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/numberNullable",
-
-					KindValidation: validation.KindValidation{
-						Type:     "number",
-						Nullable: true,
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "objectAdditionalPropertiesImplicit",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesImplicit",
-
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "known",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesImplicit/properties/known",
-
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
+									AdditionalPropertiesAllowed: true,
 								},
 							},
 						},
 
-						AdditionalPropertiesAllowed: true,
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
 					},
-				},
-			}, {
-				Name: "objectAdditionalPropertiesSchema",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesSchema",
+				}, {
+					Name: "arrayNotNullableItemsNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNullable",
 
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
+						KindValidation: validation.KindValidation{
+							Type: "array",
+						},
 
-					ObjectValidation: validation.ObjectValidation{
+						ArrayValidation: validation.ArrayValidation{
 
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "known",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesSchema/properties/known",
+							Items: &validation.Validation{
+								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNullable/items",
 
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
+								KindValidation: validation.KindValidation{
+									Type:     "string",
+									Nullable: true,
+								},
 
-									ObjectValidation: validation.ObjectValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-										AdditionalPropertiesAllowed: true,
-									},
+									AdditionalPropertiesAllowed: true,
 								},
 							},
 						},
 
-						AdditionalPropertiesAllowed: true,
+						ObjectValidation: validation.ObjectValidation{
 
-						AdditionalPropertiesValidation: &validation.Validation{
-							SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesSchema/additionalProperties",
-
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
+							AdditionalPropertiesAllowed: true,
 						},
 					},
-				},
-			}, {
-				Name: "objectAdditionalPropertiesTrue",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesTrue",
+				}, {
+					Name: "arrayNullableItemsNotNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNotNullable",
 
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
+						KindValidation: validation.KindValidation{
+							Type:     "array",
+							Nullable: true,
+						},
 
-					ObjectValidation: validation.ObjectValidation{
+						ArrayValidation: validation.ArrayValidation{
 
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "known",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesTrue/properties/known",
+							Items: &validation.Validation{
+								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNotNullable/items",
 
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
 
-									ObjectValidation: validation.ObjectValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-										AdditionalPropertiesAllowed: true,
-									},
+									AdditionalPropertiesAllowed: true,
 								},
 							},
 						},
 
-						AdditionalPropertiesAllowed: true,
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
 					},
-				},
-			}, {
-				Name: "stringFormatNotNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/stringFormatNotNullable",
-
-					KindValidation: validation.KindValidation{
-						Type: "string",
-					},
-
-					StringValidation: validation.StringValidation{
-
-						Format: "date-time",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "stringFormatNullable",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/stringFormatNullable",
-
-					KindValidation: validation.KindValidation{
-						Type:     "string",
-						Nullable: true,
-					},
-
-					StringValidation: validation.StringValidation{
-
-						Format: "date-time",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			},
-		},
-	},
-}
-
-var nullableObjectKeysAdditionalPropertiesFalse = &validation.Validation{
-	SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
-
-	KindValidation: validation.KindValidation{
-		Type:     "object",
-		Nullable: true,
-	},
-
-	ObjectValidation: validation.ObjectValidation{
-
-		Required: []string{"requiredNotNullableString", "requiredNullableString"},
-
-		Properties: []validation.PropertyValidation{
-			{
-				Name: "optionalNotNullableString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/optionalNotNullableString",
-
-					KindValidation: validation.KindValidation{
-						Type: "string",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "optionalNullableString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/optionalNullableString",
-
-					KindValidation: validation.KindValidation{
-						Type:     "string",
-						Nullable: true,
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "requiredNotNullableString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/requiredNotNullableString",
-
-					KindValidation: validation.KindValidation{
-						Type: "string",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "requiredNullableString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/requiredNullableString",
-
-					KindValidation: validation.KindValidation{
-						Type:     "string",
-						Nullable: true,
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			},
-		},
-	},
-}
-
-var objectKeysAdditionalPropertiesFalse = &validation.Validation{
-	SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
-
-	KindValidation: validation.KindValidation{
-		Type: "object",
-	},
-
-	ObjectValidation: validation.ObjectValidation{
-
-		Required: []string{"requiredNotNullableString", "requiredNullableString"},
-
-		Properties: []validation.PropertyValidation{
-			{
-				Name: "optionalNotNullableString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/optionalNotNullableString",
-
-					KindValidation: validation.KindValidation{
-						Type: "string",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "optionalNullableString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/optionalNullableString",
-
-					KindValidation: validation.KindValidation{
-						Type:     "string",
-						Nullable: true,
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "requiredNotNullableString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/requiredNotNullableString",
-
-					KindValidation: validation.KindValidation{
-						Type: "string",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "requiredNullableString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/requiredNullableString",
-
-					KindValidation: validation.KindValidation{
-						Type:     "string",
-						Nullable: true,
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			},
-		},
-	},
-}
-
-var optionalArrayNullable = &validation.Validation{
-	SchemaPointer: "#/paths/~1optional-array-nullable/post/requestBody/content/application~1json/schema",
-
-	KindValidation: validation.KindValidation{
-		Type:     "array",
-		Nullable: true,
-	},
-
-	ArrayValidation: validation.ArrayValidation{
-
-		Items: &validation.Validation{
-			SchemaPointer: "#/paths/~1optional-array-nullable/post/requestBody/content/application~1json/schema/items",
-
-			KindValidation: validation.KindValidation{
-				Type: "string",
-			},
-
-			ObjectValidation: validation.ObjectValidation{
-
-				AdditionalPropertiesAllowed: true,
-			},
-		},
-	},
-
-	ObjectValidation: validation.ObjectValidation{
-
-		AdditionalPropertiesAllowed: true,
-	},
-}
-
-var refObject = &validation.Validation{
-	SchemaPointer: "#/components/schemas/RefObjectRequest",
-	BodyRequired:  true,
-
-	KindValidation: validation.KindValidation{
-		Type: "object",
-	},
-
-	ObjectValidation: validation.ObjectValidation{
-
-		Required: []string{"refRequiredString"},
-
-		Properties: []validation.PropertyValidation{
-			{
-				Name: "refOptionalBool",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/components/schemas/RefObjectRequest/properties/refOptionalBool",
-
-					KindValidation: validation.KindValidation{
-						Type:     "boolean",
-						Nullable: true,
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			}, {
-				Name: "refRequiredString",
-				Validation: &validation.Validation{
-					SchemaPointer: "#/components/schemas/RefObjectRequest/properties/refRequiredString",
-
-					KindValidation: validation.KindValidation{
-						Type: "string",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			},
-		},
-	},
-}
-
-var refStressObject = &validation.Validation{
-	SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
-
-	ObjectValidation: validation.ObjectValidation{
-
-		AdditionalPropertiesAllowed: true,
-	},
-
-	AllOfValidations: []*validation.Validation{
-		&validation.Validation{
-			SchemaPointer: "#/components/schemas/RefStressFirstAllOf",
-
-			ObjectValidation: validation.ObjectValidation{
-
-				AdditionalPropertiesAllowed: true,
-			},
-
-			AllOfValidations: []*validation.Validation{
-				&validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressFinal",
-
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						Required: []string{"finalCode", "sharedName"},
-
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "finalCode",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
+				}, {
+					Name: "arrayNullableItemsNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNullable",
+
+						KindValidation: validation.KindValidation{
+							Type:     "array",
+							Nullable: true,
+						},
+
+						ArrayValidation: validation.ArrayValidation{
+
+							Items: &validation.Validation{
+								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNullable/items",
+
+								KindValidation: validation.KindValidation{
+									Type:     "string",
+									Nullable: true,
 								},
-							}, {
-								Name: "nested",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-									KindValidation: validation.KindValidation{
-										Type:     "object",
-										Nullable: true,
-									},
+								ObjectValidation: validation.ObjectValidation{
 
-									ObjectValidation: validation.ObjectValidation{
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						},
 
-										Required: []string{"sameName"},
+						ObjectValidation: validation.ObjectValidation{
 
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "leaf",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "boolNotNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/boolNotNullable",
 
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
+						KindValidation: validation.KindValidation{
+							Type: "boolean",
+						},
 
-													ObjectValidation: validation.ObjectValidation{
+						ObjectValidation: validation.ObjectValidation{
 
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sameName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "boolNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/boolNullable",
 
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
+						KindValidation: validation.KindValidation{
+							Type:     "boolean",
+							Nullable: true,
+						},
 
-													ObjectValidation: validation.ObjectValidation{
+						ObjectValidation: validation.ObjectValidation{
 
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "numberNotNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/numberNotNullable",
+
+						KindValidation: validation.KindValidation{
+							Type: "number",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "numberNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/numberNullable",
+
+						KindValidation: validation.KindValidation{
+							Type:     "number",
+							Nullable: true,
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "objectAdditionalPropertiesImplicit",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesImplicit",
+
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "known",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesImplicit/properties/known",
+
+										KindValidation: validation.KindValidation{
+											Type: "string",
 										},
 
-										AdditionalPropertiesAllowed: true,
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
 								},
-							}, {
-								Name: "optionalShared",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+							},
 
-									KindValidation: validation.KindValidation{
-										Type:     "string",
-										Nullable: true,
-									},
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "objectAdditionalPropertiesSchema",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesSchema",
 
-									ObjectValidation: validation.ObjectValidation{
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
 
-										AdditionalPropertiesAllowed: true,
+						ObjectValidation: validation.ObjectValidation{
+
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "known",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesSchema/properties/known",
+
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
 								},
-							}, {
-								Name: "sharedName",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+							},
 
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
+							AdditionalPropertiesAllowed: true,
 
-									ObjectValidation: validation.ObjectValidation{
+							AdditionalPropertiesValidation: &validation.Validation{
+								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesSchema/additionalProperties",
 
-										AdditionalPropertiesAllowed: true,
-									},
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
 								},
 							},
 						},
-
-						AdditionalPropertiesAllowed: true,
 					},
-				}, &validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressViaMiddle",
+				}, {
+					Name: "objectAdditionalPropertiesTrue",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesTrue",
 
-					ObjectValidation: validation.ObjectValidation{
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
 
-						AdditionalPropertiesAllowed: true,
-					},
+						ObjectValidation: validation.ObjectValidation{
 
-					AllOfValidations: []*validation.Validation{
-						&validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressMiddleAllOf",
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "known",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/objectAdditionalPropertiesTrue/properties/known",
 
-							ObjectValidation: validation.ObjectValidation{
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
 
-								AdditionalPropertiesAllowed: true,
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
 							},
 
-							AllOfValidations: []*validation.Validation{
-								&validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal",
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "stringFormatNotNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/stringFormatNotNullable",
 
-									KindValidation: validation.KindValidation{
-										Type: "object",
+						KindValidation: validation.KindValidation{
+							Type: "string",
+						},
+
+						StringValidation: validation.StringValidation{
+
+							Format: "date-time",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "stringFormatNullable",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/stringFormatNullable",
+
+						KindValidation: validation.KindValidation{
+							Type:     "string",
+							Nullable: true,
+						},
+
+						StringValidation: validation.StringValidation{
+
+							Format: "date-time",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				},
+			},
+		},
+	},
+}
+
+var nullableObjectKeysAdditionalPropertiesFalse = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
+
+		KindValidation: validation.KindValidation{
+			Type:     "object",
+			Nullable: true,
+		},
+
+		ObjectValidation: validation.ObjectValidation{
+
+			Required: []string{"requiredNotNullableString", "requiredNullableString"},
+
+			Properties: []validation.PropertyValidation{
+				{
+					Name: "optionalNotNullableString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/optionalNotNullableString",
+
+						KindValidation: validation.KindValidation{
+							Type: "string",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "optionalNullableString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/optionalNullableString",
+
+						KindValidation: validation.KindValidation{
+							Type:     "string",
+							Nullable: true,
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "requiredNotNullableString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/requiredNotNullableString",
+
+						KindValidation: validation.KindValidation{
+							Type: "string",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "requiredNullableString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1nullable-object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/requiredNullableString",
+
+						KindValidation: validation.KindValidation{
+							Type:     "string",
+							Nullable: true,
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				},
+			},
+		},
+	},
+}
+
+var objectKeysAdditionalPropertiesFalse = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
+
+		KindValidation: validation.KindValidation{
+			Type: "object",
+		},
+
+		ObjectValidation: validation.ObjectValidation{
+
+			Required: []string{"requiredNotNullableString", "requiredNullableString"},
+
+			Properties: []validation.PropertyValidation{
+				{
+					Name: "optionalNotNullableString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/optionalNotNullableString",
+
+						KindValidation: validation.KindValidation{
+							Type: "string",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "optionalNullableString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/optionalNullableString",
+
+						KindValidation: validation.KindValidation{
+							Type:     "string",
+							Nullable: true,
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "requiredNotNullableString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/requiredNotNullableString",
+
+						KindValidation: validation.KindValidation{
+							Type: "string",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "requiredNullableString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/paths/~1object-keys-additional-properties-false/post/requestBody/content/application~1json/schema/properties/requiredNullableString",
+
+						KindValidation: validation.KindValidation{
+							Type:     "string",
+							Nullable: true,
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				},
+			},
+		},
+	},
+}
+
+var optionalArrayNullable = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1optional-array-nullable/post/requestBody/content/application~1json/schema",
+
+		KindValidation: validation.KindValidation{
+			Type:     "array",
+			Nullable: true,
+		},
+
+		ArrayValidation: validation.ArrayValidation{
+
+			Items: &validation.Validation{
+				SchemaPointer: "#/paths/~1optional-array-nullable/post/requestBody/content/application~1json/schema/items",
+
+				KindValidation: validation.KindValidation{
+					Type: "string",
+				},
+
+				ObjectValidation: validation.ObjectValidation{
+
+					AdditionalPropertiesAllowed: true,
+				},
+			},
+		},
+
+		ObjectValidation: validation.ObjectValidation{
+
+			AdditionalPropertiesAllowed: true,
+		},
+	},
+}
+
+var refObject = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/components/schemas/RefObjectRequest",
+		BodyRequired:  true,
+
+		KindValidation: validation.KindValidation{
+			Type: "object",
+		},
+
+		ObjectValidation: validation.ObjectValidation{
+
+			Required: []string{"refRequiredString"},
+
+			Properties: []validation.PropertyValidation{
+				{
+					Name: "refOptionalBool",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/components/schemas/RefObjectRequest/properties/refOptionalBool",
+
+						KindValidation: validation.KindValidation{
+							Type:     "boolean",
+							Nullable: true,
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				}, {
+					Name: "refRequiredString",
+					Validation: &validation.Validation{
+						SchemaPointer: "#/components/schemas/RefObjectRequest/properties/refRequiredString",
+
+						KindValidation: validation.KindValidation{
+							Type: "string",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				},
+			},
+		},
+	},
+}
+
+var refStressObject = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
+
+		ObjectValidation: validation.ObjectValidation{
+
+			AdditionalPropertiesAllowed: true,
+		},
+
+		AllOfValidations: []*validation.Validation{
+			&validation.Validation{
+				SchemaPointer: "#/components/schemas/RefStressFirstAllOf",
+
+				ObjectValidation: validation.ObjectValidation{
+
+					AdditionalPropertiesAllowed: true,
+				},
+
+				AllOfValidations: []*validation.Validation{
+					&validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressFinal",
+
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							Required: []string{"finalCode", "sharedName"},
+
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "finalCode",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
+								}, {
+									Name: "nested",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-									ObjectValidation: validation.ObjectValidation{
+										KindValidation: validation.KindValidation{
+											Type:     "object",
+											Nullable: true,
+										},
 
-										Required: []string{"finalCode", "sharedName"},
+										ObjectValidation: validation.ObjectValidation{
 
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "finalCode",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+											Required: []string{"sameName"},
 
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "leaf",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "nested",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-													KindValidation: validation.KindValidation{
-														Type:     "object",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type:     "string",
-																		Nullable: true,
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
+														KindValidation: validation.KindValidation{
+															Type: "string",
 														},
 
-														AdditionalPropertiesAllowed: true,
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
 													},
-												},
-											}, {
-												Name: "optionalShared",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+												}, {
+													Name: "sameName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
 
-													ObjectValidation: validation.ObjectValidation{
+														ObjectValidation: validation.ObjectValidation{
 
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sharedName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
+															AdditionalPropertiesAllowed: true,
+														},
 													},
 												},
 											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "optionalShared",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+										KindValidation: validation.KindValidation{
+											Type:     "string",
+											Nullable: true,
 										},
 
-										AdditionalPropertiesAllowed: true,
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
-								}, &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1",
+								}, {
+									Name: "sharedName",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
 
-									KindValidation: validation.KindValidation{
-										Type:     "object",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sharedName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "optionalCode",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1/properties/optionalCode",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sharedName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1/properties/sharedName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
+										KindValidation: validation.KindValidation{
+											Type: "string",
 										},
 
-										AdditionalPropertiesAllowed: true,
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
 								},
 							},
-						}, &validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1",
 
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
+							AdditionalPropertiesAllowed: true,
+						},
+					}, &validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressViaMiddle",
 
-							ObjectValidation: validation.ObjectValidation{
+						ObjectValidation: validation.ObjectValidation{
 
-								Required: []string{"middleFlag", "sharedName"},
+							AdditionalPropertiesAllowed: true,
+						},
 
-								Properties: []validation.PropertyValidation{
-									{
-										Name: "middleFlag",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1/properties/middleFlag",
+						AllOfValidations: []*validation.Validation{
+							&validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressMiddleAllOf",
 
-											KindValidation: validation.KindValidation{
-												Type: "boolean",
-											},
+								ObjectValidation: validation.ObjectValidation{
 
-											ObjectValidation: validation.ObjectValidation{
+									AdditionalPropertiesAllowed: true,
+								},
 
-												AdditionalPropertiesAllowed: true,
-											},
+								AllOfValidations: []*validation.Validation{
+									&validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
 										},
-									}, {
-										Name: "nested",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
-											ObjectValidation: validation.ObjectValidation{
+										ObjectValidation: validation.ObjectValidation{
 
-												AdditionalPropertiesAllowed: true,
-											},
+											Required: []string{"finalCode", "sharedName"},
 
-											AllOfValidations: []*validation.Validation{
-												&validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase",
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "finalCode",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
 
-													KindValidation: validation.KindValidation{
-														Type:     "object",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type:     "string",
-																		Nullable: true,
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
+														KindValidation: validation.KindValidation{
+															Type: "string",
 														},
 
-														AdditionalPropertiesAllowed: true,
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
 													},
-												}, &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
+												}, {
+													Name: "nested",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-													KindValidation: validation.KindValidation{
-														Type: "object",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
+														KindValidation: validation.KindValidation{
+															Type:     "object",
+															Nullable: true,
 														},
 
-														AdditionalPropertiesAllowed: true,
-													},
-												}, &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
+														ObjectValidation: validation.ObjectValidation{
 
-													KindValidation: validation.KindValidation{
-														Type: "object",
-													},
+															Required: []string{"sameName"},
 
-													ObjectValidation: validation.ObjectValidation{
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-														Required: []string{"sameName", "sealed"},
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
 
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
+																		ObjectValidation: validation.ObjectValidation{
 
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
+																			AdditionalPropertiesAllowed: true,
+																		},
 																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-																	ObjectValidation: validation.ObjectValidation{
+																		KindValidation: validation.KindValidation{
+																			Type:     "string",
+																			Nullable: true,
+																		},
 
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sealed",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
+																		ObjectValidation: validation.ObjectValidation{
 
-																	KindValidation: validation.KindValidation{
-																		Type: "object",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		Required: []string{"locked"},
-
-																		Properties: []validation.PropertyValidation{
-																			{
-																				Name: "locked",
-																				Validation: &validation.Validation{
-																					SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
-
-																					KindValidation: validation.KindValidation{
-																						Type: "boolean",
-																					},
-
-																					ObjectValidation: validation.ObjectValidation{
-
-																						AdditionalPropertiesAllowed: true,
-																					},
-																				},
-																			},
+																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
 																},
 															},
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "optionalShared",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
 														},
 
-														AdditionalPropertiesAllowed: true,
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sharedName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
 													},
 												},
 											},
+
+											AdditionalPropertiesAllowed: true,
 										},
-									}, {
-										Name: "sharedName",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1/properties/sharedName",
+									}, &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1",
 
-											KindValidation: validation.KindValidation{
-												Type:     "string",
-												Nullable: true,
+										KindValidation: validation.KindValidation{
+											Type:     "object",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sharedName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "optionalCode",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1/properties/optionalCode",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sharedName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1/properties/sharedName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
 											},
 
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
+											AdditionalPropertiesAllowed: true,
 										},
 									},
 								},
+							}, &validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1",
 
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					},
-				}, &validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2",
-
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						Required: []string{"final", "nested", "nullableRequired"},
-
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "final",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"finalCode", "sharedName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "finalCode",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "nested",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-													KindValidation: validation.KindValidation{
-														Type:     "object",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type:     "string",
-																		Nullable: true,
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
-														},
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "optionalShared",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
-
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sharedName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
+								KindValidation: validation.KindValidation{
+									Type: "object",
 								},
-							}, {
-								Name: "nested",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
-									ObjectValidation: validation.ObjectValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-										AdditionalPropertiesAllowed: true,
-									},
+									Required: []string{"middleFlag", "sharedName"},
 
-									AllOfValidations: []*validation.Validation{
-										&validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedBase",
+									Properties: []validation.PropertyValidation{
+										{
+											Name: "middleFlag",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1/properties/middleFlag",
 
-											KindValidation: validation.KindValidation{
-												Type:     "object",
-												Nullable: true,
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"sameName"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "leaf",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													},
+												KindValidation: validation.KindValidation{
+													Type: "boolean",
 												},
 
-												AdditionalPropertiesAllowed: true,
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
 											},
-										}, &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
+										}, {
+											Name: "nested",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
+												ObjectValidation: validation.ObjectValidation{
 
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"sameName"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "leaf",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													},
+													AdditionalPropertiesAllowed: true,
 												},
 
-												AdditionalPropertiesAllowed: true,
-											},
-										}, &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
+												AllOfValidations: []*validation.Validation{
+													&validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"sameName", "sealed"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
+														KindValidation: validation.KindValidation{
+															Type:     "object",
+															Nullable: true,
 														},
-													}, {
-														Name: "sealed",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
 
-															KindValidation: validation.KindValidation{
-																Type: "object",
-															},
+														ObjectValidation: validation.ObjectValidation{
 
-															ObjectValidation: validation.ObjectValidation{
+															Required: []string{"sameName"},
 
-																Required: []string{"locked"},
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-																Properties: []validation.PropertyValidation{
-																	{
-																		Name: "locked",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
 
-																			KindValidation: validation.KindValidation{
-																				Type: "boolean",
-																			},
+																		ObjectValidation: validation.ObjectValidation{
 
-																			ObjectValidation: validation.ObjectValidation{
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-																				AdditionalPropertiesAllowed: true,
-																			},
+																		KindValidation: validation.KindValidation{
+																			Type:     "string",
+																			Nullable: true,
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
 																},
 															},
+
+															AdditionalPropertiesAllowed: true,
 														},
-													},
-												},
+													}, &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
 
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									},
-								},
-							}, {
-								Name: "nullableRequired",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/nullableRequired",
-
-									KindValidation: validation.KindValidation{
-										Type:     "string",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "optionalShared",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/optionalShared",
-
-									KindValidation: validation.KindValidation{
-										Type:     "string",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "sharedName",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/sharedName",
-
-									KindValidation: validation.KindValidation{
-										Type:     "string",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-						},
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			},
-		}, &validation.Validation{
-			SchemaPointer: "#/components/schemas/RefStressSecondAllOf",
-
-			ObjectValidation: validation.ObjectValidation{
-
-				AdditionalPropertiesAllowed: true,
-			},
-
-			AllOfValidations: []*validation.Validation{
-				&validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressOtherMiddle",
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-
-					AllOfValidations: []*validation.Validation{
-						&validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressFinal",
-
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								Required: []string{"finalCode", "sharedName"},
-
-								Properties: []validation.PropertyValidation{
-									{
-										Name: "finalCode",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "nested",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-											KindValidation: validation.KindValidation{
-												Type:     "object",
-												Nullable: true,
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"sameName"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "leaf",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
+														KindValidation: validation.KindValidation{
+															Type: "object",
 														},
-													}, {
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
+														ObjectValidation: validation.ObjectValidation{
 
-															ObjectValidation: validation.ObjectValidation{
+															Required: []string{"sameName"},
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													},
-												},
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "optionalShared",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
-
-											KindValidation: validation.KindValidation{
-												Type:     "string",
-												Nullable: true,
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "sharedName",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									},
-								},
-
-								AdditionalPropertiesAllowed: true,
-							},
-						}, &validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1",
-
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								Required: []string{"metadata", "rootFlag"},
-
-								Properties: []validation.PropertyValidation{
-									{
-										Name: "final",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal",
-
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"finalCode", "sharedName"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "finalCode",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "nested",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-															KindValidation: validation.KindValidation{
-																Type:     "object",
-																Nullable: true,
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																Required: []string{"sameName"},
-
-																Properties: []validation.PropertyValidation{
-																	{
-																		Name: "leaf",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																			KindValidation: validation.KindValidation{
-																				Type: "string",
-																			},
-
-																			ObjectValidation: validation.ObjectValidation{
-
-																				AdditionalPropertiesAllowed: true,
-																			},
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
 																		},
-																	}, {
-																		Name: "sameName",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-																			KindValidation: validation.KindValidation{
-																				Type:     "string",
-																				Nullable: true,
-																			},
+																		ObjectValidation: validation.ObjectValidation{
 
-																			ObjectValidation: validation.ObjectValidation{
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
 
-																				AdditionalPropertiesAllowed: true,
-																			},
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
 																},
-
-																AdditionalPropertiesAllowed: true,
 															},
+
+															AdditionalPropertiesAllowed: true,
 														},
-													}, {
-														Name: "optionalShared",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+													}, &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
 
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
+														KindValidation: validation.KindValidation{
+															Type: "object",
 														},
-													}, {
-														Name: "sharedName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
+														ObjectValidation: validation.ObjectValidation{
 
-															ObjectValidation: validation.ObjectValidation{
+															Required: []string{"sameName", "sealed"},
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													},
-												},
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
 
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "metadata",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1/properties/metadata",
-
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-
-												AdditionalPropertiesValidation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-									}, {
-										Name: "rootFlag",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1/properties/rootFlag",
-
-											KindValidation: validation.KindValidation{
-												Type: "boolean",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									},
-								},
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					},
-				}, &validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1",
-
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						Required: []string{"count", "finals", "metadata", "rootFlag"},
-
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "count",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/count",
-
-									KindValidation: validation.KindValidation{
-										Type: "number",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "finals",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/finals",
-
-									KindValidation: validation.KindValidation{
-										Type: "array",
-									},
-
-									ArrayValidation: validation.ArrayValidation{
-
-										Items: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal",
-
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"finalCode", "sharedName"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "finalCode",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "nested",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-															KindValidation: validation.KindValidation{
-																Type:     "object",
-																Nullable: true,
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																Required: []string{"sameName"},
-
-																Properties: []validation.PropertyValidation{
-																	{
-																		Name: "leaf",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																			KindValidation: validation.KindValidation{
-																				Type: "string",
-																			},
-
-																			ObjectValidation: validation.ObjectValidation{
-
-																				AdditionalPropertiesAllowed: true,
-																			},
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
 																		},
-																	}, {
-																		Name: "sameName",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-																			KindValidation: validation.KindValidation{
-																				Type:     "string",
-																				Nullable: true,
-																			},
+																		ObjectValidation: validation.ObjectValidation{
 
-																			ObjectValidation: validation.ObjectValidation{
-
-																				AdditionalPropertiesAllowed: true,
-																			},
+																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
-																},
+																}, {
+																	Name: "sealed",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "optionalShared",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+																		KindValidation: validation.KindValidation{
+																			Type: "object",
+																		},
 
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
+																		ObjectValidation: validation.ObjectValidation{
 
-															ObjectValidation: validation.ObjectValidation{
+																			Required: []string{"locked"},
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "sharedName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+																			Properties: []validation.PropertyValidation{
+																				{
+																					Name: "locked",
+																					Validation: &validation.Validation{
+																						SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
+																						KindValidation: validation.KindValidation{
+																							Type: "boolean",
+																						},
 
-															ObjectValidation: validation.ObjectValidation{
+																						ObjectValidation: validation.ObjectValidation{
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													},
-												},
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "metadata",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/metadata",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-
-										AdditionalPropertiesValidation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									},
-								},
-							}, {
-								Name: "rootFlag",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/rootFlag",
-
-									KindValidation: validation.KindValidation{
-										Type: "boolean",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "sharedName",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/sharedName",
-
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-						},
-
-						AdditionalPropertiesAllowed: true,
-					},
-				},
-			},
-		}, &validation.Validation{
-			SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2",
-
-			KindValidation: validation.KindValidation{
-				Type: "object",
-			},
-
-			ObjectValidation: validation.ObjectValidation{
-
-				Required: []string{"count", "final", "finalCode", "finals", "metadata", "middleFlag", "nested", "nullableRequired", "rootFlag", "sharedName"},
-
-				Properties: []validation.PropertyValidation{
-					{
-						Name: "count",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/count",
-
-							KindValidation: validation.KindValidation{
-								Type: "number",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "final",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressFinal",
-
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								Required: []string{"finalCode", "sharedName"},
-
-								Properties: []validation.PropertyValidation{
-									{
-										Name: "finalCode",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "nested",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-											KindValidation: validation.KindValidation{
-												Type:     "object",
-												Nullable: true,
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"sameName"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "leaf",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													},
-												},
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "optionalShared",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
-
-											KindValidation: validation.KindValidation{
-												Type:     "string",
-												Nullable: true,
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "sharedName",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									},
-								},
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "finalCode",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/finalCode",
-
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "finals",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/finals",
-
-							KindValidation: validation.KindValidation{
-								Type: "array",
-							},
-
-							ArrayValidation: validation.ArrayValidation{
-
-								Items: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"finalCode", "sharedName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "finalCode",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "nested",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-													KindValidation: validation.KindValidation{
-														Type:     "object",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type:     "string",
-																		Nullable: true,
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
-														},
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "optionalShared",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
-
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sharedName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "metadata",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/metadata",
-
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-
-								AdditionalPropertiesValidation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-						},
-					}, {
-						Name: "middleFlag",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/middleFlag",
-
-							KindValidation: validation.KindValidation{
-								Type: "boolean",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "nested",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressNestedCombined",
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-
-							AllOfValidations: []*validation.Validation{
-								&validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-									KindValidation: validation.KindValidation{
-										Type:     "object",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sameName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "leaf",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sameName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								}, &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sameName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "leaf",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sameName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								}, &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sameName", "sealed"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "sameName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sealed",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
-
-													KindValidation: validation.KindValidation{
-														Type: "object",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"locked"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "locked",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "boolean",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
-														},
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-						},
-					}, {
-						Name: "nullableRequired",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/nullableRequired",
-
-							KindValidation: validation.KindValidation{
-								Type:     "string",
-								Nullable: true,
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "optionalCode",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/optionalCode",
-
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "optionalShared",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/optionalShared",
-
-							KindValidation: validation.KindValidation{
-								Type:     "string",
-								Nullable: true,
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "rootFlag",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/rootFlag",
-
-							KindValidation: validation.KindValidation{
-								Type: "boolean",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "sharedName",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/sharedName",
-
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					},
-				},
-			},
-		},
-	},
-}
-
-var refStressObjectPut = &validation.Validation{
-	SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
-
-	ObjectValidation: validation.ObjectValidation{
-
-		AdditionalPropertiesAllowed: true,
-	},
-
-	AllOfValidations: []*validation.Validation{
-		&validation.Validation{
-			SchemaPointer: "#/components/schemas/RefStressFirstAllOf",
-
-			ObjectValidation: validation.ObjectValidation{
-
-				AdditionalPropertiesAllowed: true,
-			},
-
-			AllOfValidations: []*validation.Validation{
-				&validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressFinal",
-
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
-
-					ObjectValidation: validation.ObjectValidation{
-
-						Required: []string{"finalCode", "sharedName"},
-
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "finalCode",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "nested",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-									KindValidation: validation.KindValidation{
-										Type:     "object",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sameName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "leaf",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sameName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "optionalShared",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
-
-									KindValidation: validation.KindValidation{
-										Type:     "string",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "sharedName",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-						},
-
-						AdditionalPropertiesAllowed: true,
-					},
-				}, &validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressViaMiddle",
-
-					ObjectValidation: validation.ObjectValidation{
-
-						AdditionalPropertiesAllowed: true,
-					},
-
-					AllOfValidations: []*validation.Validation{
-						&validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressMiddleAllOf",
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-
-							AllOfValidations: []*validation.Validation{
-								&validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"finalCode", "sharedName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "finalCode",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "nested",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-													KindValidation: validation.KindValidation{
-														Type:     "object",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type:     "string",
-																		Nullable: true,
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
-														},
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "optionalShared",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
-
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sharedName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								}, &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1",
-
-									KindValidation: validation.KindValidation{
-										Type:     "object",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sharedName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "optionalCode",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1/properties/optionalCode",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sharedName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1/properties/sharedName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-						}, &validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1",
-
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								Required: []string{"middleFlag", "sharedName"},
-
-								Properties: []validation.PropertyValidation{
-									{
-										Name: "middleFlag",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1/properties/middleFlag",
-
-											KindValidation: validation.KindValidation{
-												Type: "boolean",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "nested",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedCombined",
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-
-											AllOfValidations: []*validation.Validation{
-												&validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-													KindValidation: validation.KindValidation{
-														Type:     "object",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type:     "string",
-																		Nullable: true,
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
-														},
-
-														AdditionalPropertiesAllowed: true,
-													},
-												}, &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
-
-													KindValidation: validation.KindValidation{
-														Type: "object",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
-														},
-
-														AdditionalPropertiesAllowed: true,
-													},
-												}, &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
-
-													KindValidation: validation.KindValidation{
-														Type: "object",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName", "sealed"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sealed",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "object",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		Required: []string{"locked"},
-
-																		Properties: []validation.PropertyValidation{
-																			{
-																				Name: "locked",
-																				Validation: &validation.Validation{
-																					SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
-
-																					KindValidation: validation.KindValidation{
-																						Type: "boolean",
-																					},
-
-																					ObjectValidation: validation.ObjectValidation{
-
-																						AdditionalPropertiesAllowed: true,
+																							AdditionalPropertiesAllowed: true,
+																						},
 																					},
 																				},
 																			},
@@ -3203,315 +1264,315 @@ var refStressObjectPut = &validation.Validation{
 																	},
 																},
 															},
-														},
 
-														AdditionalPropertiesAllowed: true,
+															AdditionalPropertiesAllowed: true,
+														},
 													},
 												},
 											},
-										},
-									}, {
-										Name: "sharedName",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1/properties/sharedName",
+										}, {
+											Name: "sharedName",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1/properties/sharedName",
 
-											KindValidation: validation.KindValidation{
-												Type:     "string",
-												Nullable: true,
-											},
+												KindValidation: validation.KindValidation{
+													Type:     "string",
+													Nullable: true,
+												},
 
-											ObjectValidation: validation.ObjectValidation{
+												ObjectValidation: validation.ObjectValidation{
 
-												AdditionalPropertiesAllowed: true,
+													AdditionalPropertiesAllowed: true,
+												},
 											},
 										},
 									},
-								},
 
-								AdditionalPropertiesAllowed: true,
+									AdditionalPropertiesAllowed: true,
+								},
 							},
 						},
-					},
-				}, &validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2",
+					}, &validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2",
 
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
 
-					ObjectValidation: validation.ObjectValidation{
+						ObjectValidation: validation.ObjectValidation{
 
-						Required: []string{"final", "nested", "nullableRequired"},
+							Required: []string{"final", "nested", "nullableRequired"},
 
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "final",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal",
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "final",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal",
 
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"finalCode", "sharedName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "finalCode",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "nested",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-													KindValidation: validation.KindValidation{
-														Type:     "object",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"sameName"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-																	KindValidation: validation.KindValidation{
-																		Type:     "string",
-																		Nullable: true,
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
-																},
-															},
-														},
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "optionalShared",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
-
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sharedName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
+										KindValidation: validation.KindValidation{
+											Type: "object",
 										},
 
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "nested",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedCombined",
+										ObjectValidation: validation.ObjectValidation{
 
-									ObjectValidation: validation.ObjectValidation{
+											Required: []string{"finalCode", "sharedName"},
 
-										AdditionalPropertiesAllowed: true,
-									},
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "finalCode",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
 
-									AllOfValidations: []*validation.Validation{
-										&validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-											KindValidation: validation.KindValidation{
-												Type:     "object",
-												Nullable: true,
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"sameName"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "leaf",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
+														KindValidation: validation.KindValidation{
+															Type: "string",
 														},
-													}, {
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "nested",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+														KindValidation: validation.KindValidation{
+															Type:     "object",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"sameName"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																		KindValidation: validation.KindValidation{
+																			Type:     "string",
+																			Nullable: true,
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
 															},
 
-															ObjectValidation: validation.ObjectValidation{
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "optionalShared",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
 
-																AdditionalPropertiesAllowed: true,
-															},
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sharedName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
 														},
 													},
 												},
-
-												AdditionalPropertiesAllowed: true,
-											},
-										}, &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
-
-											KindValidation: validation.KindValidation{
-												Type: "object",
 											},
 
-											ObjectValidation: validation.ObjectValidation{
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "nested",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
-												Required: []string{"sameName"},
+										ObjectValidation: validation.ObjectValidation{
 
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "leaf",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+											AdditionalPropertiesAllowed: true,
+										},
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
+										AllOfValidations: []*validation.Validation{
+											&validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+												KindValidation: validation.KindValidation{
+													Type:     "object",
+													Nullable: true,
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"sameName"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "leaf",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
+														}, {
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-															ObjectValidation: validation.ObjectValidation{
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
+																},
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
+																ObjectValidation: validation.ObjectValidation{
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
 														},
 													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											}, &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
+
+												KindValidation: validation.KindValidation{
+													Type: "object",
 												},
 
-												AdditionalPropertiesAllowed: true,
-											},
-										}, &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
+												ObjectValidation: validation.ObjectValidation{
 
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
+													Required: []string{"sameName"},
 
-											ObjectValidation: validation.ObjectValidation{
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "leaf",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-												Required: []string{"sameName", "sealed"},
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
 
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
+																ObjectValidation: validation.ObjectValidation{
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
+														}, {
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
 
-															ObjectValidation: validation.ObjectValidation{
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
 
-																AdditionalPropertiesAllowed: true,
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
 														},
-													}, {
-														Name: "sealed",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
+													},
 
-															KindValidation: validation.KindValidation{
-																Type: "object",
+													AdditionalPropertiesAllowed: true,
+												},
+											}, &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
+
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"sameName", "sealed"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
+														}, {
+															Name: "sealed",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
 
-															ObjectValidation: validation.ObjectValidation{
+																KindValidation: validation.KindValidation{
+																	Type: "object",
+																},
 
-																Required: []string{"locked"},
+																ObjectValidation: validation.ObjectValidation{
 
-																Properties: []validation.PropertyValidation{
-																	{
-																		Name: "locked",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
+																	Required: []string{"locked"},
 
-																			KindValidation: validation.KindValidation{
-																				Type: "boolean",
-																			},
+																	Properties: []validation.PropertyValidation{
+																		{
+																			Name: "locked",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
 
-																			ObjectValidation: validation.ObjectValidation{
+																				KindValidation: validation.KindValidation{
+																					Type: "boolean",
+																				},
 
-																				AdditionalPropertiesAllowed: true,
+																				ObjectValidation: validation.ObjectValidation{
+
+																					AdditionalPropertiesAllowed: true,
+																				},
 																			},
 																		},
 																	},
@@ -3519,1145 +1580,1145 @@ var refStressObjectPut = &validation.Validation{
 															},
 														},
 													},
-												},
 
-												AdditionalPropertiesAllowed: true,
+													AdditionalPropertiesAllowed: true,
+												},
 											},
 										},
 									},
-								},
-							}, {
-								Name: "nullableRequired",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/nullableRequired",
+								}, {
+									Name: "nullableRequired",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/nullableRequired",
 
-									KindValidation: validation.KindValidation{
-										Type:     "string",
-										Nullable: true,
+										KindValidation: validation.KindValidation{
+											Type:     "string",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
+								}, {
+									Name: "optionalShared",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/optionalShared",
 
-									ObjectValidation: validation.ObjectValidation{
+										KindValidation: validation.KindValidation{
+											Type:     "string",
+											Nullable: true,
+										},
 
-										AdditionalPropertiesAllowed: true,
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
-								},
-							}, {
-								Name: "optionalShared",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/optionalShared",
+								}, {
+									Name: "sharedName",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/sharedName",
 
-									KindValidation: validation.KindValidation{
-										Type:     "string",
-										Nullable: true,
-									},
+										KindValidation: validation.KindValidation{
+											Type:     "string",
+											Nullable: true,
+										},
 
-									ObjectValidation: validation.ObjectValidation{
+										ObjectValidation: validation.ObjectValidation{
 
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "sharedName",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/sharedName",
-
-									KindValidation: validation.KindValidation{
-										Type:     "string",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
+											AdditionalPropertiesAllowed: true,
+										},
 									},
 								},
 							},
-						},
 
-						AdditionalPropertiesAllowed: true,
+							AdditionalPropertiesAllowed: true,
+						},
 					},
 				},
-			},
-		}, &validation.Validation{
-			SchemaPointer: "#/components/schemas/RefStressSecondAllOf",
+			}, &validation.Validation{
+				SchemaPointer: "#/components/schemas/RefStressSecondAllOf",
 
-			ObjectValidation: validation.ObjectValidation{
+				ObjectValidation: validation.ObjectValidation{
 
-				AdditionalPropertiesAllowed: true,
-			},
+					AdditionalPropertiesAllowed: true,
+				},
 
-			AllOfValidations: []*validation.Validation{
-				&validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressOtherMiddle",
+				AllOfValidations: []*validation.Validation{
+					&validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressOtherMiddle",
 
-					ObjectValidation: validation.ObjectValidation{
+						ObjectValidation: validation.ObjectValidation{
 
-						AdditionalPropertiesAllowed: true,
-					},
+							AdditionalPropertiesAllowed: true,
+						},
 
-					AllOfValidations: []*validation.Validation{
-						&validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressFinal",
+						AllOfValidations: []*validation.Validation{
+							&validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressFinal",
 
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
+								KindValidation: validation.KindValidation{
+									Type: "object",
+								},
 
-							ObjectValidation: validation.ObjectValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-								Required: []string{"finalCode", "sharedName"},
+									Required: []string{"finalCode", "sharedName"},
 
-								Properties: []validation.PropertyValidation{
-									{
-										Name: "finalCode",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+									Properties: []validation.PropertyValidation{
+										{
+											Name: "finalCode",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
 
-											KindValidation: validation.KindValidation{
-												Type: "string",
+												KindValidation: validation.KindValidation{
+													Type: "string",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
 											},
+										}, {
+											Name: "nested",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-											ObjectValidation: validation.ObjectValidation{
+												KindValidation: validation.KindValidation{
+													Type:     "object",
+													Nullable: true,
+												},
 
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "nested",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedBase",
+												ObjectValidation: validation.ObjectValidation{
 
-											KindValidation: validation.KindValidation{
-												Type:     "object",
-												Nullable: true,
-											},
+													Required: []string{"sameName"},
 
-											ObjectValidation: validation.ObjectValidation{
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "leaf",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-												Required: []string{"sameName"},
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
 
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "leaf",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+																ObjectValidation: validation.ObjectValidation{
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
+														}, {
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-															ObjectValidation: validation.ObjectValidation{
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
+																},
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+																ObjectValidation: validation.ObjectValidation{
 
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
 														},
 													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "optionalShared",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+												KindValidation: validation.KindValidation{
+													Type:     "string",
+													Nullable: true,
 												},
 
-												AdditionalPropertiesAllowed: true,
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
 											},
-										},
-									}, {
-										Name: "optionalShared",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+										}, {
+											Name: "sharedName",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
 
-											KindValidation: validation.KindValidation{
-												Type:     "string",
-												Nullable: true,
-											},
+												KindValidation: validation.KindValidation{
+													Type: "string",
+												},
 
-											ObjectValidation: validation.ObjectValidation{
+												ObjectValidation: validation.ObjectValidation{
 
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "sharedName",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
+													AdditionalPropertiesAllowed: true,
+												},
 											},
 										},
 									},
+
+									AdditionalPropertiesAllowed: true,
+								},
+							}, &validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1",
+
+								KindValidation: validation.KindValidation{
+									Type: "object",
 								},
 
-								AdditionalPropertiesAllowed: true,
-							},
-						}, &validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1",
+								ObjectValidation: validation.ObjectValidation{
 
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
+									Required: []string{"metadata", "rootFlag"},
 
-							ObjectValidation: validation.ObjectValidation{
+									Properties: []validation.PropertyValidation{
+										{
+											Name: "final",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal",
 
-								Required: []string{"metadata", "rootFlag"},
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
 
-								Properties: []validation.PropertyValidation{
-									{
-										Name: "final",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal",
+												ObjectValidation: validation.ObjectValidation{
 
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
+													Required: []string{"finalCode", "sharedName"},
 
-											ObjectValidation: validation.ObjectValidation{
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "finalCode",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
 
-												Required: []string{"finalCode", "sharedName"},
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
 
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "finalCode",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+																ObjectValidation: validation.ObjectValidation{
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
+														}, {
+															Name: "nested",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-															ObjectValidation: validation.ObjectValidation{
+																KindValidation: validation.KindValidation{
+																	Type:     "object",
+																	Nullable: true,
+																},
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "nested",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase",
+																ObjectValidation: validation.ObjectValidation{
 
-															KindValidation: validation.KindValidation{
-																Type:     "object",
-																Nullable: true,
-															},
+																	Required: []string{"sameName"},
 
-															ObjectValidation: validation.ObjectValidation{
+																	Properties: []validation.PropertyValidation{
+																		{
+																			Name: "leaf",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-																Required: []string{"sameName"},
+																				KindValidation: validation.KindValidation{
+																					Type: "string",
+																				},
 
-																Properties: []validation.PropertyValidation{
-																	{
-																		Name: "leaf",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+																				ObjectValidation: validation.ObjectValidation{
 
-																			KindValidation: validation.KindValidation{
-																				Type: "string",
+																					AdditionalPropertiesAllowed: true,
+																				},
 																			},
+																		}, {
+																			Name: "sameName",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-																			ObjectValidation: validation.ObjectValidation{
+																				KindValidation: validation.KindValidation{
+																					Type:     "string",
+																					Nullable: true,
+																				},
 
-																				AdditionalPropertiesAllowed: true,
-																			},
-																		},
-																	}, {
-																		Name: "sameName",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+																				ObjectValidation: validation.ObjectValidation{
 
-																			KindValidation: validation.KindValidation{
-																				Type:     "string",
-																				Nullable: true,
-																			},
-
-																			ObjectValidation: validation.ObjectValidation{
-
-																				AdditionalPropertiesAllowed: true,
+																					AdditionalPropertiesAllowed: true,
+																				},
 																			},
 																		},
 																	},
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "optionalShared",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
 																},
 
-																AdditionalPropertiesAllowed: true,
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "sharedName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
 														},
-													}, {
-														Name: "optionalShared",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+													},
 
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "metadata",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1/properties/metadata",
 
-															ObjectValidation: validation.ObjectValidation{
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
 
-																AdditionalPropertiesAllowed: true,
-															},
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+
+													AdditionalPropertiesValidation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
 														},
-													}, {
-														Name: "sharedName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
+														ObjectValidation: validation.ObjectValidation{
 
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
+															AdditionalPropertiesAllowed: true,
 														},
 													},
 												},
-
-												AdditionalPropertiesAllowed: true,
 											},
-										},
-									}, {
-										Name: "metadata",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1/properties/metadata",
+										}, {
+											Name: "rootFlag",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1/properties/rootFlag",
 
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-
-												AdditionalPropertiesValidation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
+												KindValidation: validation.KindValidation{
+													Type: "boolean",
 												},
-											},
-										},
-									}, {
-										Name: "rootFlag",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1/properties/rootFlag",
 
-											KindValidation: validation.KindValidation{
-												Type: "boolean",
-											},
+												ObjectValidation: validation.ObjectValidation{
 
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
+													AdditionalPropertiesAllowed: true,
+												},
 											},
 										},
 									},
-								},
 
-								AdditionalPropertiesAllowed: true,
+									AdditionalPropertiesAllowed: true,
+								},
 							},
 						},
-					},
-				}, &validation.Validation{
-					SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1",
+					}, &validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1",
 
-					KindValidation: validation.KindValidation{
-						Type: "object",
-					},
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
 
-					ObjectValidation: validation.ObjectValidation{
+						ObjectValidation: validation.ObjectValidation{
 
-						Required: []string{"count", "finals", "metadata", "rootFlag"},
+							Required: []string{"count", "finals", "metadata", "rootFlag"},
 
-						Properties: []validation.PropertyValidation{
-							{
-								Name: "count",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/count",
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "count",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/count",
 
-									KindValidation: validation.KindValidation{
-										Type: "number",
+										KindValidation: validation.KindValidation{
+											Type: "number",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
+								}, {
+									Name: "finals",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/finals",
 
-									ObjectValidation: validation.ObjectValidation{
+										KindValidation: validation.KindValidation{
+											Type: "array",
+										},
 
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "finals",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/finals",
+										ArrayValidation: validation.ArrayValidation{
 
-									KindValidation: validation.KindValidation{
-										Type: "array",
-									},
+											Items: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal",
 
-									ArrayValidation: validation.ArrayValidation{
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
 
-										Items: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal",
+												ObjectValidation: validation.ObjectValidation{
 
-											KindValidation: validation.KindValidation{
-												Type: "object",
-											},
+													Required: []string{"finalCode", "sharedName"},
 
-											ObjectValidation: validation.ObjectValidation{
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "finalCode",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
 
-												Required: []string{"finalCode", "sharedName"},
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
 
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "finalCode",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+																ObjectValidation: validation.ObjectValidation{
 
-															KindValidation: validation.KindValidation{
-																Type: "string",
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
+														}, {
+															Name: "nested",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-															ObjectValidation: validation.ObjectValidation{
+																KindValidation: validation.KindValidation{
+																	Type:     "object",
+																	Nullable: true,
+																},
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "nested",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase",
+																ObjectValidation: validation.ObjectValidation{
 
-															KindValidation: validation.KindValidation{
-																Type:     "object",
-																Nullable: true,
-															},
+																	Required: []string{"sameName"},
 
-															ObjectValidation: validation.ObjectValidation{
+																	Properties: []validation.PropertyValidation{
+																		{
+																			Name: "leaf",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-																Required: []string{"sameName"},
+																				KindValidation: validation.KindValidation{
+																					Type: "string",
+																				},
 
-																Properties: []validation.PropertyValidation{
-																	{
-																		Name: "leaf",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+																				ObjectValidation: validation.ObjectValidation{
 
-																			KindValidation: validation.KindValidation{
-																				Type: "string",
+																					AdditionalPropertiesAllowed: true,
+																				},
 																			},
+																		}, {
+																			Name: "sameName",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-																			ObjectValidation: validation.ObjectValidation{
+																				KindValidation: validation.KindValidation{
+																					Type:     "string",
+																					Nullable: true,
+																				},
 
-																				AdditionalPropertiesAllowed: true,
-																			},
-																		},
-																	}, {
-																		Name: "sameName",
-																		Validation: &validation.Validation{
-																			SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+																				ObjectValidation: validation.ObjectValidation{
 
-																			KindValidation: validation.KindValidation{
-																				Type:     "string",
-																				Nullable: true,
-																			},
-
-																			ObjectValidation: validation.ObjectValidation{
-
-																				AdditionalPropertiesAllowed: true,
+																					AdditionalPropertiesAllowed: true,
+																				},
 																			},
 																		},
 																	},
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "optionalShared",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
 																},
 
-																AdditionalPropertiesAllowed: true,
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
-														},
-													}, {
-														Name: "optionalShared",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+														}, {
+															Name: "sharedName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
 
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
 
-															ObjectValidation: validation.ObjectValidation{
+																ObjectValidation: validation.ObjectValidation{
 
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "sharedName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
+																	AdditionalPropertiesAllowed: true,
+																},
 															},
 														},
 													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "metadata",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/metadata",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+
+											AdditionalPropertiesValidation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+												KindValidation: validation.KindValidation{
+													Type: "string",
 												},
 
-												AdditionalPropertiesAllowed: true,
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
 											},
 										},
 									},
+								}, {
+									Name: "rootFlag",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/rootFlag",
 
-									ObjectValidation: validation.ObjectValidation{
+										KindValidation: validation.KindValidation{
+											Type: "boolean",
+										},
 
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "metadata",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/metadata",
+										ObjectValidation: validation.ObjectValidation{
 
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-
-										AdditionalPropertiesValidation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
+											AdditionalPropertiesAllowed: true,
 										},
 									},
-								},
-							}, {
-								Name: "rootFlag",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/rootFlag",
+								}, {
+									Name: "sharedName",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/sharedName",
 
-									KindValidation: validation.KindValidation{
-										Type: "boolean",
-									},
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
 
-									ObjectValidation: validation.ObjectValidation{
+										ObjectValidation: validation.ObjectValidation{
 
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							}, {
-								Name: "sharedName",
-								Validation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/sharedName",
-
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
+											AdditionalPropertiesAllowed: true,
+										},
 									},
 								},
 							},
-						},
 
-						AdditionalPropertiesAllowed: true,
+							AdditionalPropertiesAllowed: true,
+						},
 					},
 				},
-			},
-		}, &validation.Validation{
-			SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2",
+			}, &validation.Validation{
+				SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2",
 
-			KindValidation: validation.KindValidation{
-				Type: "object",
-			},
+				KindValidation: validation.KindValidation{
+					Type: "object",
+				},
 
-			ObjectValidation: validation.ObjectValidation{
+				ObjectValidation: validation.ObjectValidation{
 
-				Required: []string{"count", "final", "finalCode", "finals", "metadata", "middleFlag", "nested", "nullableRequired", "rootFlag", "sharedName"},
+					Required: []string{"count", "final", "finalCode", "finals", "metadata", "middleFlag", "nested", "nullableRequired", "rootFlag", "sharedName"},
 
-				Properties: []validation.PropertyValidation{
-					{
-						Name: "count",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/count",
+					Properties: []validation.PropertyValidation{
+						{
+							Name: "count",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/count",
 
-							KindValidation: validation.KindValidation{
-								Type: "number",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "final",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressFinal",
-
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								Required: []string{"finalCode", "sharedName"},
-
-								Properties: []validation.PropertyValidation{
-									{
-										Name: "finalCode",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "nested",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-											KindValidation: validation.KindValidation{
-												Type:     "object",
-												Nullable: true,
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												Required: []string{"sameName"},
-
-												Properties: []validation.PropertyValidation{
-													{
-														Name: "leaf",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-															KindValidation: validation.KindValidation{
-																Type: "string",
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													}, {
-														Name: "sameName",
-														Validation: &validation.Validation{
-															SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-															KindValidation: validation.KindValidation{
-																Type:     "string",
-																Nullable: true,
-															},
-
-															ObjectValidation: validation.ObjectValidation{
-
-																AdditionalPropertiesAllowed: true,
-															},
-														},
-													},
-												},
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "optionalShared",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
-
-											KindValidation: validation.KindValidation{
-												Type:     "string",
-												Nullable: true,
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									}, {
-										Name: "sharedName",
-										Validation: &validation.Validation{
-											SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-											KindValidation: validation.KindValidation{
-												Type: "string",
-											},
-
-											ObjectValidation: validation.ObjectValidation{
-
-												AdditionalPropertiesAllowed: true,
-											},
-										},
-									},
+								KindValidation: validation.KindValidation{
+									Type: "number",
 								},
 
-								AdditionalPropertiesAllowed: true,
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
 							},
-						},
-					}, {
-						Name: "finalCode",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/finalCode",
+						}, {
+							Name: "final",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressFinal",
 
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
+								KindValidation: validation.KindValidation{
+									Type: "object",
+								},
 
-							ObjectValidation: validation.ObjectValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "finals",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/finals",
+									Required: []string{"finalCode", "sharedName"},
 
-							KindValidation: validation.KindValidation{
-								Type: "array",
-							},
+									Properties: []validation.PropertyValidation{
+										{
+											Name: "finalCode",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
 
-							ArrayValidation: validation.ArrayValidation{
-
-								Items: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressFinal",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"finalCode", "sharedName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "finalCode",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
+												KindValidation: validation.KindValidation{
+													Type: "string",
 												},
-											}, {
-												Name: "nested",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-													KindValidation: validation.KindValidation{
-														Type:     "object",
-														Nullable: true,
-													},
+												ObjectValidation: validation.ObjectValidation{
 
-													ObjectValidation: validation.ObjectValidation{
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "nested",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
-														Required: []string{"sameName"},
+												KindValidation: validation.KindValidation{
+													Type:     "object",
+													Nullable: true,
+												},
 
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "leaf",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+												ObjectValidation: validation.ObjectValidation{
 
-																	KindValidation: validation.KindValidation{
-																		Type: "string",
-																	},
+													Required: []string{"sameName"},
 
-																	ObjectValidation: validation.ObjectValidation{
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "leaf",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressMetadataValue",
 
-																		AdditionalPropertiesAllowed: true,
-																	},
+																KindValidation: validation.KindValidation{
+																	Type: "string",
 																},
-															}, {
-																Name: "sameName",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-																	KindValidation: validation.KindValidation{
-																		Type:     "string",
-																		Nullable: true,
-																	},
+																ObjectValidation: validation.ObjectValidation{
 
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
+																	AdditionalPropertiesAllowed: true,
 																},
 															},
-														},
+														}, {
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
 
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "optionalShared",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
+																},
 
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
+																ObjectValidation: validation.ObjectValidation{
 
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sharedName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "metadata",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/metadata",
-
-							KindValidation: validation.KindValidation{
-								Type: "object",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-
-								AdditionalPropertiesValidation: &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-									KindValidation: validation.KindValidation{
-										Type: "string",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										AdditionalPropertiesAllowed: true,
-									},
-								},
-							},
-						},
-					}, {
-						Name: "middleFlag",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/middleFlag",
-
-							KindValidation: validation.KindValidation{
-								Type: "boolean",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "nested",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/components/schemas/RefStressNestedCombined",
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
-							},
-
-							AllOfValidations: []*validation.Validation{
-								&validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedBase",
-
-									KindValidation: validation.KindValidation{
-										Type:     "object",
-										Nullable: true,
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sameName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "leaf",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sameName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
-
-													KindValidation: validation.KindValidation{
-														Type:     "string",
-														Nullable: true,
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								}, &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sameName"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "leaf",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressMetadataValue",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sameName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											},
-										},
-
-										AdditionalPropertiesAllowed: true,
-									},
-								}, &validation.Validation{
-									SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
-
-									KindValidation: validation.KindValidation{
-										Type: "object",
-									},
-
-									ObjectValidation: validation.ObjectValidation{
-
-										Required: []string{"sameName", "sealed"},
-
-										Properties: []validation.PropertyValidation{
-											{
-												Name: "sameName",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
-
-													KindValidation: validation.KindValidation{
-														Type: "string",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														AdditionalPropertiesAllowed: true,
-													},
-												},
-											}, {
-												Name: "sealed",
-												Validation: &validation.Validation{
-													SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
-
-													KindValidation: validation.KindValidation{
-														Type: "object",
-													},
-
-													ObjectValidation: validation.ObjectValidation{
-
-														Required: []string{"locked"},
-
-														Properties: []validation.PropertyValidation{
-															{
-																Name: "locked",
-																Validation: &validation.Validation{
-																	SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
-
-																	KindValidation: validation.KindValidation{
-																		Type: "boolean",
-																	},
-
-																	ObjectValidation: validation.ObjectValidation{
-
-																		AdditionalPropertiesAllowed: true,
-																	},
+																	AdditionalPropertiesAllowed: true,
 																},
 															},
 														},
 													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "optionalShared",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+												KindValidation: validation.KindValidation{
+													Type:     "string",
+													Nullable: true,
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "sharedName",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+												KindValidation: validation.KindValidation{
+													Type: "string",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
 												},
 											},
 										},
+									},
 
-										AdditionalPropertiesAllowed: true,
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "finalCode",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/finalCode",
+
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "finals",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/finals",
+
+								KindValidation: validation.KindValidation{
+									Type: "array",
+								},
+
+								ArrayValidation: validation.ArrayValidation{
+
+									Items: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"finalCode", "sharedName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "finalCode",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "nested",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+														KindValidation: validation.KindValidation{
+															Type:     "object",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"sameName"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																		KindValidation: validation.KindValidation{
+																			Type:     "string",
+																			Nullable: true,
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
+															},
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "optionalShared",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sharedName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "metadata",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/metadata",
+
+								KindValidation: validation.KindValidation{
+									Type: "object",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+
+									AdditionalPropertiesValidation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
 									},
 								},
 							},
-						},
-					}, {
-						Name: "nullableRequired",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/nullableRequired",
+						}, {
+							Name: "middleFlag",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/middleFlag",
 
-							KindValidation: validation.KindValidation{
-								Type:     "string",
-								Nullable: true,
+								KindValidation: validation.KindValidation{
+									Type: "boolean",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
 							},
+						}, {
+							Name: "nested",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
-							ObjectValidation: validation.ObjectValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-								AdditionalPropertiesAllowed: true,
+									AdditionalPropertiesAllowed: true,
+								},
+
+								AllOfValidations: []*validation.Validation{
+									&validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+										KindValidation: validation.KindValidation{
+											Type:     "object",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sameName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "leaf",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sameName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									}, &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sameName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "leaf",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sameName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									}, &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sameName", "sealed"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "sameName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sealed",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
+
+														KindValidation: validation.KindValidation{
+															Type: "object",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"locked"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "locked",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "boolean",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
+															},
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
 							},
-						},
-					}, {
-						Name: "optionalCode",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/optionalCode",
+						}, {
+							Name: "nullableRequired",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/nullableRequired",
 
-							KindValidation: validation.KindValidation{
-								Type: "string",
+								KindValidation: validation.KindValidation{
+									Type:     "string",
+									Nullable: true,
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
 							},
+						}, {
+							Name: "optionalCode",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/optionalCode",
 
-							ObjectValidation: validation.ObjectValidation{
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
 
-								AdditionalPropertiesAllowed: true,
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
 							},
-						},
-					}, {
-						Name: "optionalShared",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/optionalShared",
+						}, {
+							Name: "optionalShared",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/optionalShared",
 
-							KindValidation: validation.KindValidation{
-								Type:     "string",
-								Nullable: true,
+								KindValidation: validation.KindValidation{
+									Type:     "string",
+									Nullable: true,
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
 							},
+						}, {
+							Name: "rootFlag",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/rootFlag",
 
-							ObjectValidation: validation.ObjectValidation{
+								KindValidation: validation.KindValidation{
+									Type: "boolean",
+								},
 
-								AdditionalPropertiesAllowed: true,
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
 							},
-						},
-					}, {
-						Name: "rootFlag",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/rootFlag",
+						}, {
+							Name: "sharedName",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2/properties/sharedName",
 
-							KindValidation: validation.KindValidation{
-								Type: "boolean",
-							},
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
 
-							ObjectValidation: validation.ObjectValidation{
+								ObjectValidation: validation.ObjectValidation{
 
-								AdditionalPropertiesAllowed: true,
-							},
-						},
-					}, {
-						Name: "sharedName",
-						Validation: &validation.Validation{
-							SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/sharedName",
-
-							KindValidation: validation.KindValidation{
-								Type: "string",
-							},
-
-							ObjectValidation: validation.ObjectValidation{
-
-								AdditionalPropertiesAllowed: true,
+									AdditionalPropertiesAllowed: true,
+								},
 							},
 						},
 					},
@@ -4667,37 +2728,2000 @@ var refStressObjectPut = &validation.Validation{
 	},
 }
 
-var stringNoFormatNotNullable = &validation.Validation{
-	SchemaPointer: "#/paths/~1string-no-format-not-nullable/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
+var refStressObjectPut = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
 
-	KindValidation: validation.KindValidation{
-		Type: "string",
-	},
+		ObjectValidation: validation.ObjectValidation{
 
-	ObjectValidation: validation.ObjectValidation{
+			AdditionalPropertiesAllowed: true,
+		},
 
-		AdditionalPropertiesAllowed: true,
+		AllOfValidations: []*validation.Validation{
+			&validation.Validation{
+				SchemaPointer: "#/components/schemas/RefStressFirstAllOf",
+
+				ObjectValidation: validation.ObjectValidation{
+
+					AdditionalPropertiesAllowed: true,
+				},
+
+				AllOfValidations: []*validation.Validation{
+					&validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressFinal",
+
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							Required: []string{"finalCode", "sharedName"},
+
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "finalCode",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "nested",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+										KindValidation: validation.KindValidation{
+											Type:     "object",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sameName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "leaf",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sameName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "optionalShared",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+										KindValidation: validation.KindValidation{
+											Type:     "string",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "sharedName",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
+							},
+
+							AdditionalPropertiesAllowed: true,
+						},
+					}, &validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressViaMiddle",
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+
+						AllOfValidations: []*validation.Validation{
+							&validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressMiddleAllOf",
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+
+								AllOfValidations: []*validation.Validation{
+									&validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"finalCode", "sharedName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "finalCode",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "nested",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+														KindValidation: validation.KindValidation{
+															Type:     "object",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"sameName"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																		KindValidation: validation.KindValidation{
+																			Type:     "string",
+																			Nullable: true,
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
+															},
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "optionalShared",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sharedName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									}, &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1",
+
+										KindValidation: validation.KindValidation{
+											Type:     "object",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sharedName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "optionalCode",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1/properties/optionalCode",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sharedName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1/properties/sharedName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
+							}, &validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1",
+
+								KindValidation: validation.KindValidation{
+									Type: "object",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									Required: []string{"middleFlag", "sharedName"},
+
+									Properties: []validation.PropertyValidation{
+										{
+											Name: "middleFlag",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1/properties/middleFlag",
+
+												KindValidation: validation.KindValidation{
+													Type: "boolean",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "nested",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedCombined",
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+
+												AllOfValidations: []*validation.Validation{
+													&validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+														KindValidation: validation.KindValidation{
+															Type:     "object",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"sameName"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																		KindValidation: validation.KindValidation{
+																			Type:     "string",
+																			Nullable: true,
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
+															},
+
+															AdditionalPropertiesAllowed: true,
+														},
+													}, &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
+
+														KindValidation: validation.KindValidation{
+															Type: "object",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"sameName"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
+															},
+
+															AdditionalPropertiesAllowed: true,
+														},
+													}, &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
+
+														KindValidation: validation.KindValidation{
+															Type: "object",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"sameName", "sealed"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sealed",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "object",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			Required: []string{"locked"},
+
+																			Properties: []validation.PropertyValidation{
+																				{
+																					Name: "locked",
+																					Validation: &validation.Validation{
+																						SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
+
+																						KindValidation: validation.KindValidation{
+																							Type: "boolean",
+																						},
+
+																						ObjectValidation: validation.ObjectValidation{
+
+																							AdditionalPropertiesAllowed: true,
+																						},
+																					},
+																				},
+																			},
+																		},
+																	},
+																},
+															},
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+										}, {
+											Name: "sharedName",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1/properties/sharedName",
+
+												KindValidation: validation.KindValidation{
+													Type:     "string",
+													Nullable: true,
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										},
+									},
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						},
+					}, &validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2",
+
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							Required: []string{"final", "nested", "nullableRequired"},
+
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "final",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"finalCode", "sharedName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "finalCode",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "nested",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+														KindValidation: validation.KindValidation{
+															Type:     "object",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"sameName"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																		KindValidation: validation.KindValidation{
+																			Type:     "string",
+																			Nullable: true,
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
+															},
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "optionalShared",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sharedName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "nested",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedCombined",
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+
+										AllOfValidations: []*validation.Validation{
+											&validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+												KindValidation: validation.KindValidation{
+													Type:     "object",
+													Nullable: true,
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"sameName"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "leaf",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														},
+													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											}, &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
+
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"sameName"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "leaf",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														},
+													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											}, &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
+
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"sameName", "sealed"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "sealed",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
+
+																KindValidation: validation.KindValidation{
+																	Type: "object",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	Required: []string{"locked"},
+
+																	Properties: []validation.PropertyValidation{
+																		{
+																			Name: "locked",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
+
+																				KindValidation: validation.KindValidation{
+																					Type: "boolean",
+																				},
+
+																				ObjectValidation: validation.ObjectValidation{
+
+																					AdditionalPropertiesAllowed: true,
+																				},
+																			},
+																		},
+																	},
+																},
+															},
+														},
+													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										},
+									},
+								}, {
+									Name: "nullableRequired",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/nullableRequired",
+
+										KindValidation: validation.KindValidation{
+											Type:     "string",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "optionalShared",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/optionalShared",
+
+										KindValidation: validation.KindValidation{
+											Type:     "string",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "sharedName",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2/properties/sharedName",
+
+										KindValidation: validation.KindValidation{
+											Type:     "string",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
+							},
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				},
+			}, &validation.Validation{
+				SchemaPointer: "#/components/schemas/RefStressSecondAllOf",
+
+				ObjectValidation: validation.ObjectValidation{
+
+					AdditionalPropertiesAllowed: true,
+				},
+
+				AllOfValidations: []*validation.Validation{
+					&validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressOtherMiddle",
+
+						ObjectValidation: validation.ObjectValidation{
+
+							AdditionalPropertiesAllowed: true,
+						},
+
+						AllOfValidations: []*validation.Validation{
+							&validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressFinal",
+
+								KindValidation: validation.KindValidation{
+									Type: "object",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									Required: []string{"finalCode", "sharedName"},
+
+									Properties: []validation.PropertyValidation{
+										{
+											Name: "finalCode",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+												KindValidation: validation.KindValidation{
+													Type: "string",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "nested",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+												KindValidation: validation.KindValidation{
+													Type:     "object",
+													Nullable: true,
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"sameName"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "leaf",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														},
+													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "optionalShared",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+												KindValidation: validation.KindValidation{
+													Type:     "string",
+													Nullable: true,
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "sharedName",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+												KindValidation: validation.KindValidation{
+													Type: "string",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										},
+									},
+
+									AdditionalPropertiesAllowed: true,
+								},
+							}, &validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1",
+
+								KindValidation: validation.KindValidation{
+									Type: "object",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									Required: []string{"metadata", "rootFlag"},
+
+									Properties: []validation.PropertyValidation{
+										{
+											Name: "final",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal",
+
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"finalCode", "sharedName"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "finalCode",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "nested",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "object",
+																	Nullable: true,
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	Required: []string{"sameName"},
+
+																	Properties: []validation.PropertyValidation{
+																		{
+																			Name: "leaf",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																				KindValidation: validation.KindValidation{
+																					Type: "string",
+																				},
+
+																				ObjectValidation: validation.ObjectValidation{
+
+																					AdditionalPropertiesAllowed: true,
+																				},
+																			},
+																		}, {
+																			Name: "sameName",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																				KindValidation: validation.KindValidation{
+																					Type:     "string",
+																					Nullable: true,
+																				},
+
+																				ObjectValidation: validation.ObjectValidation{
+
+																					AdditionalPropertiesAllowed: true,
+																				},
+																			},
+																		},
+																	},
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "optionalShared",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "sharedName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														},
+													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "metadata",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1/properties/metadata",
+
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+
+													AdditionalPropertiesValidation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+										}, {
+											Name: "rootFlag",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1/properties/rootFlag",
+
+												KindValidation: validation.KindValidation{
+													Type: "boolean",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										},
+									},
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						},
+					}, &validation.Validation{
+						SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1",
+
+						KindValidation: validation.KindValidation{
+							Type: "object",
+						},
+
+						ObjectValidation: validation.ObjectValidation{
+
+							Required: []string{"count", "finals", "metadata", "rootFlag"},
+
+							Properties: []validation.PropertyValidation{
+								{
+									Name: "count",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/count",
+
+										KindValidation: validation.KindValidation{
+											Type: "number",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "finals",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/finals",
+
+										KindValidation: validation.KindValidation{
+											Type: "array",
+										},
+
+										ArrayValidation: validation.ArrayValidation{
+
+											Items: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal",
+
+												KindValidation: validation.KindValidation{
+													Type: "object",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"finalCode", "sharedName"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "finalCode",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "nested",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "object",
+																	Nullable: true,
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	Required: []string{"sameName"},
+
+																	Properties: []validation.PropertyValidation{
+																		{
+																			Name: "leaf",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																				KindValidation: validation.KindValidation{
+																					Type: "string",
+																				},
+
+																				ObjectValidation: validation.ObjectValidation{
+
+																					AdditionalPropertiesAllowed: true,
+																				},
+																			},
+																		}, {
+																			Name: "sameName",
+																			Validation: &validation.Validation{
+																				SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																				KindValidation: validation.KindValidation{
+																					Type:     "string",
+																					Nullable: true,
+																				},
+
+																				ObjectValidation: validation.ObjectValidation{
+
+																					AdditionalPropertiesAllowed: true,
+																				},
+																			},
+																		},
+																	},
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "optionalShared",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "sharedName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														},
+													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "metadata",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/metadata",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+
+											AdditionalPropertiesValidation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+												KindValidation: validation.KindValidation{
+													Type: "string",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										},
+									},
+								}, {
+									Name: "rootFlag",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/rootFlag",
+
+										KindValidation: validation.KindValidation{
+											Type: "boolean",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								}, {
+									Name: "sharedName",
+									Validation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1/properties/sharedName",
+
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
+							},
+
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				},
+			}, &validation.Validation{
+				SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2",
+
+				KindValidation: validation.KindValidation{
+					Type: "object",
+				},
+
+				ObjectValidation: validation.ObjectValidation{
+
+					Required: []string{"count", "final", "finalCode", "finals", "metadata", "middleFlag", "nested", "nullableRequired", "rootFlag", "sharedName"},
+
+					Properties: []validation.PropertyValidation{
+						{
+							Name: "count",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/count",
+
+								KindValidation: validation.KindValidation{
+									Type: "number",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "final",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressFinal",
+
+								KindValidation: validation.KindValidation{
+									Type: "object",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									Required: []string{"finalCode", "sharedName"},
+
+									Properties: []validation.PropertyValidation{
+										{
+											Name: "finalCode",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+												KindValidation: validation.KindValidation{
+													Type: "string",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "nested",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+												KindValidation: validation.KindValidation{
+													Type:     "object",
+													Nullable: true,
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													Required: []string{"sameName"},
+
+													Properties: []validation.PropertyValidation{
+														{
+															Name: "leaf",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																KindValidation: validation.KindValidation{
+																	Type: "string",
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														}, {
+															Name: "sameName",
+															Validation: &validation.Validation{
+																SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																KindValidation: validation.KindValidation{
+																	Type:     "string",
+																	Nullable: true,
+																},
+
+																ObjectValidation: validation.ObjectValidation{
+
+																	AdditionalPropertiesAllowed: true,
+																},
+															},
+														},
+													},
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "optionalShared",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+												KindValidation: validation.KindValidation{
+													Type:     "string",
+													Nullable: true,
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										}, {
+											Name: "sharedName",
+											Validation: &validation.Validation{
+												SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+												KindValidation: validation.KindValidation{
+													Type: "string",
+												},
+
+												ObjectValidation: validation.ObjectValidation{
+
+													AdditionalPropertiesAllowed: true,
+												},
+											},
+										},
+									},
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "finalCode",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/finalCode",
+
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "finals",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/finals",
+
+								KindValidation: validation.KindValidation{
+									Type: "array",
+								},
+
+								ArrayValidation: validation.ArrayValidation{
+
+									Items: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressFinal",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"finalCode", "sharedName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "finalCode",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/finalCode",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "nested",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+														KindValidation: validation.KindValidation{
+															Type:     "object",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"sameName"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "leaf",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "string",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																}, {
+																	Name: "sameName",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+																		KindValidation: validation.KindValidation{
+																			Type:     "string",
+																			Nullable: true,
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
+															},
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "optionalShared",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/optionalShared",
+
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sharedName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressFinal/properties/sharedName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "metadata",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/metadata",
+
+								KindValidation: validation.KindValidation{
+									Type: "object",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+
+									AdditionalPropertiesValidation: &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+										KindValidation: validation.KindValidation{
+											Type: "string",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
+							},
+						}, {
+							Name: "middleFlag",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/middleFlag",
+
+								KindValidation: validation.KindValidation{
+									Type: "boolean",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "nested",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/components/schemas/RefStressNestedCombined",
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+
+								AllOfValidations: []*validation.Validation{
+									&validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedBase",
+
+										KindValidation: validation.KindValidation{
+											Type:     "object",
+											Nullable: true,
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sameName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "leaf",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sameName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedBase/properties/sameName",
+
+														KindValidation: validation.KindValidation{
+															Type:     "string",
+															Nullable: true,
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									}, &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sameName"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "leaf",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressMetadataValue",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sameName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedOverlay/properties/sameName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									}, &validation.Validation{
+										SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
+
+										KindValidation: validation.KindValidation{
+											Type: "object",
+										},
+
+										ObjectValidation: validation.ObjectValidation{
+
+											Required: []string{"sameName", "sealed"},
+
+											Properties: []validation.PropertyValidation{
+												{
+													Name: "sameName",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sameName",
+
+														KindValidation: validation.KindValidation{
+															Type: "string",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															AdditionalPropertiesAllowed: true,
+														},
+													},
+												}, {
+													Name: "sealed",
+													Validation: &validation.Validation{
+														SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed",
+
+														KindValidation: validation.KindValidation{
+															Type: "object",
+														},
+
+														ObjectValidation: validation.ObjectValidation{
+
+															Required: []string{"locked"},
+
+															Properties: []validation.PropertyValidation{
+																{
+																	Name: "locked",
+																	Validation: &validation.Validation{
+																		SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2/properties/sealed/properties/locked",
+
+																		KindValidation: validation.KindValidation{
+																			Type: "boolean",
+																		},
+
+																		ObjectValidation: validation.ObjectValidation{
+
+																			AdditionalPropertiesAllowed: true,
+																		},
+																	},
+																},
+															},
+														},
+													},
+												},
+											},
+
+											AdditionalPropertiesAllowed: true,
+										},
+									},
+								},
+							},
+						}, {
+							Name: "nullableRequired",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/nullableRequired",
+
+								KindValidation: validation.KindValidation{
+									Type:     "string",
+									Nullable: true,
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "optionalCode",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/optionalCode",
+
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "optionalShared",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/optionalShared",
+
+								KindValidation: validation.KindValidation{
+									Type:     "string",
+									Nullable: true,
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "rootFlag",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/rootFlag",
+
+								KindValidation: validation.KindValidation{
+									Type: "boolean",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						}, {
+							Name: "sharedName",
+							Validation: &validation.Validation{
+								SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2/properties/sharedName",
+
+								KindValidation: validation.KindValidation{
+									Type: "string",
+								},
+
+								ObjectValidation: validation.ObjectValidation{
+
+									AdditionalPropertiesAllowed: true,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	},
 }
 
-var stringNoFormatNullable = &validation.Validation{
-	SchemaPointer: "#/paths/~1string-no-format-nullable/post/requestBody/content/application~1json/schema",
-	BodyRequired:  true,
+var stringNoFormatNotNullable = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1string-no-format-not-nullable/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
 
-	KindValidation: validation.KindValidation{
-		Type:     "string",
-		Nullable: true,
-	},
+		KindValidation: validation.KindValidation{
+			Type: "string",
+		},
 
-	ObjectValidation: validation.ObjectValidation{
+		ObjectValidation: validation.ObjectValidation{
 
-		AdditionalPropertiesAllowed: true,
+			AdditionalPropertiesAllowed: true,
+		},
 	},
 }
 
-// validations contains every compiled request-body validation by exact operation ID.
-var validations = map[string]*validation.Validation{
+var stringNoFormatNullable = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1string-no-format-nullable/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
+
+		KindValidation: validation.KindValidation{
+			Type:     "string",
+			Nullable: true,
+		},
+
+		ObjectValidation: validation.ObjectValidation{
+
+			AdditionalPropertiesAllowed: true,
+		},
+	},
+}
+
+// RequestValidations contains every compiled request validation by exact operation ID.
+var RequestValidations = map[string]validation.RequestValidation{
 
 	"allOfObject": allOfObject,
 

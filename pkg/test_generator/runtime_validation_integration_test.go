@@ -18,19 +18,19 @@ type runtimeValidationAdapter struct {
 
 // newRuntimeValidationRequestBodyValidator parses the document once per fixture.
 func newRuntimeValidationRequestBodyValidator(spec []byte) (validatorAdapter, error) {
-	parsed, _, err := validation.Parse(spec)
+	parsed, err := validation.Parse(spec)
 	if err != nil {
 		return validatorAdapter{}, err
 	}
 
-	requestValidation, ok := parsed["checkThing"]
-	if !ok {
+	request, ok := parsed["checkThing"]
+	if !ok || request.Body == nil {
 		return validatorAdapter{}, errors.New(`operationId "checkThing" is missing`)
 	}
 
 	return validatorAdapter{
 		name:      runtimeValidationName,
-		validator: runtimeValidationAdapter{validation: requestValidation},
+		validator: runtimeValidationAdapter{validation: request.Body},
 	}, nil
 }
 

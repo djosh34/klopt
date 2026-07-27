@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/names"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
 
@@ -46,7 +47,7 @@ paths:
 			spec: []byte(`openapi: 3.0.3
 paths:
   /bodyless:
-    get: {}
+    get: {operationId: bodyless}
 `),
 			patternOption: validation.PatternOptions(),
 		},
@@ -253,13 +254,13 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 	require.Equal(t, 3, strings.Count(generatedSource, "\nvar "))
 	require.Less(
 		t,
-		strings.Index(generatedSource, "var alphaRequest"),
-		strings.Index(generatedSource, "var zetaRequest"),
+		strings.Index(generatedSource, "var alphaRequest = validation.RequestValidation{"),
+		strings.Index(generatedSource, "var zetaRequest = validation.RequestValidation{"),
 	)
 	require.Less(
 		t,
-		strings.Index(generatedSource, "var zetaRequest"),
-		strings.Index(generatedSource, "var validations"),
+		strings.Index(generatedSource, "var zetaRequest = validation.RequestValidation{"),
+		strings.Index(generatedSource, "var RequestValidations"),
 	)
 
 	probe := []byte(`package generatefixture
@@ -283,7 +284,7 @@ func TestGeneratedValidation(t *testing.T) {
 			"{\"array\":[2],\"enum\":" + enumValue +
 				",\"number\":1.5,\"text\":\"a@b.co\",\"extra\":\"ok\"}",
 		)
-		if errs := validations["alphaRequest"].Validate(body); len(errs) != 0 {
+		if errs := RequestValidations["alphaRequest"].Body.Validate(body); len(errs) != 0 {
 			t.Fatalf("valid enum %s: %v", enumValue, errs)
 		}
 	}
@@ -291,13 +292,13 @@ func TestGeneratedValidation(t *testing.T) {
 	invalid := []byte(
 		"{\"array\":[2,2],\"enum\":\"missing\",\"number\":1,\"text\":\"bad\",\"extra\":1}",
 	)
-	if errs := validations["alphaRequest"].Validate(invalid); len(errs) == 0 {
+	if errs := RequestValidations["alphaRequest"].Body.Validate(invalid); len(errs) == 0 {
 		t.Fatal("invalid body passed")
 	}
-	if errs := validations["alphaRequest"].Validate([]byte("null")); len(errs) != 0 {
+	if errs := RequestValidations["alphaRequest"].Body.Validate([]byte("null")); len(errs) != 0 {
 		t.Fatalf("nullable body: %v", errs)
 	}
-	if errs := validations["zetaRequest"].Validate([]byte("true")); len(errs) != 0 {
+	if errs := RequestValidations["zetaRequest"].Body.Validate([]byte("true")); len(errs) != 0 {
 		t.Fatalf("zeta body: %v", errs)
 	}
 }
@@ -346,7 +347,7 @@ import (
 )
 
 func TestGeneratedQueryDecoder(t *testing.T) {
-	got, err := queryDecoders["listItems"].Decode(&url.URL{RawQuery: "tags=go&tags=api"})
+	got, err := RequestValidations["listItems"].Query.Decode(&url.URL{RawQuery: "tags=go&tags=api"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,6 +360,103 @@ func TestGeneratedQueryDecoder(t *testing.T) {
 
 	command := exec.CommandContext(
 		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "TestGeneratedQueryDecoder",
+	)
+	command.Dir = repo
+	result, err := command.CombinedOutput()
+	require.NoError(t, err, string(result))
+}
+
+// TestGenerateWritesAtomicRequestValidation verifies generated Body, Query, and Path integration.
+func TestGenerateWritesAtomicRequestValidation(t *testing.T) {
+	t.Parallel()
+
+	repo := repoRoot(t)
+	output, err := os.MkdirTemp(filepath.Join(repo, "pkg"), "generate-request-fixture-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(output)) })
+
+	spec := []byte(`openapi: 3.0.3
+paths:
+  /items/{id}:
+    post:
+      operationId: get-item/by_id
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: q, in: query, schema: {type: string}}
+      requestBody:
+        content:
+          application/json:
+            schema: {type: boolean}
+`)
+	require.NoError(t, Generate(output, "generaterequestfixture", spec, validation.PatternOptions()))
+
+	generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
+	require.NoError(t, err)
+
+	generatedSource := string(generated)
+	require.Contains(t, generatedSource, "var get_0item_1by__id = validation.RequestValidation{")
+	require.Contains(t, generatedSource, "PathDecoderDefinition")
+	require.Contains(t, generatedSource, `PathTemplate: "/items/{id}"`)
+	require.Contains(t, generatedSource, "NewPathDecoderFromGenerated")
+	require.Contains(t, generatedSource, "var RequestValidations = map[string]validation.RequestValidation{")
+	require.NotContains(t, generatedSource, "var validations")
+	require.NotContains(t, generatedSource, "var queryDecoders")
+	require.NotContains(t, generatedSource, "validation.Parse")
+
+	probe := []byte(`package generaterequestfixture
+
+import (
+	"fmt"
+	"net/url"
+	"testing"
+
+	"github.com/djosh34/klopt/pkg/validation"
+)
+
+func TestGeneratedRequestValidation(t *testing.T) {
+	request, ok := RequestValidations["get-item/by_id"]
+	if !ok || request.Body == nil || request.Query == nil || request.Path == nil {
+		t.Fatalf("incomplete request validation: %#v", request)
+	}
+	if errs := request.Body.Validate([]byte("true")); len(errs) != 0 {
+		t.Fatalf("body: %v", errs)
+	}
+	query, err := request.Query.Decode(&url.URL{RawQuery: "q=value"})
+	if err != nil || string(query) != "{\"q\":\"value\"}" {
+		t.Fatalf("query %s: %v", query, err)
+	}
+	path, err := request.Path.DecodePathParams(&url.URL{Path: "/items/42"})
+	if err != nil || string(path) != "{\"id\":42}" {
+		t.Fatalf("path %s: %v", path, err)
+	}
+
+	runtimeRequests, err := validation.Parse(openAPI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimePath, err := runtimeRequests["get-item/by_id"].Path.DecodePathParams(&url.URL{Path: "/items/42"})
+	if err != nil || string(runtimePath) != string(path) {
+		t.Fatalf("runtime path %s generated path %s: %v", runtimePath, path, err)
+	}
+	for _, input := range []*url.URL{{Path: "/items/not-an-integer"}, {Path: "/wrong/42"}} {
+		generatedJSON, generatedErr := request.Path.DecodePathParams(input)
+		runtimeJSON, runtimeErr := runtimeRequests["get-item/by_id"].Path.DecodePathParams(input)
+		if generatedJSON != nil || runtimeJSON != nil || fmt.Sprint(generatedErr) != fmt.Sprint(runtimeErr) {
+			t.Fatalf(
+				"path error mismatch: generated (%s, %v), runtime (%s, %v)",
+				generatedJSON,
+				generatedErr,
+				runtimeJSON,
+				runtimeErr,
+			)
+		}
+	}
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(output, "probe_test.go"), probe, 0o644))
+
+	command := exec.CommandContext(
+		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "^TestGeneratedRequestValidation$",
 	)
 	command.Dir = repo
 	result, err := command.CombinedOutput()
@@ -534,7 +632,7 @@ import (
 )
 
 func TestGeneratedRuntimeParity(t *testing.T) {
-	_, runtimeDecoders, err := validation.Parse(openAPI)
+	runtimeRequests, err := validation.Parse(openAPI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -605,8 +703,8 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.operationID, func(t *testing.T) {
 			input := &url.URL{RawQuery: test.rawQuery}
-			generated, generatedErr := queryDecoders[test.operationID].Decode(input)
-			runtime, runtimeErr := runtimeDecoders[test.operationID].Decode(input)
+			generated, generatedErr := RequestValidations[test.operationID].Query.Decode(input)
+			runtime, runtimeErr := runtimeRequests[test.operationID].Query.Decode(input)
 			if fmt.Sprint(generatedErr) != fmt.Sprint(runtimeErr) {
 				t.Fatalf("error mismatch: generated %v runtime %v", generatedErr, runtimeErr)
 			}
@@ -683,36 +781,21 @@ paths:
 	require.NoError(t, err, string(result))
 }
 
-// TestGenerateRejectsUnsafeOperationIdentifiers checks generated package-scope name conflicts.
-func TestGenerateRejectsUnsafeOperationIdentifiers(t *testing.T) {
+// TestGenerateUsesSharedOperationNames verifies valid IDs are converted and malformed IDs preserve the sentinel.
+func TestGenerateUsesSharedOperationNames(t *testing.T) {
 	t.Parallel()
 
-	for _, operationID := range []string{
-		"validations",
-		"init",
-		"_",
-		"validation",
-		"openAPI",
-		"queryDecoders",
-		"mustQueryDecoder",
-		"TestValidations",
-		"request/path",
-		"type",
-		"json",
-		"patternvalidator",
-		"jsonvalue",
-		"errors",
-		"testing",
-		"testgenerator",
-		"string",
-		"byte",
-		"error",
-		"true",
+	for operationID, backingName := range map[string]string{
+		"init":         "_xinit",
+		"validation":   "_xvalidation",
+		"request/path": "request_1path",
+		"get-pet":      "get_0pet",
+		"get_pet":      "get__pet",
+		"errors":       "errors",
 	} {
 		t.Run(operationID, func(t *testing.T) {
 			t.Parallel()
 
-			output := filepath.Join(t.TempDir(), "output")
 			spec := fmt.Appendf(nil, `
 openapi: 3.0.3
 info: {title: generated, version: "1"}
@@ -726,13 +809,28 @@ paths:
             schema: {type: string}
 `, operationID)
 			files, err := GenerateInMemory("example", spec, validation.PatternOptions())
+			require.NoError(t, err)
+			require.Contains(t, string(files["validate.go"]), "var "+backingName+" = validation.RequestValidation{")
+			require.Contains(t, string(files["validate.go"]), fmt.Sprintf("%q: %s", operationID, backingName))
+		})
+	}
+
+	for _, operationID := range []string{"not valid", "1request"} {
+		t.Run(operationID, func(t *testing.T) {
+			t.Parallel()
+
+			output := filepath.Join(t.TempDir(), "output")
+			spec := fmt.Appendf(nil, `openapi: 3.0.3
+paths:
+  /request:
+    post: {operationId: %q}
+`, operationID)
+			files, err := GenerateInMemory("example", spec, validation.PatternOptions())
 			require.Nil(t, files)
-			require.ErrorIs(t, err, ErrUnsafeOperationID)
-			require.ErrorContains(t, err, fmt.Sprintf("operation ID %q", operationID))
+			require.ErrorIs(t, err, names.ErrInvalidOperationID)
 
 			err = Generate(output, "example", spec, validation.PatternOptions())
-			require.ErrorIs(t, err, ErrUnsafeOperationID)
-			require.ErrorContains(t, err, fmt.Sprintf("operation ID %q", operationID))
+			require.ErrorIs(t, err, names.ErrInvalidOperationID)
 
 			_, statErr := os.Stat(output)
 			require.ErrorIs(t, statErr, os.ErrNotExist)
@@ -797,10 +895,10 @@ paths:
 
 			spec := specForPattern(pattern)
 			composite := validation.PatternOptions(test.options...)
-			runtime, _, err := validation.Parse(spec, composite)
+			runtime, err := validation.Parse(spec, composite)
 			require.NoError(t, err)
 
-			runtimePattern := runtime["patternRequest"].StringValidation.CompiledPattern
+			runtimePattern := runtime["patternRequest"].Body.StringValidation.CompiledPattern
 			require.Equal(t, test.reject, runtimePattern.RejectsNonASCII())
 			require.Equal(t, test.useRE2, runtimePattern.UsesRE2())
 
@@ -829,14 +927,14 @@ paths:
 import "testing"
 
 func TestPatternSettings(t *testing.T) {
-	compiled := patternRequest.StringValidation.CompiledPattern
+	compiled := patternRequest.Body.StringValidation.CompiledPattern
 	if compiled.RejectsNonASCII() != %t {
 		t.Fatalf("RejectsNonASCII = %%t", compiled.RejectsNonASCII())
 	}
 	if compiled.UsesRE2() != %t {
 		t.Fatalf("UsesRE2 = %%t", compiled.UsesRE2())
 	}
-	accepted := len(patternRequest.Validate([]byte(%q))) == 0
+	accepted := len(patternRequest.Body.Validate([]byte(%q))) == 0
 	if accepted != %t {
 		t.Fatalf("non-ASCII acceptance = %%t", accepted)
 	}
@@ -901,9 +999,10 @@ openapi: 3.0.3
 info: {title: generated, version: "1"}
 paths:
   /bodyless:
-    get: {}
+    get: {operationId: bodyless}
   /plain:
     post:
+      operationId: plain
       requestBody:
         content:
           text/plain:

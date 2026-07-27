@@ -2485,7 +2485,15 @@ func TestParseOpenAPI(t *testing.T) {
 		expected[operationID] = test.expectedValidation
 	}
 
-	actual, _, err := validation.Parse(spec)
+	requests, err := validation.Parse(spec)
 	require.NoError(t, err)
+
+	actual := make(map[string]*validation.Validation, len(requests))
+	for operationID, request := range requests {
+		if request.Body != nil {
+			actual[operationID] = request.Body
+		}
+	}
+
 	require.Equal(t, expected, actual)
 }

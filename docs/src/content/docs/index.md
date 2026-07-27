@@ -1,13 +1,13 @@
 ---
 title: Getting started
-description: Validate OpenAPI 3.0.3 JSON request bodies and decode query parameters into JSON.
+description: Validate OpenAPI 3.0.x JSON request bodies and decode path and query parameters into JSON.
 ---
 
 :::caution[Work in progress]
 These docs are a work in progress and may not yet be complete or fully up to date with the code.
 :::
 
-`pkg/validation` compiles an OpenAPI 3.0.3 document once. Use the result to validate raw JSON request bodies and decode query parameters into validated JSON.
+`pkg/validation` compiles an OpenAPI 3.0.x document once. Use the result to validate raw JSON request bodies and decode path and query parameters into validated JSON.
 
 ## Install
 
@@ -23,13 +23,13 @@ if err != nil {
 	return err
 }
 
-validations, queryDecoders, err := validation.Parse(spec)
+requestValidations, err := validation.Parse(spec)
 if err != nil {
 	return err
 }
 ```
 
-Both maps are keyed by OpenAPI `operationId`. Parse at startup, then reuse the compiled values. Do not mutate them after parsing.
+The map is keyed by exact, case-sensitive OpenAPI `operationId`. Every operation has one `RequestValidation` containing its optional `Body`, `Query`, and `Path` components. Parse at startup, then reuse the compiled values. Do not mutate them after parsing.
 
 ## Validate a request body
 
@@ -44,7 +44,31 @@ func validateCreateThing(r *http.Request, requestValidation *validation.Validati
 }
 ```
 
-Call it with `validations["createThing"]`. Empty bytes mean the body is absent. JSON `null` is a present body and follows the schema's `type` and `nullable` rules.
+Call it with `requestValidations["createThing"].Body`. Empty bytes mean the body is absent. JSON `null` is a present body and follows the schema's `type` and `nullable` rules.
+
+## Decode a path
+
+```go
+type GetThingPath struct {
+	ThingID int `json:"thingID"`
+}
+
+func decodeGetThingPath(r *http.Request, decoder *validation.PathDecoder) (GetThingPath, error) {
+	raw, err := decoder.DecodePathParams(r.URL)
+	if err != nil {
+		return GetThingPath{}, err
+	}
+
+	var path GetThingPath
+	if err := json.Unmarshal(raw, &path); err != nil {
+		return GetThingPath{}, err
+	}
+
+	return path, nil
+}
+```
+
+Call it with `requestValidations["getThing"].Path`. The URL must be operation-relative: remove any effective OpenAPI server URL path prefix before calling the decoder. The decoder matches the selected operation's exact path template; it does not route requests or resolve servers.
 
 ## Decode a query
 
@@ -69,6 +93,6 @@ func decodeListThings(r *http.Request, decoder *validation.QueryDecoder) (ListTh
 }
 ```
 
-Call it with `queryDecoders["listThings"]`. The decoder handles the OpenAPI wire format and returns ordinary JSON, leaving the final Go type under your control.
+Call it with `requestValidations["listThings"].Query`. The decoder handles the OpenAPI wire format and returns ordinary JSON, leaving the final Go type under your control.
 
-Next: [why validation happens before unmarshalling](/klopt/philosophy/), [how query decoding works](/klopt/query-decoding/), and [the architecture](/klopt/architecture/).
+Next: [why validation happens before unmarshalling](/klopt/philosophy/), [how path decoding works](/klopt/path-decoding/), [how query decoding works](/klopt/query-decoding/), and [the architecture](/klopt/architecture/).

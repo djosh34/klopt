@@ -16,21 +16,20 @@ import (
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
-// Parse compiles every JSON request-body validation and query decoder in one OpenAPI document.
+// Parse compiles every request validation in one OpenAPI document.
 func Parse(
 	spec []byte,
 	patternOptions ...patternvalidator.Option,
-) (map[string]*Validation, map[string]*QueryDecoder, error) {
+) (map[string]RequestValidation, error) {
 	sources, err := oas.Parse(spec)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	validations := make(map[string]*Validation, len(sources))
-
-	queryDecoders := make(map[string]*QueryDecoder, len(sources))
+	requestValidations := make(map[string]RequestValidation, len(sources))
 	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
 		source := sources[operationID]
+		requestValidation := RequestValidation{}
 		compiler := schemaCompiler{
 			source:         source,
 			bySchema:       make(map[string]*Validation),
@@ -41,24 +40,35 @@ func Parse(
 		if len(source.RequestSchema.Raw) != 0 {
 			root, err := compiler.compile(source.RequestSchema)
 			if err != nil {
-				return nil, nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
+				return nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
 			}
 
 			root.BodyRequired = source.RequestBodyRequired
-			validations[operationID] = root
+			requestValidation.Body = root
 		}
 
 		if len(source.QueryParameters) != 0 {
 			decoder, err := compileQueryDecoder(operationID, source, &compiler)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 
-			queryDecoders[operationID] = decoder
+			requestValidation.Query = decoder
 		}
+
+		if len(source.PathParameters) != 0 {
+			decoder, err := compilePathDecoder(operationID, source, &compiler)
+			if err != nil {
+				return nil, err
+			}
+
+			requestValidation.Path = decoder
+		}
+
+		requestValidations[operationID] = requestValidation
 	}
 
-	return validations, queryDecoders, nil
+	return requestValidations, nil
 }
 
 // schemaCompiler owns compilation state for one operation.

@@ -1,4 +1,4 @@
-//nolint:godoclint,lll // Query interface fixtures keep complete OpenAPI cases together.
+//nolint:godoclint,lll // Parameter interface fixtures keep complete OpenAPI cases together.
 package oas
 
 import (
@@ -13,7 +13,7 @@ func TestParseMergesResolvedQueryParameters(t *testing.T) {
 
 	sources, err := Parse([]byte(`openapi: 3.0.3
 paths:
-  /items:
+  /items/{id}:
     parameters:
       - $ref: '#/components/parameters/PathQ'
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -32,7 +32,7 @@ components:
 	parameters := sources["query"].QueryParameters
 	require.Len(t, parameters, 3)
 	require.Equal(t, []string{"q", "keep", "appended"}, parameterNames(t, parameters))
-	require.Equal(t, "#/paths/~1items/get/parameters/0", parameters[0].Pointer)
+	require.Equal(t, "#/paths/~1items~1{id}/get/parameters/0", parameters[0].Pointer)
 }
 
 func TestParseRejectsDuplicateParameterIdentityWithinOneLevel(t *testing.T) {
@@ -48,6 +48,113 @@ paths:
         - {name: q, in: query, schema: {type: number}}
 `))
 	require.ErrorContains(t, err, `parameter ("q", "query") is duplicated`)
+}
+
+func TestParseValidatesPathItemParametersWithoutOperations(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items/{id}:
+    parameters:
+      - {name: id, in: path, required: false, schema: {type: string}}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `path parameter "id"`)
+	require.ErrorContains(t, err, `required must be true`)
+}
+
+func TestParseRejectsPathParameterWithoutMatchingExpression(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items/{id}:
+    get:
+      operationId: getItem
+      parameters:
+        - {name: other, in: path, required: true, schema: {type: string}}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `path template "/items/{id}" expression "id" has no parameter declaration`)
+}
+
+func TestParseValidatesIgnoredHeaderParameter(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - {name: X-Filter, in: header, required: nope, schema: {type: string}}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `header parameter "X-Filter"`)
+	require.ErrorContains(t, err, `required must be a boolean`)
+}
+
+func TestParseValidatesIgnoredCookieParameterContentMediaType(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - name: filter
+          in: cookie
+          content:
+            invalid: {}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `cookie parameter "filter"`)
+	require.ErrorContains(t, err, `media type "invalid" is malformed`)
+}
+
+func TestParseMergesQueryAndPathParametersByExactIdentity(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items/{id}/{slug}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: q, in: query, schema: {type: string}}
+      - {name: X-Ignored, in: header, schema: {type: string}}
+    get:
+      operationId: getItem
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: slug, in: path, required: true, schema: {type: string}}
+`))
+	require.NoError(t, err)
+
+	source := sources["getItem"]
+	require.Equal(t, "/items/{id}/{slug}", source.PathTemplate)
+	require.Equal(t, []string{"q"}, parameterNames(t, source.QueryParameters))
+	require.Equal(t, []string{"id", "slug"}, parameterNames(t, source.PathParameters))
+	require.Equal(t, "#/paths/~1items~1{id}~1{slug}/get/parameters/0", source.PathParameters[0].Pointer)
+}
+
+func TestParseRejectsInvalidOverriddenPathItemParameter(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items/{id}:
+    parameters:
+      - {name: id, in: path, required: false, schema: {type: string}}
+    get:
+      operationId: getItem
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `path parameter "id"`)
+	require.ErrorContains(t, err, "required must be true")
 }
 
 func TestParseRejectsMalformedParameterListsAndIdentities(t *testing.T) {

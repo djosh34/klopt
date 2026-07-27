@@ -16,7 +16,7 @@ import (
 func TestParseBuildsBodyAndQueryMaps(t *testing.T) {
 	t.Parallel()
 
-	validations, decoders, err := validation.Parse([]byte(`openapi: 3.0.3
+	requests, err := validation.Parse([]byte(`openapi: 3.0.3
 paths:
   /both:
     post:
@@ -41,8 +41,13 @@ paths:
         - {name: q, in: query, schema: {type: string}}
 `))
 	require.NoError(t, err)
-	require.ElementsMatch(t, []string{"body", "both"}, mapKeys(validations))
-	require.ElementsMatch(t, []string{"both", "query"}, mapKeys(decoders))
+	require.ElementsMatch(t, []string{"body", "both", "query"}, mapKeys(requests))
+	require.NotNil(t, requests["both"].Body)
+	require.NotNil(t, requests["both"].Query)
+	require.NotNil(t, requests["body"].Body)
+	require.Nil(t, requests["body"].Query)
+	require.Nil(t, requests["query"].Body)
+	require.NotNil(t, requests["query"].Query)
 }
 
 func TestQueryDecoderStyleMatrix(t *testing.T) {
@@ -82,6 +87,32 @@ func TestQueryDecoderStyleMatrix(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			decoder := parseQueryDecoder(t, test.parameter)
+			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderUnknownScalarSlotsUseStrings(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		parameter string
+		rawQuery  string
+		expected  string
+	}{
+		{name: "root", parameter: `{name: q, in: query, schema: {}}`, rawQuery: `q=123`, expected: `{"q":"123"}`},
+		{name: "indeterminate enum", parameter: `{name: q, in: query, schema: {enum: [123, '123']}}`, rawQuery: `q=123`, expected: `{"q":"123"}`},
+		{name: "array items", parameter: `{name: q, in: query, explode: false, schema: {type: array, items: {}}}`, rawQuery: `q=123,true,false,null,1.5`, expected: `{"q":["123","true","false","null","1.5"]}`},
+		{name: "object property", parameter: `{name: q, in: query, explode: false, schema: {type: object, additionalProperties: false, properties: {value: {}}}}`, rawQuery: `q=value,123`, expected: `{"q":{"value":"123"}}`},
+		{name: "deep array items", parameter: `{name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {value: {type: array, items: {}}}}}`, rawQuery: `q%5Bvalue%5D=123&q%5Bvalue%5D=true`, expected: `{"q":{"value":["123","true"]}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			decoder := parseQueryDecoder(t, test.parameter)
 			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
 			require.NoError(t, err)
@@ -171,7 +202,7 @@ func TestQueryJSONContentAbsentAndExplicitEmptySchemasCompileEquivalently(t *tes
 func TestQueryJSONContentUsesOrdinarySchemaCompilation(t *testing.T) {
 	t.Parallel()
 
-	_, decoders, err := validation.Parse([]byte(`openapi: 3.0.3
+	decoders, err := validation.Parse([]byte(`openapi: 3.0.3
 paths:
   /direct:
     get:
@@ -218,7 +249,7 @@ components:
 		t.Run(test.operationID+test.rawQuery, func(t *testing.T) {
 			t.Parallel()
 
-			actual, decodeErr := decoders[test.operationID].Decode(&url.URL{RawQuery: test.rawQuery})
+			actual, decodeErr := decoders[test.operationID].Query.Decode(&url.URL{RawQuery: test.rawQuery})
 			if test.wantError != "" {
 				require.Nil(t, actual)
 				require.ErrorContains(t, decodeErr, test.wantError)
@@ -273,7 +304,7 @@ func TestQueryJSONContentRejectsInvalidShapesAtSourcePointers(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := validation.Parse(querySpec("- " + test.parameter))
+			_, err := validation.Parse(querySpec("- " + test.parameter))
 			require.Error(t, err)
 			require.ErrorContains(t, err, `parameter "q"`)
 			require.ErrorContains(t, err, test.objectName)
@@ -301,7 +332,7 @@ func TestQueryJSONContentRejectsUnsupportedMediaTypes(t *testing.T) {
 			t.Parallel()
 
 			parameter := fmt.Sprintf(`- {name: q, in: query, content: {%q: {}}}`, test.mediaType)
-			_, _, err := validation.Parse(querySpec(parameter))
+			_, err := validation.Parse(querySpec(parameter))
 			require.ErrorContains(t, err, test.contains)
 		})
 	}
@@ -324,7 +355,7 @@ func TestQueryJSONContentRejectsMalformedMediaTypesAtContentPointer(t *testing.T
 			t.Parallel()
 
 			parameter := fmt.Sprintf(`- {name: q, in: query, content: {%q: {}}}`, mediaType)
-			_, _, err := validation.Parse(querySpec(parameter))
+			_, err := validation.Parse(querySpec(parameter))
 			require.Error(t, err)
 			require.ErrorContains(t, err, "malformed")
 			require.ErrorContains(t, err, contentPointer)
@@ -342,7 +373,7 @@ func TestQueryJSONContentRejectsParameterExampleByPresence(t *testing.T) {
 			t.Parallel()
 
 			parameter := fmt.Sprintf(`- {name: q, in: query, example: %s, content: {application/json: {}}}`, value)
-			_, _, err := validation.Parse(querySpec(parameter))
+			_, err := validation.Parse(querySpec(parameter))
 			require.Error(t, err)
 			require.ErrorContains(t, err, pointer)
 		})
@@ -359,7 +390,7 @@ func TestQueryJSONContentRejectsParameterExamplesByPresence(t *testing.T) {
 			t.Parallel()
 
 			parameter := fmt.Sprintf(`- {name: q, in: query, examples: %s, content: {application/json: {}}}`, value)
-			_, _, err := validation.Parse(querySpec(parameter))
+			_, err := validation.Parse(querySpec(parameter))
 			require.Error(t, err)
 			require.ErrorContains(t, err, pointer)
 		})
@@ -400,7 +431,7 @@ func TestQueryJSONContentPlacementGuardPrecedence(t *testing.T) {
 			t.Parallel()
 
 			parameter := "- {name: q, in: query, " + test.fields + "content: {application/json: {}}}"
-			_, _, err := validation.Parse(querySpec(parameter))
+			_, err := validation.Parse(querySpec(parameter))
 			require.Error(t, err)
 			require.ErrorContains(t, err, test.wantContains)
 		})
@@ -410,7 +441,7 @@ func TestQueryJSONContentPlacementGuardPrecedence(t *testing.T) {
 func TestQueryJSONContentExampleGuardUsesResolvedEscapedPointer(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := validation.Parse([]byte(`openapi: 3.0.3
+	_, err := validation.Parse([]byte(`openapi: 3.0.3
 paths:
   /items:
     get:
@@ -485,6 +516,7 @@ func TestQueryDecoderDynamicObjectScalarTypes(t *testing.T) {
 		{name: "space number", parameter: `{name: filter, in: query, style: spaceDelimited, explode: false, schema: {type: object, additionalProperties: {type: number}}}`, rawQuery: `filter=ratio+2.5`, expected: `{"filter":{"ratio":2.5}}`},
 		{name: "pipe string", parameter: `{name: filter, in: query, style: pipeDelimited, explode: false, schema: {type: object, additionalProperties: {type: string}}}`, rawQuery: `filter=value%7Ctrue`, expected: `{"filter":{"value":"true"}}`},
 		{name: "deep integer", parameter: `{name: filter, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: {type: integer}}}`, rawQuery: `filter%5Bcount%5D=2`, expected: `{"filter":{"count":2}}`},
+		{name: "enum integer", parameter: `{name: filter, in: query, schema: {type: object, additionalProperties: {enum: [1, 2]}}}`, rawQuery: `count=2.0`, expected: `{"filter":{"count":2}}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -541,10 +573,10 @@ paths:
           schema:
             type: object
             additionalProperties: ` + test.additionalProperties + "\n" + test.components)
-			_, decoders, err := validation.Parse(spec)
+			decoders, err := validation.Parse(spec)
 			require.NoError(t, err)
 
-			actual, err := decoders["query"].Decode(&url.URL{RawQuery: test.rawQuery})
+			actual, err := decoders["query"].Query.Decode(&url.URL{RawQuery: test.rawQuery})
 			if test.errorContains != "" {
 				require.ErrorContains(t, err, test.errorContains)
 
@@ -642,7 +674,7 @@ func TestQueryCompileRejectsSatisfiableDynamicArrayAndObjectTypes(t *testing.T) 
 		t.Run(additionalProperties, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := validation.Parse(querySpec(`- {name: filter, in: query, schema: {type: object, additionalProperties: ` + additionalProperties + `}}`))
+			_, err := validation.Parse(querySpec(`- {name: filter, in: query, schema: {type: object, additionalProperties: ` + additionalProperties + `}}`))
 			require.ErrorContains(t, err, "style-based dynamic properties cannot have satisfiable type")
 		})
 	}
@@ -684,7 +716,7 @@ func TestQueryDecoderDeepObjectDeclaredEmptyChild(t *testing.T) {
 func TestQueryDecoderDynamicOwnershipOrder(t *testing.T) {
 	t.Parallel()
 
-	_, decoders, err := validation.Parse([]byte(`openapi: 3.0.3
+	decoders, err := validation.Parse([]byte(`openapi: 3.0.3
 paths:
   /items:
     get:
@@ -711,7 +743,7 @@ components:
     apiKey: {type: apiKey, in: query, name: api_key}
 `))
 	require.NoError(t, err)
-	actual, err := decoders["query"].Decode(&url.URL{RawQuery: `exact=2&owned=true&options%5Bfixed%5D=false&options%5Bdynamic%5D=3&free=true&bracket%5Bkey%5D=value&api_key=secret`})
+	actual, err := decoders["query"].Query.Decode(&url.URL{RawQuery: `exact=2&owned=true&options%5Bfixed%5D=false&options%5Bdynamic%5D=3&free=true&bracket%5Bkey%5D=value&api_key=secret`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{
 		"filter":{"free":"true","bracket[key]":"value","api_key":"secret"},
@@ -720,9 +752,9 @@ components:
       "options":{"fixed":false,"dynamic":3}
     }`, string(actual))
 
-	_, err = decoders["query"].Decode(&url.URL{RawQuery: `options[malformed]=3`})
+	_, err = decoders["query"].Query.Decode(&url.URL{RawQuery: `options[malformed]=3`})
 	require.ErrorContains(t, err, "canonical")
-	_, err = decoders["query"].Decode(&url.URL{RawQuery: `closed%5Bunknown%5D=3`})
+	_, err = decoders["query"].Query.Decode(&url.URL{RawQuery: `closed%5Bunknown%5D=3`})
 	require.ErrorContains(t, err, "malformed or unknown deepObject child")
 }
 
@@ -735,7 +767,7 @@ func TestQueryCompileRejectsTwoOpenExplodedFormMapsInEitherOrder(t *testing.T) {
 		`- {name: options, in: query, schema: {type: object}}
     - {name: filter, in: query, schema: {type: object}}`,
 	} {
-		_, _, err := validation.Parse(querySpec(parameters))
+		_, err := validation.Parse(querySpec(parameters))
 		require.ErrorContains(t, err, `operationId "query"`)
 		require.ErrorContains(t, err, "filter")
 		require.ErrorContains(t, err, "options")
@@ -748,16 +780,16 @@ func TestQueryDecoderExactLiteralOwnerWinsOverOpenDeepObject(t *testing.T) {
 
 	parameters := `- {name: 'filter[a]', in: query, schema: {type: string}}
     - {name: filter, in: query, style: deepObject, explode: true, schema: {type: object}}`
-	_, decoders, err := validation.Parse(querySpec(parameters))
+	decoders, err := validation.Parse(querySpec(parameters))
 	require.NoError(t, err)
-	actual, err := decoders["query"].Decode(&url.URL{RawQuery: `filter%5Ba%5D=x`})
+	actual, err := decoders["query"].Query.Decode(&url.URL{RawQuery: `filter%5Ba%5D=x`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"filter[a]":"x"}`, string(actual))
 
 	required := strings.Replace(parameters, `{name: filter, in: query`, `{name: filter, in: query, required: true`, 1)
-	_, decoders, err = validation.Parse(querySpec(required))
+	decoders, err = validation.Parse(querySpec(required))
 	require.NoError(t, err)
-	_, err = decoders["query"].Decode(&url.URL{RawQuery: `filter%5Ba%5D=x`})
+	_, err = decoders["query"].Query.Decode(&url.URL{RawQuery: `filter%5Ba%5D=x`})
 	require.ErrorContains(t, err, "required parameter is absent")
 }
 
@@ -1019,7 +1051,6 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
       in: query
       schema: {type: string}
       content: {application/json: {schema: {type: string}}}`, contains: "exactly one of schema or content"},
-		{name: "no direct type", parameters: `- {name: q, in: query, schema: {allOf: [{type: string}]}}`, contains: "must have a direct type"},
 		{name: "required shape", parameters: `- {name: q, in: query, required: nope, schema: {type: string}}`, contains: "required"},
 		{name: "allow empty shape", parameters: `- {name: q, in: query, allowEmptyValue: nope, schema: {type: string}}`, contains: "allowEmptyValue"},
 		{name: "allow reserved shape", parameters: `- {name: q, in: query, allowReserved: nope, schema: {type: string}}`, contains: "allowReserved must be a boolean"},
@@ -1043,8 +1074,7 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
 		{name: "content media type", parameters: `- {name: q, in: query, content: {text/plain: {schema: {type: string}}}}`, contains: "only application/json"},
 		{name: "content schema unsupported", parameters: `- {name: q, in: query, content: {application/json: {schema: {type: string, oneOf: [{type: string}]}}}}`, contains: "unsupported keyword"},
 		{name: "nested array", parameters: `- {name: q, in: query, schema: {type: array, items: {type: array, items: {type: string}}}}`, contains: "primitive type"},
-		{name: "array items missing", parameters: `- {name: q, in: query, schema: {type: array}}`, contains: "array items"},
-		{name: "array items typeless", parameters: `- {name: q, in: query, schema: {type: array, items: {allOf: [{type: string}]}}}`, contains: "primitive type"},
+		{name: "array items missing", parameters: `- {name: q, in: query, schema: {type: array}}`, contains: "/items"},
 		{name: "nested deep child", parameters: `- name: filter
       in: query
       style: deepObject
@@ -1059,13 +1089,12 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
 		{name: "deep right bracket property", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'x]y': {type: string}}}}`, contains: "property name"},
 		{name: "object style", parameters: `- {name: q, in: query, style: matrix, explode: false, schema: {type: object, additionalProperties: false, properties: {x: {type: string}}}}`, contains: "unsupported"},
 		{name: "properties shape", parameters: `- {name: q, in: query, style: form, explode: false, schema: {type: object, properties: []}}`, contains: "properties"},
-		{name: "property typeless", parameters: `- {name: q, in: query, style: form, explode: false, schema: {type: object, properties: {x: {allOf: [{type: string}]}}}}`, contains: "direct type"},
-		{name: "deep array items missing", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {x: {type: array}}}}`, contains: "array property"},
+		{name: "deep array items missing", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {x: {type: array}}}}`, contains: "/items"},
 		{name: "deep nested array items", parameters: `- {name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {x: {type: array, items: {type: object}}}}}`, contains: "primitive type"},
 		{name: "bad schema reference", parameters: `- {name: q, in: query, schema: {$ref: '#/components/schemas/Missing'}}`, contains: "resolve schema"},
 		{name: "schema not object", parameters: `- {name: q, in: query, schema: 1}`, contains: "Schema Object must be an object"},
 		{name: "type shape", parameters: `- {name: q, in: query, schema: {type: 1}}`, contains: "type"},
-		{name: "unsupported type", parameters: `- {name: q, in: query, schema: {type: 'null'}}`, contains: "unsupported direct type"},
+		{name: "unsupported type", parameters: `- {name: q, in: query, schema: {type: 'null'}}`, contains: "unsupported type"},
 		{name: "unsupported schema", parameters: `- {name: q, in: query, schema: {type: string, oneOf: [{type: string}]}}`, contains: "unsupported keyword"},
 		{name: "ownership collision", parameters: `- {name: lat, in: query, schema: {type: string}}
     - ` + objectParameter("form", true), contains: "ownership"},
@@ -1076,7 +1105,7 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := validation.Parse(querySpec(test.parameters))
+			_, err := validation.Parse(querySpec(test.parameters))
 			require.ErrorContains(t, err, test.contains)
 		})
 	}
@@ -1134,10 +1163,10 @@ func TestQueryDecoderConstraintsDefaultsAndConcurrency(t *testing.T) {
 func TestQueryDecoderPreservesParameterOrderAndSortsValidationLookup(t *testing.T) {
 	t.Parallel()
 
-	_, decoders, err := validation.Parse(querySpec(`- {name: z, in: query, schema: {type: string}}
+	decoders, err := validation.Parse(querySpec(`- {name: z, in: query, schema: {type: string}}
     - {name: a, in: query, required: true, schema: {type: integer}}`))
 	require.NoError(t, err)
-	actual, err := decoders["query"].Decode(&url.URL{RawQuery: `a=1&z=last`})
+	actual, err := decoders["query"].Query.Decode(&url.URL{RawQuery: `a=1&z=last`})
 	require.NoError(t, err)
 	require.Equal(t, `{"z":"last","a":1}`, string(actual))
 }
@@ -1167,11 +1196,11 @@ func FuzzQueryDecoder(f *testing.F) {
 func parseQueryDecoder(t testing.TB, parameter string) *validation.QueryDecoder {
 	t.Helper()
 
-	_, decoders, err := validation.Parse(querySpec("- " + parameter))
+	decoders, err := validation.Parse(querySpec("- " + parameter))
 	require.NoError(t, err)
 	require.Contains(t, decoders, "query")
 
-	return decoders["query"]
+	return decoders["query"].Query
 }
 
 func querySpec(parameters string) []byte {

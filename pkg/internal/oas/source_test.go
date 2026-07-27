@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/djosh34/klopt/pkg/names"
 	"github.com/stretchr/testify/require"
 )
 
@@ -264,9 +265,10 @@ paths:
 openapi: 3.0.3
 paths:
   /bodyless:
-    get: {}
+    get: {operationId: bodyless}
   /plain:
     post:
+      operationId: plain
       requestBody:
         content:
           text/plain:
@@ -280,7 +282,7 @@ paths:
             schema: {type: string}
 `))
 	require.NoError(t, err)
-	require.Equal(t, []string{"exactID"}, slices.Sorted(maps.Keys(sources)))
+	require.Equal(t, []string{"bodyless", "exactID", "plain"}, slices.Sorted(maps.Keys(sources)))
 }
 
 // TestParseTreatsMissingRequestBodySchemaAsEmpty verifies optional Media Type schema parity.
@@ -471,4 +473,163 @@ paths:
 
 	source := sources["create"]
 	require.False(t, source.RequestBodyRequired)
+}
+
+// TestParseRejectsDuplicateJSONRootNames verifies the shared root-object preflight.
+func TestParseRejectsDuplicateJSONRootNames(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`{"openapi":"3.0.3","openapi":"3.0.4","paths":{}}`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `duplicate object name "openapi"`)
+}
+
+// TestParseWrapsInvalidOperationIDSentinel verifies acquisition preserves the public sentinel.
+func TestParseWrapsInvalidOperationIDSentinel(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /things:
+    get:
+      operationId: bad.operation
+`))
+	require.Nil(t, sources)
+	require.ErrorIs(t, err, names.ErrInvalidOperationID)
+}
+
+// TestParseRejectsPathKeyWithoutLeadingSlashBeforeAcquisition covers zero-operation Paths members.
+func TestParseRejectsPathKeyWithoutLeadingSlashBeforeAcquisition(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  things: {}
+`))
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, `path template "things" must begin with /`)
+}
+
+// TestParseRejectsDuplicateDecodedJSONNamesRecursively covers every shared ingestion branch.
+func TestParseRejectsDuplicateDecodedJSONNamesRecursively(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"escaped equivalent Paths keys": `{"openapi":"3.0.3","paths":{"/pets":{},"\u002fpets":{}}}`,
+		"Paths extension value":         `{"openapi":"3.0.3","paths":{"x-meta":{"a":1,"\u0061":2}}}`,
+		"request body": `{"openapi":"3.0.3","paths":{"/pets":{"post":{"operationId":"createPet",` +
+			`"requestBody":{"required":true,"required":false,"content":{"application/json":{}}}}}}}`,
+		"query parameter": `{"openapi":"3.0.3","paths":{"/pets":{"get":{"operationId":"getPets",` +
+			`"parameters":[{"name":"q","\u006eame":"other","in":"query","schema":{}}]}}}}`,
+		"schema": `{"openapi":"3.0.3","paths":{"/pets":{"post":{"operationId":"createPet",` +
+			`"requestBody":{"content":{"application/json":{"schema":{"type":"string","\u0074ype":"number"}}}}}}}}`,
+	}
+
+	for name, spec := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sources, err := Parse([]byte(spec))
+			require.Nil(t, sources)
+			require.ErrorContains(t, err, "duplicate object name")
+		})
+	}
+}
+
+// TestParseRetainsYAMLDuplicateRejection keeps YAML's existing strict behavior.
+func TestParseRetainsYAMLDuplicateRejection(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte("openapi: 3.0.3\nopenapi: 3.0.4\npaths: {}\n"))
+	require.Nil(t, sources)
+	require.Error(t, err)
+}
+
+// TestParseClassifiesPathsExtensionsBeforeAcquisition verifies extensions stay opaque.
+func TestParseClassifiesPathsExtensionsBeforeAcquisition(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  x-path-item:
+    $ref: other.yaml#/Ignored
+    malformed: true
+  /pets:
+    get: {operationId: getPets}
+`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"getPets"}, slices.Sorted(maps.Keys(sources)))
+}
+
+// TestParseValidatesEveryPathBeforeOperationAcquisition covers the complete Paths preflight.
+func TestParseValidatesEveryPathBeforeOperationAcquisition(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		paths    string
+		contains string
+	}{
+		"identical hierarchy": {
+			paths:    "  /pets/{id}: {}\n  /pets/{name}: {}\n",
+			contains: "identical templated hierarchy",
+		},
+		"unknown Path Item field": {
+			paths:    "  /pets:\n    connect: {}\n",
+			contains: `unknown Path Item field "connect"`,
+		},
+		"reached external Path Item": {
+			paths:    "  /pets:\n    $ref: other.yaml#/Pets\n",
+			contains: "external reference",
+		},
+		"adjacent expressions": {
+			paths:    "  /pets/{id}{name}: {}\n",
+			contains: "adjacent expressions",
+		},
+		"repeated expression": {
+			paths:    "  /pets/{id}/{id}: {}\n",
+			contains: "repeats expression",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sources, err := Parse([]byte("openapi: 3.0.3\npaths:\n" + test.paths))
+			require.Nil(t, sources)
+			require.ErrorContains(t, err, test.contains)
+		})
+	}
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /{entity}/mine: {}
+  /pets/{id}: {}
+`))
+	require.NoError(t, err)
+	require.Empty(t, sources)
+}
+
+// TestParseDoesNotReachUntouchedOperationBranches verifies reference reachability remains lazy.
+func TestParseDoesNotReachUntouchedOperationBranches(t *testing.T) {
+	t.Parallel()
+
+	sources, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /pets:
+    get:
+      operationId: getPets
+      callbacks:
+        ignored:
+          '{$request.body#/url}':
+            post:
+              requestBody: {$ref: other.yaml#/CallbackBody}
+      responses:
+        default: {$ref: other.yaml#/Response}
+components:
+  schemas:
+    Unused: {$ref: other.yaml#/Schema}
+`))
+	require.NoError(t, err)
+	require.Contains(t, sources, "getPets")
 }

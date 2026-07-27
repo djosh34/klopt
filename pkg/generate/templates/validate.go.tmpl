@@ -162,7 +162,34 @@
 	},
 }{{end}}
 
-{{define "validate.go.tmpl"}}// Package {{.Package}} contains generated request-body validations and query decoders.
+{{define "pathProperty"}}validation.PathPropertyDefinition{
+	Name: {{printf "%q" .Name}},
+	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
+}{{end}}
+
+{{define "pathParameter"}}validation.PathParameterDefinition{
+	Name: {{printf "%q" .Name}},
+	Wire: {{.Wire}},
+	{{if .Explode}}Explode: true,{{end}}
+	Validation: {{template "validation" .Validation}},
+	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
+	{{with .DynamicType}}DynamicType: {{printf "%q" .}},{{end}}
+	{{with .Properties}}
+	Properties: []validation.PathPropertyDefinition{
+		{{range .}}{{template "pathProperty" .}},{{end}}
+	},
+	{{end}}
+}{{end}}
+
+{{define "pathDecoder"}}validation.PathDecoderDefinition{
+	OperationID: {{printf "%q" .OperationID}},
+	PathTemplate: {{printf "%q" .PathTemplate}},
+	Parameters: []validation.PathParameterDefinition{
+		{{range .Parameters}}{{template "pathParameter" .}},{{end}}
+	},
+}{{end}}
+
+{{define "validate.go.tmpl"}}// Package {{.Package}} contains generated request validations.
 //
 //nolint:dupl,godoclint,lll // Generated validation trees use operation IDs and may contain repeated schemas.
 package {{.Package}}
@@ -175,27 +202,34 @@ import (
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
-{{range $operationID, $validation := .Validations}}
-var {{$operationID}} = {{template "validation" $validation}}
+{{range .Operations}}
+var {{.Name}} = validation.RequestValidation{
+	{{with .Body}}Body: {{template "validation" .}},{{end}}
+	{{with .Query}}Query: mustQueryDecoder({{template "queryDecoder" .Definition}}),{{end}}
+	{{with .Path}}Path: mustPathDecoder({{template "pathDecoder" .Definition}}),{{end}}
+}
 {{end}}
 
-// validations contains every compiled request-body validation by exact operation ID.
-var validations = map[string]*validation.Validation{
-	{{range $operationID, $_ := .Validations}}
-	{{printf "%q" $operationID}}: {{$operationID}},
+// RequestValidations contains every compiled request validation by exact operation ID.
+var RequestValidations = map[string]validation.RequestValidation{
+	{{range .Operations}}
+	{{printf "%q" .OperationID}}: {{.Name}},
 	{{end}}
 }
 
-{{if .QueryDecoders}}
-// queryDecoders contains every compiled query decoder by exact operation ID.
-var queryDecoders = map[string]*validation.QueryDecoder{
-	{{range $operationID, $decoder := .QueryDecoders}}
-	{{printf "%q" $operationID}}: mustQueryDecoder({{template "queryDecoder" $decoder.Definition}}),
-	{{end}}
-}
-
+{{if .HasQuery}}
 func mustQueryDecoder(definition validation.QueryDecoderDefinition) *validation.QueryDecoder {
 	decoder, err := validation.NewQueryDecoderFromGenerated(definition)
+	if err != nil {
+		panic(err)
+	}
+	return decoder
+}
+{{end}}
+
+{{if .HasPath}}
+func mustPathDecoder(definition validation.PathDecoderDefinition) *validation.PathDecoder {
+	decoder, err := validation.NewPathDecoderFromGenerated(definition)
 	if err != nil {
 		panic(err)
 	}
