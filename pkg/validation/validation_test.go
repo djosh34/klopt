@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,10 +124,10 @@ func TestParseExposesCompiledGraphAndCopiesInput(t *testing.T) {
 		"additionalProperties":false,
 		"allOf":[{"maxProperties":1}]
 	}`, "", true)
-	parsedByOperation, _, err := Parse(spec)
+	parsedByOperation, err := Parse(spec)
 	require.NoError(t, err)
 
-	parsed := parsedByOperation["checkThing"]
+	parsed := parsedByOperation["checkThing"].Body
 
 	for index := range spec {
 		spec[index] = ' '
@@ -157,33 +159,264 @@ func TestParseCompilesIndependentOperationGraphs(t *testing.T) {
 				"operationId":"optionalBody",
 				"requestBody":{"content":{"application/*":{"schema":{"$ref":"#/components/schemas/Body"}}}}
 			}},
-			"/plain":{"post":{"requestBody":{"content":{"text/plain":{"schema":{"type":"string"}}}}}},
-			"/bodyless":{"get":{}}
+			"/plain":{"post":{"operationId":"plain","requestBody":{"content":{"text/plain":{"schema":{"type":"string"}}}}}},
+			"/bodyless":{"get":{"operationId":"bodyless"}}
 		},
 		"components":{"schemas":{"Body":{"type":"string"}}}
 	}`)
 
-	parsed, _, err := Parse(spec)
+	parsed, err := Parse(spec)
 	require.NoError(t, err)
-	require.Equal(t, []string{"RequiredBody", "optionalBody"}, slices.Sorted(maps.Keys(parsed)))
-	require.True(t, parsed["RequiredBody"].BodyRequired)
-	require.False(t, parsed["optionalBody"].BodyRequired)
-	require.NotSame(t, parsed["RequiredBody"], parsed["optionalBody"])
-	require.Equal(t, "#/components/schemas/Body", parsed["RequiredBody"].SchemaPointer)
-	require.Equal(t, "#/components/schemas/Body", parsed["optionalBody"].SchemaPointer)
+	require.Equal(t, []string{"RequiredBody", "bodyless", "optionalBody", "plain"}, slices.Sorted(maps.Keys(parsed)))
+	require.True(t, parsed["RequiredBody"].Body.BodyRequired)
+	require.False(t, parsed["optionalBody"].Body.BodyRequired)
+	require.NotSame(t, parsed["RequiredBody"].Body, parsed["optionalBody"].Body)
+	require.Equal(t, "#/components/schemas/Body", parsed["RequiredBody"].Body.SchemaPointer)
+	require.Equal(t, "#/components/schemas/Body", parsed["optionalBody"].Body.SchemaPointer)
+	require.Nil(t, parsed["plain"].Body)
+	require.Equal(t, RequestValidation{}, parsed["bodyless"])
 
 	for index := range spec {
 		spec[index] = ' '
 	}
 
-	require.Empty(t, parsed["RequiredBody"].Validate(json.RawMessage(`"still compiled"`)))
+	require.Empty(t, parsed["RequiredBody"].Body.Validate(json.RawMessage(`"still compiled"`)))
+}
+
+// TestParseBuildsOneRequestValidationPerOperation covers the atomic public Parse result.
+func TestParseBuildsOneRequestValidationPerOperation(t *testing.T) {
+	t.Parallel()
+
+	requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /all/{id}:
+    post:
+      operationId: all
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: q, in: query, schema: {type: string}}
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object}
+  /none:
+    get: {operationId: none}
+`))
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"all", "none"}, slices.Sorted(maps.Keys(requests)))
+	require.NotNil(t, requests["all"].Body)
+	require.NotNil(t, requests["all"].Query)
+	require.NotNil(t, requests["all"].Path)
+	require.Equal(t, RequestValidation{}, requests["none"])
+
+	path, err := requests["all"].Path.DecodePathParams(&url.URL{Path: "/all/42"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":42}`, string(path))
+}
+
+// TestParseRejectsInvalidOverriddenParameterDeclarations keeps invalid Path Item input visible through overrides.
+func TestParseRejectsInvalidOverriddenParameterDeclarations(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		parameter string
+		contains  string
+	}{
+		{
+			name: "schema", parameter: `{name: id, in: path, required: true, schema: {oneOf: [{type: string}]}}`,
+			contains: "/parameters/0/schema/oneOf",
+		},
+		{
+			name: "content", parameter: `{name: id, in: path, required: true, content: {text/plain: {}}}`,
+			contains: "only application/json",
+		},
+		{
+			name: "style", parameter: `{name: id, in: path, required: true, style: form, schema: {type: string}}`,
+			contains: `style "form" is unsupported`,
+		},
+		{
+			name: "path field", parameter: `{name: id, in: path, required: true, allowReserved: false, schema: {type: string}}`,
+			contains: "cannot declare allowReserved",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items/{id}:
+    parameters:
+      - ` + test.parameter + `
+    get:
+      operationId: getItem
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+`))
+			require.Nil(t, requests)
+			require.ErrorContains(t, err, test.contains)
+		})
+	}
+}
+
+// TestParseRejectsInvalidIgnoredParameterDeclarations validates header and cookie inputs before filtering.
+func TestParseRejectsInvalidIgnoredParameterDeclarations(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		parameter string
+		contains  string
+	}{
+		{
+			name: "header schema reference", parameter: `{name: X-Filter, in: header, schema: {$ref: '#/missing'}}`,
+			contains: "resolve reference",
+		},
+		{
+			name: "header style", parameter: `{name: X-Filter, in: header, style: matrix, schema: {type: string}}`,
+			contains: `header parameter "X-Filter" style "matrix" is invalid`,
+		},
+		{
+			name:      "header allow reserved",
+			parameter: `{name: X-Filter, in: header, allowReserved: false, schema: {type: string}}`,
+			contains:  `header parameter "X-Filter" cannot declare allowReserved`,
+		},
+		{
+			name: "cookie style", parameter: `{name: session, in: cookie, style: simple, schema: {type: string}}`,
+			contains: `cookie parameter "session" style "simple" is invalid`,
+		},
+		{
+			name: "cookie allow empty", parameter: `{name: session, in: cookie, allowEmptyValue: false, schema: {type: string}}`,
+			contains: `cookie parameter "session" cannot declare allowEmptyValue`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - ` + test.parameter + `
+`))
+			require.Nil(t, requests)
+			require.ErrorContains(t, err, test.contains)
+		})
+	}
+}
+
+// TestParseIgnoresReservedHeaderParameterDefinitions preserves OpenAPI's reserved-header exception.
+func TestParseIgnoresReservedHeaderParameterDefinitions(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"Accept", "content-type", "AUTHORIZATION"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - {name: ` + name + `, in: header, schema: {oneOf: [{type: string}]}}
+`))
+			require.NoError(t, err)
+			require.Contains(t, requests, "getItems")
+		})
+	}
+}
+
+// TestParseAllowsParameterExamplesWithContent keeps Parameter Object examples independent of schema/content.
+func TestParseAllowsParameterExamplesWithContent(t *testing.T) {
+	t.Parallel()
+
+	parameters := []string{
+		`{name: q, in: query, %s, content: {application/json: {}}}`,
+		`{name: value, in: path, required: true, %s, content: {application/json: {}}}`,
+		`{name: X-Value, in: header, %s, content: {application/json: {}}}`,
+		`{name: value, in: cookie, %s, content: {application/json: {}}}`,
+	}
+
+	for _, field := range []string{`example: false`, `examples: {sample: {value: false}}`} {
+		for index, parameter := range parameters {
+			t.Run(fmt.Sprintf("%s location %d", field, index), func(t *testing.T) {
+				t.Parallel()
+
+				path := "/items"
+				if index == 1 {
+					path = "/items/{value}"
+				}
+
+				requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  ` + path + `:
+    get:
+      operationId: getItems
+      parameters:
+        - ` + fmt.Sprintf(parameter, field) + `
+`))
+				require.NoError(t, err)
+				require.Contains(t, requests, "getItems")
+			})
+		}
+	}
+}
+
+// TestParseReportsPathSchemaErrorsBeforePathFieldMisuse preserves compiler error precedence.
+func TestParseReportsPathSchemaErrorsBeforePathFieldMisuse(t *testing.T) {
+	t.Parallel()
+
+	for _, field := range []string{"allowEmptyValue", "allowReserved"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+
+			requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items/{id}:
+    get:
+      operationId: getItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          ` + field + `: false
+          schema: {oneOf: [{type: string}]}
+`))
+			require.Nil(t, requests)
+			require.ErrorContains(t, err, "/schema/oneOf")
+			require.ErrorContains(t, err, "unsupported keyword")
+			require.NotContains(t, err.Error(), "cannot declare "+field)
+		})
+	}
+}
+
+// TestParseCompilesRawOperationParametersBeforeOperationID preserves full acquisition precedence.
+func TestParseCompilesRawOperationParametersBeforeOperationID(t *testing.T) {
+	t.Parallel()
+
+	requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: not-valid-
+      parameters:
+        - {name: q, in: query, schema: {oneOf: [{type: string}]}}
+`))
+	require.Nil(t, requests)
+	require.ErrorContains(t, err, "/parameters/0/schema/oneOf")
+	require.ErrorContains(t, err, "unsupported keyword")
+	require.NotErrorIs(t, err, oas.ErrInvalidOperationID)
 }
 
 // TestParseCompilesOperationsInSortedIDOrder verifies deterministic atomic failure selection.
 func TestParseCompilesOperationsInSortedIDOrder(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := Parse([]byte(`{
+	_, err := Parse([]byte(`{
 		"openapi":"3.0.3",
 		"paths":{
 			"/first":{"post":{"operationId":"zulu","requestBody":{"content":{"application/json":{"schema":{"not":{}}}}}}},
@@ -192,6 +425,24 @@ func TestParseCompilesOperationsInSortedIDOrder(t *testing.T) {
 	}`))
 	require.ErrorContains(t, err, `compile operationId "alpha"`)
 	require.ErrorContains(t, err, "/oneOf")
+}
+
+// TestParseReturnsNilMapsAfterLateCompilationFailure verifies atomic return values.
+func TestParseReturnsNilMapsAfterLateCompilationFailure(t *testing.T) {
+	t.Parallel()
+
+	requestValidations, err := Parse([]byte(`{
+		"openapi":"3.0.3",
+		"paths":{
+			"/first":{"post":{
+				"operationId":"alpha",
+				"requestBody":{"content":{"application/json":{"schema":{"type":"string"}}}}
+			}},
+			"/second":{"post":{"operationId":"zulu","requestBody":{"content":{"application/json":{"schema":{"not":{}}}}}}}
+		}
+	}`))
+	require.Nil(t, requestValidations)
+	require.ErrorContains(t, err, `compile operationId "zulu"`)
 }
 
 // TestValidationStringFormats covers every agreed format and unknown-format fallback.
@@ -280,7 +531,7 @@ func TestParseRejectsMalformedJSONRequestMediaAndSchemasAtPointers(t *testing.T)
 					"requestBody":{"content":{"application/json; charset=utf-8":%s}}
 				}}}
 			}`, test.mediaType)
-			_, _, err := Parse(spec)
+			_, err := Parse(spec)
 			require.Error(t, err)
 			require.ErrorContains(t, err, test.objectName)
 			require.ErrorContains(t, err, test.pointer)
@@ -292,7 +543,7 @@ func TestParseRejectsMalformedJSONRequestMediaAndSchemasAtPointers(t *testing.T)
 func TestSchemaLessJSONRequestBodyRuntimeSemantics(t *testing.T) {
 	t.Parallel()
 
-	validations, _, err := Parse([]byte(`openapi: 3.0.3
+	requestValidations, err := Parse([]byte(`openapi: 3.0.3
 paths:
   /optional:
     post:
@@ -334,13 +585,17 @@ paths:
 		json.RawMessage(`{"value":1}`),
 		json.RawMessage(" \n\tnull\r "),
 	} {
-		require.Empty(t, validations["optionalBody"].Validate(body), "%q", body)
-		require.Empty(t, validations["requiredBody"].Validate(body), "%q", body)
+		require.Empty(t, requestValidations["optionalBody"].Body.Validate(body), "%q", body)
+		require.Empty(t, requestValidations["requiredBody"].Body.Validate(body), "%q", body)
 	}
 
 	for _, absent := range []json.RawMessage{nil, {}} {
-		require.Empty(t, validations["optionalBody"].Validate(absent))
-		require.ErrorContains(t, errors.Join(validations["requiredBody"].Validate(absent)...), "required body is absent")
+		require.Empty(t, requestValidations["optionalBody"].Body.Validate(absent))
+		require.ErrorContains(
+			t,
+			errors.Join(requestValidations["requiredBody"].Body.Validate(absent)...),
+			"required body is absent",
+		)
 	}
 
 	for _, invalid := range []json.RawMessage{
@@ -348,15 +603,15 @@ paths:
 		json.RawMessage(`{"value":`),
 		json.RawMessage(`true false`),
 	} {
-		require.NotEmpty(t, validations["optionalBody"].Validate(invalid), "%q", invalid)
+		require.NotEmpty(t, requestValidations["optionalBody"].Body.Validate(invalid), "%q", invalid)
 	}
 
-	require.Empty(t, validations["defaultedOptionalBody"].Validate(nil))
-	require.NotEmpty(t, validations["defaultedOptionalBody"].Validate(json.RawMessage(`"x"`)))
-	require.Empty(t, validations["defaultedOptionalBody"].Validate(json.RawMessage(`"ok"`)))
+	require.Empty(t, requestValidations["defaultedOptionalBody"].Body.Validate(nil))
+	require.NotEmpty(t, requestValidations["defaultedOptionalBody"].Body.Validate(json.RawMessage(`"x"`)))
+	require.Empty(t, requestValidations["defaultedOptionalBody"].Body.Validate(json.RawMessage(`"ok"`)))
 	require.ErrorContains(
 		t,
-		errors.Join(validations["defaultedRequiredBody"].Validate(nil)...),
+		errors.Join(requestValidations["defaultedRequiredBody"].Body.Validate(nil)...),
 		"required body is absent",
 	)
 }
@@ -365,7 +620,7 @@ paths:
 func TestSchemaLessJSONRequestBodyPreservesMediaSelection(t *testing.T) {
 	t.Parallel()
 
-	validations, _, err := Parse([]byte(`openapi: 3.0.3
+	requestValidations, err := Parse([]byte(`openapi: 3.0.3
 paths:
   /exact:
     post:
@@ -399,7 +654,7 @@ paths:
 	require.NoError(t, err)
 
 	for _, operationID := range []string{"exact", "applicationWildcard", "globalWildcard", "parameterizedExact"} {
-		require.Empty(t, validations[operationID].Validate(json.RawMessage(`"schema-less winner"`)))
+		require.Empty(t, requestValidations[operationID].Body.Validate(json.RawMessage(`"schema-less winner"`)))
 	}
 }
 
@@ -507,14 +762,14 @@ func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := Parse(openAPISpec(test.schema, test.components, false))
+			_, err := Parse(openAPISpec(test.schema, test.components, false))
 			require.ErrorContains(t, err, test.want)
 		})
 	}
 
-	parsed, _, err := Parse([]byte(`{"openapi":"3.0.3","paths":{"/a":{"post":{"operationId":"unused"}}}}`))
+	parsed, err := Parse([]byte(`{"openapi":"3.0.3","paths":{"/a":{"post":{"operationId":"unused"}}}}`))
 	require.NoError(t, err)
-	require.Empty(t, parsed)
+	require.Equal(t, map[string]RequestValidation{"unused": {}}, parsed)
 }
 
 // TestValidationAcceptsDiscriminatorAsAnInertHint verifies the intentional permissive
@@ -589,7 +844,7 @@ func TestParseRejectsMalformedDiscriminatorAtExactPointers(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := Parse(openAPISpec(test.schema, test.components, false))
+			_, err := Parse(openAPISpec(test.schema, test.components, false))
 			require.Error(t, err)
 			require.ErrorContains(t, err, "compile schema at "+test.pointer)
 		})
@@ -680,7 +935,7 @@ func TestParseRejectsMalformedReadOnlyAndWriteOnlyAtEverySchemaShape(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := Parse(openAPISpec(test.schema, test.components, false))
+			_, err := Parse(openAPISpec(test.schema, test.components, false))
 			require.Error(t, err)
 			require.ErrorContains(t, err, "compile schema at "+test.pointer)
 			require.ErrorContains(t, err, "must be a boolean")
@@ -715,7 +970,7 @@ func TestParseRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := Parse(openAPISpec(test.schema, test.components, false))
+			_, err := Parse(openAPISpec(test.schema, test.components, false))
 			require.Error(t, err)
 			require.ErrorContains(t, err, "compile schema at "+test.pointer)
 			require.ErrorContains(t, err, "readOnly and writeOnly must not both be true")
@@ -795,7 +1050,7 @@ func TestParseRejectsRecursiveSchemas(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := Parse(openAPISpec(`{"$ref":"#/components/schemas/Loop"}`, test.components, false))
+			_, err := Parse(openAPISpec(`{"$ref":"#/components/schemas/Loop"}`, test.components, false))
 			require.ErrorContains(t, err, `compile operationId "checkThing"`)
 			require.ErrorContains(t, err, "recursive schema is unsupported")
 			require.ErrorContains(t, err, "#/components/schemas/Loop")
@@ -882,7 +1137,7 @@ func TestParseAcceptsCompatibleOpenAPIVersions(t *testing.T) {
 			t.Parallel()
 
 			spec := strings.Replace(string(valid), `"3.0.3"`, strconv.Quote(version), 1)
-			_, _, err := Parse([]byte(spec))
+			_, err := Parse([]byte(spec))
 			require.NoError(t, err)
 		})
 	}
@@ -915,13 +1170,13 @@ func TestParseRejectsUnsupportedOpenAPIVersions(t *testing.T) {
 			t.Parallel()
 
 			spec := strings.Replace(string(valid), `"3.0.3"`, test.replacement, 1)
-			_, _, err := Parse([]byte(spec))
+			_, err := Parse([]byte(spec))
 			require.ErrorContains(t, err, test.wantError)
 		})
 	}
 
 	missing := strings.Replace(string(valid), `"openapi":"3.0.3",`, "", 1)
-	_, _, err := Parse([]byte(missing))
+	_, err := Parse([]byte(missing))
 	require.ErrorContains(t, err, "Semantic Versioning 2.0.0")
 }
 
@@ -932,7 +1187,7 @@ func TestParsePreservesOpenAPIVersionDecodeError(t *testing.T) {
 	valid := openAPISpec(`{}`, "", false)
 	spec := strings.Replace(string(valid), `"3.0.3"`, `3.0`, 1)
 
-	_, _, err := Parse([]byte(spec))
+	_, err := Parse([]byte(spec))
 
 	var typeError *json.UnmarshalTypeError
 	require.ErrorAs(t, err, &typeError)
@@ -954,7 +1209,7 @@ func TestParseRejectsFirstMalformedOperationDeterministically(t *testing.T) {
 		}
 	}`)
 
-	_, _, err := Parse(spec)
+	_, err := Parse(spec)
 	require.ErrorContains(t, err, "#/paths/~1broken-operation/post")
 }
 
@@ -1078,10 +1333,10 @@ func mustParseSchema(t *testing.T, schema string, components string) *Validation
 func mustParseSchemaWithRequired(t *testing.T, schema string, components string, required bool) *Validation {
 	t.Helper()
 
-	parsedByOperation, _, err := Parse(openAPISpec(schema, components, required))
+	parsedByOperation, err := Parse(openAPISpec(schema, components, required))
 	require.NoError(t, err)
 
-	return parsedByOperation["checkThing"]
+	return parsedByOperation["checkThing"].Body
 }
 
 // openAPISpec embeds one JSON Schema Object into one selected OpenAPI operation.

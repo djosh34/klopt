@@ -1,4 +1,4 @@
-// Package validation compiles OpenAPI 3.0.x request-body validations and query decoders.
+// Package validation compiles OpenAPI 3.0.x request validations.
 //
 // Parse is the OpenAPI constructor. Callers may also construct a compiled graph
 // directly by populating every exported textual and exact field consistently.
@@ -12,6 +12,13 @@ import (
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
+
+// RequestValidation contains every compiled request input for one OpenAPI operation.
+type RequestValidation struct {
+	Path  *PathDecoder
+	Query *QueryDecoder
+	Body  *Validation
+}
 
 // Validation is one compiled OpenAPI Schema Object.
 type Validation struct {

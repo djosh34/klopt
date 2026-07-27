@@ -16,21 +16,33 @@ import (
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
-// Parse compiles every JSON request-body validation and query decoder in one OpenAPI document.
+// Parse compiles every request validation in one OpenAPI document.
 func Parse(
 	spec []byte,
 	patternOptions ...patternvalidator.Option,
-) (map[string]*Validation, map[string]*QueryDecoder, error) {
-	sources, err := oas.Parse(spec)
-	if err != nil {
-		return nil, nil, err
+) (map[string]RequestValidation, error) {
+	rawCompiler := schemaCompiler{
+		bySchema:       make(map[string]*Validation),
+		active:         make(map[string]struct{}),
+		patternOptions: patternOptions,
 	}
 
-	validations := make(map[string]*Validation, len(sources))
+	sources, err := oas.ParseWithParameterValidation(
+		spec,
+		func(source oas.Source, parameter oas.LocatedSchema) error {
+			rawCompiler.source = source
 
-	queryDecoders := make(map[string]*QueryDecoder, len(sources))
+			return validateRawParameter(parameter, &rawCompiler)
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	requestValidations := make(map[string]RequestValidation, len(sources))
 	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
 		source := sources[operationID]
+		requestValidation := RequestValidation{}
 		compiler := schemaCompiler{
 			source:         source,
 			bySchema:       make(map[string]*Validation),
@@ -41,24 +53,177 @@ func Parse(
 		if len(source.RequestSchema.Raw) != 0 {
 			root, err := compiler.compile(source.RequestSchema)
 			if err != nil {
-				return nil, nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
+				return nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
 			}
 
 			root.BodyRequired = source.RequestBodyRequired
-			validations[operationID] = root
+			requestValidation.Body = root
 		}
 
 		if len(source.QueryParameters) != 0 {
 			decoder, err := compileQueryDecoder(operationID, source, &compiler)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 
-			queryDecoders[operationID] = decoder
+			requestValidation.Query = decoder
+		}
+
+		if len(source.PathParameters) != 0 {
+			decoder, err := compilePathDecoder(operationID, source, &compiler)
+			if err != nil {
+				return nil, err
+			}
+
+			requestValidation.Path = decoder
+		}
+
+		requestValidations[operationID] = requestValidation
+	}
+
+	return requestValidations, nil
+}
+
+// validateRawParameter compiles one declaration before acquisition can override or ignore it.
+func validateRawParameter(parameter oas.LocatedSchema, compiler *schemaCompiler) error {
+	members, err := parameterMembers(parameter)
+	if err != nil {
+		return err
+	}
+
+	location, err := decodeString(members["in"], "in")
+	if err != nil {
+		return fmt.Errorf("parameter at %s in: %w", parameter.Pointer, err)
+	}
+
+	switch location {
+	case "query":
+		_, err = compileQueryParameter(parameter, compiler)
+	case "path":
+		_, err = compilePathParameter(parameter, compiler)
+	case "header":
+		reserved, reservedErr := isReservedHeaderParameter(members)
+		if reservedErr != nil {
+			return fmt.Errorf("parameter at %s name: %w", parameter.Pointer, reservedErr)
+		}
+
+		if reserved {
+			return nil
+		}
+
+		err = compileIgnoredParameterSchema(parameter, members, compiler)
+	case "cookie":
+		err = compileIgnoredParameterSchema(parameter, members, compiler)
+	default:
+		return fmt.Errorf("parameter at %s has unsupported location %q", parameter.Pointer, location)
+	}
+
+	return err
+}
+
+// isReservedHeaderParameter reports whether OpenAPI requires this Header Parameter Object to be ignored.
+func isReservedHeaderParameter(members map[string]json.RawMessage) (bool, error) {
+	name, err := decodeString(members["name"], "name")
+	if err != nil {
+		return false, err
+	}
+
+	return strings.EqualFold(name, "Accept") ||
+		strings.EqualFold(name, "Content-Type") ||
+		strings.EqualFold(name, "Authorization"), nil
+}
+
+// compileIgnoredParameterSchema compiles the schema of a valid but unsupported parameter location.
+func compileIgnoredParameterSchema(
+	parameter oas.LocatedSchema,
+	members map[string]json.RawMessage,
+	compiler *schemaCompiler,
+) error {
+	name, err := decodeString(members["name"], "name")
+	if err != nil {
+		return fmt.Errorf("parameter at %s name: %w", parameter.Pointer, err)
+	}
+
+	schema, err := ignoredParameterSchema(parameter, members)
+	if err != nil {
+		return fmt.Errorf("parameter %q: %w", name, err)
+	}
+
+	if _, compileErr := compiler.compile(schema); compileErr != nil {
+		return fmt.Errorf("parameter %q schema: %w", name, compileErr)
+	}
+
+	location, err := decodeString(members["in"], "in")
+	if err != nil {
+		return fmt.Errorf("parameter %q in: %w", name, err)
+	}
+
+	return validateIgnoredParameterSerialization(name, location, members)
+}
+
+// ignoredParameterSchema locates the schema used by one header or cookie declaration.
+func ignoredParameterSchema(
+	parameter oas.LocatedSchema,
+	members map[string]json.RawMessage,
+) (oas.LocatedSchema, error) {
+	rawContent, hasContent := members["content"]
+	if !hasContent {
+		return locatedRawChild(parameter, members["schema"], "schema"), nil
+	}
+
+	var content map[string]json.RawMessage
+	if err := json.Unmarshal(rawContent, &content); err != nil {
+		return oas.LocatedSchema{}, fmt.Errorf("content: %w", err)
+	}
+
+	mediaTypeName := slices.Sorted(maps.Keys(content))[0]
+
+	var mediaType map[string]json.RawMessage
+	if err := json.Unmarshal(content[mediaTypeName], &mediaType); err != nil {
+		return oas.LocatedSchema{}, fmt.Errorf("media type object: %w", err)
+	}
+
+	rawSchema, ok := mediaType["schema"]
+	if !ok {
+		rawSchema = json.RawMessage(`{}`)
+	}
+
+	return locatedRawChild(parameter, rawSchema, "content", mediaTypeName, "schema"), nil
+}
+
+// validateIgnoredParameterSerialization enforces location-specific Parameter Object fields.
+func validateIgnoredParameterSerialization(
+	name string,
+	location string,
+	members map[string]json.RawMessage,
+) error {
+	for _, field := range []string{"allowEmptyValue", "allowReserved"} {
+		if _, present := members[field]; present {
+			return fmt.Errorf("%s parameter %q cannot declare %s", location, name, field)
 		}
 	}
 
-	return validations, queryDecoders, nil
+	expectedStyle := "simple"
+	if location == "cookie" {
+		expectedStyle = "form"
+	}
+
+	style := expectedStyle
+
+	if raw, present := members["style"]; present {
+		parsedStyle, err := decodeString(raw, "style")
+		if err != nil {
+			return fmt.Errorf("%s parameter %q style: %w", location, name, err)
+		}
+
+		style = parsedStyle
+	}
+
+	if style != expectedStyle {
+		return fmt.Errorf("%s parameter %q style %q is invalid", location, name, style)
+	}
+
+	return nil
 }
 
 // schemaCompiler owns compilation state for one operation.

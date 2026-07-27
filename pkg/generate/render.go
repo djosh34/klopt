@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"text/template"
 
+	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/validation"
 	"golang.org/x/tools/imports"
 )
@@ -20,11 +23,18 @@ type patternSettings struct {
 	UseRE2         bool
 }
 
+type operationRender struct {
+	OperationID string
+	Name        string
+	Body        *validation.Validation
+	Query       *validation.QueryDecoder
+	Path        *validation.PathDecoder
+}
+
 func render(
 	packageName string,
 	openAPI []byte,
-	parsed map[string]*validation.Validation,
-	queryDecoders map[string]*validation.QueryDecoder,
+	parsed map[string]validation.RequestValidation,
 	settings patternSettings,
 ) (map[string][]byte, error) {
 	templates, err := template.ParseFS(templateFiles, "templates/*.go.tmpl")
@@ -32,18 +42,42 @@ func render(
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
 
+	operations := make([]operationRender, 0, len(parsed))
+	hasQuery := false
+	hasPath := false
+
+	for _, operationID := range slices.Sorted(maps.Keys(parsed)) {
+		name, nameErr := oas.RequestValidationName(operationID)
+		if nameErr != nil {
+			return nil, fmt.Errorf("render operation ID %q: %w", operationID, nameErr)
+		}
+
+		request := parsed[operationID]
+		operations = append(operations, operationRender{
+			OperationID: operationID,
+			Name:        name,
+			Body:        request.Body,
+			Query:       request.Query,
+			Path:        request.Path,
+		})
+		hasQuery = hasQuery || request.Query != nil
+		hasPath = hasPath || request.Path != nil
+	}
+
 	data := struct {
-		Package       string
-		OpenAPI       string
-		Validations   map[string]*validation.Validation
-		QueryDecoders map[string]*validation.QueryDecoder
-		Pattern       patternSettings
+		Package    string
+		OpenAPI    string
+		Operations []operationRender
+		HasQuery   bool
+		HasPath    bool
+		Pattern    patternSettings
 	}{
-		Package:       packageName,
-		OpenAPI:       strconv.Quote(string(openAPI)),
-		Validations:   parsed,
-		QueryDecoders: queryDecoders,
-		Pattern:       settings,
+		Package:    packageName,
+		OpenAPI:    strconv.Quote(string(openAPI)),
+		Operations: operations,
+		HasQuery:   hasQuery,
+		HasPath:    hasPath,
+		Pattern:    settings,
 	}
 
 	validate, err := executeTemplate(templates, "validate.go.tmpl", data)

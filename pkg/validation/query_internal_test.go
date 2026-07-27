@@ -51,7 +51,7 @@ func TestGeneratedQueryDecoderDefinitionRoundTripAndRejections(t *testing.T) {
 func TestParseSharesCompiledValidationWithQueryDecoderDefinition(t *testing.T) {
 	t.Parallel()
 
-	validations, decoders, err := Parse([]byte(`openapi: 3.0.3
+	requests, err := Parse([]byte(`openapi: 3.0.3
 paths:
   /shared:
     post:
@@ -69,7 +69,7 @@ components:
     Value: {type: string}
 `))
 	require.NoError(t, err)
-	require.Same(t, validations["shared"], decoders["shared"].Definition().Parameters[0].Validation)
+	require.Same(t, requests["shared"].Body, requests["shared"].Query.Definition().Parameters[0].Validation)
 }
 
 func TestQueryDecoderDefinitionSharesValidation(t *testing.T) {
@@ -183,19 +183,7 @@ func TestPrivateQueryHelpersRejectImpossibleCompiledInputs(t *testing.T) {
 	_, err = compileQueryParameter(oas.LocatedSchema{Raw: json.RawMessage(`{"name":null,"in":"query","schema":{"type":"string"}}`), Pointer: "#/parameter"}, &compiler)
 	require.Error(t, err)
 
-	source := oas.Source{Document: json.RawMessage(`{"schema":{"$ref":"#/missing"}}`)}
-	_, _, _, err = directSchemaType( //nolint:dogsled // Only the error is relevant to this malformed schema case.
-		source, oas.LocatedSchema{Raw: json.RawMessage(`{"$ref":"#/missing"}`), Pointer: "#/schema"},
-	)
-	require.Error(t, err)
-	_, _, _, err = directSchemaType( //nolint:dogsled // Only the error is relevant to this malformed schema case.
-		source, oas.LocatedSchema{Raw: json.RawMessage(`[]`), Pointer: "#/schema"},
-	)
-	require.Error(t, err)
-
-	_, _, err = compileQueryProperties(
-		oas.LocatedSchema{Raw: json.RawMessage(`null`), Pointer: "#/schema"}, source, false,
-	)
+	_, _, err = compileQueryProperties(nil, false)
 	require.Error(t, err)
 
 	var output bytes.Buffer

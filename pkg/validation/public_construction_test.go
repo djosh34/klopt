@@ -104,10 +104,10 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 		}}}
 	}`)
 
-	parsed, _, err := validation.Parse(spec, composite)
+	parsed, err := validation.Parse(spec, composite)
 	require.NoError(t, err)
 
-	compiled := parsed["request"].StringValidation.CompiledPattern
+	compiled := parsed["request"].Body.StringValidation.CompiledPattern
 	require.True(t, compiled.RejectsNonASCII())
 	require.True(t, compiled.UsesRE2())
 	require.Panics(t, func() { composite(compiled) })
@@ -116,7 +116,7 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 
 	require.Panics(t, func() { validation.PatternOptions(nil) })
 
-	_, _, err = validation.Parse(spec, nil)
+	_, err = validation.Parse(spec, nil)
 	require.EqualError(t, err, strings.Join([]string{
 		"compile operationId \"request\": compile schema at ",
 		"#/paths/~1request/post/requestBody/content/application~1json/schema/pattern: ",

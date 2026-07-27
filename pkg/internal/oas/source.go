@@ -25,12 +25,14 @@ var semanticVersionPattern = regexp.MustCompile(
 		`(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$`,
 )
 
-// Source retains one parsed document and one request Schema Object.
+// Source retains one parsed document and one acquired operation's request inputs.
 type Source struct {
 	Document            json.RawMessage
+	PathTemplate        string
 	RequestSchema       LocatedSchema
 	RequestBodyRequired bool
 	QueryParameters     []LocatedSchema
+	PathParameters      []LocatedSchema
 }
 
 // LocatedSchema is raw JSON together with its canonical document pointer.
@@ -38,6 +40,9 @@ type LocatedSchema struct {
 	Raw     json.RawMessage
 	Pointer string
 }
+
+// ParameterValidator validates one independently resolved raw Parameter Object.
+type ParameterValidator func(Source, LocatedSchema) error
 
 // ReferenceError describes a failed local reference chain.
 type ReferenceError struct {
@@ -74,8 +79,29 @@ func (referenceError *ReferenceError) Unwrap() error {
 
 // Parse parses YAML once and collects every application/json request Schema Object.
 func Parse(spec []byte) (map[string]Source, error) {
+	return parse(spec, nil)
+}
+
+// ParseWithParameterValidation validates every raw Parameter Object before merge or filtering.
+func ParseWithParameterValidation(
+	spec []byte,
+	validateParameter ParameterValidator,
+) (map[string]Source, error) {
+	if validateParameter == nil {
+		return nil, errors.New("parameter validator must not be nil")
+	}
+
+	return parse(spec, validateParameter)
+}
+
+// parse ingests and acquires one OpenAPI document with optional raw Parameter Object validation.
+func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source, error) {
 	document := spec
-	if !json.Valid(spec) {
+	if json.Valid(spec) {
+		if err := rejectDuplicateJSONNames(spec); err != nil {
+			return nil, fmt.Errorf("parse OpenAPI document JSON: %w", err)
+		}
+	} else {
 		var err error
 
 		document, err = yaml.YAMLToJSON(spec)
@@ -112,7 +138,82 @@ func Parse(spec []byte) (map[string]Source, error) {
 
 	source := Source{Document: append(json.RawMessage(nil), document...)}
 
-	return source.collectRequests(root["paths"])
+	return source.collectRequests(root["paths"], validateParameter)
+}
+
+// rejectDuplicateJSONNames preflights decoded member-name uniqueness across one JSON document.
+func rejectDuplicateJSONNames(document []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+
+	if err := rejectDuplicateJSONValue(decoder, "#"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// rejectDuplicateJSONValue walks one complete value from the decoder.
+//
+//nolint:cyclop // JSON objects and arrays require separate recursive token handling.
+func rejectDuplicateJSONValue(decoder *json.Decoder, pointer string) error {
+	token, tokenErr := decoder.Token()
+	if tokenErr != nil {
+		return tokenErr
+	}
+
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+
+		for decoder.More() {
+			nameToken, nameTokenErr := decoder.Token()
+			if nameTokenErr != nil {
+				return nameTokenErr
+			}
+
+			name, ok := nameToken.(string)
+			if !ok {
+				return fmt.Errorf("object name at %s must be a string", pointer)
+			}
+
+			if _, duplicate := seen[name]; duplicate {
+				return fmt.Errorf("duplicate object name %q at %s", name, pointer)
+			}
+
+			seen[name] = struct{}{}
+			if childErr := rejectDuplicateJSONValue(decoder, appendPointer(pointer, name)); childErr != nil {
+				return childErr
+			}
+		}
+	case '[':
+		for index := 0; decoder.More(); index++ {
+			if childErr := rejectDuplicateJSONValue(
+				decoder,
+				appendPointer(pointer, strconv.Itoa(index)),
+			); childErr != nil {
+				return childErr
+			}
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q at %s", delimiter, pointer)
+	}
+
+	closing, closingErr := decoder.Token()
+	if closingErr != nil {
+		return closingErr
+	}
+
+	if closing != delimiter+2 {
+		return fmt.Errorf("unexpected JSON delimiter %q at %s", closing, pointer)
+	}
+
+	return nil
 }
 
 // Resolve follows a local Reference Object chain and ignores all Reference Object siblings.
@@ -197,7 +298,10 @@ func (source Source) Child(parent LocatedSchema, tokens ...string) (LocatedSchem
 // collectRequests walks all path operations in deterministic path and method order.
 //
 //nolint:cyclop // Path, method, inclusion, and duplicate handling are one deterministic collection pass.
-func (source Source) collectRequests(pathsRaw json.RawMessage) (map[string]Source, error) {
+func (source Source) collectRequests(
+	pathsRaw json.RawMessage,
+	validateParameter ParameterValidator,
+) (map[string]Source, error) {
 	var paths map[string]json.RawMessage
 	if err := json.Unmarshal(pathsRaw, &paths); err != nil {
 		return nil, fmt.Errorf("parse OpenAPI paths: %w", err)
@@ -209,17 +313,60 @@ func (source Source) collectRequests(pathsRaw json.RawMessage) (map[string]Sourc
 
 	result := make(map[string]Source)
 	locations := make(map[string]string)
+	pathTemplates := make([]string, 0, len(paths))
+	hierarchies := make(map[string]string, len(paths))
+	expressionsByPath := make(map[string][]string, len(paths))
 
 	for _, path := range slices.Sorted(maps.Keys(paths)) {
 		if strings.HasPrefix(path, "x-") {
 			continue
 		}
 
+		canonical, expressions, err := ParsePathTemplate(path)
+		if err != nil {
+			return nil, fmt.Errorf("parse OpenAPI path %q: %w", path, err)
+		}
+
+		if first, duplicate := hierarchies[canonical]; duplicate {
+			return nil, fmt.Errorf(
+				"OpenAPI paths %q and %q have an identical templated hierarchy",
+				first,
+				path,
+			)
+		}
+
+		hierarchies[canonical] = path
+		expressionsByPath[path] = expressions
+		pathTemplates = append(pathTemplates, path)
+	}
+
+	for _, path := range pathTemplates {
 		pathItem := LocatedSchema{Raw: paths[path], Pointer: appendPointer("#/paths", path)}
 
 		resolved, err := source.Resolve(pathItem)
 		if err != nil {
 			return nil, fmt.Errorf("resolve OpenAPI path item %q: %w", path, err)
+		}
+
+		if validateErr := validatePathItem(resolved); validateErr != nil {
+			return nil, fmt.Errorf("parse OpenAPI path item %q: %w", path, validateErr)
+		}
+
+		pathParameters, err := source.parameterList(resolved)
+		if err != nil {
+			return nil, fmt.Errorf("parse OpenAPI path item parameters for %q: %w", path, err)
+		}
+
+		if validationErr := source.validateParameters(pathParameters, validateParameter); validationErr != nil {
+			return nil, fmt.Errorf("parse OpenAPI path item parameters for %q: %w", path, validationErr)
+		}
+
+		if correspondenceErr := validateDeclaredPathParameters(
+			path,
+			expressionsByPath[path],
+			pathParameters,
+		); correspondenceErr != nil {
+			return nil, fmt.Errorf("parse OpenAPI path item parameters for %q: %w", path, correspondenceErr)
 		}
 
 		operations, err := operationChildren(resolved)
@@ -228,28 +375,28 @@ func (source Source) collectRequests(pathsRaw json.RawMessage) (map[string]Sourc
 		}
 
 		for _, operation := range operations {
-			operationSource, operationID, included, err := source.requestSource(resolved, operation.Schema)
+			operationSource, operationID, err := source.requestSource(
+				path,
+				expressionsByPath[path],
+				pathParameters,
+				operation.Schema,
+				validateParameter,
+			)
 			if err != nil {
 				return nil, err
 			}
 
-			if operationID != "" {
-				if first, duplicate := locations[operationID]; duplicate {
-					return nil, fmt.Errorf(
-						"operationId %q is duplicated at %s and %s",
-						operationID,
-						first,
-						appendPointer(pathItem.Pointer, operation.Method),
-					)
-				}
-
-				locations[operationID] = appendPointer(pathItem.Pointer, operation.Method)
+			if first, duplicate := locations[operationID]; duplicate {
+				return nil, fmt.Errorf(
+					"%w: operationId %q is duplicated at %s and %s",
+					ErrInvalidOperationID,
+					operationID,
+					first,
+					appendPointer(pathItem.Pointer, operation.Method),
+				)
 			}
 
-			if !included {
-				continue
-			}
-
+			locations[operationID] = appendPointer(pathItem.Pointer, operation.Method)
 			result[operationID] = operationSource
 		}
 	}
@@ -257,39 +404,126 @@ func (source Source) collectRequests(pathsRaw json.RawMessage) (map[string]Sourc
 	return result, nil
 }
 
-// requestSource returns one operation's JSON request-body source when it qualifies.
+// ParsePathTemplate returns a canonical hierarchy and expression order.
+//
+//nolint:cyclop // Each malformed brace/expression form needs a distinct Parse diagnostic.
+func ParsePathTemplate(pathTemplate string) (string, []string, error) {
+	if !strings.HasPrefix(pathTemplate, "/") {
+		return "", nil, fmt.Errorf("path template %q must begin with /", pathTemplate)
+	}
+
+	canonical := make([]byte, 0, len(pathTemplate))
+	seen := make(map[string]struct{})
+	expressions := make([]string, 0)
+	previousExpression := false
+
+	for index := 0; index < len(pathTemplate); {
+		switch pathTemplate[index] {
+		case '}':
+			return "", nil, fmt.Errorf("path template %q has an unmatched }", pathTemplate)
+		case '{':
+			if previousExpression {
+				return "", nil, fmt.Errorf("path template %q has adjacent expressions", pathTemplate)
+			}
+
+			closing := strings.IndexByte(pathTemplate[index+1:], '}')
+			if closing == -1 {
+				return "", nil, fmt.Errorf("path template %q has an unmatched {", pathTemplate)
+			}
+
+			closing += index + 1
+
+			name := pathTemplate[index+1 : closing]
+			if name == "" {
+				return "", nil, fmt.Errorf("path template %q has an empty expression", pathTemplate)
+			}
+
+			if strings.ContainsRune(name, '{') {
+				return "", nil, fmt.Errorf("path template %q has a nested expression", pathTemplate)
+			}
+
+			if _, duplicate := seen[name]; duplicate {
+				return "", nil, fmt.Errorf("path template %q repeats expression %q", pathTemplate, name)
+			}
+
+			seen[name] = struct{}{}
+			expressions = append(expressions, name)
+
+			canonical = append(canonical, '{', '}')
+
+			index = closing + 1
+			previousExpression = true
+		default:
+			canonical = append(canonical, pathTemplate[index])
+			index++
+			previousExpression = false
+		}
+	}
+
+	return string(canonical), expressions, nil
+}
+
+// requestSource returns one acquired operation's request source.
 //
 //nolint:cyclop,nestif // Each request-body field needs its own malformed-input diagnostic or skip decision.
-func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSchema) (Source, string, bool, error) {
+func (source Source) requestSource(
+	pathTemplate string,
+	pathExpressions []string,
+	pathParameters []locatedParameter,
+	operation LocatedSchema,
+	validateParameter ParameterValidator,
+) (Source, string, error) {
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(operation.Raw, &members); err != nil {
-		return Source{}, "", false, fmt.Errorf("parse operation at %s: %w", operation.Pointer, err)
+		return Source{}, "", fmt.Errorf("parse operation at %s: %w", operation.Pointer, err)
 	}
 
 	if members == nil {
-		return Source{}, "", false, fmt.Errorf("parse operation at %s: operation must be an object", operation.Pointer)
+		return Source{}, "", fmt.Errorf("parse operation at %s: operation must be an object", operation.Pointer)
 	}
 
-	operationIDRaw, hasOperationID := members["operationId"]
+	operationParameters, parametersErr := source.parameterList(operation)
+	if parametersErr != nil {
+		return Source{}, "", fmt.Errorf(
+			"operation at %s parameters: operation parameters: %w",
+			operation.Pointer,
+			parametersErr,
+		)
+	}
 
-	var (
-		operationID    string
-		operationIDErr error
+	if validationErr := source.validateParameters(operationParameters, validateParameter); validationErr != nil {
+		return Source{}, "", fmt.Errorf("operation at %s parameters: %w", operation.Pointer, validationErr)
+	}
+
+	var operationID string
+	if err := json.Unmarshal(members["operationId"], &operationID); err != nil || operationID == "" {
+		return Source{}, "", fmt.Errorf(
+			"operation at %s: operationId must be a non-empty string: %w",
+			operation.Pointer,
+			ErrInvalidOperationID,
+		)
+	}
+
+	if _, err := RequestValidationName(operationID); err != nil {
+		return Source{}, "", fmt.Errorf("operation at %s: %w", operation.Pointer, err)
+	}
+
+	queryParameters, mergedPathParameters, err := source.mergedParameters(
+		pathTemplate,
+		pathExpressions,
+		pathParameters,
+		operationParameters,
 	)
-	if hasOperationID {
-		operationIDErr = json.Unmarshal(operationIDRaw, &operationID)
-	}
-
-	if operationIDErr != nil {
-		operationID = ""
-	}
-
-	queryParameters, err := source.mergedQueryParameters(pathItem, operation)
 	if err != nil {
-		return Source{}, "", false, fmt.Errorf("operation at %s query parameters: %w", operation.Pointer, err)
+		return Source{}, "", fmt.Errorf("operation at %s parameters: %w", operation.Pointer, err)
 	}
 
-	result := Source{Document: source.Document, QueryParameters: queryParameters}
+	result := Source{
+		Document:        source.Document,
+		PathTemplate:    pathTemplate,
+		QueryParameters: queryParameters,
+		PathParameters:  mergedPathParameters,
+	}
 
 	requestBodyRaw, hasRequestBody := members["requestBody"]
 	if hasRequestBody {
@@ -297,12 +531,12 @@ func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSche
 
 		requestBody, resolveErr := source.Resolve(requestBody)
 		if resolveErr != nil {
-			return Source{}, "", false, fmt.Errorf("operation at %s request body: %w", operation.Pointer, resolveErr)
+			return Source{}, "", fmt.Errorf("operation at %s request body: %w", operation.Pointer, resolveErr)
 		}
 
 		var body map[string]json.RawMessage
 		if unmarshalErr := json.Unmarshal(requestBody.Raw, &body); unmarshalErr != nil {
-			return Source{}, "", false, fmt.Errorf(
+			return Source{}, "", fmt.Errorf(
 				"parse operation at %s request body: %w",
 				operation.Pointer,
 				unmarshalErr,
@@ -310,17 +544,17 @@ func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSche
 		}
 
 		if body == nil {
-			return Source{}, "", false, fmt.Errorf("parse operation at %s request body: must be an object", operation.Pointer)
+			return Source{}, "", fmt.Errorf("parse operation at %s request body: must be an object", operation.Pointer)
 		}
 
 		required, requiredErr := optionalBoolean(body["required"], "required")
 		if requiredErr != nil {
-			return Source{}, "", false, fmt.Errorf("parse operation at %s request body: %w", operation.Pointer, requiredErr)
+			return Source{}, "", fmt.Errorf("parse operation at %s request body: %w", operation.Pointer, requiredErr)
 		}
 
 		contentRaw, hasContent := body["content"]
 		if !hasContent {
-			return Source{}, "", false, fmt.Errorf(
+			return Source{}, "", fmt.Errorf(
 				"parse operation at %s request body: content does not exist",
 				operation.Pointer,
 			)
@@ -328,7 +562,7 @@ func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSche
 
 		var content map[string]json.RawMessage
 		if unmarshalErr := json.Unmarshal(contentRaw, &content); unmarshalErr != nil {
-			return Source{}, "", false, fmt.Errorf(
+			return Source{}, "", fmt.Errorf(
 				"parse operation at %s request body content: %w",
 				operation.Pointer,
 				unmarshalErr,
@@ -336,7 +570,7 @@ func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSche
 		}
 
 		if content == nil {
-			return Source{}, "", false, fmt.Errorf(
+			return Source{}, "", fmt.Errorf(
 				"parse operation at %s request body: content must be an object",
 				operation.Pointer,
 			)
@@ -351,7 +585,7 @@ func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSche
 
 			schema, schemaErr := mediaTypeSchema(mediaType)
 			if schemaErr != nil {
-				return Source{}, "", false, fmt.Errorf(
+				return Source{}, "", fmt.Errorf(
 					"parse operation at %s request body: %w",
 					operation.Pointer,
 					schemaErr,
@@ -363,28 +597,127 @@ func (source Source) requestSource(pathItem LocatedSchema, operation LocatedSche
 		}
 	}
 
-	included := len(result.RequestSchema.Raw) != 0 || len(result.QueryParameters) != 0
-	if !included {
-		return Source{}, operationID, false, nil
+	return result, operationID, nil
+}
+
+// validateParameters invokes the caller's validator for every independently resolved declaration.
+func (source Source) validateParameters(
+	parameters []locatedParameter,
+	validateParameter ParameterValidator,
+) error {
+	if validateParameter == nil {
+		return nil
 	}
 
-	if !hasOperationID {
-		return Source{}, "", false, fmt.Errorf("operation at %s: operationId must be a non-empty string", operation.Pointer)
+	for _, parameter := range parameters {
+		if err := validateParameter(source, parameter.schema); err != nil {
+			return fmt.Errorf("parameter at %s: %w", parameter.schema.Pointer, err)
+		}
 	}
 
-	if operationIDErr != nil {
-		return Source{}, "", false, fmt.Errorf(
-			"operation at %s: operationId must be a non-empty string: %w",
-			operation.Pointer,
-			operationIDErr,
+	return nil
+}
+
+// validatePathParameterCorrespondence requires exact template/declaration ownership.
+func validatePathParameterCorrespondence(
+	pathTemplate string,
+	expressions []string,
+	parameters []locatedParameter,
+) error {
+	declared := make(map[string]struct{}, len(parameters))
+	for _, parameter := range parameters {
+		if parameter.identity.location != "path" {
+			continue
+		}
+
+		if strings.ContainsRune(parameter.identity.name, '/') {
+			return fmt.Errorf("path parameter %q must not contain /", parameter.identity.name)
+		}
+
+		declared[parameter.identity.name] = struct{}{}
+	}
+
+	for _, expression := range expressions {
+		if _, ok := declared[expression]; !ok {
+			return fmt.Errorf(
+				"path template %q expression %q has no parameter declaration",
+				pathTemplate,
+				expression,
+			)
+		}
+
+		delete(declared, expression)
+	}
+
+	if len(declared) != 0 {
+		unused := slices.Sorted(maps.Keys(declared))[0]
+
+		return fmt.Errorf(
+			"path parameter %q has no expression in path template %q",
+			unused,
+			pathTemplate,
 		)
 	}
 
-	if operationID == "" {
-		return Source{}, "", false, fmt.Errorf("operation at %s: operationId must be a non-empty string", operation.Pointer)
+	return nil
+}
+
+// validateDeclaredPathParameters requires every Path Item path declaration to name one template expression.
+func validateDeclaredPathParameters(
+	pathTemplate string,
+	expressions []string,
+	parameters []locatedParameter,
+) error {
+	expressionSet := make(map[string]struct{}, len(expressions))
+	for _, expression := range expressions {
+		expressionSet[expression] = struct{}{}
 	}
 
-	return result, operationID, true, nil
+	for _, parameter := range parameters {
+		if parameter.identity.location != "path" {
+			continue
+		}
+
+		if strings.ContainsRune(parameter.identity.name, '/') {
+			return fmt.Errorf("path parameter %q must not contain /", parameter.identity.name)
+		}
+
+		if _, ok := expressionSet[parameter.identity.name]; !ok {
+			return fmt.Errorf(
+				"path parameter %q has no expression in path template %q",
+				parameter.identity.name,
+				pathTemplate,
+			)
+		}
+	}
+
+	return nil
+}
+
+// validatePathItem rejects unknown non-extension fixed fields.
+func validatePathItem(pathItem LocatedSchema) error {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(pathItem.Raw, &members); err != nil {
+		return err
+	}
+
+	if members == nil {
+		return errors.New("path item must be an object")
+	}
+
+	allowed := map[string]struct{}{
+		"$ref": {}, "summary": {}, "description": {}, "get": {}, "put": {}, "post": {}, "delete": {},
+		"options": {}, "head": {}, "patch": {}, "trace": {}, "servers": {}, "parameters": {},
+	}
+	for name := range members {
+		if _, ok := allowed[name]; ok || strings.HasPrefix(name, "x-") {
+			continue
+		}
+
+		return fmt.Errorf("unknown Path Item field %q at %s", name, pathItem.Pointer)
+	}
+
+	return nil
 }
 
 // optionalBoolean decodes an absent-or-boolean field without accepting null.

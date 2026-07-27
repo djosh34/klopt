@@ -50,7 +50,7 @@ decodes to:
 Use that JSON with any struct:
 
 ```go
-raw, err := queryDecoders["listThings"].Decode(r.URL)
+raw, err := requestValidations["listThings"].Query.Decode(r.URL)
 if err != nil {
 	return err
 }
