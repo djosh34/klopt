@@ -99,8 +99,12 @@ func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, err
 		}
 	}
 
-	if raw == ";"+parameter.name {
+	if raw == ";"+url.PathEscape(parameter.name) {
 		switch parameter.wire {
+		case pathWireMatrixPrimitive:
+			if parameter.scalarType == "string" {
+				return jsontext.Value(`""`), nil
+			}
 		case pathWireMatrixArray:
 			return jsontext.Value(`[]`), nil
 		case pathWireMatrixObject:
@@ -278,7 +282,7 @@ func (parameter *pathParameter) pathStyleBody(raw string) (string, error) {
 }
 
 func (parameter *pathParameter) matrixBody(raw string) (string, error) {
-	prefix := ";" + parameter.name + "="
+	prefix := ";" + url.PathEscape(parameter.name) + "="
 	if !strings.HasPrefix(raw, prefix) {
 		return "", fmt.Errorf("matrix value must begin with %q", prefix)
 	}
@@ -292,12 +296,13 @@ func (parameter *pathParameter) matrixArrayValues(raw string) ([]string, error) 
 	}
 
 	terms := strings.Split(raw[1:], ";")
+	escapedName := url.PathEscape(parameter.name)
 
 	values := make([]string, len(terms))
 	for index, term := range terms {
 		name, value, hasValue := strings.Cut(term, "=")
-		if name != parameter.name {
-			return nil, fmt.Errorf("matrix array term names %q, want %q", name, parameter.name)
+		if name != escapedName {
+			return nil, fmt.Errorf("matrix array term names %q, want %q", name, escapedName)
 		}
 
 		if hasValue {

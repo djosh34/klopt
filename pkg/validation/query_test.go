@@ -409,36 +409,32 @@ func TestQueryJSONContentRejectsMalformedMediaTypesAtContentPointer(t *testing.T
 	}
 }
 
-func TestQueryJSONContentRejectsParameterExampleByPresence(t *testing.T) {
+func TestQueryJSONContentAllowsParameterExample(t *testing.T) {
 	t.Parallel()
-
-	const pointer = "#/paths/~1items/get/parameters/0/example"
 
 	for _, value := range []string{"null", "false", `''`, `{}`} {
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
 
 			parameter := fmt.Sprintf(`- {name: q, in: query, example: %s, content: {application/json: {}}}`, value)
-			_, err := validation.Parse(querySpec(parameter))
-			require.Error(t, err)
-			require.ErrorContains(t, err, pointer)
+			decoders, err := validation.Parse(querySpec(parameter))
+			require.NoError(t, err)
+			require.Contains(t, decoders, "query")
 		})
 	}
 }
 
-func TestQueryJSONContentRejectsParameterExamplesByPresence(t *testing.T) {
+func TestQueryJSONContentAllowsParameterExamples(t *testing.T) {
 	t.Parallel()
 
-	const pointer = "#/paths/~1items/get/parameters/0/examples"
-
-	for _, value := range []string{"null", "false", `{}`} {
+	for _, value := range []string{`{}`, `{sample: {value: false}}`} {
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
 
 			parameter := fmt.Sprintf(`- {name: q, in: query, examples: %s, content: {application/json: {}}}`, value)
-			_, err := validation.Parse(querySpec(parameter))
-			require.Error(t, err)
-			require.ErrorContains(t, err, pointer)
+			decoders, err := validation.Parse(querySpec(parameter))
+			require.NoError(t, err)
+			require.Contains(t, decoders, "query")
 		})
 	}
 }
@@ -466,11 +462,6 @@ func TestQueryJSONContentPlacementGuardPrecedence(t *testing.T) {
 			fields:       `explode: false, examples: null, `,
 			wantContains: "explode",
 		},
-		{
-			name:         "example guard",
-			fields:       `example: null, `,
-			wantContains: "#/paths/~1items/get/parameters/0/example",
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -484,10 +475,10 @@ func TestQueryJSONContentPlacementGuardPrecedence(t *testing.T) {
 	}
 }
 
-func TestQueryJSONContentExampleGuardUsesResolvedEscapedPointer(t *testing.T) {
+func TestQueryJSONContentAllowsExamplesInResolvedParameter(t *testing.T) {
 	t.Parallel()
 
-	_, err := validation.Parse([]byte(`openapi: 3.0.3
+	requests, err := validation.Parse([]byte(`openapi: 3.0.3
 paths:
   /items:
     get:
@@ -499,12 +490,12 @@ components:
     'query/~examples':
       name: q
       in: query
-      examples: false
+      examples: {sample: {value: false}}
       content:
         application/json: {}
 `))
-	require.Error(t, err)
-	require.ErrorContains(t, err, "#/components/parameters/query~1~0examples/examples")
+	require.NoError(t, err)
+	require.Contains(t, requests, "query")
 }
 
 func TestAllowedQueryExamplesRemainInert(t *testing.T) {

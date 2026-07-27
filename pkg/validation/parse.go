@@ -101,13 +101,36 @@ func validateRawParameter(parameter oas.LocatedSchema, compiler *schemaCompiler)
 		_, err = compileQueryParameter(parameter, compiler)
 	case "path":
 		_, err = compilePathParameter(parameter, compiler)
-	case "header", "cookie":
+	case "header":
+		reserved, reservedErr := isReservedHeaderParameter(members)
+		if reservedErr != nil {
+			return fmt.Errorf("parameter at %s name: %w", parameter.Pointer, reservedErr)
+		}
+
+		if reserved {
+			return nil
+		}
+
+		err = compileIgnoredParameterSchema(parameter, members, compiler)
+	case "cookie":
 		err = compileIgnoredParameterSchema(parameter, members, compiler)
 	default:
 		return fmt.Errorf("parameter at %s has unsupported location %q", parameter.Pointer, location)
 	}
 
 	return err
+}
+
+// isReservedHeaderParameter reports whether OpenAPI requires this Header Parameter Object to be ignored.
+func isReservedHeaderParameter(members map[string]json.RawMessage) (bool, error) {
+	name, err := decodeString(members["name"], "name")
+	if err != nil {
+		return false, err
+	}
+
+	return strings.EqualFold(name, "Accept") ||
+		strings.EqualFold(name, "Content-Type") ||
+		strings.EqualFold(name, "Authorization"), nil
 }
 
 // compileIgnoredParameterSchema compiles the schema of a valid but unsupported parameter location.

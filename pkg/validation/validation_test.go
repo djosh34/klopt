@@ -308,6 +308,64 @@ paths:
 	}
 }
 
+// TestParseIgnoresReservedHeaderParameterDefinitions preserves OpenAPI's reserved-header exception.
+func TestParseIgnoresReservedHeaderParameterDefinitions(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"Accept", "content-type", "AUTHORIZATION"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: getItems
+      parameters:
+        - {name: ` + name + `, in: header, schema: {oneOf: [{type: string}]}}
+`))
+			require.NoError(t, err)
+			require.Contains(t, requests, "getItems")
+		})
+	}
+}
+
+// TestParseAllowsParameterExamplesWithContent keeps Parameter Object examples independent of schema/content.
+func TestParseAllowsParameterExamplesWithContent(t *testing.T) {
+	t.Parallel()
+
+	parameters := []string{
+		`{name: q, in: query, %s, content: {application/json: {}}}`,
+		`{name: value, in: path, required: true, %s, content: {application/json: {}}}`,
+		`{name: X-Value, in: header, %s, content: {application/json: {}}}`,
+		`{name: value, in: cookie, %s, content: {application/json: {}}}`,
+	}
+
+	for _, field := range []string{`example: false`, `examples: {sample: {value: false}}`} {
+		for index, parameter := range parameters {
+			t.Run(fmt.Sprintf("%s location %d", field, index), func(t *testing.T) {
+				t.Parallel()
+
+				path := "/items"
+				if index == 1 {
+					path = "/items/{value}"
+				}
+
+				requests, err := Parse([]byte(`openapi: 3.0.3
+paths:
+  ` + path + `:
+    get:
+      operationId: getItems
+      parameters:
+        - ` + fmt.Sprintf(parameter, field) + `
+`))
+				require.NoError(t, err)
+				require.Contains(t, requests, "getItems")
+			})
+		}
+	}
+}
+
 // TestParseReportsPathSchemaErrorsBeforePathFieldMisuse preserves compiler error precedence.
 func TestParseReportsPathSchemaErrorsBeforePathFieldMisuse(t *testing.T) {
 	t.Parallel()

@@ -240,7 +240,7 @@ func validateParameterFields(
 		return validateSchemaObjectShape(identity.name, appendPointer(pointer, "schema"), members["schema"])
 	}
 
-	for _, field := range []string{"allowReserved", "style", "explode", "example", "examples"} {
+	for _, field := range []string{"allowReserved", "style", "explode"} {
 		if _, present := members[field]; present {
 			return fmt.Errorf(
 				"parameter %q content cannot be combined with %s at %s",

@@ -99,6 +99,8 @@ func TestGeneratedPathDecoderUsesDeclaredShapeForEmptyCaptures(t *testing.T) {
 		{name: "label exploded framed empty string", wire: 3, explode: true, path: "/.", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 		{name: "matrix framed empty string", wire: 6, path: "/;p=", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 		{name: "matrix exploded framed empty string", wire: 6, explode: true, path: "/;p=", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
+		{name: "matrix undefined string", wire: 6, path: "/;p", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
+		{name: "matrix exploded undefined string", wire: 6, explode: true, path: "/;p", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 	}
 
 	for _, test := range tests {
@@ -151,6 +153,49 @@ func TestGeneratedPathDecoderRequiresStyleFramingForEmptyAggregates(t *testing.T
 				require.Error(t, err)
 			})
 		}
+	}
+}
+
+func TestGeneratedPathDecoderMatchesEscapedMatrixParameterNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		wire       uint8
+		explode    bool
+		path       string
+		validation *validation.Validation
+		scalarType string
+		expected   string
+	}{
+		{name: "primitive", wire: 6, path: "/;x%20y=blue", validation: pathStringValidation(), scalarType: "string", expected: `{"x y":"blue"}`},
+		{name: "array", wire: 7, path: "/;x%20y=blue,black", validation: pathArrayValidation(), scalarType: "string", expected: `{"x y":["blue","black"]}`},
+		{name: "exploded array", wire: 7, explode: true, path: "/;x%20y=blue;x%20y=black", validation: pathArrayValidation(), scalarType: "string", expected: `{"x y":["blue","black"]}`},
+		{name: "object", wire: 8, path: "/;x%20y=key,value", validation: pathOpenObjectValidation(), expected: `{"x y":{"key":"value"}}`},
+		{name: "undefined primitive", wire: 6, path: "/;x%20y", validation: pathStringValidation(), scalarType: "string", expected: `{"x y":""}`},
+		{name: "undefined array", wire: 7, path: "/;x%20y", validation: pathArrayValidation(), scalarType: "string", expected: `{"x y":[]}`},
+		{name: "undefined object", wire: 8, path: "/;x%20y", validation: pathOpenObjectValidation(), expected: `{"x y":{}}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+				OperationID: "escaped", PathTemplate: "/{x y}",
+				Parameters: []validation.PathParameterDefinition{{
+					Name: "x y", Wire: test.wire, Explode: test.explode,
+					Validation: test.validation, ScalarType: test.scalarType,
+				}},
+			})
+			require.NoError(t, err)
+
+			input, err := url.Parse(test.path)
+			require.NoError(t, err)
+			actual, err := decoder.DecodePathParams(input)
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
 	}
 }
 
