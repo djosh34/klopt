@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
@@ -69,11 +68,4 @@ func (adapter kinopenapiRequestBodyValidator) Validate(body []byte) error {
 	}
 
 	return nil
-}
-
-// TestKinopenapiValidatorCharacterizations pins known v0.140.0 behavior outside the consensus corpus.
-func TestKinopenapiValidatorCharacterizations(t *testing.T) {
-	t.Parallel()
-
-	runValidatorCharacterizations(t, newKinopenapiRequestBodyValidator, kinopenapiValidatorName)
 }

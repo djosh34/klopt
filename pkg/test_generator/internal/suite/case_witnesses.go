@@ -17,15 +17,8 @@ const witnessDecimalRadix = 10
 // witnessMidpointParts divides an exact interval into halves.
 const witnessMidpointParts = 2
 
-// Architecture note: witness planning derives exact values from the effective
-// occurrence context. The basicNumbers, fractionalCandidates,
-// rationalWitnessCandidates, numberWitnessCandidates, nonMultipleCandidates,
-// half-step, and outsiderCandidates paths were deleted; implementation LOC now
-// points at one context solver. Opaque string languages remain intentionally
-// unsupported without a trusted valid oracle. Invalid oracle values establish
-// whole-occurrence rejection, never atomic pattern/format blame. Numeric format
-// names remain open annotations because the generator and pinned validators do
-// not share consensus enforcement semantics.
+// Architecture note: exact boundary planning derives values from the effective
+// occurrence context through one bounded solver.
 
 // contextFailures creates dynamic failing partitions that depend on sibling passing rules.
 func (planner *CasePlanner) contextFailures(
@@ -78,7 +71,7 @@ func (planner *CasePlanner) enumContextFailuresAt(
 		limit += len(pass.Enum.Values)
 	}
 
-	values, err := planner.contextValuesAt(contextDomain, limit, make(map[DomainID]bool), use, false)
+	values, err := planner.contextValuesAt(contextDomain, limit, make(map[DomainID]bool), use)
 	if err != nil {
 		return nil, err
 	}
@@ -101,26 +94,18 @@ func (planner *CasePlanner) contextValues(
 	limit int,
 	active map[DomainID]bool,
 ) ([]jsonvalue.Value, error) {
-	return planner.contextValuesAt(domain, limit, active, nil, false)
+	return planner.contextValuesAt(domain, limit, active, nil)
 }
 
-// contextValuesAt enumerates modeled values with optional exact-occurrence oracle access.
+// contextValuesAt enumerates modeled values while retaining exact child occurrences.
 func (planner *CasePlanner) contextValuesAt(
 	domain Domain,
 	limit int,
 	active map[DomainID]bool,
 	use *schemaUse,
-	useOracle bool,
 ) ([]jsonvalue.Value, error) {
 	if limit <= 0 {
 		return nil, nil
-	}
-
-	if useOracle && use != nil && use.examples.ValidDeclared &&
-		(domain.Enum != nil || hasOpaqueStringConstraints(domain.String)) {
-		values := generationExampleValues(use.examples.Valid)
-
-		return values[:min(limit, len(values))], nil
 	}
 
 	if domain.Enum != nil {
@@ -137,16 +122,6 @@ func (planner *CasePlanner) contextValuesAt(
 	}
 
 	return collector.values, nil
-}
-
-// generationExampleValues clones retained occurrence values in declaration order.
-func generationExampleValues(examples []GenerationExample) []jsonvalue.Value {
-	values := make([]jsonvalue.Value, 0, len(examples))
-	for _, example := range examples {
-		values = append(values, cloneJSONValue(example.Value))
-	}
-
-	return values
 }
 
 // contextValueCollector appends distinct values up to one fixed bound.
@@ -510,7 +485,7 @@ func (planner *CasePlanner) contextArrayChildrenAt(
 	}
 
 	active[items] = true
-	children, err := planner.contextValuesAt(child, limit, active, use, true)
+	children, err := planner.contextValuesAt(child, limit, active, use)
 	delete(active, items)
 
 	return children, err
@@ -780,7 +755,7 @@ func (planner *CasePlanner) contextChildValuesAt(
 	}
 
 	active[id] = true
-	values, err := planner.contextValuesAt(child, limit, active, use, true)
+	values, err := planner.contextValuesAt(child, limit, active, use)
 	delete(active, id)
 
 	return values, err

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
-	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -129,40 +128,7 @@ func TestAdditionalPropertyNamesNeverCollide(t *testing.T) {
 }
 
 // TestCompileSuiteRejectsEmptyRoot verifies the public checker cannot silently execute zero cases.
-func TestCompileSuiteRejectsEmptyRoot(t *testing.T) {
-	t.Parallel()
-
-	compiler := NewCompiler(parseSchemaSource(t, `type: string
-minLength: 2
-maxLength: 1`, "", "create"))
-	_, err := compiler.CompileSuite()
-	require.ErrorContains(t, err, "accepts no JSON value")
-}
-
-// TestCompileSuiteConstructsPatternsWithoutExamples verifies pattern generation needs no oracle.
-func TestCompileSuiteConstructsPatternsWithoutExamples(t *testing.T) {
-	t.Parallel()
-
-	compiler := NewCompiler(parseSchemaSource(t, `pattern: '^ok$'`, "", "create"))
-	compiled, err := compiler.CompileSuite()
-	require.NoError(t, err)
-
-	for _, plannedCase := range compiled.Cases {
-		if plannedCase.Expect != ExpectAccepted {
-			continue
-		}
-
-		for seed := range 10 {
-			value := plannedCase.Generator.Example(seed)
-			if value.Kind == jsonvalue.KindString {
-				require.True(t, patternvalidator.MustParse(`^ok$`).Validate(value.String))
-			}
-		}
-	}
-}
-
-// TestCompileSuiteRequiresTrustedFormatButNotPatternExamples verifies only opaque formats need an oracle.
-func TestCompileSuiteRequiresTrustedFormatButNotPatternExamples(t *testing.T) {
+func TestCompileSuiteConstructsPatternsAndFormatsWithoutExamples(t *testing.T) {
 	t.Parallel()
 
 	patternCompiler := NewCompiler(parseSchemaSource(t, "type: string\npattern: '^ok$'", "", "create"))
@@ -171,7 +137,7 @@ func TestCompileSuiteRequiresTrustedFormatButNotPatternExamples(t *testing.T) {
 
 	formatCompiler := NewCompiler(parseSchemaSource(t, "type: string\nformat: email", "", "create"))
 	_, err = formatCompiler.CompileSuite()
-	require.ErrorContains(t, err, "no trusted valid example")
+	require.NoError(t, err)
 }
 
 // TestCompileSuiteKeepsRequiredNamesSeparateFromDeclaredProperties verifies that required

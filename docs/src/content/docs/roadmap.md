@@ -5,7 +5,6 @@ description: Known hard problems and likely next steps for validation test gener
 
 ## Test generation
 
-- Generate strings for `pattern` and `format` without depending on `x-valid-examples` and `x-invalid-examples`.
 - Correctly intersect string patterns across `allOf`.
 
 ## Composition

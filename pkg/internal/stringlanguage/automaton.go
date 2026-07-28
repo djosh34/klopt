@@ -1,5 +1,5 @@
 //nolint:godoclint,mnd // Private automata vocabulary and bit widths are local implementation details.
-package patterngenerator
+package stringlanguage
 
 import (
 	"encoding/binary"
@@ -391,7 +391,7 @@ func (builder *nfaBuilder) buildRawNode(expression *regexpsyntax.Regexp) (fragme
 			return builder.buildRawNode(expression.Sub[0])
 		}, expression.Min, expression.Max, expression.Max < 0)
 	default:
-		return fragment{}, &CapabilityError{Feature: "regexp operation"}
+		return fragment{}, errors.New("raw Go regexp generator does not support regexp operation")
 	}
 }
 

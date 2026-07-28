@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"slices"
 	"sort"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
@@ -128,6 +129,8 @@ func (registry *DomainRegistry) normalizeDomain(domain Domain) Domain {
 }
 
 // normalizeNumber removes irrelevant numeric constraints.
+//
+//nolint:cyclop // Canonical numeric implications stay visible in one normalization pass.
 func normalizeNumber(number *NumberConstraints) {
 	if number.State == KindExcluded {
 		*number = NumberConstraints{State: KindExcluded}
@@ -135,9 +138,20 @@ func normalizeNumber(number *NumberConstraints) {
 		return
 	}
 
+	sort.Strings(number.Formats)
+
+	number.Formats = compactStrings(number.Formats)
+	if slices.Contains(number.Formats, "int32") {
+		number.Formats = slices.DeleteFunc(number.Formats, func(format string) bool { return format == "int64" })
+	}
+
+	if slices.Contains(number.Formats, "float") {
+		number.Formats = slices.DeleteFunc(number.Formats, func(format string) bool { return format == "double" })
+	}
+
 	if number.State == KindUnrestricted || number.State == KindRestricted &&
 		!number.IntegersOnly && number.Minimum == nil && number.Maximum == nil &&
-		number.MultipleOf == nil {
+		number.MultipleOf == nil && len(number.Formats) == 0 {
 		*number = NumberConstraints{State: KindUnrestricted}
 	}
 }
@@ -312,7 +326,9 @@ func (registry *DomainRegistry) appendNumber(encoded []byte, number NumberConstr
 	encoded = appendBound(encoded, number.Minimum)
 	encoded = appendBound(encoded, number.Maximum)
 
-	return appendNumberValue(encoded, number.MultipleOf)
+	encoded = appendNumberValue(encoded, number.MultipleOf)
+
+	return appendStrings(encoded, number.Formats)
 }
 
 // appendString appends the semantic string constraint encoding.
@@ -426,6 +442,7 @@ func cloneDomain(domain Domain) Domain {
 	domain.Number.Minimum = cloneBound(domain.Number.Minimum)
 	domain.Number.Maximum = cloneBound(domain.Number.Maximum)
 	domain.Number.MultipleOf = cloneNumber(domain.Number.MultipleOf)
+	domain.Number.Formats = append([]string(nil), domain.Number.Formats...)
 
 	if domain.String.MaxLength != nil {
 		domain.String.MaxLength = new(*domain.String.MaxLength)

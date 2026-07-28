@@ -5,30 +5,12 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
-	"github.com/djosh34/klopt/pkg/test_generator/internal/patterngenerator"
 )
 
-// CompileOption configures a Compiler.
-type CompileOption func(*Compiler)
-
-// MustHaveAllXValidCases requires every oracle-backed allOf merge to retain a shared valid case.
-func MustHaveAllXValidCases(compiler *Compiler) {
-	if compiler.mustHaveAllXValidCases {
-		return
-	}
-
-	compiler.mustHaveAllXValidCases = true
-	compiler.usesByPointer = make(map[string]*schemaUse)
-	compiler.rootUse = nil
-}
-
 // CompileSuite compiles, plans, and links the request schema to Rapid generators.
-func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite, error) {
-	for _, option := range options {
-		option(compiler)
-	}
-
+func (compiler *Compiler) CompileSuite() (*CompiledSuite, error) {
 	root, err := compiler.Compile()
 	if err != nil {
 		return nil, err
@@ -41,12 +23,12 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 		return nil, err
 	}
 
-	linked, unavailable, unlinked, err := compiler.linkCases(cases)
+	linked, unavailable, err := compiler.linkCases(cases)
 	if err != nil {
 		return nil, err
 	}
 
-	planner.markUnconstructibleConstraints(linked, unavailable, unlinked)
+	planner.markUnconstructibleConstraints(linked, unavailable)
 
 	if err := compiler.requireAcceptedCase(root, linked); err != nil {
 		return nil, err
@@ -64,31 +46,21 @@ func (compiler *Compiler) CompileSuite(options ...CompileOption) (*CompiledSuite
 // linkCases assigns a Rapid generator to each constructible CasePlan.
 func (compiler *Compiler) linkCases(
 	cases []CasePlan,
-) ([]CasePlan, []CasePlan, []ConstraintSource, error) {
+) ([]CasePlan, []CasePlan, error) {
 	linked := make([]CasePlan, 0, len(cases))
 	unavailable := make([]CasePlan, 0)
-	unlinked := make([]ConstraintSource, 0)
 	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.patternOption)
 
 	for index := range cases {
 		generators.pattern = cases[index].pattern
-		generators.expect = cases[index].Expect
-
 		generator, generatorErr := generators.generator(
 			cases[index].Values,
 			compiler.rootUse,
-			cases[index].evidenceUse,
 		)
-		if errors.Is(generatorErr, patterngenerator.ErrNoValues) {
+
+		var emptyError *stringlanguage.EmptyError
+		if errors.As(generatorErr, &emptyError) {
 			unavailable = append(unavailable, cases[index])
-
-			continue
-		}
-
-		if errors.Is(generatorErr, errNoTrustedStringExample) &&
-			cases[index].Expect == ExpectRejected &&
-			cases[index].Source.Keyword != "x-invalid-examples" {
-			unlinked = append(unlinked, cases[index].Source)
 
 			continue
 		}
@@ -101,7 +73,7 @@ func (compiler *Compiler) linkCases(
 				source = constructionError.source
 			}
 
-			return nil, nil, nil, compiler.failure(
+			return nil, nil, compiler.failure(
 				"generate",
 				"unconstructible",
 				source.Pointer,
@@ -114,14 +86,13 @@ func (compiler *Compiler) linkCases(
 		linked = append(linked, cases[index])
 	}
 
-	return linked, unavailable, unlinked, nil
+	return linked, unavailable, nil
 }
 
 // markUnconstructibleConstraints records isolated failures without a linked generator.
 func (planner *CasePlanner) markUnconstructibleConstraints(
 	cases []CasePlan,
 	unavailable []CasePlan,
-	unlinked []ConstraintSource,
 ) {
 	for index := range planner.Constraints {
 		constraint := &planner.Constraints[index]
@@ -140,15 +111,8 @@ func (planner *CasePlanner) markUnconstructibleConstraints(
 			continue
 		}
 
-		if constraintSourceContains(unlinked, constraint.Source) {
-			constraint.Outcome = ObligationUnconstructible
-			constraint.Reason = "isolated failure cannot satisfy opaque sibling rules"
-
-			continue
-		}
-
 		constraint.Outcome = ObligationUnconstructible
-		constraint.Reason = "isolated failure has no trusted pattern or format example"
+		constraint.Reason = "isolated failure has no constructive generator"
 	}
 }
 
@@ -156,17 +120,6 @@ func (planner *CasePlanner) markUnconstructibleConstraints(
 func hasUnavailableRejectedCase(cases []CasePlan, source ConstraintSource) bool {
 	for _, plannedCase := range cases {
 		if plannedCase.Expect == ExpectRejected && plannedCase.Source == source {
-			return true
-		}
-	}
-
-	return false
-}
-
-// constraintSourceContains reports exact source membership.
-func constraintSourceContains(sources []ConstraintSource, candidate ConstraintSource) bool {
-	for _, source := range sources {
-		if source == candidate {
 			return true
 		}
 	}
@@ -206,7 +159,7 @@ func (compiler *Compiler) requireAcceptedCase(
 		"unconstructible",
 		compiler.Source.RequestSchema.Pointer,
 		"",
-		errNoTrustedStringExample,
+		errors.New("productive request schema has no accepted generated case"),
 	)
 }
 
@@ -266,8 +219,6 @@ func (planner *CasePlanner) Plan(rootUse *schemaUse) ([]CasePlan, error) {
 		})
 	}
 
-	planner.addExactEvidenceCases(result, rootUse, rootUse.examples.Invalid, ExpectRejected)
-
 	if err := planner.addIsolatedFailures(result); err != nil {
 		return nil, err
 	}
@@ -279,29 +230,6 @@ func (planner *CasePlanner) Plan(rootUse *schemaUse) ([]CasePlan, error) {
 	}
 
 	return result.cases, nil
-}
-
-// addExactEvidenceCases preserves every explicit oracle value as a distinct case.
-func (planner *CasePlanner) addExactEvidenceCases(
-	result *caseSet,
-	use *schemaUse,
-	examples []GenerationExample,
-	expect ExpectedResult,
-) {
-	for index, example := range examples {
-		values := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{example.Value}))
-		result.add(CasePlan{
-			Name: caseName(
-				fmt.Sprintf("%s exact evidence %d", expectName(expect), index+1),
-				example.Source.Pointer,
-				example.Source.Keyword,
-			),
-			Expect:      expect,
-			Values:      values,
-			Source:      example.Source,
-			evidenceUse: use,
-		})
-	}
 }
 
 // constraintPlans creates atomic pass/fail Domains while retaining allOf source provenance.
@@ -367,7 +295,7 @@ func (planner *CasePlanner) atomicConstraint(source ConstraintSource, use *schem
 	case "minLength", "maxLength":
 		return planner.atomicStringConstraint(source, domain)
 	case "pattern", "format":
-		return planner.atomicOpaqueStringConstraint(source, domain)
+		return planner.atomicStringLanguageConstraint(source, domain)
 	case "minItems", "maxItems":
 		return planner.atomicArrayConstraint(source, domain)
 	case "minProperties", "maxProperties", "required", "additionalProperties":
@@ -375,6 +303,66 @@ func (planner *CasePlanner) atomicConstraint(source ConstraintSource, use *schem
 	default:
 		return ConstraintPlan{}, false, nil
 	}
+}
+
+// atomicStringLanguageConstraint dispatches patterns and scalar formats.
+func (planner *CasePlanner) atomicStringLanguageConstraint(
+	source ConstraintSource,
+	domain Domain,
+) (ConstraintPlan, bool, error) {
+	if source.Keyword == "pattern" {
+		return planner.atomicOpaqueStringConstraint(source, domain)
+	}
+
+	return planner.atomicFormatConstraint(source, domain)
+}
+
+// atomicFormatConstraint dispatches formats by their applicable scalar kind.
+func (planner *CasePlanner) atomicFormatConstraint(
+	source ConstraintSource,
+	domain Domain,
+) (ConstraintPlan, bool, error) {
+	if domain.String.State != KindExcluded && len(domain.String.Formats) > 0 {
+		return planner.atomicOpaqueStringConstraint(source, domain)
+	}
+
+	if domain.Number.State == KindExcluded || len(domain.Number.Formats) == 0 {
+		return ConstraintPlan{}, false, nil
+	}
+
+	return planner.atomicNumericFormatConstraint(source, domain.Number.Formats[0])
+}
+
+// atomicNumericFormatConstraint builds exact numeric format pass and overflow failure partitions.
+func (planner *CasePlanner) atomicNumericFormatConstraint(
+	source ConstraintSource,
+	format string,
+) (ConstraintPlan, bool, error) {
+	number := NumberConstraints{State: KindUnrestricted}
+	if err := applyNumberFormat(&number, format); err != nil {
+		return ConstraintPlan{}, false, err
+	}
+
+	lexemes := map[string][]string{
+		"int32":  {"-2147483649", "2147483648", "0.5"},
+		"int64":  {"-9223372036854775809", "9223372036854775808", "0.5"},
+		"float":  {"-1e39", "1e39"},
+		"double": {"-1e309", "1e309"},
+	}[format]
+	values := make([]jsonvalue.Value, 0, len(lexemes))
+
+	for _, lexeme := range lexemes {
+		value, err := jsonvalue.ParseNumber(lexeme)
+		if err != nil {
+			return ConstraintPlan{}, false, fmt.Errorf("parse %s format failure %q: %w", format, lexeme, err)
+		}
+
+		values = append(values, jsonvalue.Value{Kind: jsonvalue.KindNumber, Number: value})
+	}
+
+	failure := planner.Domains.FindOrAddEquivalentDomain(finiteDomain(values))
+
+	return planner.plannedAtomicConstraint(source, numberRuleDomain(number), []DomainID{failure})
 }
 
 // atomicConstraintDomain returns the source-local Domain before whole-schema enum filtering.
@@ -969,6 +957,17 @@ func (planner *CasePlanner) addConstraintFailures(result *caseSet, constraint *C
 		return planner.addPatternFailure(result, constraint, context)
 	}
 
+	if constraint.Source.Keyword == "format" {
+		pass, ok := planner.Domains.Domain(constraint.Pass)
+		if !ok {
+			return fmt.Errorf("constraint passing Domain %d does not exist", constraint.Pass)
+		}
+
+		if pass.String.State != KindExcluded && len(pass.String.Formats) > 0 {
+			return planner.addPatternFailure(result, constraint, context)
+		}
+	}
+
 	failures, contextualStart, err := planner.isolatedFailureDomains(*constraint, context)
 	if err != nil {
 		return err
@@ -1037,13 +1036,6 @@ func (planner *CasePlanner) addPatternFailure(
 		return fmt.Errorf("isolated pattern failure Domain %d does not exist", values)
 	}
 
-	if len(domain.String.Formats) > 0 {
-		constraint.Outcome = ObligationUnconstructible
-		constraint.Reason = "isolated pattern failure cannot construct the sibling format"
-
-		return nil
-	}
-
 	if domain.Status != DomainProductive {
 		constraint.Outcome = ObligationUnconstructible
 		constraint.Reason = "isolated pattern failure Domain is unconstructible"
@@ -1091,9 +1083,15 @@ func (planner *CasePlanner) finishUnplannedConstraint(
 	failures []DomainID,
 ) {
 	if len(failures) > 0 {
-		if constraint.Source.Keyword == "pattern" || constraint.Source.Keyword == "format" {
+		opaqueString := constraint.Source.Keyword == "pattern"
+		if constraint.Source.Keyword == "format" {
+			pass, ok := planner.Domains.Domain(constraint.Pass)
+			opaqueString = ok && pass.String.State != KindExcluded && len(pass.String.Formats) > 0
+		}
+
+		if opaqueString {
 			constraint.Outcome = ObligationUnconstructible
-			constraint.Reason = "trusted failing examples do not isolate this constraint"
+			constraint.Reason = "no constructive value isolates this constraint"
 		} else {
 			constraint.Outcome = ObligationDominated
 			constraint.Reason = "failing partition is empty while all sibling constraints pass"

@@ -7,12 +7,7 @@ import (
 
 // meet pairs the canonical semantic intersection with the exact recursive occurrences that produced it.
 func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, error) {
-	leftDomain, rightDomain, resultDomain, domain, err := compiler.meetDomains(left, right)
-	if err != nil {
-		return nil, err
-	}
-
-	examples, err := compiler.meetGenerationExamples(left.examples, leftDomain, right.examples, rightDomain)
+	leftDomain, rightDomain, _, domain, err := compiler.meetDomains(left, right)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +20,6 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		objectShape: left.objectShape,
 		constraints: append(append([]ConstraintSource(nil), left.constraints...), right.constraints...),
 		patterns:    append(append([]patternOccurrence(nil), left.patterns...), right.patterns...),
-		examples:    examples,
 		atomic:      left.atomic,
 		allOf:       append(append([]*schemaUse(nil), left.allOf...), right),
 		resolved:    left.resolved,
@@ -35,21 +29,7 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		return nil, err
 	}
 
-	if overlap := generationExampleOverlap(result.examples); overlap != nil {
-		return nil, &generationOverlapError{Example: *overlap}
-	}
-
-	if compiler.mustHaveAllXValidCases && needsTrustedValidCases(resultDomain) &&
-		result.examples.ValidDeclared && len(result.examples.Valid) == 0 {
-		return nil, fmt.Errorf("%w: allOf merge has no trusted valid generation case", errUnconstructible)
-	}
-
 	return result, nil
-}
-
-// needsTrustedValidCases reports occurrence languages that remain oracle-backed.
-func needsTrustedValidCases(domain Domain) bool {
-	return domain.Enum != nil || domain.String.State != KindExcluded && len(domain.String.Formats) > 0
 }
 
 // meetDomains intersects semantic Domains and returns their canonical values.
@@ -526,16 +506,6 @@ func (use *schemaUse) preserveChildPlanningParity(left *schemaUse, right *schema
 	use.localDomain = source.localDomain
 	use.atomic = source.atomic
 	use.resolved = source.resolved
-}
-
-// generationOverlapError preserves the invalid declaration source across a meet.
-type generationOverlapError struct {
-	Example GenerationExample
-}
-
-// Error reports the contradictory oracle declaration.
-func (overlap *generationOverlapError) Error() string {
-	return "trusted value is declared both valid and invalid"
 }
 
 // existingChild returns the schema-valued side of an intersection with an implicit policy.

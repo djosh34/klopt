@@ -16,6 +16,7 @@
 	MultipleOf: {{printf "%q" .MultipleOf}},
 	ExactMultipleOf: &jsonvalue.Number{Lexeme: {{printf "%q" .ExactMultipleOf.Lexeme}}},
 	{{end}}
+	{{with .Format}}Format: {{printf "%q" .}},{{end}}
 }{{end}}
 
 {{define "stringValidation"}}validation.StringValidation{
@@ -28,6 +29,7 @@
 		{{if .CompiledPattern.RejectsNonASCII}}patternvalidator.RejectNonASCII,{{end}}
 		{{if .CompiledPattern.UsesRE2}}patternvalidator.UseRE2,{{end}}
 	),{{end}}
+	{{if .CompiledFormat}}CompiledFormat: validation.MustCompileStringFormat({{printf "%q" .Format}}),{{end}}
 }{{end}}
 
 {{define "arrayValidation"}}validation.ArrayValidation{
@@ -109,11 +111,11 @@
 	EnumValidation: {{template "enum" .EnumValidation}},
 	{{end}}
 
-	{{if or .NumberValidation.Minimum .NumberValidation.Maximum .NumberValidation.ExactMultipleOf}}
+	{{if or .NumberValidation.Minimum .NumberValidation.Maximum .NumberValidation.ExactMultipleOf .NumberValidation.Format}}
 	NumberValidation: {{template "numberValidation" .NumberValidation}},
 	{{end}}
 
-	{{if or .StringValidation.MinLength .StringValidation.MaxLength .StringValidation.Pattern .StringValidation.Format .StringValidation.CompiledPattern}}
+	{{if or .StringValidation.MinLength .StringValidation.MaxLength .StringValidation.Pattern .StringValidation.Format .StringValidation.CompiledPattern .StringValidation.CompiledFormat}}
 	StringValidation: {{template "stringValidation" .StringValidation}},
 	{{end}}
 

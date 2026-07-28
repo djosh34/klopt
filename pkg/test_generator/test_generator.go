@@ -12,19 +12,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Option configures request-body case generation.
-type Option func(*suite.Compiler)
-
-// MustHaveAllXValidCases requires every oracle-backed allOf merge to retain a shared valid case.
-func MustHaveAllXValidCases(compiler *suite.Compiler) {
-	suite.MustHaveAllXValidCases(compiler)
-}
-
-// DefaultOption applies every default case-generation requirement.
-func DefaultOption(compiler *suite.Compiler) {
-	MustHaveAllXValidCases(compiler)
-}
-
 // CheckJSONRequestBodies checks validate with generated application/json request bodies for every operation.
 // Every CasePlan runs as its own Rapid property, and validate is the only source of verdicts.
 func CheckJSONRequestBodies(
@@ -32,7 +19,6 @@ func CheckJSONRequestBodies(
 	openAPIYAML []byte,
 	validate func(operationID string, body []byte) error,
 	patternOption patternvalidator.Option,
-	options ...Option,
 ) {
 	t.Helper()
 
@@ -49,11 +35,6 @@ func CheckJSONRequestBodies(
 		t.Fatal(err)
 	}
 
-	compileOptions := make([]suite.CompileOption, len(options))
-	for index, option := range options {
-		compileOptions[index] = suite.CompileOption(option)
-	}
-
 	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
 		if len(sources[operationID].RequestSchema.Raw) == 0 {
 			continue
@@ -62,7 +43,7 @@ func CheckJSONRequestBodies(
 		t.Run(operationID, func(t *testing.T) {
 			t.Parallel()
 
-			compiled, err := suite.NewCompiler(sources[operationID], patternOption).CompileSuite(compileOptions...)
+			compiled, err := suite.NewCompiler(sources[operationID], patternOption).CompileSuite()
 			if err != nil {
 				t.Fatal(err)
 			}

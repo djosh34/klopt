@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
@@ -337,6 +338,10 @@ func (compiler *schemaCompiler) compileKeywords(
 	members map[string]json.RawMessage,
 ) error {
 	if err := compileKind(validation, schema.Pointer, members); err != nil {
+		return err
+	}
+
+	if err := compileFormat(validation, schema.Pointer, members); err != nil {
 		return err
 	}
 
@@ -731,16 +736,97 @@ func (compiler *schemaCompiler) compileString(
 		validation.StringValidation.CompiledPattern = compiled
 	}
 
-	if raw, ok := members["format"]; ok {
-		format, err := decodeString(raw, "format")
-		if err != nil {
-			return keywordError(pointer, "format", err)
+	return nil
+}
+
+// compileFormat validates and compiles the closed native format policy.
+//
+//nolint:cyclop // The locked OpenAPI type/format allowlist is intentionally explicit.
+func compileFormat(
+	validation *Validation,
+	pointer string,
+	members map[string]json.RawMessage,
+) error {
+	raw, ok := members["format"]
+	if !ok {
+		return nil
+	}
+
+	format, err := decodeString(raw, "format")
+	if err != nil {
+		return keywordError(pointer, "format", err)
+	}
+
+	typeName := validation.KindValidation.Type
+
+	switch format {
+	case "int32", "int64":
+		if typeName != "" && typeName != "integer" && typeName != "number" {
+			return invalidFormatPair(pointer, typeName, format)
+		}
+
+		validation.NumberValidation.Format = format
+	case "float", "double":
+		if typeName != "" && typeName != "number" {
+			return invalidFormatPair(pointer, typeName, format)
+		}
+
+		validation.NumberValidation.Format = format
+	case "password":
+		if typeName != "" && typeName != "string" {
+			return invalidFormatPair(pointer, typeName, format)
 		}
 
 		validation.StringValidation.Format = format
+	case "uuid", "uuidv4", "uuid-v4", "ipv4", "cidr", "ipv4-cidr", "email", "byte", "date", "date-time":
+		if typeName != "" && typeName != "string" {
+			return invalidFormatPair(pointer, typeName, format)
+		}
+
+		compiled, compileErr := compileStringFormat(format)
+		if compileErr != nil {
+			return keywordError(pointer, "format", compileErr)
+		}
+
+		validation.StringValidation.Format = format
+		validation.StringValidation.CompiledFormat = compiled
+	default:
+		return keywordError(pointer, "format", fmt.Errorf(
+			"format %q is legal OpenAPI but unsupported by this tool", format,
+		))
 	}
 
 	return nil
+}
+
+// invalidFormatPair reports a format attached to an incompatible explicit type.
+func invalidFormatPair(pointer string, typeName string, format string) error {
+	return keywordError(pointer, "format", fmt.Errorf(
+		"invalid type/format pair: format %q does not apply to type %q", format, typeName,
+	))
+}
+
+// compileStringFormat builds one already allowlisted native string format.
+func compileStringFormat(format string) (*stringlanguage.Set, error) {
+	language, err := stringlanguage.Format(format)
+	if err != nil {
+		return nil, err
+	}
+
+	return stringlanguage.Compile([]stringlanguage.Requirement{{
+		Language:  language,
+		WantMatch: true,
+	}}, stringlanguage.Length{})
+}
+
+// MustCompileStringFormat rebuilds one format already checked by Parse for generated validators.
+func MustCompileStringFormat(format string) *stringlanguage.Set {
+	compiled, err := compileStringFormat(format)
+	if err != nil {
+		panic(fmt.Sprintf("compile prevalidated string format %q: %v", format, err))
+	}
+
+	return compiled
 }
 
 // compileArray compiles array bounds, uniqueness, and item recursion.

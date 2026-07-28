@@ -9,6 +9,7 @@ package validation
 import (
 	"encoding/json"
 
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
@@ -63,6 +64,7 @@ type NumberValidation struct {
 	Minimum    *NumberBound
 	Maximum    *NumberBound
 	MultipleOf string
+	Format     string
 
 	// ExactMultipleOf is the compiled numeric form of MultipleOf used by Validate.
 	ExactMultipleOf *jsonvalue.Number
@@ -85,6 +87,8 @@ type StringValidation struct {
 
 	// CompiledPattern is the compiled form of Pattern used by Validate.
 	CompiledPattern *patternvalidator.PatternValidation
+	// CompiledFormat is the compiled form of Format used by Validate.
+	CompiledFormat *stringlanguage.Set
 }
 
 // ArrayValidation holds array-specific constraints.

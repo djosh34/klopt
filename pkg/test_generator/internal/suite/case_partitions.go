@@ -37,8 +37,6 @@ func (planner *CasePlanner) addValidPartitions(
 	}
 
 	source := ConstraintSource{Pointer: use.pointer}
-	planner.addValidEvidenceCases(result, use, domain)
-
 	if err := planner.addKindPartitions(result, id, domain, source); err != nil {
 		return err
 	}
@@ -56,22 +54,6 @@ func (planner *CasePlanner) addValidPartitions(
 	}
 
 	return planner.addObjectPartitions(result, domain, use, active)
-}
-
-// addValidEvidenceCases excludes trusted strings now covered by constructive pattern generation.
-func (planner *CasePlanner) addValidEvidenceCases(
-	result *caseSet,
-	use *schemaUse,
-	domain Domain,
-) {
-	for _, example := range use.examples.Valid {
-		if example.Value.Kind == jsonvalue.KindString && len(use.patterns) > 0 &&
-			len(domain.String.Formats) == 0 {
-			continue
-		}
-
-		planner.addExactEvidenceCases(result, use, []GenerationExample{example}, ExpectAccepted)
-	}
 }
 
 // addKindPartitions adds one accepted partition per constructible JSON kind.
@@ -170,7 +152,7 @@ func (planner *CasePlanner) addNumberBoundaryPartitions(
 	return nil
 }
 
-// addStringValidPartitions adds length boundaries and trusted string examples.
+// addStringValidPartitions adds string length boundaries.
 func (planner *CasePlanner) addStringValidPartitions(
 	result *caseSet,
 	root DomainID,
@@ -178,10 +160,6 @@ func (planner *CasePlanner) addStringValidPartitions(
 	use *schemaUse,
 ) error {
 	if domain.String.State == KindExcluded {
-		return nil
-	}
-
-	if len(domain.String.Formats) > 0 {
 		return nil
 	}
 
@@ -381,12 +359,11 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 
 		values := planner.Domains.FindOrAddEquivalentDomain(lifted)
 		result.add(CasePlan{
-			Name:        caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
-			Expect:      child.Expect,
-			Values:      values,
-			Source:      child.Source,
-			evidenceUse: child.evidenceUse,
-			pattern:     child.pattern,
+			Name:    caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
+			Expect:  child.Expect,
+			Values:  values,
+			Source:  child.Source,
+			pattern: child.pattern,
 		})
 	}
 }
@@ -677,18 +654,17 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 				use.pointer,
 				"properties",
 			),
-			Expect:      expect,
-			Values:      values,
-			Source:      child.Source,
-			evidenceUse: child.evidenceUse,
-			pattern:     child.pattern,
+			Expect:  expect,
+			Values:  values,
+			Source:  child.Source,
+			pattern: child.pattern,
 		})
 	}
 
 	return nil
 }
 
-// isAggregateChildCase identifies the synthetic child aggregate, not evidence.
+// isAggregateChildCase identifies the synthetic child aggregate.
 func isAggregateChildCase(child CasePlan, values DomainID) bool {
 	return child.Expect == ExpectAccepted && child.Values == values && child.Source.Keyword == ""
 }
@@ -778,11 +754,10 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 				use.pointer,
 				"additionalProperties",
 			),
-			Expect:      child.Expect,
-			Values:      values,
-			Source:      child.Source,
-			evidenceUse: child.evidenceUse,
-			pattern:     child.pattern,
+			Expect:  child.Expect,
+			Values:  values,
+			Source:  child.Source,
+			pattern: child.pattern,
 		})
 	}
 
@@ -1172,7 +1147,6 @@ func (planner *CasePlanner) childPartitions(
 		Values: use.domain,
 		Source: ConstraintSource{Pointer: use.pointer},
 	})
-	planner.addExactEvidenceCases(children, use, use.examples.Invalid, ExpectRejected)
 
 	if err := planner.addValidPartitions(children, use, active); err != nil {
 		return nil, err

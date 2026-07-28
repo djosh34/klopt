@@ -2,18 +2,23 @@ package validation
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
-	"net/mail"
 	"sort"
-	"time"
+	"strconv"
 	"unicode/utf8"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+)
+
+const (
+	// float32BitSize selects IEEE-754 binary32 parsing.
+	float32BitSize = 32
+	// float64BitSize selects IEEE-754 binary64 parsing.
+	float64BitSize = 64
 )
 
 // Validate validates one present or absent raw JSON request body.
@@ -275,7 +280,61 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 		))
 	}
 
+	if err := validateNumberFormat(value.number, number.Format); err != nil {
+		errs = append(errs, newValidationError(validation, pointer, "format", err.Error()))
+	}
+
 	return errs
+}
+
+// validateNumberFormat applies one prevalidated numeric format.
+func validateNumberFormat(number jsonvalue.Number, format string) error {
+	switch format {
+	case "":
+		return nil
+	case "int32":
+		return validateSignedInteger(number, "-2147483648", "2147483647", format)
+	case "int64":
+		return validateSignedInteger(number, "-9223372036854775808", "9223372036854775807", format)
+	case "float":
+		return validateFloat(number, float32BitSize)
+	case "double":
+		return validateFloat(number, float64BitSize)
+	default:
+		return fmt.Errorf("uncompiled numeric format %q", format)
+	}
+}
+
+// validateSignedInteger checks mathematical integrality and exact inclusive bounds.
+func validateSignedInteger(number jsonvalue.Number, minimum string, maximum string, format string) error {
+	if !number.IsInteger() {
+		return fmt.Errorf("value is not an integer in %s", format)
+	}
+
+	minimumNumber, err := jsonvalue.ParseNumber(minimum)
+	if err != nil {
+		return fmt.Errorf("parse %s minimum: %w", format, err)
+	}
+
+	maximumNumber, err := jsonvalue.ParseNumber(maximum)
+	if err != nil {
+		return fmt.Errorf("parse %s maximum: %w", format, err)
+	}
+
+	if number.Compare(minimumNumber) < 0 || number.Compare(maximumNumber) > 0 {
+		return fmt.Errorf("value is outside %s signed range", format)
+	}
+
+	return nil
+}
+
+// validateFloat delegates the complete floating-point policy to strconv.
+func validateFloat(number jsonvalue.Number, bitSize int) error {
+	if _, err := strconv.ParseFloat(number.Lexeme, bitSize); err != nil {
+		return fmt.Errorf("invalid float%d: %w", bitSize, err)
+	}
+
+	return nil
 }
 
 // validate applies string length, pattern, and format constraints.
@@ -309,39 +368,13 @@ func (stringValidation StringValidation) validate(
 		)))
 	}
 
-	if !matchesFormat(value.string, stringValidation.Format) {
+	if stringValidation.CompiledFormat != nil && !stringValidation.CompiledFormat.Matches(value.string) {
 		errs = append(errs, newValidationError(validation, pointer, "format", fmt.Sprintf(
 			"string does not match %q format", stringValidation.Format,
 		)))
 	}
 
 	return errs
-}
-
-// matchesFormat checks the runtime validator's agreed string formats.
-func matchesFormat(value string, format string) bool {
-	switch format {
-	case "", "binary", "password":
-		return true
-	case "byte":
-		_, err := base64.StdEncoding.Strict().DecodeString(value)
-
-		return err == nil
-	case "date":
-		parsed, err := time.Parse("2006-01-02", value)
-
-		return err == nil && parsed.Format("2006-01-02") == value
-	case "date-time":
-		_, err := time.Parse(time.RFC3339, value)
-
-		return err == nil
-	case "email":
-		address, err := mail.ParseAddress(value)
-
-		return err == nil && address.Address == value
-	default:
-		return true
-	}
 }
 
 // validate applies array bounds, child schemas, and semantic uniqueness.

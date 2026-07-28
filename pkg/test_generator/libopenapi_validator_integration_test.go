@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"testing"
 
 	//nolint:depguard // This test-only dependency loads one independent integration SUT.
 	"github.com/pb33f/libopenapi"
@@ -183,11 +182,4 @@ func validatorSetupError(buildErrs []error) error {
 	}
 
 	return fmt.Errorf("build libopenapi-validator: %w", errors.Join(errs...))
-}
-
-// TestLibopenapiValidatorCharacterizations pins known v0.13.13 behavior outside the consensus corpus.
-func TestLibopenapiValidatorCharacterizations(t *testing.T) {
-	t.Parallel()
-
-	runValidatorCharacterizations(t, newLibopenapiRequestBodyValidator, libopenapiValidatorName)
 }

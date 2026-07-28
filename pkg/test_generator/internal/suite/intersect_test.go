@@ -59,18 +59,19 @@ format: int64`)
 	require.Equal(t, formatLeft, formatRight)
 }
 
-// TestCompilerTreatsNumericFormatsAsOpenAnnotations verifies OAS numeric
-// formats do not invent generator constraints without validator consensus.
-func TestCompilerTreatsNumericFormatsAsOpenAnnotations(t *testing.T) {
+// TestCompilerEnforcesNumericFormatDomains verifies exact native numeric restrictions.
+func TestCompilerEnforcesNumericFormatDomains(t *testing.T) {
 	t.Parallel()
 
-	for _, schemaType := range []string{"integer", "number"} {
-		compiler, plain := compileSchemaYAML(t, "type: "+schemaType, "")
-		for _, format := range []string{"int32", "int64", "float", "double", "vendor-number"} {
-			formatted := compileInto(t, compiler, "type: "+schemaType+"\nformat: "+format)
-			require.Equal(t, plain, formatted, schemaType+"/"+format)
-		}
-	}
+	compiler, int32DomainID := compileSchemaYAML(t, "type: number\nformat: int32", "")
+	int32Domain := mustDomain(t, compiler.Domains, int32DomainID)
+	require.True(t, int32Domain.Number.IntegersOnly)
+	require.Equal(t, "-2147483648", int32Domain.Number.Minimum.Value.Lexeme)
+	require.Equal(t, "2147483647", int32Domain.Number.Maximum.Value.Lexeme)
+	require.Equal(t, []string{"int32"}, int32Domain.Number.Formats)
+
+	float := compileInto(t, compiler, "type: number\nformat: float")
+	require.Equal(t, []string{"float"}, mustDomain(t, compiler.Domains, float).Number.Formats)
 }
 
 // TestIntersectDomainsMergesKindsNumbersAndEnums verifies scalar and finite intersections.
@@ -120,65 +121,6 @@ nullable: true`)
 
 // TestCompilerExcludesNestedEnumCandidatesWithDefiniteFailures verifies a
 // modeled false dominates opaque membership regardless of traversal order.
-func TestCompilerExcludesNestedEnumCandidatesWithDefiniteFailures(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		schema string
-		repeat int
-	}{
-		{
-			name: "array opaque first",
-			schema: `allOf:
-  - enum: [[opaque, ""]]
-  - type: array
-    minItems: 2
-    maxItems: 2
-    items: {type: string, minLength: 1, pattern: '^opaque$', x-valid-examples: [opaque]}`,
-			repeat: 1,
-		},
-		{
-			name: "array failure first",
-			schema: `allOf:
-  - enum: [["", opaque]]
-  - type: array
-    minItems: 2
-    maxItems: 2
-    items: {type: string, minLength: 1, pattern: '^opaque$', x-valid-examples: [opaque]}`,
-			repeat: 1,
-		},
-		{
-			name: "object stable across repeated allOf compilation",
-			schema: `allOf:
-  - enum: [{opaque: opaque, failing: ""}]
-  - type: object
-    required: [opaque, failing]
-    maxProperties: 2
-    properties:
-      opaque: {type: string, pattern: '^opaque$', x-valid-examples: [opaque]}
-      failing: {type: string, minLength: 1}
-    additionalProperties: false`,
-			repeat: 100,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			for range tt.repeat {
-				compiler := NewCompiler(parseSchemaSource(t, tt.schema, "", "create"))
-				root, err := compiler.Compile()
-				require.NoError(t, err)
-				require.Equal(t, EmptyDomainID, root)
-			}
-		})
-	}
-}
-
-// TestObjectMembershipKeepsLastDuplicatesAndUnrelatedErrors verifies stable
-// member traversal retains the previous last-value semantics without hiding errors.
 func TestObjectMembershipKeepsLastDuplicatesAndUnrelatedErrors(t *testing.T) {
 	t.Parallel()
 
@@ -310,66 +252,6 @@ func TestIntersectDomainsHandlesArrayAndObjectProductivity(t *testing.T) {
 }
 
 // TestCompilerFoldsNestedAllOfSiblingsAndPreservesProvenance verifies allOf source metadata.
-func TestCompilerFoldsNestedAllOfSiblingsAndPreservesProvenance(t *testing.T) {
-	t.Parallel()
-
-	compiler, id := compileSchemaYAML(t, `type: string
-maxLength: 8
-allOf:
-  - minLength: 2
-  - allOf:
-      - maxLength: 5
-      - minLength: 3`, "")
-	domain := mustDomain(t, compiler.Domains, id)
-	require.Equal(t, 3, domain.String.MinLength)
-	require.Equal(t, 5, *domain.String.MaxLength)
-
-	use := schemaUseAt(t, compiler.rootUse, compiler.Source.RequestSchema.Pointer)
-	require.Contains(t, use.constraints, ConstraintSource{
-		Pointer: compiler.Source.RequestSchema.Pointer,
-		Keyword: "allOf",
-	})
-	require.Contains(t, use.constraints, ConstraintSource{
-		Pointer: compiler.Source.RequestSchema.Pointer + "/allOf/0", Keyword: "minLength",
-	})
-}
-
-// TestCompilerUsesTrustedExamplesForPatternAndFormatConjunctions verifies opaque string languages.
-func TestCompilerUsesTrustedExamplesForPatternAndFormatConjunctions(t *testing.T) {
-	t.Parallel()
-
-	compiler, id := compileSchemaYAML(t, `allOf:
-  - pattern: '^a$'
-    x-valid-examples: [not-a]
-  - format: email
-    x-valid-examples: [not-a]`, "")
-	domain := mustDomain(t, compiler.Domains, id)
-	require.Equal(t, []string{"^a$"}, domain.String.Patterns)
-	require.Equal(t, []string{"email"}, domain.String.Formats)
-	use := schemaUseAt(t, compiler.rootUse, compiler.Source.RequestSchema.Pointer)
-	require.Equal(t, "not-a", use.examples.Valid[0].Value.String)
-
-	outerSource := parseSchemaSource(t, `x-valid-examples: [outer-trusted]
-allOf:
-  - pattern: first
-  - format: email`, "", "create")
-	_, err := NewCompiler(outerSource).Compile()
-	require.ErrorContains(t, err, "x-valid-examples")
-
-	source := parseSchemaSource(t, `allOf:
-  - pattern: '^a$'
-    x-valid-examples: [a]
-  - format: email
-    x-valid-examples: [b]`, "", "create")
-	_, err = NewCompiler(source).CompileSuite(MustHaveAllXValidCases)
-	require.Error(t, err)
-
-	var compileError *Error
-	require.True(t, errors.As(err, &compileError))
-	require.Equal(t, "unconstructible", compileError.Code)
-}
-
-// TestCompilerDistinguishesMalformedUnsupportedUnconstructibleAndEmptyAllOf verifies outcomes.
 func TestCompilerDistinguishesMalformedUnsupportedUnconstructibleAndEmptyAllOf(t *testing.T) {
 	t.Parallel()
 

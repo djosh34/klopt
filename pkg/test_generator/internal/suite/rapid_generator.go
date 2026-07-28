@@ -6,11 +6,10 @@ import (
 	"math"
 	"math/big"
 	"strconv"
-	"unicode/utf8"
 
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
-	"github.com/djosh34/klopt/pkg/test_generator/internal/patterngenerator"
 	"pgregory.net/rapid"
 )
 
@@ -20,25 +19,20 @@ const generatedCollectionSlack = 4
 // halfDenominator divides exact bounded intervals without binary floating point.
 const halfDenominator = 2
 
-// errNoTrustedStringExample reports that a string Domain has no retained trusted example.
-var errNoTrustedStringExample = errors.New("pattern or format Domain has no trusted valid example")
-
 // RapidGeneratorBuilder links canonical Domains to shared constructive Rapid generators.
 type RapidGeneratorBuilder struct {
-	domains       *DomainRegistry
-	patternOption patternvalidator.Option
-	pattern       *patternOccurrence
-	expect        ExpectedResult
-	generators    map[generatorKey]*rapid.Generator[jsonvalue.Value]
-	patternSets   map[patternSetKey]*patterngenerator.Set
+	domains          *DomainRegistry
+	patternOption    patternvalidator.Option
+	pattern          *patternOccurrence
+	generators       map[generatorKey]*rapid.Generator[jsonvalue.Value]
+	patternLanguages map[patternSetKey][]stringlanguage.Language
 }
 
 // generatorKey identifies one Domain at one exact occurrence.
 type generatorKey struct {
-	domain      DomainID
-	use         *schemaUse
-	evidenceUse *schemaUse
-	patternID   uint64
+	domain    DomainID
+	use       *schemaUse
+	patternID uint64
 }
 
 // patternSetKey identifies one ordered list of original pattern occurrences.
@@ -62,10 +56,10 @@ func NewRapidGeneratorBuilder(
 	}
 
 	return &RapidGeneratorBuilder{
-		domains:       domains,
-		patternOption: patternOption,
-		generators:    make(map[generatorKey]*rapid.Generator[jsonvalue.Value]),
-		patternSets:   make(map[patternSetKey]*patterngenerator.Set),
+		domains:          domains,
+		patternOption:    patternOption,
+		generators:       make(map[generatorKey]*rapid.Generator[jsonvalue.Value]),
+		patternLanguages: make(map[patternSetKey][]stringlanguage.Language),
 	}
 }
 
@@ -74,21 +68,19 @@ func (builder *RapidGeneratorBuilder) Generator(
 	id DomainID,
 	use *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	return builder.generator(id, use, nil)
+	return builder.generator(id, use)
 }
 
-// generator builds one occurrence while keeping an exact evidence Domain out
-// of occurrence-oracle substitution.
+// generator builds one exact schema occurrence.
 func (builder *RapidGeneratorBuilder) generator(
 	id DomainID,
 	use *schemaUse,
-	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	if builder == nil || builder.domains == nil {
 		return nil, errors.New("build Rapid generator: Domain registry is nil")
 	}
 
-	key := generatorKey{domain: id, use: use, evidenceUse: evidenceUse, patternID: builder.patternID()}
+	key := generatorKey{domain: id, use: use, patternID: builder.patternID()}
 	if generator, ok := builder.generators[key]; ok {
 		return generator, nil
 	}
@@ -120,12 +112,7 @@ func (builder *RapidGeneratorBuilder) generator(
 		return nil, fmt.Errorf("build Rapid generator: Domain %d is not productive", id)
 	}
 
-	generator, err := builder.domainGenerator(
-		domain,
-		use,
-		use != nil && id == use.domain && use != evidenceUse,
-		evidenceUse,
-	)
+	generator, err := builder.domainGenerator(domain, use)
 	if err != nil {
 		return nil, fmt.Errorf("build Rapid generator for Domain %d: %w", id, err)
 	}
@@ -148,16 +135,9 @@ func (builder *RapidGeneratorBuilder) patternID() uint64 {
 func (builder *RapidGeneratorBuilder) domainGenerator(
 	domain Domain,
 	use *schemaUse,
-	useOracle bool,
-	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if generator, handled, err := builder.occurrenceOracleGenerator(
-		domain,
-		use,
-		useOracle,
-		evidenceUse,
-	); handled {
-		return generator, err
+	if domain.Enum != nil {
+		return builder.enumGenerator(domain, use)
 	}
 
 	var (
@@ -180,19 +160,19 @@ func (builder *RapidGeneratorBuilder) domainGenerator(
 	}
 
 	if domain.String.State != KindExcluded {
-		generator, err := builder.stringGenerator(domain.String, use, useOracle)
+		generator, err := builder.stringGenerator(domain.String, use)
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
 
 	if domain.Array.State != KindExcluded {
-		generator, err := builder.arrayGenerator(domain.Array, use, evidenceUse)
+		generator, err := builder.arrayGenerator(domain.Array, use)
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
 
 	if domain.Object.State != KindExcluded {
-		generator, err := builder.objectGenerator(domain.Object, use, evidenceUse)
+		generator, err := builder.objectGenerator(domain.Object, use)
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
@@ -208,71 +188,17 @@ func (builder *RapidGeneratorBuilder) domainGenerator(
 	return nil, errors.New("productive Domain has no reachable JSON kind")
 }
 
-// occurrenceOracleGenerator handles finite and opaque occurrence case sets.
-func (builder *RapidGeneratorBuilder) occurrenceOracleGenerator(
-	domain Domain,
-	use *schemaUse,
-	useOracle bool,
-	evidenceUse *schemaUse,
-) (*rapid.Generator[jsonvalue.Value], bool, error) {
-	if domain.Enum != nil {
-		generator, err := builder.enumGenerator(domain, use, useOracle, evidenceUse)
-
-		return generator, true, err
-	}
-
-	if useOracle && use.examples.ValidDeclared && len(domain.String.Formats) > 0 {
-		if len(use.examples.Valid) == 0 {
-			return nil, false, nil
-		}
-
-		generator, err := generationExampleGenerator(use.examples.Valid)
-
-		return generator, true, err
-	}
-
-	return nil, false, nil
-}
-
-// generationExampleGenerator samples complete trusted occurrence values without
-// rechecking their kind or modeled siblings.
-func generationExampleGenerator(
-	examples []GenerationExample,
-) (*rapid.Generator[jsonvalue.Value], error) {
-	values := make([]jsonvalue.Value, 0, len(examples))
-	for _, example := range examples {
-		values = append(values, cloneJSONValue(example.Value))
-	}
-
-	if len(values) == 0 {
-		return nil, errNoTrustedStringExample
-	}
-
-	return rapid.SampledFrom(values), nil
-}
-
 // enumGenerator samples the effective occurrence cases without changing Domain identity.
-//
-//nolint:cyclop // Evidence, finite patterns, and empty intersections have distinct outcomes.
 func (builder *RapidGeneratorBuilder) enumGenerator(
 	domain Domain,
 	use *schemaUse,
-	useOracle bool,
-	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	values := cloneJSONValues(domain.Enum.Values)
-	if evidenceUse != nil && evidenceUse == use && builder.expect == ExpectRejected {
-		return rapid.SampledFrom(values), nil
-	}
-
-	if useOracle && use != nil && use.examples.ValidDeclared {
-		values = generationExampleValues(use.examples.Valid)
-	}
 
 	patterns := occurrencePatterns(use, domain.String.Patterns)
 	if len(patterns) == 0 {
 		if len(values) == 0 {
-			return nil, errors.New("enum conjunction has no trusted valid generation case")
+			return nil, errors.New("enum conjunction accepts no value")
 		}
 
 		return rapid.SampledFrom(values), nil
@@ -284,7 +210,7 @@ func (builder *RapidGeneratorBuilder) enumGenerator(
 	}
 
 	if len(matching) == 0 {
-		return nil, newPatternConstructionError(patterns, use, builder.pattern, patterngenerator.ErrNoValues)
+		return nil, newPatternConstructionError(patterns, use, builder.pattern, &stringlanguage.EmptyError{})
 	}
 
 	return rapid.SampledFrom(matching), nil
@@ -297,24 +223,22 @@ func (builder *RapidGeneratorBuilder) matchingPatternEnumValues(
 	patterns []patternOccurrence,
 	values []jsonvalue.Value,
 ) ([]jsonvalue.Value, error) {
-	set, err := builder.patternSet(patterns, use)
-	if err != nil {
-		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
-	}
-
 	wantMatches := make([]bool, 0, len(patterns))
 	for _, pattern := range patterns {
 		wantMatches = append(wantMatches, builder.pattern == nil || builder.pattern.id != pattern.id)
 	}
 
+	set, err := builder.patternSet(patterns, use, wantMatches, stringlanguage.Length{
+		Min: domain.String.MinLength,
+		Max: domain.String.MaxLength,
+	})
+	if err != nil {
+		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
+	}
+
 	matching := make([]jsonvalue.Value, 0, len(values))
 	for _, value := range values {
-		matches, matchErr := builder.patternEnumValueMatches(domain.String, set, wantMatches, value)
-		if matchErr != nil {
-			return nil, newPatternConstructionError(patterns, use, builder.pattern, matchErr)
-		}
-
-		if matches {
+		if builder.patternEnumValueMatches(set, value) {
 			matching = append(matching, value)
 		}
 	}
@@ -324,21 +248,14 @@ func (builder *RapidGeneratorBuilder) matchingPatternEnumValues(
 
 // patternEnumValueMatches checks one finite candidate with the independent ASCII DFA.
 func (builder *RapidGeneratorBuilder) patternEnumValueMatches(
-	constraints StringConstraints,
-	set *patterngenerator.Set,
-	wantMatches []bool,
+	set *stringlanguage.Set,
 	value jsonvalue.Value,
-) (bool, error) {
+) bool {
 	if value.Kind != jsonvalue.KindString {
-		return builder.pattern == nil, nil
+		return builder.pattern == nil
 	}
 
-	length := utf8.RuneCountInString(value.String)
-	if length < constraints.MinLength || constraints.MaxLength != nil && length > *constraints.MaxLength {
-		return false, nil
-	}
-
-	return set.Matches(value.String, wantMatches)
+	return set.Matches(value.String)
 }
 
 // appendConstructiveGenerator records a reachable generator or preserves the first construction error.
@@ -632,17 +549,12 @@ func mustGeneratedNumber(t *rapid.T, rational *big.Rat) jsonvalue.Value {
 	return jsonvalue.Value{Kind: jsonvalue.KindNumber, Number: *number}
 }
 
-// stringGenerator builds arbitrary strings, constructively satisfies patterns, or samples trusted formats.
+// stringGenerator builds arbitrary strings or constructively satisfies string languages.
 func (builder *RapidGeneratorBuilder) stringGenerator(
 	constraints StringConstraints,
 	use *schemaUse,
-	useOracle bool,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if len(constraints.Formats) > 0 {
-		return trustedStringGenerator(constraints, use, useOracle)
-	}
-
-	if len(constraints.Patterns) > 0 || use != nil && len(use.patterns) > 0 {
+	if len(constraints.Patterns) > 0 || len(constraints.Formats) > 0 || use != nil && len(use.patterns) > 0 {
 		return builder.patternStringGenerator(constraints, use)
 	}
 
@@ -664,49 +576,103 @@ func (builder *RapidGeneratorBuilder) patternStringGenerator(
 		wantMatches = append(wantMatches, builder.pattern == nil || builder.pattern.id != pattern.id)
 	}
 
-	set, err := builder.patternSet(patterns, use)
+	set, err := builder.patternSet(patterns, use, wantMatches, stringlanguage.Length{
+		Min: constraints.MinLength,
+		Max: constraints.MaxLength,
+	})
 	if err != nil {
 		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
 	}
 
-	generator, err := set.Strings(
-		wantMatches,
-		constraints.MinLength,
-		constraints.MaxLength,
-	)
-	if err != nil {
-		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
-	}
-
-	return rapid.Map(generator, jsonvalue.String), nil
+	return rapid.Map(rapid.Uint64(), func(seed uint64) jsonvalue.Value {
+		return jsonvalue.String(set.Generate(seed))
+	}), nil
 }
 
-// patternSet compiles each original occurrence once and reuses it for every signed request.
+// patternSet compiles one exact signed request from cached occurrence languages.
 func (builder *RapidGeneratorBuilder) patternSet(
 	patterns []patternOccurrence,
 	use *schemaUse,
-) (*patterngenerator.Set, error) {
-	sources := make([]string, len(patterns))
-	signature := ""
-
-	for index, pattern := range patterns {
-		sources[index] = pattern.value
-		signature += strconv.Itoa(len(pattern.value)) + ":" + pattern.value
-	}
-
-	key := patternSetKey{use: use, signature: signature}
-	if set, ok := builder.patternSets[key]; ok {
-		return set, nil
-	}
-
-	set, err := patterngenerator.Compile(sources, builder.patternOption)
+	wantMatches []bool,
+	length stringlanguage.Length,
+) (*stringlanguage.Set, error) {
+	languages, err := builder.languages(patterns, use)
 	if err != nil {
 		return nil, err
 	}
 
-	builder.patternSets[key] = set
+	if len(wantMatches) != len(languages) {
+		return nil, fmt.Errorf(
+			"compile pattern set: got %d signed requirements for %d patterns",
+			len(wantMatches),
+			len(languages),
+		)
+	}
 
-	return set, nil
+	requirements := make([]stringlanguage.Requirement, len(languages))
+	for index, language := range languages {
+		requirements[index] = stringlanguage.Requirement{
+			Language: language, WantMatch: wantMatches[index],
+		}
+	}
+
+	return stringlanguage.Compile(requirements, length)
+}
+
+// languages compiles each original occurrence once and reuses it across signed requests.
+func (builder *RapidGeneratorBuilder) languages(
+	patterns []patternOccurrence,
+	use *schemaUse,
+) ([]stringlanguage.Language, error) {
+	signature := ""
+
+	for _, pattern := range patterns {
+		signature += strconv.Itoa(len(pattern.value)) + ":" + pattern.value
+	}
+
+	key := patternSetKey{use: use, signature: signature}
+	if languages, ok := builder.patternLanguages[key]; ok {
+		return languages, nil
+	}
+
+	languages := make([]stringlanguage.Language, 0, len(patterns))
+	for index, pattern := range patterns {
+		var (
+			language stringlanguage.Language
+			err      error
+		)
+		if pattern.source.Keyword == "format" {
+			language, err = stringlanguage.Format(pattern.value)
+		} else {
+			language, err = stringlanguage.Pattern(pattern.value, builder.patternOption)
+		}
+
+		if err != nil {
+			return nil, &patternLanguageError{index: index, err: err}
+		}
+
+		languages = append(languages, language)
+	}
+
+	builder.patternLanguages[key] = languages
+
+	return languages, nil
+}
+
+// patternLanguageError retains the occurrence index for source attribution.
+type patternLanguageError struct {
+	index int
+	err   error
+}
+
+// Error reports the underlying language compilation failure.
+func (languageError *patternLanguageError) Error() string {
+	return languageError.err.Error()
+}
+
+// Unwrap exposes the language compilation failure.
+func (languageError *patternLanguageError) Unwrap() error {
+	return languageError.err
 }
 
 // occurrencePatterns returns exact provenance when available and semantic patterns otherwise.
@@ -751,9 +717,9 @@ func newPatternConstructionError(
 		source.Pointer = use.pointer
 	}
 
-	var requirementError *patterngenerator.RequirementError
-	if errors.As(err, &requirementError) && requirementError.Index >= 0 && requirementError.Index < len(patterns) {
-		source = patterns[requirementError.Index].source
+	var languageError *patternLanguageError
+	if errors.As(err, &languageError) && languageError.index >= 0 && languageError.index < len(patterns) {
+		source = patterns[languageError.index].source
 	} else if target != nil {
 		source = target.source
 	} else if len(patterns) > 0 {
@@ -761,41 +727,6 @@ func newPatternConstructionError(
 	}
 
 	return &patternConstructionError{source: source, cause: err}
-}
-
-// trustedStringGenerator samples exact occurrence cases, filtering only for an
-// isolated partition Domain rather than rechecking the effective occurrence.
-func trustedStringGenerator(
-	constraints StringConstraints,
-	use *schemaUse,
-	useOracle bool,
-) (*rapid.Generator[jsonvalue.Value], error) {
-	if use == nil {
-		return nil, fmt.Errorf("trusted string generator has no schema occurrence: %w", errNoTrustedStringExample)
-	}
-
-	values := make([]jsonvalue.Value, 0, len(use.examples.Valid))
-
-	for _, example := range use.examples.Valid {
-		if example.Value.Kind != jsonvalue.KindString {
-			continue
-		}
-
-		if !useOracle {
-			length := utf8.RuneCountInString(example.Value.String)
-			if length < constraints.MinLength || constraints.MaxLength != nil && length > *constraints.MaxLength {
-				continue
-			}
-		}
-
-		values = append(values, cloneJSONValue(example.Value))
-	}
-
-	if len(values) == 0 {
-		return nil, errNoTrustedStringExample
-	}
-
-	return rapid.SampledFrom(values), nil
 }
 
 // generatedCollectionMaximum caps an unbounded collection range above minimum.
@@ -816,14 +747,13 @@ func generatedCollectionMaximum(minimum int, configuredMaximum *int) int {
 func (builder *RapidGeneratorBuilder) arrayGenerator(
 	constraints ArrayConstraints,
 	use *schemaUse,
-	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	var itemsUse *schemaUse
 	if use != nil {
 		itemsUse = use.items
 	}
 
-	items, err := builder.generator(constraints.Items, itemsUse, evidenceUse)
+	items, err := builder.generator(constraints.Items, itemsUse)
 	if err != nil {
 		if constraints.MinItems == 0 && constraints.MaxItems != nil && *constraints.MaxItems == 0 {
 			return rapid.Just(jsonvalue.Array(nil)), nil
@@ -841,12 +771,10 @@ func (builder *RapidGeneratorBuilder) arrayGenerator(
 func (builder *RapidGeneratorBuilder) objectGenerator(
 	constraints ObjectConstraints,
 	use *schemaUse,
-	evidenceUse *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	required, optional, err := builder.objectPropertyGenerators(
 		constraints.Properties,
 		use,
-		evidenceUse,
 	)
 	if err != nil {
 		return nil, err
@@ -860,7 +788,6 @@ func (builder *RapidGeneratorBuilder) objectGenerator(
 	additional, additionalErr := builder.generator(
 		constraints.Additional.Values,
 		additionalUse,
-		evidenceUse,
 	)
 
 	minimum, maximum, err := objectPropertyCountRange(
@@ -882,7 +809,6 @@ func (builder *RapidGeneratorBuilder) objectGenerator(
 func (builder *RapidGeneratorBuilder) objectPropertyGenerators(
 	properties []NamedProperty,
 	use *schemaUse,
-	evidenceUse *schemaUse,
 ) ([]objectPropertyGenerator, []objectPropertyGenerator, error) {
 	required := make([]objectPropertyGenerator, 0, len(properties))
 	optional := make([]objectPropertyGenerator, 0, len(properties))
@@ -900,7 +826,7 @@ func (builder *RapidGeneratorBuilder) objectPropertyGenerators(
 			}
 		}
 
-		values, err := builder.generator(property.Values, propertyUse, evidenceUse)
+		values, err := builder.generator(property.Values, propertyUse)
 		if err != nil && property.Required {
 			return nil, nil, fmt.Errorf("object property %q: %w", property.Name, err)
 		}

@@ -4,9 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"unicode/utf8"
 
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+)
+
+const (
+	// suiteFloat32BitSize selects IEEE-754 binary32 parsing.
+	suiteFloat32BitSize = 32
+	// suiteFloat64BitSize selects IEEE-754 binary64 parsing.
+	suiteFloat64BitSize = 64
 )
 
 // decodeEnumMembers validates and decodes the enum array.
@@ -72,7 +81,7 @@ func (compiler *Compiler) valueFitsDomain(value jsonvalue.Value, domain Domain) 
 	case jsonvalue.KindNumber:
 		return numberFits(value.Number, domain.Number)
 	case jsonvalue.KindString:
-		return stringFits(value.String, domain.String)
+		return compiler.stringFits(value.String, domain.String)
 	case jsonvalue.KindArray:
 		return compiler.arrayFits(value.Array, domain.Array)
 	case jsonvalue.KindObject:
@@ -110,6 +119,8 @@ func jsonValuesContain(values []jsonvalue.Value, candidate jsonvalue.Value) bool
 }
 
 // numberFits reports whether a JSON number satisfies number constraints.
+//
+//nolint:cyclop // Numeric membership checks each exact keyword family in order.
 func numberFits(value jsonvalue.Number, constraints NumberConstraints) (bool, error) {
 	if constraints.State == KindExcluded || !fitsIntegerConstraint(value, constraints) {
 		return false, nil
@@ -120,7 +131,36 @@ func numberFits(value jsonvalue.Number, constraints NumberConstraints) (bool, er
 		return matches, err
 	}
 
-	return fitsMultipleOf(value, constraints.MultipleOf)
+	matches, err = fitsMultipleOf(value, constraints.MultipleOf)
+	if err != nil || !matches {
+		return matches, err
+	}
+
+	for _, format := range constraints.Formats {
+		switch format {
+		case "int32", "int64":
+			if !value.IsInteger() {
+				return false, nil
+			}
+		case "float":
+			if !fitsFloat(value, suiteFloat32BitSize) {
+				return false, nil
+			}
+		case "double":
+			if !fitsFloat(value, suiteFloat64BitSize) {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
+}
+
+// fitsFloat applies the same standard-library policy as runtime validation.
+func fitsFloat(value jsonvalue.Number, bitSize int) bool {
+	_, err := strconv.ParseFloat(value.Lexeme, bitSize)
+
+	return err == nil
 }
 
 // fitsIntegerConstraint reports whether a value satisfies an integer-only constraint.
@@ -174,7 +214,9 @@ func fitsMultipleOf(value jsonvalue.Number, multipleOf *jsonvalue.Number) (bool,
 }
 
 // stringFits reports whether a JSON string satisfies string constraints.
-func stringFits(value string, constraints StringConstraints) (bool, error) {
+//
+//nolint:cyclop // Pattern and format languages are compiled independently before one signed product.
+func (compiler *Compiler) stringFits(value string, constraints StringConstraints) (bool, error) {
 	if constraints.State == KindExcluded {
 		return false, nil
 	}
@@ -184,54 +226,68 @@ func stringFits(value string, constraints StringConstraints) (bool, error) {
 		return false, nil
 	}
 
-	if len(constraints.Patterns) > 0 || len(constraints.Formats) > 0 {
-		return false, errOpaqueStringMembership
+	requirements := make([]stringlanguage.Requirement, 0, len(constraints.Patterns)+len(constraints.Formats))
+	for _, pattern := range constraints.Patterns {
+		var (
+			language stringlanguage.Language
+			err      error
+		)
+		if compiler.patternOption == nil {
+			language, err = stringlanguage.Pattern(pattern)
+		} else {
+			language, err = stringlanguage.Pattern(pattern, compiler.patternOption)
+		}
+
+		if err != nil {
+			return false, err
+		}
+
+		requirements = append(requirements, stringlanguage.Requirement{Language: language, WantMatch: true})
+	}
+
+	for _, format := range constraints.Formats {
+		language, err := stringlanguage.Format(format)
+		if err != nil {
+			return false, err
+		}
+
+		requirements = append(requirements, stringlanguage.Requirement{Language: language, WantMatch: true})
+	}
+
+	if len(requirements) > 0 {
+		set, err := stringlanguage.Compile(requirements, stringlanguage.Length{
+			Min: constraints.MinLength,
+			Max: constraints.MaxLength,
+		})
+		if err != nil {
+			return false, err
+		}
+
+		return set.Matches(value), nil
 	}
 
 	return true, nil
 }
 
-// errOpaqueStringMembership marks an enum membership check that needs occurrence evidence.
-var errOpaqueStringMembership = fmt.Errorf(
-	"%w: enum with pattern or format needs trusted compatible examples",
-	errUnconstructible,
-)
-
-// childMembership aggregates recursive checks without letting opaque membership
-// hide a definite modeled failure.
+// childMembership aggregates recursive checks.
 type childMembership struct {
-	opaque bool
 	failed bool
 }
 
 // add records one child result while propagating hard errors immediately.
 func (membership *childMembership) add(matches bool, err error) error {
-	if err == nil {
-		membership.failed = membership.failed || !matches
-
-		return nil
+	if err != nil {
+		return err
 	}
 
-	if errors.Is(err, errOpaqueStringMembership) {
-		membership.opaque = true
+	membership.failed = membership.failed || !matches
 
-		return nil
-	}
-
-	return err
+	return nil
 }
 
-// result applies hard error > false > opaque > true precedence.
+// result reports whether every child matched.
 func (membership childMembership) result() (bool, error) {
-	if membership.failed {
-		return false, nil
-	}
-
-	if membership.opaque {
-		return false, errOpaqueStringMembership
-	}
-
-	return true, nil
+	return !membership.failed, nil
 }
 
 // arrayFits reports whether a JSON array satisfies array constraints.
