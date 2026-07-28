@@ -42,7 +42,7 @@ const (
 	DomainEmpty
 	// DomainUnsupported uses understood OpenAPI behavior not implemented by this step.
 	DomainUnsupported
-	// DomainUnconstructible is understood but lacks enough trusted generation input.
+	// DomainUnconstructible is understood but cannot be generated constructively.
 	DomainUnconstructible
 )
 
@@ -71,6 +71,7 @@ type NumberConstraints struct {
 	Minimum      *NumberBound
 	Maximum      *NumberBound
 	MultipleOf   *jsonvalue.Number
+	Formats      []string
 }
 
 // StringConstraints constrains JSON strings.
@@ -160,13 +161,12 @@ type ConstraintPlan struct {
 
 // CasePlan names one semantic partition without materializing a JSON case.
 type CasePlan struct {
-	Name        string
-	Expect      ExpectedResult
-	Values      DomainID
-	Source      ConstraintSource
-	Generator   *rapid.Generator[jsonvalue.Value]
-	evidenceUse *schemaUse
-	pattern     *patternOccurrence
+	Name           string
+	Expect         ExpectedResult
+	Values         DomainID
+	Source         ConstraintSource
+	Generator      *rapid.Generator[jsonvalue.Value]
+	stringLanguage *stringLanguageOccurrence
 }
 
 // CasePlanner builds canonical semantic partitions from a compiled Domain graph.
@@ -197,39 +197,25 @@ type ConstraintSource struct {
 	Keyword string
 }
 
-// GenerationExample is one trusted generation input at its exact declaration.
-type GenerationExample struct {
-	Value  jsonvalue.Value
-	Source ConstraintSource
-}
-
-// GenerationExamples are trusted generation inputs and not Domain identity.
-type GenerationExamples struct {
-	Valid         []GenerationExample
-	Invalid       []GenerationExample
-	ValidDeclared bool
-}
-
 // schemaUse preserves one exact schema occurrence separately from its canonical Domain.
 type schemaUse struct {
-	pointer     string
-	domain      DomainID
-	localDomain DomainID
-	arrayShape  DomainID
-	objectShape DomainID
-	constraints []ConstraintSource
-	patterns    []patternOccurrence
-	examples    GenerationExamples
-	atomic      map[string]DomainID
-	allOf       []*schemaUse
-	items       *schemaUse
-	properties  []schemaPropertyUse
-	additional  *schemaUse
-	resolved    *schemaUse
+	pointer         string
+	domain          DomainID
+	localDomain     DomainID
+	arrayShape      DomainID
+	objectShape     DomainID
+	constraints     []ConstraintSource
+	stringLanguages []stringLanguageOccurrence
+	atomic          map[string]DomainID
+	allOf           []*schemaUse
+	items           *schemaUse
+	properties      []schemaPropertyUse
+	additional      *schemaUse
+	resolved        *schemaUse
 }
 
-// patternOccurrence preserves one original pattern declaration separately from canonical Domain identity.
-type patternOccurrence struct {
+// stringLanguageOccurrence preserves one original pattern or format declaration with its source.
+type stringLanguageOccurrence struct {
 	id     uint64
 	source ConstraintSource
 	value  string

@@ -498,6 +498,8 @@ var compositeObject = validation.RequestValidation{
 						StringValidation: validation.StringValidation{
 
 							Format: "date-time",
+
+							CompiledFormat: validation.MustCompileStringFormat("date-time"),
 						},
 
 						ObjectValidation: validation.ObjectValidation{
@@ -518,6 +520,8 @@ var compositeObject = validation.RequestValidation{
 						StringValidation: validation.StringValidation{
 
 							Format: "date-time",
+
+							CompiledFormat: validation.MustCompileStringFormat("date-time"),
 						},
 
 						ObjectValidation: validation.ObjectValidation{

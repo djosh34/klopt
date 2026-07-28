@@ -5,23 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
 // Compiler compiles located Schema Objects into canonical DomainIDs.
 type Compiler struct {
-	Source                 oas.Source
-	Domains                *DomainRegistry
-	usesByPointer          map[string]*schemaUse
-	rootUse                *schemaUse
-	mustHaveAllXValidCases bool
-	patternOption          patternvalidator.Option
-	nextPatternID          uint64
+	Source               oas.Source
+	Domains              *DomainRegistry
+	usesByPointer        map[string]*schemaUse
+	rootUse              *schemaUse
+	patternOption        patternvalidator.Option
+	nextStringLanguageID uint64
 }
 
 // NewCompiler creates a Compiler for one located OpenAPI source.
@@ -36,11 +38,11 @@ func NewCompiler(source oas.Source, options ...patternvalidator.Option) *Compile
 	}
 
 	return &Compiler{
-		Source:        source,
-		Domains:       NewDomainRegistry(),
-		usesByPointer: make(map[string]*schemaUse),
-		patternOption: patternOption,
-		nextPatternID: 1,
+		Source:               source,
+		Domains:              NewDomainRegistry(),
+		usesByPointer:        make(map[string]*schemaUse),
+		patternOption:        patternOption,
+		nextStringLanguageID: 1,
 	}
 }
 
@@ -103,23 +105,18 @@ func (compiler *Compiler) compileSchema(
 // referenceUse records one Reference Object occurrence without copying its resolved occurrence graph.
 func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *schemaUse {
 	use := &schemaUse{
-		pointer:     pointer,
-		domain:      resolved.domain,
-		localDomain: resolved.localDomain,
-		arrayShape:  resolved.arrayShape,
-		objectShape: resolved.objectShape,
-		constraints: append([]ConstraintSource(nil), resolved.constraints...),
-		patterns:    append([]patternOccurrence(nil), resolved.patterns...),
-		examples: GenerationExamples{
-			Valid:         cloneGenerationExamples(resolved.examples.Valid),
-			Invalid:       cloneGenerationExamples(resolved.examples.Invalid),
-			ValidDeclared: resolved.examples.ValidDeclared,
-		},
-		atomic:     resolved.atomic,
-		items:      resolved.items,
-		properties: append([]schemaPropertyUse(nil), resolved.properties...),
-		additional: resolved.additional,
-		resolved:   resolved,
+		pointer:         pointer,
+		domain:          resolved.domain,
+		localDomain:     resolved.localDomain,
+		arrayShape:      resolved.arrayShape,
+		objectShape:     resolved.objectShape,
+		constraints:     append([]ConstraintSource(nil), resolved.constraints...),
+		stringLanguages: append([]stringLanguageOccurrence(nil), resolved.stringLanguages...),
+		atomic:          resolved.atomic,
+		items:           resolved.items,
+		properties:      append([]schemaPropertyUse(nil), resolved.properties...),
+		additional:      resolved.additional,
+		resolved:        resolved,
 	}
 	compiler.usesByPointer[pointer] = use
 
@@ -165,7 +162,7 @@ func (compiler *Compiler) compileResolvedSchema(
 
 	use := &schemaUse{pointer: resolved.Pointer, atomic: make(map[string]DomainID)}
 
-	domain, constraints, examples, err := compiler.compileSchemaDomain(use, resolved, members, active)
+	domain, constraints, err := compiler.compileSchemaDomain(use, resolved, members, active)
 	if err != nil {
 		return nil, err
 	}
@@ -174,12 +171,10 @@ func (compiler *Compiler) compileResolvedSchema(
 	use.localDomain = use.domain
 	use.constraints = constraints
 
-	use.patterns, err = compiler.localPatternOccurrences(resolved.Pointer, members)
+	use.stringLanguages, err = compiler.localStringLanguageOccurrences(resolved.Pointer, members)
 	if err != nil {
 		return nil, compiler.failure("compile", "malformed", resolved.Pointer, "pattern", err)
 	}
-
-	use.examples = examples
 
 	use, err = compiler.compileAllOf(resolved, members, active, use)
 	if err != nil {
@@ -252,32 +247,37 @@ func (compiler *Compiler) validateDiscriminator(pointer string, members map[stri
 	return nil
 }
 
-// localPatternOccurrences records a direct declaration before allOf composition.
-func (compiler *Compiler) localPatternOccurrences(
+// localStringLanguageOccurrences records direct pattern and restrictive format declarations.
+func (compiler *Compiler) localStringLanguageOccurrences(
 	pointer string,
 	members map[string]json.RawMessage,
-) ([]patternOccurrence, error) {
-	raw, ok := members["pattern"]
-	if !ok {
-		return nil, nil
+) ([]stringLanguageOccurrence, error) {
+	var occurrences []stringLanguageOccurrence
+
+	for _, keyword := range []string{"pattern", "format"} {
+		raw, ok := members[keyword]
+		if !ok {
+			continue
+		}
+
+		value, err := parseString(raw, keyword)
+		if err != nil {
+			return nil, err
+		}
+
+		if keyword == "format" && (value == "password" || !isStringFormat(value)) {
+			continue
+		}
+
+		occurrences = append(occurrences, stringLanguageOccurrence{
+			id:     compiler.nextStringLanguageID,
+			source: ConstraintSource{Pointer: pointer, Keyword: keyword},
+			value:  value,
+		})
+		compiler.nextStringLanguageID++
 	}
 
-	pattern, err := parseString(raw, "pattern")
-	if err != nil {
-		return nil, err
-	}
-
-	occurrence := patternOccurrence{
-		id: compiler.nextPatternID,
-		source: ConstraintSource{
-			Pointer: pointer,
-			Keyword: "pattern",
-		},
-		value: pattern,
-	}
-	compiler.nextPatternID++
-
-	return []patternOccurrence{occurrence}, nil
+	return occurrences, nil
 }
 
 // unsupportedKeywordFailure reports a known Schema Object keyword not supported by this step.
@@ -292,27 +292,24 @@ func (compiler *Compiler) unsupportedKeywordFailure(pointer string, keyword stri
 }
 
 // compileSchemaDomain compiles all schema keywords into a Domain and source metadata.
+//
+//nolint:cyclop // Schema keyword families remain an explicit compile pipeline.
 func (compiler *Compiler) compileSchemaDomain(
 	use *schemaUse,
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 	active map[string]struct{},
-) (Domain, []ConstraintSource, GenerationExamples, error) {
-	examples, err := compiler.compileLocalGenerationExamples(schema.Pointer, members)
-	if err != nil {
-		return Domain{}, nil, GenerationExamples{}, err
-	}
-
+) (Domain, []ConstraintSource, error) {
 	domain := anyJSONDomain()
 	constraints := make([]ConstraintSource, 0, len(members))
 
 	if validationErr := compiler.validateFormat(schema.Pointer, members); validationErr != nil {
-		return Domain{}, nil, GenerationExamples{}, validationErr
+		return Domain{}, nil, validationErr
 	}
 
 	hasType, err := applyTypeAndNullable(&domain, members)
 	if err != nil {
-		return Domain{}, nil, GenerationExamples{}, compiler.failure("compile", "malformed", schema.Pointer, "type", err)
+		return Domain{}, nil, compiler.failure("compile", "malformed", schema.Pointer, "type", err)
 	}
 
 	if hasType {
@@ -320,82 +317,46 @@ func (compiler *Compiler) compileSchemaDomain(
 	}
 
 	if err := compiler.compileScalarConstraints(&domain, schema.Pointer, members); err != nil {
-		return Domain{}, nil, GenerationExamples{}, err
+		return Domain{}, nil, err
 	}
 
 	if err := compiler.compileArray(&domain, use, schema, members, active); err != nil {
-		return Domain{}, nil, GenerationExamples{}, err
+		return Domain{}, nil, err
 	}
 
 	if err := compiler.compileObject(&domain, use, schema, members, active); err != nil {
-		return Domain{}, nil, GenerationExamples{}, err
+		return Domain{}, nil, err
 	}
 
-	constraints = append(constraints, constraintSources(schema.Pointer, members)...)
+	for _, source := range constraintSources(schema.Pointer, members) {
+		if source.Keyword == "format" && schemaFormatIsPassword(members) {
+			continue
+		}
+
+		constraints = append(constraints, source)
+	}
+
 	if err := eliminateContradictoryKinds(&domain); err != nil {
-		return Domain{}, nil, GenerationExamples{}, compiler.failure("compile", "unconstructible", schema.Pointer, "", err)
+		return Domain{}, nil, compiler.failure("compile", "unconstructible", schema.Pointer, "", err)
 	}
 
-	if err := compiler.applyLocalOracles(&domain, use, schema.Pointer, members, &examples); err != nil {
-		return Domain{}, nil, GenerationExamples{}, err
+	if err := compiler.applyEnum(&domain, use, schema.Pointer, members); err != nil {
+		return Domain{}, nil, err
 	}
 
-	return domain, constraints, examples, nil
+	return domain, constraints, nil
 }
 
-// compileLocalGenerationExamples parses extension values and locates malformed input.
-func (compiler *Compiler) compileLocalGenerationExamples(
-	pointer string,
-	members map[string]json.RawMessage,
-) (GenerationExamples, error) {
-	examples, err := compileGenerationExamples(pointer, members)
-	if err == nil {
-		return examples, nil
+// schemaFormatIsPassword reports the one no-op format annotation.
+func schemaFormatIsPassword(members map[string]json.RawMessage) bool {
+	raw, ok := members["format"]
+	if !ok {
+		return false
 	}
 
-	var exampleError *generationExampleError
-	if errors.As(err, &exampleError) {
-		return GenerationExamples{}, compiler.failure(
-			"compile", "malformed", pointer, exampleError.Keyword, exampleError.Cause,
-		)
-	}
+	format, err := parseString(raw, "format")
 
-	return GenerationExamples{}, compiler.failure("compile", "malformed", pointer, "", err)
-}
-
-// applyLocalOracles compiles enum cases and validates exact local oracle evidence.
-func (compiler *Compiler) applyLocalOracles(
-	domain *Domain,
-	use *schemaUse,
-	pointer string,
-	members map[string]json.RawMessage,
-	examples *GenerationExamples,
-) error {
-	if err := compiler.applyEnum(domain, use, pointer, members, examples); err != nil {
-		return err
-	}
-
-	if overlap := generationExampleOverlap(*examples); overlap != nil {
-		return compiler.failure(
-			"compile", "malformed", overlap.Source.Pointer, overlap.Source.Keyword,
-			errors.New("trusted value is declared both valid and invalid"),
-		)
-	}
-
-	if !hasUnconstructibleStringDomain(*domain) || examples.ValidDeclared &&
-		(len(examples.Valid) > 0 || hasReachableNonStringKind(*domain)) {
-		return nil
-	}
-
-	keyword := "pattern"
-	if _, ok := members[keyword]; !ok {
-		keyword = "format"
-	}
-
-	return compiler.failure(
-		"compile", "unconstructible", pointer, keyword,
-		errors.New("pattern or format has no trusted valid example declared locally"),
-	)
+	return err == nil && format == "password"
 }
 
 // compileScalarConstraints applies number and string keyword families.
@@ -416,28 +377,69 @@ func (compiler *Compiler) compileScalarConstraints(
 }
 
 // validateFormat validates format even when it is inapplicable to every reachable kind.
+//
+//nolint:cyclop // The closed format/type allowlist is intentionally explicit.
 func (compiler *Compiler) validateFormat(pointer string, members map[string]json.RawMessage) error {
 	raw, ok := members["format"]
 	if !ok {
 		return nil
 	}
 
-	if _, err := parseString(raw, "format"); err != nil {
+	format, err := parseString(raw, "format")
+	if err != nil {
 		return compiler.failure("compile", "malformed", pointer, "format", err)
+	}
+
+	typeName := ""
+	if rawType, ok := members["type"]; ok {
+		typeName, err = parseString(rawType, "type")
+		if err != nil {
+			return compiler.failure("compile", "malformed", pointer, "format", err)
+		}
+	}
+
+	validPair := false
+
+	switch format {
+	case "int32", "int64":
+		validPair = typeName == "" || typeName == "integer" || typeName == "number"
+	case "float", "double":
+		validPair = typeName == "" || typeName == "number"
+	case "uuid", "uuidv4", "uuid-v4", "ipv4", "cidr", "ipv4-cidr", "email", "byte", "date", "date-time", "password":
+		validPair = typeName == "" || typeName == "string"
+	default:
+		return compiler.failure("compile", "unsupported", pointer, "format", fmt.Errorf(
+			"format %q is legal OpenAPI but unsupported by this tool", format,
+		))
+	}
+
+	if !validPair {
+		return compiler.failure("compile", "malformed", pointer, "format", fmt.Errorf(
+			"invalid type/format pair: format %q does not apply to type %q", format, typeName,
+		))
 	}
 
 	return nil
 }
 
+// isStringFormat reports whether format has a native string language.
+func isStringFormat(format string) bool {
+	switch format {
+	case "uuid", "uuidv4", "uuid-v4", "ipv4", "cidr", "ipv4-cidr", "email", "byte", "date", "date-time":
+		return true
+	default:
+		return false
+	}
+}
+
 // applyEnum replaces a Domain with the local enum while retaining constructive patterns.
 //
-//nolint:cyclop // Enum decoding and occurrence-oracle bookkeeping stay in source order.
+//nolint:cyclop // Enum decoding and atomic constraint bookkeeping stay in source order.
 func (compiler *Compiler) applyEnum(
 	domain *Domain,
 	use *schemaUse,
 	pointer string,
 	members map[string]json.RawMessage,
-	examples *GenerationExamples,
 ) error {
 	raw, ok := members["enum"]
 	if !ok {
@@ -463,6 +465,18 @@ func (compiler *Compiler) applyEnum(
 
 	preEnum := compiler.Domains.FindOrAddEquivalentDomain(*domain)
 
+	filteredValues := make([]jsonvalue.Value, 0, len(atomicValues))
+	for _, value := range atomicValues {
+		matches, fitErr := compiler.valueFitsDomain(value, *domain)
+		if fitErr != nil {
+			return compiler.failure("compile", "unconstructible", pointer, "enum", fitErr)
+		}
+
+		if matches {
+			filteredValues = append(filteredValues, value)
+		}
+	}
+
 	for _, source := range constraintSources(pointer, members) {
 		if source.Keyword != "enum" {
 			if _, preserved := use.atomic[source.Keyword]; !preserved {
@@ -474,19 +488,11 @@ func (compiler *Compiler) applyEnum(
 	use.atomic["enum"] = compiler.Domains.FindOrAddEquivalentDomain(finiteDomain(atomicValues))
 	stringConstraints := domain.String
 
-	*domain = finiteDomain(atomicValues)
-	if domain.String.State != KindExcluded && len(stringConstraints.Patterns) > 0 {
+	*domain = finiteDomain(filteredValues)
+	if domain.String.State != KindExcluded &&
+		(len(stringConstraints.Patterns) > 0 || len(stringConstraints.Formats) > 0) {
 		domain.String = stringConstraints
 	}
-
-	for _, value := range atomicValues {
-		appendGenerationExample(&examples.Valid, GenerationExample{
-			Value:  value,
-			Source: ConstraintSource{Pointer: pointer, Keyword: "enum"},
-		})
-	}
-
-	examples.ValidDeclared = true
 
 	return nil
 }
@@ -687,7 +693,89 @@ func (compiler *Compiler) compileNumber(domain *Domain, members map[string]json.
 		return err
 	}
 
+	if err := compileNumberFormat(number, members); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// compileNumberFormat applies one validated numeric format to the constructive domain.
+func compileNumberFormat(number *NumberConstraints, members map[string]json.RawMessage) error {
+	raw, ok := members["format"]
+	if !ok {
+		return nil
+	}
+
+	format, err := parseString(raw, "format")
+	if err != nil {
+		return err
+	}
+
+	return applyNumberFormat(number, format)
+}
+
+// applyNumberFormat applies one recognized numeric format to number.
+//
+//nolint:cyclop // Four locked formats have distinct exact domains.
+func applyNumberFormat(number *NumberConstraints, format string) error {
+	if format != "int32" && format != "int64" && format != "float" && format != "double" {
+		return nil
+	}
+
+	number.Formats = []string{format}
+	restrictNumber(number)
+
+	if format == "int32" || format == "int64" {
+		number.IntegersOnly = true
+
+		minimum, maximum := "-9223372036854775808", "9223372036854775807"
+		if format == "int32" {
+			minimum, maximum = "-2147483648", "2147483647"
+		}
+
+		if err := applyNumericFormatBounds(number, minimum, maximum); err != nil {
+			return err
+		}
+	}
+
+	if format == "float" {
+		maximum := strconv.FormatFloat(float64(math.MaxFloat32), 'g', -1, suiteFloat32BitSize)
+
+		return applyNumericFormatBounds(number, "-"+maximum, maximum)
+	}
+
+	if format == "double" {
+		maximum := strconv.FormatFloat(math.MaxFloat64, 'g', -1, suiteFloat64BitSize)
+
+		return applyNumericFormatBounds(number, "-"+maximum, maximum)
+	}
+
+	return nil
+}
+
+// applyNumericFormatBounds intersects one signed integer range.
+func applyNumericFormatBounds(number *NumberConstraints, minimum string, maximum string) error {
+	minimumValue, err := jsonvalue.ParseNumber(minimum)
+	if err != nil {
+		return err
+	}
+
+	maximumValue, err := jsonvalue.ParseNumber(maximum)
+	if err != nil {
+		return err
+	}
+
+	var boundErr error
+
+	number.Minimum, boundErr = stricterMinimum(number.Minimum, &NumberBound{Value: minimumValue})
+	if boundErr != nil {
+		return boundErr
+	}
+
+	number.Maximum, boundErr = stricterMaximum(number.Maximum, &NumberBound{Value: maximumValue})
+
+	return boundErr
 }
 
 // compileNumberBounds applies minimum, maximum, and multipleOf to number constraints.
@@ -916,10 +1004,30 @@ func compileStringFormat(stringConstraints *StringConstraints, members map[strin
 		return err
 	}
 
-	stringConstraints.Formats = []string{value}
+	if value == "password" || !isStringFormat(value) {
+		return nil
+	}
+
+	if _, err := stringlanguage.Format(value); err != nil {
+		return err
+	}
+
+	stringConstraints.Formats = []string{canonicalStringFormat(value)}
 	stringConstraints.State = KindRestricted
 
 	return nil
+}
+
+// canonicalStringFormat folds aliases for semantic Domain identity.
+func canonicalStringFormat(format string) string {
+	switch format {
+	case "uuidv4", "uuid-v4":
+		return "uuid"
+	case "ipv4-cidr":
+		return "cidr"
+	default:
+		return format
+	}
 }
 
 // compileArray applies array Schema Object keywords to a Domain.
@@ -1617,145 +1725,8 @@ func eliminateContradictoryObjects(domain *Domain) {
 	}
 }
 
-// errUnconstructible marks constraints that require trusted generation inputs.
+// errUnconstructible marks constraints that cannot be represented constructively.
 var errUnconstructible = errors.New("unconstructible")
-
-// compileGenerationExamples parses trusted valid and invalid generation examples.
-func compileGenerationExamples(pointer string, members map[string]json.RawMessage) (GenerationExamples, error) {
-	var examples GenerationExamples
-
-	if err := validateGenerationExamplePlacement(members); err != nil {
-		return GenerationExamples{}, err
-	}
-
-	for _, keyword := range []string{"x-valid-examples", "x-invalid-examples"} {
-		if err := compileGenerationExampleKeyword(pointer, members, keyword, &examples); err != nil {
-			return GenerationExamples{}, err
-		}
-	}
-
-	return examples, nil
-}
-
-// generationExampleError locates malformed extension input at its keyword.
-type generationExampleError struct {
-	Keyword string
-	Cause   error
-}
-
-// Error returns the malformed extension cause.
-func (exampleError *generationExampleError) Error() string {
-	return exampleError.Cause.Error()
-}
-
-// validateGenerationExamplePlacement requires an opaque rule on the same Schema Object.
-func validateGenerationExamplePlacement(members map[string]json.RawMessage) error {
-	if hasOpaqueStringRule(members) {
-		return nil
-	}
-
-	for _, keyword := range []string{"x-valid-examples", "x-invalid-examples"} {
-		if _, ok := members[keyword]; ok {
-			return &generationExampleError{
-				Keyword: keyword,
-				Cause:   errors.New("extension requires a pattern or format on the same Schema Object"),
-			}
-		}
-	}
-
-	return nil
-}
-
-// compileGenerationExampleKeyword parses one valid or invalid extension array.
-func compileGenerationExampleKeyword(
-	pointer string,
-	members map[string]json.RawMessage,
-	keyword string,
-	examples *GenerationExamples,
-) error {
-	raw, ok := members[keyword]
-	if !ok {
-		return nil
-	}
-
-	target := &examples.Invalid
-	if keyword == "x-valid-examples" {
-		target = &examples.Valid
-		examples.ValidDeclared = true
-	}
-
-	if isJSONNull(raw) {
-		return &generationExampleError{Keyword: keyword, Cause: fmt.Errorf("%s must be an array", keyword)}
-	}
-
-	var values []json.RawMessage
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return &generationExampleError{
-			Keyword: keyword, Cause: fmt.Errorf("%s must be an array: %w", keyword, err),
-		}
-	}
-
-	for _, valueRaw := range values {
-		value, err := jsonvalue.Parse(valueRaw)
-		if err != nil {
-			return &generationExampleError{Keyword: keyword, Cause: fmt.Errorf("parse %s: %w", keyword, err)}
-		}
-
-		appendGenerationExample(target, GenerationExample{
-			Value: value, Source: ConstraintSource{Pointer: pointer, Keyword: keyword},
-		})
-	}
-
-	return nil
-}
-
-// hasOpaqueStringRule reports whether a direct pattern or format is declared.
-func hasOpaqueStringRule(members map[string]json.RawMessage) bool {
-	_, hasPattern := members["pattern"]
-	_, hasFormat := members["format"]
-
-	return hasPattern || hasFormat
-}
-
-// hasUnconstructibleStringDomain reports whether a reachable string format needs oracle evidence.
-func hasUnconstructibleStringDomain(domain Domain) bool {
-	return domain.String.State != KindExcluded &&
-		len(domain.String.Formats) > 0
-}
-
-// hasReachableNonStringKind reports whether generation has another kind to attempt.
-func hasReachableNonStringKind(domain Domain) bool {
-	return domain.Null != KindExcluded || domain.Boolean != KindExcluded ||
-		domain.Number.State != KindExcluded || domain.Array.State != KindExcluded ||
-		domain.Object.State != KindExcluded
-}
-
-// appendGenerationExample appends one semantically distinct exact case.
-func appendGenerationExample(examples *[]GenerationExample, candidate GenerationExample) {
-	for _, example := range *examples {
-		if example.Value.Equal(candidate.Value) {
-			return
-		}
-	}
-
-	*examples = append(*examples, GenerationExample{
-		Value:  cloneJSONValue(candidate.Value),
-		Source: candidate.Source,
-	})
-}
-
-// generationExampleOverlap returns an invalid case also declared valid.
-func generationExampleOverlap(examples GenerationExamples) *GenerationExample {
-	for index := range examples.Invalid {
-		for _, valid := range examples.Valid {
-			if examples.Invalid[index].Value.Equal(valid.Value) {
-				return &examples.Invalid[index]
-			}
-		}
-	}
-
-	return nil
-}
 
 // constraintSources records the supported constraint keywords in source order.
 func constraintSources(pointer string, members map[string]json.RawMessage) []ConstraintSource {
@@ -1784,16 +1755,6 @@ func cloneJSONValues(values []jsonvalue.Value) []jsonvalue.Value {
 	result := make([]jsonvalue.Value, len(values))
 	for index, value := range values {
 		result[index] = cloneJSONValue(value)
-	}
-
-	return result
-}
-
-// cloneGenerationExamples deep-copies exact values and preserves their source.
-func cloneGenerationExamples(examples []GenerationExample) []GenerationExample {
-	result := make([]GenerationExample, len(examples))
-	for index, example := range examples {
-		result[index] = GenerationExample{Value: cloneJSONValue(example.Value), Source: example.Source}
 	}
 
 	return result

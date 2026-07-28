@@ -665,7 +665,7 @@ func TestQueryDecoderUntypedDynamicFormatsUseStringsAndFinalValidation(t *testin
 		})
 	}
 
-	for _, format := range []string{"binary", "password", "int32", "float", "vendor", ""} {
+	for _, format := range []string{"password", "int32", "float"} {
 		decoder := parseQueryDecoder(t, fmt.Sprintf(
 			`{name: filter, in: query, schema: {type: object, additionalProperties: {format: %q}}}`,
 			format,

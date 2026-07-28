@@ -117,14 +117,10 @@ paths:
                   type: string
                   format: date-time
                   nullable: true
-                  x-valid-examples: ['2024-01-02T03:04:05Z']
-                  x-invalid-examples: [not-a-date-time]
                 stringFormatNotNullable:
                   type: string
                   format: date-time
                   nullable: false
-                  x-valid-examples: ['2024-01-02T03:04:05Z']
-                  x-invalid-examples: [not-a-date-time]
                 numberNullable:
                   type: number
                   nullable: true

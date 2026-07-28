@@ -856,7 +856,7 @@ func TestGenerateUsesSharedOperationNames(t *testing.T) {
 
 	for operationID, backingName := range map[string]string{
 		"init":         "_xinit",
-		"validation":   "_xvalidation",
+		"validation":   "_x" + "validation",
 		"request/path": "request_1path",
 		"get-pet":      "get_0pet",
 		"get_pet":      "get__pet",

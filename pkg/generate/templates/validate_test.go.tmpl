@@ -27,7 +27,6 @@ func TestValidations(t *testing.T) {
 			{{if .Pattern.RejectNonASCII}}patternvalidator.RejectNonASCII,{{end}}
 			{{if .Pattern.UseRE2}}patternvalidator.UseRE2,{{end}}
 		),
-		testgenerator.DefaultOption,
 	)
 }
 {{end}}

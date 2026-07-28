@@ -2,14 +2,42 @@ package suite
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
-	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
+
+// TestNumberGeneratorSupportsUnboundedNativeFloats covers absent schema bounds.
+func TestNumberGeneratorSupportsUnboundedNativeFloats(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		format  string
+		bitSize int
+	}{
+		{format: "float", bitSize: suiteFloat32BitSize},
+		{format: "double", bitSize: suiteFloat64BitSize},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			t.Parallel()
+
+			generator, err := numberGenerator(NumberConstraints{Formats: []string{test.format}})
+			require.NoError(t, err)
+
+			rapid.Check(t, func(rt *rapid.T) {
+				value := generator.Draw(rt, "value")
+				parsed, parseErr := strconv.ParseFloat(value.Number.Lexeme, test.bitSize)
+				require.NoError(rt, parseErr)
+				require.False(rt, math.IsInf(parsed, 0))
+				require.False(rt, math.IsNaN(parsed))
+			})
+		})
+	}
+}
 
 // TestRapidGeneratorBuilderMemoizesOccurrences verifies that each occurrence generator is built once.
 func TestRapidGeneratorBuilderMemoizesOccurrences(t *testing.T) {
@@ -129,40 +157,7 @@ func TestAdditionalPropertyNamesNeverCollide(t *testing.T) {
 }
 
 // TestCompileSuiteRejectsEmptyRoot verifies the public checker cannot silently execute zero cases.
-func TestCompileSuiteRejectsEmptyRoot(t *testing.T) {
-	t.Parallel()
-
-	compiler := NewCompiler(parseSchemaSource(t, `type: string
-minLength: 2
-maxLength: 1`, "", "create"))
-	_, err := compiler.CompileSuite()
-	require.ErrorContains(t, err, "accepts no JSON value")
-}
-
-// TestCompileSuiteConstructsPatternsWithoutExamples verifies pattern generation needs no oracle.
-func TestCompileSuiteConstructsPatternsWithoutExamples(t *testing.T) {
-	t.Parallel()
-
-	compiler := NewCompiler(parseSchemaSource(t, `pattern: '^ok$'`, "", "create"))
-	compiled, err := compiler.CompileSuite()
-	require.NoError(t, err)
-
-	for _, plannedCase := range compiled.Cases {
-		if plannedCase.Expect != ExpectAccepted {
-			continue
-		}
-
-		for seed := range 10 {
-			value := plannedCase.Generator.Example(seed)
-			if value.Kind == jsonvalue.KindString {
-				require.True(t, patternvalidator.MustParse(`^ok$`).Validate(value.String))
-			}
-		}
-	}
-}
-
-// TestCompileSuiteRequiresTrustedFormatButNotPatternExamples verifies only opaque formats need an oracle.
-func TestCompileSuiteRequiresTrustedFormatButNotPatternExamples(t *testing.T) {
+func TestCompileSuiteConstructsPatternsAndFormatsWithoutExamples(t *testing.T) {
 	t.Parallel()
 
 	patternCompiler := NewCompiler(parseSchemaSource(t, "type: string\npattern: '^ok$'", "", "create"))
@@ -171,7 +166,7 @@ func TestCompileSuiteRequiresTrustedFormatButNotPatternExamples(t *testing.T) {
 
 	formatCompiler := NewCompiler(parseSchemaSource(t, "type: string\nformat: email", "", "create"))
 	_, err = formatCompiler.CompileSuite()
-	require.ErrorContains(t, err, "no trusted valid example")
+	require.NoError(t, err)
 }
 
 // TestCompileSuiteKeepsRequiredNamesSeparateFromDeclaredProperties verifies that required

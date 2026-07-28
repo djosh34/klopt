@@ -445,7 +445,7 @@ func TestParseReturnsNilMapsAfterLateCompilationFailure(t *testing.T) {
 	require.ErrorContains(t, err, `compile operationId "zulu"`)
 }
 
-// TestValidationStringFormats covers every agreed format and unknown-format fallback.
+// TestValidationStringFormats covers the original native format examples and strict policy.
 func TestValidationStringFormats(t *testing.T) {
 	t.Parallel()
 
@@ -468,8 +468,8 @@ func TestValidationStringFormats(t *testing.T) {
 		})
 	}
 
-	unknown := mustParseSchema(t, `{"type":"string","format":"vendor-string"}`, "")
-	require.Empty(t, unknown.Validate(json.RawMessage(`"anything"`)))
+	_, err := Parse(openAPISpec(`{"type":"string","format":"vendor-string"}`, "", false))
+	require.ErrorContains(t, err, "legal OpenAPI but unsupported by this tool")
 }
 
 // TestValidationStrictJSONAndBodyPresence covers transport-independent raw-body rules.

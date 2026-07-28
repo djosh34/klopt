@@ -170,11 +170,6 @@ func addGeneratedTypelessKeywords(t *rapid.T, schema generatedSchemaObject) {
 	if len(schema) == 0 || len(schema) == 1 && schema["nullable"] != nil {
 		schema["enum"] = []any{false, generatedNumber("-0"), "", "λ"}
 	}
-
-	if _, hasEnum := schema["enum"]; hasEnum {
-		delete(schema, "x-valid-examples")
-		delete(schema, "x-invalid-examples")
-	}
 }
 
 func addGeneratedStringKeywords(t *rapid.T, schema generatedSchemaObject) {
@@ -186,8 +181,6 @@ func addGeneratedStringKeywords(t *rapid.T, schema generatedSchemaObject) {
 
 	if rapid.Bool().Draw(t, "opaque string") {
 		fragment := rapid.SampledFrom(opaqueStringCatalog).Draw(t, "opaque fragment")
-		valid := generatedEvidenceSubset(t, fragment.ValidExamples, "valid evidence")
-		invalid := generatedEvidenceSubset(t, fragment.InvalidExamples, "invalid evidence")
 
 		schema["pattern"] = fragment.Pattern
 		if fragment.Format != "" {
@@ -196,8 +189,6 @@ func addGeneratedStringKeywords(t *rapid.T, schema generatedSchemaObject) {
 
 		schema["minLength"] = 1
 		schema["maxLength"] = 128
-		schema["x-valid-examples"] = valid
-		schema["x-invalid-examples"] = invalid
 
 		return
 	}
@@ -212,23 +203,6 @@ func addGeneratedStringKeywords(t *rapid.T, schema generatedSchemaObject) {
 	if rapid.Bool().Draw(t, "has maxLength") {
 		schema["maxLength"] = maximum
 	}
-}
-
-func generatedEvidenceSubset(t *rapid.T, source []json.RawMessage, label string) []any {
-	start := rapid.IntRange(0, len(source)-1).Draw(t, label+" start")
-	count := rapid.IntRange(1, min(8, len(source)-start)).Draw(t, label+" count")
-	values := make([]any, 0, count)
-
-	for _, raw := range source[start : start+count] {
-		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
-			t.Fatalf("decode trusted %s: %v", label, err)
-		}
-
-		values = append(values, value)
-	}
-
-	return values
 }
 
 func addGeneratedNumberKeywords(t *rapid.T, schema generatedSchemaObject, integer bool) {
@@ -593,7 +567,7 @@ func cloneGeneratedValue(value any) any {
 	}
 }
 
-const generatedMutationCount = 14
+const generatedMutationCount = 12
 
 func mutateGeneratedDocument(document map[string]any, mutationID int) error {
 	schema, err := generatedRequestSchema(document)
@@ -605,17 +579,10 @@ func mutateGeneratedDocument(document map[string]any, mutationID int) error {
 	case 0:
 		schema["oneOf"] = []any{generatedSchemaObject{}}
 	case 1:
-		delete(schema, "pattern")
-		delete(schema, "format")
-		schema["x-valid-examples"] = []any{"x"}
-		schema["allOf"] = []any{generatedSchemaObject{
-			"pattern": "^x$", "x-valid-examples": []any{"x"},
-		}}
-	case 2:
 		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{
 			"$ref": "#/components/schemas/Missing",
 		})
-	case 3:
+	case 2:
 		schemas, schemasErr := generatedComponentSchemas(document)
 		if schemasErr != nil {
 			return schemasErr
@@ -625,7 +592,7 @@ func mutateGeneratedDocument(document map[string]any, mutationID int) error {
 		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{
 			"$ref": "#/components/schemas/Cycle",
 		})
-	case 4:
+	case 3:
 		schemas, schemasErr := generatedComponentSchemas(document)
 		if schemasErr != nil {
 			return schemasErr
@@ -636,26 +603,21 @@ func mutateGeneratedDocument(document map[string]any, mutationID int) error {
 		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{
 			"$ref": "#/components/schemas/CycleA",
 		})
-	case 5:
+	case 4:
 		schema["minLength"] = "zero"
-	case 6:
+	case 5:
 		schema["nullable"] = nil
-	case 7:
+	case 6:
 		schema["minItems"] = -1
-	case 8:
+	case 7:
 		schema["allOf"] = []any{}
-	case 9:
+	case 8:
 		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{"$ref": "#not-a-pointer"})
-	case 10:
+	case 9:
 		schema["required"] = "property"
-	case 11:
-		delete(schema, "allOf")
-		schema["pattern"] = "^x$"
-		schema["x-valid-examples"] = []any{"x"}
-		schema["x-invalid-examples"] = []any{"x"}
-	case 12:
+	case 10:
 		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{"$ref": "#/info"})
-	case 13:
+	case 11:
 		schema["maxLength"] = nil
 	default:
 		return fmt.Errorf("unknown mutation %d", mutationID)

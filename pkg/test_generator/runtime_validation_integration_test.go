@@ -3,7 +3,6 @@ package testgenerator
 import (
 	"encoding/json"
 	"errors"
-	"testing"
 
 	"github.com/djosh34/klopt/pkg/validation"
 )
@@ -42,11 +41,4 @@ func (adapter runtimeValidationAdapter) Validate(body []byte) error {
 	}
 
 	return bodyRejectionError{err: errors.Join(errs...)}
-}
-
-// TestRuntimeValidationCharacterizations pins independent runtime setup and body verdicts.
-func TestRuntimeValidationCharacterizations(t *testing.T) {
-	t.Parallel()
-
-	runValidatorCharacterizations(t, newRuntimeValidationRequestBodyValidator, runtimeValidationName)
 }

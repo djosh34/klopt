@@ -277,17 +277,21 @@ func TestParseOpenAPI(t *testing.T) {
 							},
 						}},
 						{Name: "stringFormatNotNullable", Validation: &validation.Validation{
-							SchemaPointer:    "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/stringFormatNotNullable",
-							KindValidation:   validation.KindValidation{Type: "string"},
-							StringValidation: validation.StringValidation{Format: "date-time"},
+							SchemaPointer:  "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/stringFormatNotNullable",
+							KindValidation: validation.KindValidation{Type: "string"},
+							StringValidation: validation.StringValidation{
+								Format: "date-time", CompiledFormat: validation.MustCompileStringFormat("date-time"),
+							},
 							ObjectValidation: validation.ObjectValidation{
 								AdditionalPropertiesAllowed: true,
 							},
 						}},
 						{Name: "stringFormatNullable", Validation: &validation.Validation{
-							SchemaPointer:    "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/stringFormatNullable",
-							KindValidation:   validation.KindValidation{Type: "string", Nullable: true},
-							StringValidation: validation.StringValidation{Format: "date-time"},
+							SchemaPointer:  "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/stringFormatNullable",
+							KindValidation: validation.KindValidation{Type: "string", Nullable: true},
+							StringValidation: validation.StringValidation{
+								Format: "date-time", CompiledFormat: validation.MustCompileStringFormat("date-time"),
+							},
 							ObjectValidation: validation.ObjectValidation{
 								AdditionalPropertiesAllowed: true,
 							},

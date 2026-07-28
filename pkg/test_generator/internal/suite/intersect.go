@@ -1,7 +1,6 @@
 package suite
 
 import (
-	"errors"
 	"fmt"
 	"math/big"
 	"sort"
@@ -158,6 +157,7 @@ func intersectNumbers(left NumberConstraints, right NumberConstraints) (NumberCo
 	result := NumberConstraints{
 		State:        KindRestricted,
 		IntegersOnly: left.IntegersOnly || right.IntegersOnly,
+		Formats:      append(append([]string(nil), left.Formats...), right.Formats...),
 	}
 
 	var err error
@@ -652,11 +652,6 @@ func (registry *DomainRegistry) intersectEnums(result *Domain, left *EnumSet, ri
 
 	for _, value := range candidates {
 		matches, err := compiler.valueFitsDomain(value, knownConstraints)
-		if errors.Is(err, errOpaqueStringMembership) {
-			// Exact occurrence evidence decides opaque descendants after Domain intersection.
-			matches, err = true, nil
-		}
-
 		if err != nil {
 			return err
 		}

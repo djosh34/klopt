@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"slices"
 	"sort"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
@@ -128,6 +129,8 @@ func (registry *DomainRegistry) normalizeDomain(domain Domain) Domain {
 }
 
 // normalizeNumber removes irrelevant numeric constraints.
+//
+//nolint:cyclop // Canonical numeric implications stay visible in one normalization pass.
 func normalizeNumber(number *NumberConstraints) {
 	if number.State == KindExcluded {
 		*number = NumberConstraints{State: KindExcluded}
@@ -135,9 +138,20 @@ func normalizeNumber(number *NumberConstraints) {
 		return
 	}
 
+	slices.Sort(number.Formats)
+
+	number.Formats = slices.Compact(number.Formats)
+	if slices.Contains(number.Formats, "int32") {
+		number.Formats = slices.DeleteFunc(number.Formats, func(format string) bool { return format == "int64" })
+	}
+
+	if slices.Contains(number.Formats, "float") {
+		number.Formats = slices.DeleteFunc(number.Formats, func(format string) bool { return format == "double" })
+	}
+
 	if number.State == KindUnrestricted || number.State == KindRestricted &&
 		!number.IntegersOnly && number.Minimum == nil && number.Maximum == nil &&
-		number.MultipleOf == nil {
+		number.MultipleOf == nil && len(number.Formats) == 0 {
 		*number = NumberConstraints{State: KindUnrestricted}
 	}
 }
@@ -150,10 +164,10 @@ func normalizeString(stringConstraints *StringConstraints) {
 		return
 	}
 
-	sort.Strings(stringConstraints.Patterns)
-	stringConstraints.Patterns = compactStrings(stringConstraints.Patterns)
-	sort.Strings(stringConstraints.Formats)
-	stringConstraints.Formats = compactStrings(stringConstraints.Formats)
+	slices.Sort(stringConstraints.Patterns)
+	stringConstraints.Patterns = slices.Compact(stringConstraints.Patterns)
+	slices.Sort(stringConstraints.Formats)
+	stringConstraints.Formats = slices.Compact(stringConstraints.Formats)
 
 	if stringConstraints.State == KindUnrestricted || stringConstraints.State == KindRestricted &&
 		stringConstraints.MinLength == 0 && stringConstraints.MaxLength == nil &&
@@ -269,22 +283,6 @@ func normalizeEnum(enum *EnumSet) {
 	enum.Values = values
 }
 
-// compactStrings removes adjacent duplicate strings from a sorted slice.
-func compactStrings(values []string) []string {
-	if len(values) < minimumDistinctStrings {
-		return values
-	}
-
-	result := values[:1]
-	for _, value := range values[1:] {
-		if value != result[len(result)-1] {
-			result = append(result, value)
-		}
-	}
-
-	return result
-}
-
 // allKindsExcluded reports whether a Domain excludes every JSON kind.
 func allKindsExcluded(domain Domain) bool {
 	return domain.Null == KindExcluded && domain.Boolean == KindExcluded &&
@@ -312,7 +310,9 @@ func (registry *DomainRegistry) appendNumber(encoded []byte, number NumberConstr
 	encoded = appendBound(encoded, number.Minimum)
 	encoded = appendBound(encoded, number.Maximum)
 
-	return appendNumberValue(encoded, number.MultipleOf)
+	encoded = appendNumberValue(encoded, number.MultipleOf)
+
+	return appendStrings(encoded, number.Formats)
 }
 
 // appendString appends the semantic string constraint encoding.
@@ -426,6 +426,7 @@ func cloneDomain(domain Domain) Domain {
 	domain.Number.Minimum = cloneBound(domain.Number.Minimum)
 	domain.Number.Maximum = cloneBound(domain.Number.Maximum)
 	domain.Number.MultipleOf = cloneNumber(domain.Number.MultipleOf)
+	domain.Number.Formats = append([]string(nil), domain.Number.Formats...)
 
 	if domain.String.MaxLength != nil {
 		domain.String.MaxLength = new(*domain.String.MaxLength)

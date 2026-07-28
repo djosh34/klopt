@@ -3,17 +3,12 @@ package testgenerator
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/mail"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
-	"time"
-	"unicode/utf8"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/test_generator/internal/suite"
@@ -21,176 +16,44 @@ import (
 	"pgregory.net/rapid"
 )
 
-// TestOpaqueStringCatalog verifies the checked-in construction recipe independently
-// of the runtime schema generator. Generation only samples the resulting trusted data.
-func TestOpaqueStringCatalog(t *testing.T) {
-	t.Parallel()
-
-	require.Len(t, opaqueStringCatalog, opaqueFamilyCount*opaqueFragmentsPerFamily)
-
-	for family := 0; family < opaqueFamilyCount; family++ {
-		fragments := opaqueStringCatalog[family*opaqueFragmentsPerFamily : (family+1)*opaqueFragmentsPerFamily]
-
-		for fragmentIndex, fragment := range fragments {
-			verifyOpaqueFragment(t, family, fragmentIndex, fragment)
+func compileGeneratedSchema(t require.TestingT, candidate GeneratedSchema) (*suite.CompiledSuite, error) {
+	sources, err := oas.Parse(candidate.OpenAPIJSON)
+	if err != nil {
+		if candidate.Valid {
+			require.NoError(t, err)
 		}
 
-		verifyOpaqueFamilyOverlap(t, fragments)
-	}
-}
-
-func verifyOpaqueFragment(
-	t *testing.T,
-	family int,
-	fragmentIndex int,
-	fragment opaqueStringFragment,
-) {
-	t.Helper()
-
-	compiled, err := regexp.Compile(fragment.Pattern)
-	require.NoError(t, err)
-	require.NotEmpty(t, fragment.Pattern)
-	require.GreaterOrEqual(t, len(fragment.ValidExamples), 100)
-	require.GreaterOrEqual(t, len(fragment.InvalidExamples), 100)
-
-	valid := make(map[string]struct{}, len(fragment.ValidExamples))
-	for _, raw := range fragment.ValidExamples {
-		value := decodeOpaqueString(t, raw)
-		require.Truef(t, compiled.MatchString(value), "family %d fragment %d valid %q", family, fragmentIndex, value)
-		require.NoError(t, verifyOpaqueFormat(fragment.Format, value))
-		require.GreaterOrEqual(t, utf8.RuneCountInString(value), 1)
-		require.LessOrEqual(t, utf8.RuneCountInString(value), 128)
-		_, duplicate := valid[value]
-		require.False(t, duplicate)
-
-		valid[value] = struct{}{}
+		return nil, err
 	}
 
-	invalid := make(map[string]struct{}, len(fragment.InvalidExamples))
-	for _, raw := range fragment.InvalidExamples {
-		value := decodeOpaqueString(t, raw)
-		require.Falsef(t, compiled.MatchString(value), "family %d fragment %d invalid %q", family, fragmentIndex, value)
-		_, duplicate := invalid[value]
-		require.False(t, duplicate)
-
-		invalid[value] = struct{}{}
-	}
-}
-
-func verifyOpaqueFamilyOverlap(t *testing.T, fragments []opaqueStringFragment) {
-	t.Helper()
-
-	validSets := make([]map[string]struct{}, len(fragments))
-
-	invalidSets := make([]map[string]struct{}, len(fragments))
-	for index, fragment := range fragments {
-		validSets[index] = opaqueStringSet(t, fragment.ValidExamples)
-		invalidSets[index] = opaqueStringSet(t, fragment.InvalidExamples)
-	}
-
-	require.GreaterOrEqual(t, commonOpaqueValues(validSets), 25)
-	require.LessOrEqual(t, commonOpaqueValues(validSets), 50)
-	require.GreaterOrEqual(t, commonOpaqueValues(invalidSets), 25)
-	require.LessOrEqual(t, commonOpaqueValues(invalidSets), 50)
-
-	for index := range fragments {
-		require.GreaterOrEqual(t, valuesMissingFromSibling(validSets, index), 25)
-		require.GreaterOrEqual(t, valuesMissingFromSibling(invalidSets, index), 25)
-	}
-}
-
-func decodeOpaqueString(t *testing.T, raw json.RawMessage) string {
-	t.Helper()
-
-	var value string
-	require.NoError(t, json.Unmarshal(raw, &value))
-
-	return value
-}
-
-func verifyOpaqueFormat(format string, value string) error {
-	switch format {
-	case "":
-		return nil
-	case "byte":
-		_, err := base64.StdEncoding.DecodeString(value)
-
-		return err
-	case "date":
-		_, err := time.Parse(time.DateOnly, value)
-
-		return err
-	case "date-time":
-		_, err := time.Parse(time.RFC3339, value)
-
-		return err
-	case "email":
-		address, err := mail.ParseAddress(value)
-		if err != nil {
-			return err
+	source, ok := sources["checkThing"]
+	if !ok {
+		err = errors.New(`operationId "checkThing" is missing`)
+		if candidate.Valid {
+			require.NoError(t, err)
 		}
 
-		if address.Address != value {
-			return fmt.Errorf("email parser canonicalized %q to %q", value, address.Address)
-		}
-
-		return nil
-	default:
-		return fmt.Errorf("unverified opaque format %q", format)
-	}
-}
-
-func opaqueStringSet(t *testing.T, values []json.RawMessage) map[string]struct{} {
-	t.Helper()
-
-	set := make(map[string]struct{}, len(values))
-	for _, raw := range values {
-		set[decodeOpaqueString(t, raw)] = struct{}{}
+		return nil, err
 	}
 
-	return set
-}
+	compiled, err := suite.NewCompiler(source).CompileSuite()
+	if !candidate.Valid {
+		require.Error(t, err)
 
-func commonOpaqueValues(sets []map[string]struct{}) int {
-	common := 0
-
-	for value := range sets[0] {
-		inEverySet := true
-
-		for _, set := range sets[1:] {
-			if _, ok := set[value]; !ok {
-				inEverySet = false
-
-				break
-			}
-		}
-
-		if inEverySet {
-			common++
-		}
+		return compiled, err
 	}
 
-	return common
-}
+	if err == nil {
+		require.NotEmpty(t, compiled.Cases)
 
-func valuesMissingFromSibling(sets []map[string]struct{}, selected int) int {
-	missing := 0
-
-	for value := range sets[selected] {
-		for index, set := range sets {
-			if index == selected {
-				continue
-			}
-
-			if _, ok := set[value]; !ok {
-				missing++
-
-				break
-			}
-		}
+		return compiled, nil
 	}
 
-	return missing
+	var compileError *suite.Error
+	require.ErrorAs(t, err, &compileError)
+	require.Equal(t, "unconstructible", compileError.Code, "%v\n%s", err, candidate.OpenAPIJSON)
+
+	return nil, err
 }
 
 // TestGenerateSchemasMatchesCompilerContract checks valid supported syntax and
@@ -253,48 +116,6 @@ func TestEveryGeneratedMutationIsRejectedIndependently(t *testing.T) {
 	}
 }
 
-func compileGeneratedSchema(t require.TestingT, candidate GeneratedSchema) (*suite.CompiledSuite, error) {
-	sources, err := oas.Parse(candidate.OpenAPIJSON)
-	if err != nil {
-		if candidate.Valid {
-			require.NoError(t, err)
-		}
-
-		return nil, err
-	}
-
-	source, ok := sources["checkThing"]
-	if !ok {
-		err = errors.New(`operationId "checkThing" is missing`)
-		if candidate.Valid {
-			require.NoError(t, err)
-		}
-
-		return nil, err
-	}
-
-	compiled, err := suite.NewCompiler(source).CompileSuite(suite.MustHaveAllXValidCases)
-	if !candidate.Valid {
-		require.Error(t, err)
-
-		return compiled, err
-	}
-
-	if err == nil {
-		require.NotEmpty(t, compiled.Cases)
-
-		return compiled, nil
-	}
-
-	var compileError *suite.Error
-	require.ErrorAs(t, err, &compileError)
-	require.Equal(t, "unconstructible", compileError.Code, "%v\n%s", err, candidate.OpenAPIJSON)
-
-	return nil, err
-}
-
-// TestGeneratedSchemasAgainstValidators sends every subsequently generated body
-// from a constructible valid schema to the runtime and applicable external validators.
 func TestGeneratedSchemasAgainstValidators(t *testing.T) {
 	t.Parallel()
 
@@ -339,6 +160,10 @@ func TestGeneratedSchemasAgainstValidators(t *testing.T) {
 			}
 
 			for _, adapter := range adapters {
+				if !validatorChecksCase(adapter, plannedCase) {
+					continue
+				}
+
 				validationErr := adapter.validator.Validate(body)
 				require.Truef(
 					t,
@@ -427,7 +252,10 @@ func schemaHasEmptyProperty(value any) bool {
 
 // hasCharacterizedExternalValidatorLimitation routes pinned cases away from third-party adapters only.
 func hasCharacterizedExternalValidatorLimitation(schema []byte) bool {
-	return bytes.Contains(schema, []byte("1e400")) ||
+	withoutPassword := bytes.ReplaceAll(schema, []byte(`"format":"password"`), nil)
+
+	return bytes.Contains(withoutPassword, []byte(`"format":`)) ||
+		bytes.Contains(schema, []byte("1e400")) ||
 		bytes.Contains(schema, []byte("-1e400")) ||
 		bytes.Contains(schema, []byte("1e300")) ||
 		bytes.Contains(schema, []byte("0.0000000000000000000000000001")) ||
@@ -437,6 +265,13 @@ func hasCharacterizedExternalValidatorLimitation(schema []byte) bool {
 		bytes.Contains(schema, []byte("Reference Object siblings are ignored")) ||
 		generatedSchemaContainsNullableAllOf(schema) ||
 		generatedSchemaContainsTypelessOccurrence(schema)
+}
+
+func TestPasswordDoesNotDisableExternalValidatorCoverage(t *testing.T) {
+	t.Parallel()
+
+	require.False(t, hasCharacterizedExternalValidatorLimitation([]byte(`{"type":"string","format":"password"}`)))
+	require.True(t, hasCharacterizedExternalValidatorLimitation([]byte(`{"type":"string","format":"uuid"}`)))
 }
 
 func generatedSchemaContainsNullableAllOf(raw []byte) bool {

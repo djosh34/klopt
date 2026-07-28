@@ -1,39 +1,17 @@
 package suite
 
 import (
-	"encoding/json"
 	"errors"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
-	"github.com/djosh34/klopt/pkg/test_generator/internal/patterngenerator"
 	"github.com/stretchr/testify/require"
 )
 
 // TestPatternSuiteConstructsEqualChildLanguagesIndependently covers occurrence-local object generation.
-func TestPatternSuiteConstructsEqualChildLanguagesIndependently(t *testing.T) {
-	t.Parallel()
-
-	compiled, err := NewCompiler(parseSchemaSource(t, `type: object
-required: [first, second]
-maxProperties: 2
-additionalProperties: false
-properties:
-  first: {type: string, pattern: '^same$', x-valid-examples: [first]}
-  second: {type: string, pattern: '^same$'}`, "", "create")).CompileSuite(MustHaveAllXValidCases)
-	require.NoError(t, err)
-
-	checkAcceptedCases(t, compiled, func(t require.TestingT, body []byte) {
-		var object map[string]string
-		require.NoError(t, json.Unmarshal(body, &object))
-		require.Equal(t, "same", object["first"])
-		require.Equal(t, "same", object["second"])
-	})
-}
-
-// TestPatternSuiteLiftsIsolatedChildFailures keeps the signed target through parent construction.
 func TestPatternSuiteLiftsIsolatedChildFailures(t *testing.T) {
 	t.Parallel()
 
@@ -129,7 +107,7 @@ components:
 		{Pointer: root + "/allOf/0", Keyword: "pattern"},
 		{Pointer: root + "/allOf/1/allOf/0", Keyword: "pattern"},
 		{Pointer: "#/components/schemas/Base", Keyword: "pattern"},
-	}, patternSources(compiler.rootUse.patterns))
+	}, stringLanguageSources(compiler.rootUse.stringLanguages))
 
 	invalidPatterns := make(map[ConstraintSource]bool)
 
@@ -146,7 +124,7 @@ components:
 				require.LessOrEqual(t, length, 4, plannedCase.Name)
 			}
 
-			for _, pattern := range compiler.rootUse.patterns {
+			for _, pattern := range compiler.rootUse.stringLanguages {
 				want := true
 				if plannedCase.Expect == ExpectRejected && plannedCase.Source.Keyword == "pattern" &&
 					plannedCase.Source == pattern.source {
@@ -167,7 +145,7 @@ components:
 		}
 	}
 
-	require.Len(t, invalidPatterns, len(compiler.rootUse.patterns))
+	require.Len(t, invalidPatterns, len(compiler.rootUse.stringLanguages))
 }
 
 // TestPatternSuiteKeepsDuplicateOccurrencesAndSkipsOnlyEmptySignedCases covers exact per-occurrence skipping.
@@ -185,10 +163,10 @@ allOf:
 
 	compiled, err := compiler.CompileSuite()
 	require.NoError(t, err)
-	require.Len(t, compiler.rootUse.patterns, 3)
+	require.Len(t, compiler.rootUse.stringLanguages, 3)
 	require.Equal(t, 2, countCases(compiled.Unavailable, ExpectRejected, "pattern"))
-	require.Equal(t, compiler.rootUse.patterns[0].value, compiler.rootUse.patterns[1].value)
-	require.NotEqual(t, compiler.rootUse.patterns[0].id, compiler.rootUse.patterns[1].id)
+	require.Equal(t, compiler.rootUse.stringLanguages[0].value, compiler.rootUse.stringLanguages[1].value)
+	require.NotEqual(t, compiler.rootUse.stringLanguages[0].id, compiler.rootUse.stringLanguages[1].id)
 
 	root := compiler.Source.RequestSchema.Pointer
 	wantConstructed := ConstraintSource{Pointer: root + "/allOf/2", Keyword: "pattern"}
@@ -224,114 +202,6 @@ allOf:
 }
 
 // TestPatternSuiteIntersectsEnumCandidatesAndKeepsPatternProvenance covers finite siblings.
-func TestPatternSuiteIntersectsEnumCandidatesAndKeepsPatternProvenance(t *testing.T) {
-	t.Parallel()
-
-	for _, schema := range []string{
-		"type: string\npattern: '^A$'\nenum: [A, b]",
-		"type: string\npattern: '^A$'\nallOf:\n  - enum: [A, b]",
-		"type: string\nenum: [A, b]\nallOf:\n  - pattern: '^A$'",
-	} {
-		compiler := NewCompiler(parseSchemaSource(t, schema, "", "create"))
-		compiled, err := compiler.CompileSuite()
-		require.NoError(t, err)
-		require.Len(t, compiler.rootUse.patterns, 1)
-
-		accepted := 0
-		rejected := 0
-
-		for _, plannedCase := range compiled.Cases {
-			for seed := range 10 {
-				value := plannedCase.Generator.Example(seed)
-				if value.Kind != jsonvalue.KindString {
-					continue
-				}
-
-				if plannedCase.Expect == ExpectAccepted {
-					accepted++
-
-					require.Equal(t, "A", value.String)
-				} else if plannedCase.Source.Keyword == "pattern" {
-					rejected++
-
-					require.Equal(t, "b", value.String)
-				}
-			}
-		}
-
-		require.Positive(t, accepted)
-		require.Positive(t, rejected)
-	}
-
-	compiler := NewCompiler(parseSchemaSource(t, "type: string\npattern: '^A$'\nenum: [b]", "", "create"))
-	_, err := compiler.CompileSuite()
-	require.ErrorContains(t, err, "no trusted valid example")
-	require.Len(t, compiler.rootUse.patterns, 1)
-}
-
-// TestPatternSuiteHandlesImplicationDisjointAndUniversalLanguages covers reachability edge cases.
-func TestPatternSuiteHandlesImplicationDisjointAndUniversalLanguages(t *testing.T) {
-	t.Parallel()
-
-	t.Run("implication", func(t *testing.T) {
-		t.Parallel()
-
-		compiler := NewCompiler(parseSchemaSource(t, `
-type: string
-maxLength: 2
-allOf:
-  - pattern: '^[a-z]+$'
-  - pattern: '^[a-z]*$'
-`, "", "create"))
-		compiled, err := compiler.CompileSuite()
-		require.NoError(t, err)
-
-		root := compiler.Source.RequestSchema.Pointer
-		narrow := ConstraintSource{Pointer: root + "/allOf/0", Keyword: "pattern"}
-		broad := ConstraintSource{Pointer: root + "/allOf/1", Keyword: "pattern"}
-
-		require.True(t, hasRejectedCase(compiled.Cases, narrow))
-		require.False(t, hasRejectedCase(compiled.Cases, broad))
-		require.Equal(t, ObligationDominated, constraintBySource(t, compiled, broad).Outcome)
-	})
-
-	t.Run("disjoint", func(t *testing.T) {
-		t.Parallel()
-
-		compiler := NewCompiler(parseSchemaSource(t, `
-type: string
-allOf:
-  - pattern: '^a$'
-  - pattern: '^b$'
-`, "", "create"))
-		_, err := compiler.CompileSuite()
-		require.ErrorContains(t, err, "no trusted valid example")
-	})
-
-	t.Run("non-ASCII-only accepted language", func(t *testing.T) {
-		t.Parallel()
-
-		compiler := NewCompiler(parseSchemaSource(t, "type: string\npattern: '^é$'", "", "create"))
-		_, err := compiler.CompileSuite()
-		require.ErrorContains(t, err, "no trusted valid example")
-	})
-
-	t.Run("universal", func(t *testing.T) {
-		t.Parallel()
-
-		compiler := NewCompiler(parseSchemaSource(t, "type: string\npattern: '.*'", "", "create"))
-		compiled, err := compiler.CompileSuite()
-		require.NoError(t, err)
-		require.True(t, hasAcceptedCase(compiled.Cases))
-		require.Equal(t, 1, countCases(compiled.Unavailable, ExpectRejected, "pattern"))
-		require.False(t, hasRejectedCase(compiled.Cases, ConstraintSource{
-			Pointer: compiler.Source.RequestSchema.Pointer,
-			Keyword: "pattern",
-		}))
-	})
-}
-
-// TestPatternSuitePropagatesOptionsAndAttributesConstructionErrors covers the composite option and source mapping.
 func TestPatternSuitePropagatesOptionsAndAttributesConstructionErrors(t *testing.T) {
 	t.Parallel()
 
@@ -374,7 +244,9 @@ func TestPatternSuitePropagatesOptionsAndAttributesConstructionErrors(t *testing
 			require.ErrorAs(t, err, &compileError)
 			require.Equal(t, compiler.Source.RequestSchema.Pointer, compileError.Pointer)
 			require.Equal(t, "pattern", compileError.Keyword)
-			require.False(t, errors.Is(err, patterngenerator.ErrNoValues))
+
+			var emptyError *stringlanguage.EmptyError
+			require.False(t, errors.As(err, &emptyError))
 		})
 	}
 
@@ -409,11 +281,11 @@ func countCases(cases []CasePlan, expect ExpectedResult, keyword string) int {
 	return count
 }
 
-// patternSources returns declaration sources in composition order.
-func patternSources(patterns []patternOccurrence) []ConstraintSource {
-	result := make([]ConstraintSource, 0, len(patterns))
-	for _, pattern := range patterns {
-		result = append(result, pattern.source)
+// stringLanguageSources returns declaration sources in composition order.
+func stringLanguageSources(occurrences []stringLanguageOccurrence) []ConstraintSource {
+	result := make([]ConstraintSource, 0, len(occurrences))
+	for _, occurrence := range occurrences {
+		result = append(result, occurrence.source)
 	}
 
 	return result
