@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"strconv"
 
-	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"pgregory.net/rapid"
@@ -21,22 +22,22 @@ const halfDenominator = 2
 
 // RapidGeneratorBuilder links canonical Domains to shared constructive Rapid generators.
 type RapidGeneratorBuilder struct {
-	domains          *DomainRegistry
-	patternOption    patternvalidator.Option
-	pattern          *patternOccurrence
-	generators       map[generatorKey]*rapid.Generator[jsonvalue.Value]
-	patternLanguages map[patternSetKey][]stringlanguage.Language
+	domains              *DomainRegistry
+	patternOption        patternvalidator.Option
+	targetStringLanguage *stringLanguageOccurrence
+	generators           map[generatorKey]*rapid.Generator[jsonvalue.Value]
+	stringLanguages      map[stringLanguageSetKey][]stringlanguage.Language
 }
 
 // generatorKey identifies one Domain at one exact occurrence.
 type generatorKey struct {
-	domain    DomainID
-	use       *schemaUse
-	patternID uint64
+	domain           DomainID
+	use              *schemaUse
+	stringLanguageID uint64
 }
 
-// patternSetKey identifies one ordered list of original pattern occurrences.
-type patternSetKey struct {
+// stringLanguageSetKey identifies one ordered list of original pattern and format occurrences.
+type stringLanguageSetKey struct {
 	use       *schemaUse
 	signature string
 }
@@ -56,10 +57,10 @@ func NewRapidGeneratorBuilder(
 	}
 
 	return &RapidGeneratorBuilder{
-		domains:          domains,
-		patternOption:    patternOption,
-		generators:       make(map[generatorKey]*rapid.Generator[jsonvalue.Value]),
-		patternLanguages: make(map[patternSetKey][]stringlanguage.Language),
+		domains:         domains,
+		patternOption:   patternOption,
+		generators:      make(map[generatorKey]*rapid.Generator[jsonvalue.Value]),
+		stringLanguages: make(map[stringLanguageSetKey][]stringlanguage.Language),
 	}
 }
 
@@ -80,7 +81,7 @@ func (builder *RapidGeneratorBuilder) generator(
 		return nil, errors.New("build Rapid generator: Domain registry is nil")
 	}
 
-	key := generatorKey{domain: id, use: use, patternID: builder.patternID()}
+	key := generatorKey{domain: id, use: use, stringLanguageID: builder.stringLanguageID()}
 	if generator, ok := builder.generators[key]; ok {
 		return generator, nil
 	}
@@ -122,13 +123,13 @@ func (builder *RapidGeneratorBuilder) generator(
 	return generator, nil
 }
 
-// patternID returns the selected isolated pattern occurrence or the aggregate sentinel.
-func (builder *RapidGeneratorBuilder) patternID() uint64 {
-	if builder.pattern == nil {
+// stringLanguageID returns the selected isolated string-language occurrence or the aggregate sentinel.
+func (builder *RapidGeneratorBuilder) stringLanguageID() uint64 {
+	if builder.targetStringLanguage == nil {
 		return 0
 	}
 
-	return builder.pattern.id
+	return builder.targetStringLanguage.id
 }
 
 // domainGenerator builds a generator from every reachable JSON kind in domain.
@@ -195,8 +196,8 @@ func (builder *RapidGeneratorBuilder) enumGenerator(
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	values := cloneJSONValues(domain.Enum.Values)
 
-	patterns := occurrencePatterns(use, domain.String.Patterns)
-	if len(patterns) == 0 {
+	occurrences := occurrenceStringLanguages(use, domain.String.Patterns)
+	if len(occurrences) == 0 {
 		if len(values) == 0 {
 			return nil, errors.New("enum conjunction accepts no value")
 		}
@@ -204,41 +205,49 @@ func (builder *RapidGeneratorBuilder) enumGenerator(
 		return rapid.SampledFrom(values), nil
 	}
 
-	matching, err := builder.matchingPatternEnumValues(domain, use, patterns, values)
+	matching, err := builder.matchingStringLanguageEnumValues(domain, use, occurrences, values)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(matching) == 0 {
-		return nil, newPatternConstructionError(patterns, use, builder.pattern, &stringlanguage.EmptyError{})
+		return nil, newStringLanguageConstructionError(
+			occurrences,
+			use,
+			builder.targetStringLanguage,
+			&stringlanguage.EmptyError{},
+		)
 	}
 
 	return rapid.SampledFrom(matching), nil
 }
 
-// matchingPatternEnumValues computes the finite enum/pattern conjunction before drawing.
-func (builder *RapidGeneratorBuilder) matchingPatternEnumValues(
+// matchingStringLanguageEnumValues computes the finite enum/string-language conjunction before drawing.
+func (builder *RapidGeneratorBuilder) matchingStringLanguageEnumValues(
 	domain Domain,
 	use *schemaUse,
-	patterns []patternOccurrence,
+	occurrences []stringLanguageOccurrence,
 	values []jsonvalue.Value,
 ) ([]jsonvalue.Value, error) {
-	wantMatches := make([]bool, 0, len(patterns))
-	for _, pattern := range patterns {
-		wantMatches = append(wantMatches, builder.pattern == nil || builder.pattern.id != pattern.id)
+	wantMatches := make([]bool, 0, len(occurrences))
+	for _, occurrence := range occurrences {
+		wantMatches = append(
+			wantMatches,
+			builder.targetStringLanguage == nil || builder.targetStringLanguage.id != occurrence.id,
+		)
 	}
 
-	set, err := builder.patternSet(patterns, use, wantMatches, stringlanguage.Length{
+	set, err := builder.stringLanguageSet(occurrences, use, wantMatches, stringlanguage.Length{
 		Min: domain.String.MinLength,
 		Max: domain.String.MaxLength,
 	})
 	if err != nil {
-		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
+		return nil, newStringLanguageConstructionError(occurrences, use, builder.targetStringLanguage, err)
 	}
 
 	matching := make([]jsonvalue.Value, 0, len(values))
 	for _, value := range values {
-		if builder.patternEnumValueMatches(set, value) {
+		if builder.stringLanguageEnumValueMatches(set, value) {
 			matching = append(matching, value)
 		}
 	}
@@ -246,13 +255,13 @@ func (builder *RapidGeneratorBuilder) matchingPatternEnumValues(
 	return matching, nil
 }
 
-// patternEnumValueMatches checks one finite candidate with the independent ASCII DFA.
-func (builder *RapidGeneratorBuilder) patternEnumValueMatches(
+// stringLanguageEnumValueMatches checks one finite candidate with the independent ASCII DFA.
+func (builder *RapidGeneratorBuilder) stringLanguageEnumValueMatches(
 	set *stringlanguage.Set,
 	value jsonvalue.Value,
 ) bool {
 	if value.Kind != jsonvalue.KindString {
-		return builder.pattern == nil
+		return builder.targetStringLanguage == nil
 	}
 
 	return set.Matches(value.String)
@@ -278,6 +287,16 @@ func appendConstructiveGenerator(
 
 // numberGenerator builds a generator for numeric constraints.
 func numberGenerator(constraints NumberConstraints) (*rapid.Generator[jsonvalue.Value], error) {
+	if !constraints.IntegersOnly && constraints.MultipleOf == nil {
+		if slices.Contains(constraints.Formats, "float") {
+			return float32NumberGenerator(constraints)
+		}
+
+		if slices.Contains(constraints.Formats, "double") {
+			return float64NumberGenerator(constraints)
+		}
+	}
+
 	if constraints.IntegersOnly || constraints.MultipleOf != nil {
 		return latticeNumberGenerator(constraints)
 	}
@@ -297,6 +316,202 @@ func numberGenerator(constraints NumberConstraints) (*rapid.Generator[jsonvalue.
 	}
 
 	return rapid.SampledFrom(candidates), nil
+}
+
+// float32NumberGenerator generates finite binary32 values inside exact schema bounds.
+func float32NumberGenerator(constraints NumberConstraints) (*rapid.Generator[jsonvalue.Value], error) {
+	minimum, err := float32Minimum(constraints.Minimum)
+	if err != nil {
+		return nil, err
+	}
+
+	maximum, err := float32Maximum(constraints.Maximum)
+	if err != nil {
+		return nil, err
+	}
+
+	if minimum > maximum {
+		return nil, errors.New("float constraints contain no representable float32")
+	}
+
+	return rapid.Custom(func(t *rapid.T) jsonvalue.Value {
+		value := rapid.Float32Range(minimum, maximum).Draw(t, "float32")
+
+		return mustGeneratedFloat(t, float64(value), suiteFloat32BitSize)
+	}), nil
+}
+
+// float64NumberGenerator generates finite binary64 values inside exact schema bounds.
+func float64NumberGenerator(constraints NumberConstraints) (*rapid.Generator[jsonvalue.Value], error) {
+	minimum, err := float64Minimum(constraints.Minimum)
+	if err != nil {
+		return nil, err
+	}
+
+	maximum, err := float64Maximum(constraints.Maximum)
+	if err != nil {
+		return nil, err
+	}
+
+	if minimum > maximum {
+		return nil, errors.New("double constraints contain no representable float64")
+	}
+
+	return rapid.Custom(func(t *rapid.T) jsonvalue.Value {
+		value := rapid.Float64Range(minimum, maximum).Draw(t, "float64")
+
+		return mustGeneratedFloat(t, value, suiteFloat64BitSize)
+	}), nil
+}
+
+// float32Minimum returns the first encoded binary32 value allowed by bound.
+func float32Minimum(bound *NumberBound) (float32, error) {
+	value, err := strconv.ParseFloat(bound.Value.Lexeme, suiteFloat32BitSize)
+	if err != nil {
+		return 0, fmt.Errorf("parse float32 minimum: %w", err)
+	}
+
+	result := float32(value)
+	for {
+		satisfies, satisfiesErr := generatedFloatSatisfiesMinimum(
+			float64(result),
+			suiteFloat32BitSize,
+			bound,
+		)
+		if satisfiesErr != nil {
+			return 0, satisfiesErr
+		}
+
+		if satisfies {
+			break
+		}
+
+		result = math.Nextafter32(result, float32(math.Inf(1)))
+		if math.IsInf(float64(result), 1) {
+			return 0, errors.New("float constraints contain no representable float32 minimum")
+		}
+	}
+
+	return result, nil
+}
+
+// float32Maximum returns the last encoded binary32 value allowed by bound.
+func float32Maximum(bound *NumberBound) (float32, error) {
+	value, err := strconv.ParseFloat(bound.Value.Lexeme, suiteFloat32BitSize)
+	if err != nil {
+		return 0, fmt.Errorf("parse float32 maximum: %w", err)
+	}
+
+	result := float32(value)
+	for {
+		satisfies, satisfiesErr := generatedFloatSatisfiesMaximum(
+			float64(result),
+			suiteFloat32BitSize,
+			bound,
+		)
+		if satisfiesErr != nil {
+			return 0, satisfiesErr
+		}
+
+		if satisfies {
+			break
+		}
+
+		result = math.Nextafter32(result, float32(math.Inf(-1)))
+		if math.IsInf(float64(result), -1) {
+			return 0, errors.New("float constraints contain no representable float32 maximum")
+		}
+	}
+
+	return result, nil
+}
+
+// float64Minimum returns the first encoded binary64 value allowed by bound.
+func float64Minimum(bound *NumberBound) (float64, error) {
+	result, err := strconv.ParseFloat(bound.Value.Lexeme, suiteFloat64BitSize)
+	if err != nil {
+		return 0, fmt.Errorf("parse float64 minimum: %w", err)
+	}
+
+	for {
+		satisfies, satisfiesErr := generatedFloatSatisfiesMinimum(result, suiteFloat64BitSize, bound)
+		if satisfiesErr != nil {
+			return 0, satisfiesErr
+		}
+
+		if satisfies {
+			break
+		}
+
+		result = math.Nextafter(result, math.Inf(1))
+		if math.IsInf(result, 1) {
+			return 0, errors.New("double constraints contain no representable float64 minimum")
+		}
+	}
+
+	return result, nil
+}
+
+// float64Maximum returns the last encoded binary64 value allowed by bound.
+func float64Maximum(bound *NumberBound) (float64, error) {
+	result, err := strconv.ParseFloat(bound.Value.Lexeme, suiteFloat64BitSize)
+	if err != nil {
+		return 0, fmt.Errorf("parse float64 maximum: %w", err)
+	}
+
+	for {
+		satisfies, satisfiesErr := generatedFloatSatisfiesMaximum(result, suiteFloat64BitSize, bound)
+		if satisfiesErr != nil {
+			return 0, satisfiesErr
+		}
+
+		if satisfies {
+			break
+		}
+
+		result = math.Nextafter(result, math.Inf(-1))
+		if math.IsInf(result, -1) {
+			return 0, errors.New("double constraints contain no representable float64 maximum")
+		}
+	}
+
+	return result, nil
+}
+
+// generatedFloatSatisfiesMinimum checks the emitted decimal against an exact lower bound.
+func generatedFloatSatisfiesMinimum(value float64, bitSize int, bound *NumberBound) (bool, error) {
+	number, err := jsonvalue.ParseNumber(strconv.FormatFloat(value, 'g', -1, bitSize))
+	if err != nil {
+		return false, fmt.Errorf("encode float%d minimum candidate: %w", bitSize, err)
+	}
+
+	comparison := number.Compare(bound.Value)
+
+	return comparison > 0 || comparison == 0 && !bound.Exclusive, nil
+}
+
+// generatedFloatSatisfiesMaximum checks the emitted decimal against an exact upper bound.
+func generatedFloatSatisfiesMaximum(value float64, bitSize int, bound *NumberBound) (bool, error) {
+	number, err := jsonvalue.ParseNumber(strconv.FormatFloat(value, 'g', -1, bitSize))
+	if err != nil {
+		return false, fmt.Errorf("encode float%d maximum candidate: %w", bitSize, err)
+	}
+
+	comparison := number.Compare(bound.Value)
+
+	return comparison < 0 || comparison == 0 && !bound.Exclusive, nil
+}
+
+// mustGeneratedFloat encodes one generated finite value with the requested native width.
+func mustGeneratedFloat(t *rapid.T, value float64, bitSize int) jsonvalue.Value {
+	t.Helper()
+
+	number, err := jsonvalue.ParseNumber(strconv.FormatFloat(value, 'g', -1, bitSize))
+	if err != nil {
+		t.Fatalf("encode generated float%d: %v", bitSize, err)
+	}
+
+	return jsonvalue.Value{Kind: jsonvalue.KindNumber, Number: number}
 }
 
 // latticeNumberGenerator builds numbers from integer factors of an exact step.
@@ -554,8 +769,9 @@ func (builder *RapidGeneratorBuilder) stringGenerator(
 	constraints StringConstraints,
 	use *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if len(constraints.Patterns) > 0 || len(constraints.Formats) > 0 || use != nil && len(use.patterns) > 0 {
-		return builder.patternStringGenerator(constraints, use)
+	if len(constraints.Patterns) > 0 || len(constraints.Formats) > 0 ||
+		use != nil && len(use.stringLanguages) > 0 {
+		return builder.stringLanguageStringGenerator(constraints, use)
 	}
 
 	maximum := generatedCollectionMaximum(constraints.MinLength, constraints.MaxLength)
@@ -564,24 +780,27 @@ func (builder *RapidGeneratorBuilder) stringGenerator(
 	return rapid.Map(generator, jsonvalue.String), nil
 }
 
-// patternStringGenerator constructs the exact signed conjunction for one schema occurrence.
-func (builder *RapidGeneratorBuilder) patternStringGenerator(
+// stringLanguageStringGenerator constructs the exact signed conjunction for one schema occurrence.
+func (builder *RapidGeneratorBuilder) stringLanguageStringGenerator(
 	constraints StringConstraints,
 	use *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	patterns := occurrencePatterns(use, constraints.Patterns)
-	wantMatches := make([]bool, 0, len(patterns))
+	occurrences := occurrenceStringLanguages(use, constraints.Patterns)
+	wantMatches := make([]bool, 0, len(occurrences))
 
-	for _, pattern := range patterns {
-		wantMatches = append(wantMatches, builder.pattern == nil || builder.pattern.id != pattern.id)
+	for _, occurrence := range occurrences {
+		wantMatches = append(
+			wantMatches,
+			builder.targetStringLanguage == nil || builder.targetStringLanguage.id != occurrence.id,
+		)
 	}
 
-	set, err := builder.patternSet(patterns, use, wantMatches, stringlanguage.Length{
+	set, err := builder.stringLanguageSet(occurrences, use, wantMatches, stringlanguage.Length{
 		Min: constraints.MinLength,
 		Max: constraints.MaxLength,
 	})
 	if err != nil {
-		return nil, newPatternConstructionError(patterns, use, builder.pattern, err)
+		return nil, newStringLanguageConstructionError(occurrences, use, builder.targetStringLanguage, err)
 	}
 
 	return rapid.Map(rapid.Uint64(), func(seed uint64) jsonvalue.Value {
@@ -589,21 +808,21 @@ func (builder *RapidGeneratorBuilder) patternStringGenerator(
 	}), nil
 }
 
-// patternSet compiles one exact signed request from cached occurrence languages.
-func (builder *RapidGeneratorBuilder) patternSet(
-	patterns []patternOccurrence,
+// stringLanguageSet compiles one exact signed request from cached occurrence languages.
+func (builder *RapidGeneratorBuilder) stringLanguageSet(
+	occurrences []stringLanguageOccurrence,
 	use *schemaUse,
 	wantMatches []bool,
 	length stringlanguage.Length,
 ) (*stringlanguage.Set, error) {
-	languages, err := builder.languages(patterns, use)
+	languages, err := builder.languages(occurrences, use)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(wantMatches) != len(languages) {
 		return nil, fmt.Errorf(
-			"compile pattern set: got %d signed requirements for %d patterns",
+			"compile string-language set: got %d signed requirements for %d languages",
 			len(wantMatches),
 			len(languages),
 		)
@@ -621,112 +840,114 @@ func (builder *RapidGeneratorBuilder) patternSet(
 
 // languages compiles each original occurrence once and reuses it across signed requests.
 func (builder *RapidGeneratorBuilder) languages(
-	patterns []patternOccurrence,
+	occurrences []stringLanguageOccurrence,
 	use *schemaUse,
 ) ([]stringlanguage.Language, error) {
 	signature := ""
 
-	for _, pattern := range patterns {
-		signature += strconv.Itoa(len(pattern.value)) + ":" + pattern.value
+	for _, occurrence := range occurrences {
+		keyword := occurrence.source.Keyword
+		signature += strconv.Itoa(len(keyword)) + ":" + keyword +
+			strconv.Itoa(len(occurrence.value)) + ":" + occurrence.value
 	}
 
-	key := patternSetKey{use: use, signature: signature}
-	if languages, ok := builder.patternLanguages[key]; ok {
+	key := stringLanguageSetKey{use: use, signature: signature}
+	if languages, ok := builder.stringLanguages[key]; ok {
 		return languages, nil
 	}
 
-	languages := make([]stringlanguage.Language, 0, len(patterns))
-	for index, pattern := range patterns {
+	languages := make([]stringlanguage.Language, 0, len(occurrences))
+	for index, occurrence := range occurrences {
 		var (
 			language stringlanguage.Language
 			err      error
 		)
-		if pattern.source.Keyword == "format" {
-			language, err = stringlanguage.Format(pattern.value)
+		if occurrence.source.Keyword == "format" {
+			language, err = stringlanguage.Format(occurrence.value)
 		} else {
-			language, err = stringlanguage.Pattern(pattern.value, builder.patternOption)
+			language, err = stringlanguage.Pattern(occurrence.value, builder.patternOption)
 		}
 
 		if err != nil {
-			return nil, &patternLanguageError{index: index, err: err}
+			return nil, &stringLanguageError{index: index, err: err}
 		}
 
 		languages = append(languages, language)
 	}
 
-	builder.patternLanguages[key] = languages
+	builder.stringLanguages[key] = languages
 
 	return languages, nil
 }
 
-// patternLanguageError retains the occurrence index for source attribution.
-type patternLanguageError struct {
+// stringLanguageError retains the occurrence index for source attribution.
+type stringLanguageError struct {
 	index int
 	err   error
 }
 
 // Error reports the underlying language compilation failure.
-func (languageError *patternLanguageError) Error() string {
+func (languageError *stringLanguageError) Error() string {
 	return languageError.err.Error()
 }
 
 // Unwrap exposes the language compilation failure.
-func (languageError *patternLanguageError) Unwrap() error {
+func (languageError *stringLanguageError) Unwrap() error {
 	return languageError.err
 }
 
-// occurrencePatterns returns exact provenance when available and semantic patterns otherwise.
-func occurrencePatterns(use *schemaUse, patterns []string) []patternOccurrence {
-	if use != nil && len(use.patterns) > 0 {
-		return append([]patternOccurrence(nil), use.patterns...)
+// occurrenceStringLanguages returns exact provenance when available and semantic patterns otherwise.
+func occurrenceStringLanguages(use *schemaUse, patterns []string) []stringLanguageOccurrence {
+	if use != nil && len(use.stringLanguages) > 0 {
+		return append([]stringLanguageOccurrence(nil), use.stringLanguages...)
 	}
 
-	result := make([]patternOccurrence, 0, len(patterns))
+	result := make([]stringLanguageOccurrence, 0, len(patterns))
 	for index, pattern := range patterns {
-		result = append(result, patternOccurrence{id: uint64(index + 1), value: pattern})
+		result = append(result, stringLanguageOccurrence{id: uint64(index + 1), value: pattern})
 	}
 
 	return result
 }
 
-// patternConstructionError retains the schema source responsible for construction failure.
-type patternConstructionError struct {
+// stringLanguageConstructionError retains the schema source responsible for construction failure.
+type stringLanguageConstructionError struct {
 	source ConstraintSource
 	cause  error
 }
 
 // Error reports the underlying pattern construction failure.
-func (constructionError *patternConstructionError) Error() string {
+func (constructionError *stringLanguageConstructionError) Error() string {
 	return constructionError.cause.Error()
 }
 
 // Unwrap exposes the pattern generator failure.
-func (constructionError *patternConstructionError) Unwrap() error {
+func (constructionError *stringLanguageConstructionError) Unwrap() error {
 	return constructionError.cause
 }
 
-// newPatternConstructionError maps a backend requirement index to its exact schema declaration.
-func newPatternConstructionError(
-	patterns []patternOccurrence,
+// newStringLanguageConstructionError maps a backend requirement index to its exact schema declaration.
+func newStringLanguageConstructionError(
+	occurrences []stringLanguageOccurrence,
 	use *schemaUse,
-	target *patternOccurrence,
+	target *stringLanguageOccurrence,
 	err error,
-) *patternConstructionError {
+) *stringLanguageConstructionError {
 	source := ConstraintSource{Keyword: "pattern"}
 	if use != nil {
 		source.Pointer = use.pointer
 	}
 
-	var languageError *patternLanguageError
-	if errors.As(err, &languageError) && languageError.index >= 0 && languageError.index < len(patterns) {
-		source = patterns[languageError.index].source
+	var languageError *stringLanguageError
+	if errors.As(err, &languageError) && languageError.index >= 0 && languageError.index < len(occurrences) {
+		source = occurrences[languageError.index].source
 	} else if target != nil {
 		source = target.source
-	} else if len(patterns) > 0 {
-		source = patterns[0].source
+	} else if len(occurrences) > 0 {
+		source = occurrences[0].source
 	}
 
-	return &patternConstructionError{source: source, cause: err}
+	return &stringLanguageConstructionError{source: source, cause: err}
 }
 
 // generatedCollectionMaximum caps an unbounded collection range above minimum.

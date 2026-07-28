@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Public-seam test of the required shared module.
 	"github.com/stretchr/testify/require"
 )
 
@@ -215,6 +215,8 @@ func TestDateTimeMatchesCurrentRFC3339ValidatorAndIntersectsPatterns(t *testing.
 		"2024-02-30T12:30:00Z",
 		"2026-07-14t12:30:00z",
 		"2026-07-14T24:00:00Z",
+		"2026-07-14T12:30:00+24:00",
+		"2026-07-14T12:30:00+23:60",
 	} {
 		require.False(t, set.Matches(value), value)
 	}
@@ -252,7 +254,10 @@ func TestEmailMatchesTheStaticRFC5321MailboxGrammar(t *testing.T) {
 		`"John Doe"@example.com`,
 		`"a b\\\"c"@example.com`,
 		"postmaster@[192.0.2.1]",
+		"postmaster@[001.002.003.004]",
 		"postmaster@[IPv6:2001:db8::1]",
+		"postmaster@[ipv6:2001:db8::1]",
+		"postmaster@[IpV6:2001:db8::1]",
 		"postmaster@[IPv6:::ffff:192.0.2.1]",
 		"postmaster@[TAG:value]",
 	}
@@ -263,6 +268,8 @@ func TestEmailMatchesTheStaticRFC5321MailboxGrammar(t *testing.T) {
 		"a@example-.com",
 		"a@[256.0.0.1]",
 		"a@[IPv6:2001:::1]",
+		"a@[ipv6:not-an-ip]",
+		"a@[IpV6:not-an-ip]",
 		"a@[IPv6:not-an-ip]",
 	}
 

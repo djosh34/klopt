@@ -5,23 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
-	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
 // Compiler compiles located Schema Objects into canonical DomainIDs.
 type Compiler struct {
-	Source        oas.Source
-	Domains       *DomainRegistry
-	usesByPointer map[string]*schemaUse
-	rootUse       *schemaUse
-	patternOption patternvalidator.Option
-	nextPatternID uint64
+	Source               oas.Source
+	Domains              *DomainRegistry
+	usesByPointer        map[string]*schemaUse
+	rootUse              *schemaUse
+	patternOption        patternvalidator.Option
+	nextStringLanguageID uint64
 }
 
 // NewCompiler creates a Compiler for one located OpenAPI source.
@@ -36,11 +38,11 @@ func NewCompiler(source oas.Source, options ...patternvalidator.Option) *Compile
 	}
 
 	return &Compiler{
-		Source:        source,
-		Domains:       NewDomainRegistry(),
-		usesByPointer: make(map[string]*schemaUse),
-		patternOption: patternOption,
-		nextPatternID: 1,
+		Source:               source,
+		Domains:              NewDomainRegistry(),
+		usesByPointer:        make(map[string]*schemaUse),
+		patternOption:        patternOption,
+		nextStringLanguageID: 1,
 	}
 }
 
@@ -103,18 +105,18 @@ func (compiler *Compiler) compileSchema(
 // referenceUse records one Reference Object occurrence without copying its resolved occurrence graph.
 func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *schemaUse {
 	use := &schemaUse{
-		pointer:     pointer,
-		domain:      resolved.domain,
-		localDomain: resolved.localDomain,
-		arrayShape:  resolved.arrayShape,
-		objectShape: resolved.objectShape,
-		constraints: append([]ConstraintSource(nil), resolved.constraints...),
-		patterns:    append([]patternOccurrence(nil), resolved.patterns...),
-		atomic:      resolved.atomic,
-		items:       resolved.items,
-		properties:  append([]schemaPropertyUse(nil), resolved.properties...),
-		additional:  resolved.additional,
-		resolved:    resolved,
+		pointer:         pointer,
+		domain:          resolved.domain,
+		localDomain:     resolved.localDomain,
+		arrayShape:      resolved.arrayShape,
+		objectShape:     resolved.objectShape,
+		constraints:     append([]ConstraintSource(nil), resolved.constraints...),
+		stringLanguages: append([]stringLanguageOccurrence(nil), resolved.stringLanguages...),
+		atomic:          resolved.atomic,
+		items:           resolved.items,
+		properties:      append([]schemaPropertyUse(nil), resolved.properties...),
+		additional:      resolved.additional,
+		resolved:        resolved,
 	}
 	compiler.usesByPointer[pointer] = use
 
@@ -169,7 +171,7 @@ func (compiler *Compiler) compileResolvedSchema(
 	use.localDomain = use.domain
 	use.constraints = constraints
 
-	use.patterns, err = compiler.localStringLanguageOccurrences(resolved.Pointer, members)
+	use.stringLanguages, err = compiler.localStringLanguageOccurrences(resolved.Pointer, members)
 	if err != nil {
 		return nil, compiler.failure("compile", "malformed", resolved.Pointer, "pattern", err)
 	}
@@ -249,8 +251,8 @@ func (compiler *Compiler) validateDiscriminator(pointer string, members map[stri
 func (compiler *Compiler) localStringLanguageOccurrences(
 	pointer string,
 	members map[string]json.RawMessage,
-) ([]patternOccurrence, error) {
-	var occurrences []patternOccurrence
+) ([]stringLanguageOccurrence, error) {
+	var occurrences []stringLanguageOccurrence
 
 	for _, keyword := range []string{"pattern", "format"} {
 		raw, ok := members[keyword]
@@ -267,12 +269,12 @@ func (compiler *Compiler) localStringLanguageOccurrences(
 			continue
 		}
 
-		occurrences = append(occurrences, patternOccurrence{
-			id:     compiler.nextPatternID,
+		occurrences = append(occurrences, stringLanguageOccurrence{
+			id:     compiler.nextStringLanguageID,
 			source: ConstraintSource{Pointer: pointer, Keyword: keyword},
 			value:  value,
 		})
-		compiler.nextPatternID++
+		compiler.nextStringLanguageID++
 	}
 
 	return occurrences, nil
@@ -714,6 +716,8 @@ func compileNumberFormat(number *NumberConstraints, members map[string]json.RawM
 }
 
 // applyNumberFormat applies one recognized numeric format to number.
+//
+//nolint:cyclop // Four locked formats have distinct exact domains.
 func applyNumberFormat(number *NumberConstraints, format string) error {
 	if format != "int32" && format != "int64" && format != "float" && format != "double" {
 		return nil
@@ -733,6 +737,18 @@ func applyNumberFormat(number *NumberConstraints, format string) error {
 		if err := applyNumericFormatBounds(number, minimum, maximum); err != nil {
 			return err
 		}
+	}
+
+	if format == "float" {
+		maximum := strconv.FormatFloat(float64(math.MaxFloat32), 'g', -1, suiteFloat32BitSize)
+
+		return applyNumericFormatBounds(number, "-"+maximum, maximum)
+	}
+
+	if format == "double" {
+		maximum := strconv.FormatFloat(math.MaxFloat64, 'g', -1, suiteFloat64BitSize)
+
+		return applyNumericFormatBounds(number, "-"+maximum, maximum)
 	}
 
 	return nil

@@ -138,9 +138,9 @@ func normalizeNumber(number *NumberConstraints) {
 		return
 	}
 
-	sort.Strings(number.Formats)
+	slices.Sort(number.Formats)
 
-	number.Formats = compactStrings(number.Formats)
+	number.Formats = slices.Compact(number.Formats)
 	if slices.Contains(number.Formats, "int32") {
 		number.Formats = slices.DeleteFunc(number.Formats, func(format string) bool { return format == "int64" })
 	}
@@ -164,10 +164,10 @@ func normalizeString(stringConstraints *StringConstraints) {
 		return
 	}
 
-	sort.Strings(stringConstraints.Patterns)
-	stringConstraints.Patterns = compactStrings(stringConstraints.Patterns)
-	sort.Strings(stringConstraints.Formats)
-	stringConstraints.Formats = compactStrings(stringConstraints.Formats)
+	slices.Sort(stringConstraints.Patterns)
+	stringConstraints.Patterns = slices.Compact(stringConstraints.Patterns)
+	slices.Sort(stringConstraints.Formats)
+	stringConstraints.Formats = slices.Compact(stringConstraints.Formats)
 
 	if stringConstraints.State == KindUnrestricted || stringConstraints.State == KindRestricted &&
 		stringConstraints.MinLength == 0 && stringConstraints.MaxLength == nil &&
@@ -281,22 +281,6 @@ func normalizeEnum(enum *EnumSet) {
 	}
 
 	enum.Values = values
-}
-
-// compactStrings removes adjacent duplicate strings from a sorted slice.
-func compactStrings(values []string) []string {
-	if len(values) < minimumDistinctStrings {
-		return values
-	}
-
-	result := values[:1]
-	for _, value := range values[1:] {
-		if value != result[len(result)-1] {
-			result = append(result, value)
-		}
-	}
-
-	return result
 }
 
 // allKindsExcluded reports whether a Domain excludes every JSON kind.

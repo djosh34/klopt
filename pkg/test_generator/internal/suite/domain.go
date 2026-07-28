@@ -161,12 +161,12 @@ type ConstraintPlan struct {
 
 // CasePlan names one semantic partition without materializing a JSON case.
 type CasePlan struct {
-	Name      string
-	Expect    ExpectedResult
-	Values    DomainID
-	Source    ConstraintSource
-	Generator *rapid.Generator[jsonvalue.Value]
-	pattern   *patternOccurrence
+	Name           string
+	Expect         ExpectedResult
+	Values         DomainID
+	Source         ConstraintSource
+	Generator      *rapid.Generator[jsonvalue.Value]
+	stringLanguage *stringLanguageOccurrence
 }
 
 // CasePlanner builds canonical semantic partitions from a compiled Domain graph.
@@ -199,23 +199,23 @@ type ConstraintSource struct {
 
 // schemaUse preserves one exact schema occurrence separately from its canonical Domain.
 type schemaUse struct {
-	pointer     string
-	domain      DomainID
-	localDomain DomainID
-	arrayShape  DomainID
-	objectShape DomainID
-	constraints []ConstraintSource
-	patterns    []patternOccurrence
-	atomic      map[string]DomainID
-	allOf       []*schemaUse
-	items       *schemaUse
-	properties  []schemaPropertyUse
-	additional  *schemaUse
-	resolved    *schemaUse
+	pointer         string
+	domain          DomainID
+	localDomain     DomainID
+	arrayShape      DomainID
+	objectShape     DomainID
+	constraints     []ConstraintSource
+	stringLanguages []stringLanguageOccurrence
+	atomic          map[string]DomainID
+	allOf           []*schemaUse
+	items           *schemaUse
+	properties      []schemaPropertyUse
+	additional      *schemaUse
+	resolved        *schemaUse
 }
 
-// patternOccurrence preserves one original pattern declaration separately from canonical Domain identity.
-type patternOccurrence struct {
+// stringLanguageOccurrence preserves one original pattern or format declaration with its source.
+type stringLanguageOccurrence struct {
 	id     uint64
 	source ConstraintSource
 	value  string

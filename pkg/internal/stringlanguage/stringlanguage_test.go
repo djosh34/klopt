@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Public-seam test of the required shared module.
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 )

@@ -7,7 +7,7 @@ import (
 
 // meet pairs the canonical semantic intersection with the exact recursive occurrences that produced it.
 func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, error) {
-	leftDomain, rightDomain, _, domain, err := compiler.meetDomains(left, right)
+	leftDomain, rightDomain, domain, err := compiler.meetDomains(left, right)
 	if err != nil {
 		return nil, err
 	}
@@ -19,10 +19,13 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		arrayShape:  left.arrayShape,
 		objectShape: left.objectShape,
 		constraints: append(append([]ConstraintSource(nil), left.constraints...), right.constraints...),
-		patterns:    append(append([]patternOccurrence(nil), left.patterns...), right.patterns...),
-		atomic:      left.atomic,
-		allOf:       append(append([]*schemaUse(nil), left.allOf...), right),
-		resolved:    left.resolved,
+		stringLanguages: append(
+			append([]stringLanguageOccurrence(nil), left.stringLanguages...),
+			right.stringLanguages...,
+		),
+		atomic:   left.atomic,
+		allOf:    append(append([]*schemaUse(nil), left.allOf...), right),
+		resolved: left.resolved,
 	}
 
 	if err := compiler.meetChildren(result, left, leftDomain, right, rightDomain); err != nil {
@@ -36,26 +39,26 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 func (compiler *Compiler) meetDomains(
 	left *schemaUse,
 	right *schemaUse,
-) (Domain, Domain, Domain, DomainID, error) {
+) (Domain, Domain, DomainID, error) {
 	if left == nil || right == nil {
-		return Domain{}, Domain{}, Domain{}, NoDomain, fmt.Errorf("meet schema occurrences: occurrence is nil")
+		return Domain{}, Domain{}, NoDomain, fmt.Errorf("meet schema occurrences: occurrence is nil")
 	}
 
 	domain, err := compiler.Domains.IntersectDomains(left.domain, right.domain)
 	if err != nil {
-		return Domain{}, Domain{}, Domain{}, NoDomain, err
+		return Domain{}, Domain{}, NoDomain, err
 	}
 
 	leftDomain, leftOK := compiler.Domains.Domain(left.domain)
 	rightDomain, rightOK := compiler.Domains.Domain(right.domain)
 
-	resultDomain, resultOK := compiler.Domains.Domain(domain)
+	_, resultOK := compiler.Domains.Domain(domain)
 	if !leftOK || !rightOK || !resultOK {
-		return Domain{}, Domain{}, Domain{}, NoDomain,
+		return Domain{}, Domain{}, NoDomain,
 			fmt.Errorf("meet schema occurrences: compiled Domain does not exist")
 	}
 
-	return leftDomain, rightDomain, resultDomain, domain, nil
+	return leftDomain, rightDomain, domain, nil
 }
 
 // meetChildren recursively pairs array, object-property, and additional-property occurrences.

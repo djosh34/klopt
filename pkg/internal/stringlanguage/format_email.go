@@ -30,11 +30,11 @@ func emailPattern() string {
 	label := `[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?`
 	domain := label + `(\.` + label + `)*`
 
-	ipv4 := ipv4OctetPattern + `\.` + ipv4OctetPattern + `\.` +
-		ipv4OctetPattern + `\.` + ipv4OctetPattern
+	snum := `([0-9]|[0-9]{2}|[01][0-9]{2}|2[0-4][0-9]|25[0-5])`
+	ipv4 := snum + `\.` + snum + `\.` + snum + `\.` + snum
 	ipv6 := ipv6AddressPattern(ipv4)
 	general := generalAddressLiteralPattern()
-	literal := `\[(` + ipv4 + `|IPv6:` + ipv6 + `|` + general + `)\]`
+	literal := `\[(` + ipv4 + `|[Ii][Pp][Vv]6:` + ipv6 + `|` + general + `)\]`
 
 	return `^` + local + `@(` + domain + `|` + literal + `)$`
 }
@@ -79,23 +79,25 @@ func repeatedColonGroups(group string, count int) string {
 }
 
 func generalAddressLiteralPattern() string {
+	tagAlphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-"
+	tagLastAlphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 	tagCharacter := `[A-Za-z0-9-]`
 	tagLast := `[A-Za-z0-9]`
 	shortOrLong := `(` + tagCharacter + `{0,2}` + tagLast + `|` + tagCharacter + `{4,}` + tagLast + `)`
-	fourNotIPv6 := `(` + charactersExcept("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-", 'I') +
+	fourNotIPv6 := `(` + charactersExcept(tagAlphabet, 'I', 'i') +
 		tagCharacter + `{2}` + tagLast +
-		`|I` + charactersExcept("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-", 'P') +
+		`|[Ii]` + charactersExcept(tagAlphabet, 'P', 'p') +
 		tagCharacter + tagLast +
-		`|IP` + charactersExcept("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-", 'v') + tagLast +
-		`|IPv` + charactersExcept("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", '6') + `)`
+		`|[Ii][Pp]` + charactersExcept(tagAlphabet, 'V', 'v') + tagLast +
+		`|[Ii][Pp][Vv]` + charactersExcept(tagLastAlphabet, '6') + `)`
 
 	return `(` + shortOrLong + `|` + fourNotIPv6 + `):[!-Z^-~]+`
 }
 
-func charactersExcept(alphabet string, excluded byte) string {
-	characters := make([]string, 0, len(alphabet)-1)
+func charactersExcept(alphabet string, excluded ...byte) string {
+	characters := make([]string, 0, len(alphabet)-len(excluded))
 	for index := range len(alphabet) {
-		if alphabet[index] != excluded {
+		if !strings.ContainsRune(string(excluded), rune(alphabet[index])) {
 			characters = append(characters, string(alphabet[index]))
 		}
 	}

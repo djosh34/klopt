@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
-	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
@@ -274,20 +274,14 @@ type childMembership struct {
 	failed bool
 }
 
-// add records one child result while propagating hard errors immediately.
-func (membership *childMembership) add(matches bool, err error) error {
-	if err != nil {
-		return err
-	}
-
+// add records one child result.
+func (membership *childMembership) add(matches bool) {
 	membership.failed = membership.failed || !matches
-
-	return nil
 }
 
 // result reports whether every child matched.
-func (membership childMembership) result() (bool, error) {
-	return !membership.failed, nil
+func (membership childMembership) result() bool {
+	return !membership.failed
 }
 
 // arrayFits reports whether a JSON array satisfies array constraints.
@@ -306,13 +300,14 @@ func (compiler *Compiler) arrayFits(values []jsonvalue.Value, constraints ArrayC
 
 	for _, value := range values {
 		matches, err := compiler.valueFitsDomain(value, child)
-
-		if addErr := membership.add(matches, err); addErr != nil {
-			return false, addErr
+		if err != nil {
+			return false, err
 		}
+
+		membership.add(matches)
 	}
 
-	return membership.result()
+	return membership.result(), nil
 }
 
 // objectFits reports whether a JSON object satisfies object constraints.
@@ -390,9 +385,7 @@ func (compiler *Compiler) objectMembersFit(
 
 		childID, allowed := propertyDomain(member.Name, properties, additional)
 		if !allowed {
-			if addErr := membership.add(false, nil); addErr != nil {
-				return false, addErr
-			}
+			membership.add(false)
 
 			continue
 		}
@@ -403,13 +396,14 @@ func (compiler *Compiler) objectMembersFit(
 		}
 
 		matches, err := compiler.valueFitsDomain(member.Value, child)
-
-		if addErr := membership.add(matches, err); addErr != nil {
-			return false, addErr
+		if err != nil {
+			return false, err
 		}
+
+		membership.add(matches)
 	}
 
-	return membership.result()
+	return membership.result(), nil
 }
 
 // propertyDomain returns the child Domain and permission for one object member name.

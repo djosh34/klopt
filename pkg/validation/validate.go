@@ -21,6 +21,17 @@ const (
 	float64BitSize = 64
 )
 
+var (
+	// int32Minimum is the exact lower signed binary32 integer bound.
+	int32Minimum = jsonvalue.Number{Lexeme: "-2147483648"}
+	// int32Maximum is the exact upper signed binary32 integer bound.
+	int32Maximum = jsonvalue.Number{Lexeme: "2147483647"}
+	// int64Minimum is the exact lower signed binary64 integer bound.
+	int64Minimum = jsonvalue.Number{Lexeme: "-9223372036854775808"}
+	// int64Maximum is the exact upper signed binary64 integer bound.
+	int64Maximum = jsonvalue.Number{Lexeme: "9223372036854775807"}
+)
+
 // Validate validates one present or absent raw JSON request body.
 func (validation *Validation) Validate(body json.RawMessage) []error {
 	if len(body) == 0 {
@@ -293,9 +304,9 @@ func validateNumberFormat(number jsonvalue.Number, format string) error {
 	case "":
 		return nil
 	case "int32":
-		return validateSignedInteger(number, "-2147483648", "2147483647", format)
+		return validateSignedInteger(number, int32Minimum, int32Maximum, format)
 	case "int64":
-		return validateSignedInteger(number, "-9223372036854775808", "9223372036854775807", format)
+		return validateSignedInteger(number, int64Minimum, int64Maximum, format)
 	case "float":
 		return validateFloat(number, float32BitSize)
 	case "double":
@@ -306,22 +317,17 @@ func validateNumberFormat(number jsonvalue.Number, format string) error {
 }
 
 // validateSignedInteger checks mathematical integrality and exact inclusive bounds.
-func validateSignedInteger(number jsonvalue.Number, minimum string, maximum string, format string) error {
+func validateSignedInteger(
+	number jsonvalue.Number,
+	minimum jsonvalue.Number,
+	maximum jsonvalue.Number,
+	format string,
+) error {
 	if !number.IsInteger() {
 		return fmt.Errorf("value is not an integer in %s", format)
 	}
 
-	minimumNumber, err := jsonvalue.ParseNumber(minimum)
-	if err != nil {
-		return fmt.Errorf("parse %s minimum: %w", format, err)
-	}
-
-	maximumNumber, err := jsonvalue.ParseNumber(maximum)
-	if err != nil {
-		return fmt.Errorf("parse %s maximum: %w", format, err)
-	}
-
-	if number.Compare(minimumNumber) < 0 || number.Compare(maximumNumber) > 0 {
+	if number.Compare(minimum) < 0 || number.Compare(maximum) > 0 {
 		return fmt.Errorf("value is outside %s signed range", format)
 	}
 

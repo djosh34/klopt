@@ -359,11 +359,11 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 
 		values := planner.Domains.FindOrAddEquivalentDomain(lifted)
 		result.add(CasePlan{
-			Name:    caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
-			Expect:  child.Expect,
-			Values:  values,
-			Source:  child.Source,
-			pattern: child.pattern,
+			Name:           caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
+			Expect:         child.Expect,
+			Values:         values,
+			Source:         child.Source,
+			stringLanguage: child.stringLanguage,
 		})
 	}
 }
@@ -654,10 +654,10 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 				use.pointer,
 				"properties",
 			),
-			Expect:  expect,
-			Values:  values,
-			Source:  child.Source,
-			pattern: child.pattern,
+			Expect:         expect,
+			Values:         values,
+			Source:         child.Source,
+			stringLanguage: child.stringLanguage,
 		})
 	}
 
@@ -754,10 +754,10 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 				use.pointer,
 				"additionalProperties",
 			),
-			Expect:  child.Expect,
-			Values:  values,
-			Source:  child.Source,
-			pattern: child.pattern,
+			Expect:         child.Expect,
+			Values:         values,
+			Source:         child.Source,
+			stringLanguage: child.stringLanguage,
 		})
 	}
 

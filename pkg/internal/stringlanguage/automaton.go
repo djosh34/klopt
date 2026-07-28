@@ -6,6 +6,7 @@ import (
 	"errors"
 	regexpsyntax "regexp/syntax"
 	"slices"
+	"unicode"
 
 	"github.com/djosh34/klopt/pkg/internal/patternsyntax"
 )
@@ -313,7 +314,12 @@ func (builder *nfaBuilder) buildRawNode(expression *regexpsyntax.Regexp) (fragme
 	case regexpsyntax.OpLiteral:
 		parts := make([]fragment, 0, len(expression.Rune))
 		for _, value := range expression.Rune {
-			built, err := builder.characters(singleRuneSet(value))
+			characters := singleRuneSet(value)
+			if expression.Flags&regexpsyntax.FoldCase != 0 {
+				characters = foldedRuneSet(value)
+			}
+
+			built, err := builder.characters(characters)
 			if err != nil {
 				return fragment{}, err
 			}
@@ -393,6 +399,17 @@ func (builder *nfaBuilder) buildRawNode(expression *regexpsyntax.Regexp) (fragme
 	default:
 		return fragment{}, errors.New("raw Go regexp generator does not support regexp operation")
 	}
+}
+
+func foldedRuneSet(value rune) byteSet {
+	set := byteSet{}
+	set.addRange(value, value)
+
+	for folded := unicode.SimpleFold(value); folded != value; folded = unicode.SimpleFold(folded) {
+		set.addRange(folded, folded)
+	}
+
+	return set
 }
 
 //nolint:nestif // Bounded and unbounded Thompson construction share the required prefix.

@@ -252,7 +252,9 @@ func schemaHasEmptyProperty(value any) bool {
 
 // hasCharacterizedExternalValidatorLimitation routes pinned cases away from third-party adapters only.
 func hasCharacterizedExternalValidatorLimitation(schema []byte) bool {
-	return bytes.Contains(schema, []byte(`"format":`)) ||
+	withoutPassword := bytes.ReplaceAll(schema, []byte(`"format":"password"`), nil)
+
+	return bytes.Contains(withoutPassword, []byte(`"format":`)) ||
 		bytes.Contains(schema, []byte("1e400")) ||
 		bytes.Contains(schema, []byte("-1e400")) ||
 		bytes.Contains(schema, []byte("1e300")) ||
@@ -263,6 +265,13 @@ func hasCharacterizedExternalValidatorLimitation(schema []byte) bool {
 		bytes.Contains(schema, []byte("Reference Object siblings are ignored")) ||
 		generatedSchemaContainsNullableAllOf(schema) ||
 		generatedSchemaContainsTypelessOccurrence(schema)
+}
+
+func TestPasswordDoesNotDisableExternalValidatorCoverage(t *testing.T) {
+	t.Parallel()
+
+	require.False(t, hasCharacterizedExternalValidatorLimitation([]byte(`{"type":"string","format":"password"}`)))
+	require.True(t, hasCharacterizedExternalValidatorLimitation([]byte(`{"type":"string","format":"uuid"}`)))
 }
 
 func generatedSchemaContainsNullableAllOf(raw []byte) bool {

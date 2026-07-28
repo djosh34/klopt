@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
@@ -52,7 +52,7 @@ func (compiler *Compiler) linkCases(
 	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.patternOption)
 
 	for index := range cases {
-		generators.pattern = cases[index].pattern
+		generators.targetStringLanguage = cases[index].stringLanguage
 		generator, generatorErr := generators.generator(
 			cases[index].Values,
 			compiler.rootUse,
@@ -68,7 +68,7 @@ func (compiler *Compiler) linkCases(
 		if generatorErr != nil {
 			source := cases[index].Source
 
-			var constructionError *patternConstructionError
+			var constructionError *stringLanguageConstructionError
 			if errors.As(generatorErr, &constructionError) {
 				source = constructionError.source
 			}
@@ -322,7 +322,7 @@ func (planner *CasePlanner) atomicFormatConstraint(
 	source ConstraintSource,
 	domain Domain,
 ) (ConstraintPlan, bool, error) {
-	if domain.String.State != KindExcluded && len(domain.String.Formats) > 0 {
+	if domainHasStringFormat(domain) {
 		return planner.atomicOpaqueStringConstraint(source, domain)
 	}
 
@@ -343,12 +343,16 @@ func (planner *CasePlanner) atomicNumericFormatConstraint(
 		return ConstraintPlan{}, false, err
 	}
 
-	lexemes := map[string][]string{
+	lexemes, known := map[string][]string{
 		"int32":  {"-2147483649", "2147483648", "0.5"},
 		"int64":  {"-9223372036854775809", "9223372036854775808", "0.5"},
 		"float":  {"-1e39", "1e39"},
 		"double": {"-1e309", "1e309"},
 	}[format]
+	if !known {
+		return ConstraintPlan{}, false, fmt.Errorf("unsupported numeric format %q", format)
+	}
+
 	values := make([]jsonvalue.Value, 0, len(lexemes))
 
 	for _, lexeme := range lexemes {
@@ -963,7 +967,7 @@ func (planner *CasePlanner) addConstraintFailures(result *caseSet, constraint *C
 			return fmt.Errorf("constraint passing Domain %d does not exist", constraint.Pass)
 		}
 
-		if pass.String.State != KindExcluded && len(pass.String.Formats) > 0 {
+		if domainHasStringFormat(pass) {
 			return planner.addPatternFailure(result, constraint, context)
 		}
 	}
@@ -1009,7 +1013,7 @@ func (planner *CasePlanner) addPatternFailure(
 	constraint *ConstraintPlan,
 	context DomainID,
 ) error {
-	target := planner.patternOccurrence(constraint.Source)
+	target := planner.stringLanguageOccurrence(constraint.Source)
 	if target == nil {
 		constraint.Outcome = ObligationUnconstructible
 		constraint.Reason = "pattern occurrence provenance is missing"
@@ -1050,10 +1054,10 @@ func (planner *CasePlanner) addPatternFailure(
 			constraint.Source.Pointer,
 			constraint.Source.Keyword,
 		),
-		Expect:  ExpectRejected,
-		Values:  values,
-		Source:  constraint.Source,
-		pattern: &targetCopy,
+		Expect:         ExpectRejected,
+		Values:         values,
+		Source:         constraint.Source,
+		stringLanguage: &targetCopy,
 	})
 	constraint.Outcome = ObligationPlanned
 	constraint.Reason = ""
@@ -1061,15 +1065,15 @@ func (planner *CasePlanner) addPatternFailure(
 	return nil
 }
 
-// patternOccurrence returns the exact declaration associated with source.
-func (planner *CasePlanner) patternOccurrence(source ConstraintSource) *patternOccurrence {
+// stringLanguageOccurrence returns the exact pattern or format declaration associated with source.
+func (planner *CasePlanner) stringLanguageOccurrence(source ConstraintSource) *stringLanguageOccurrence {
 	if planner.rootUse == nil {
 		return nil
 	}
 
-	for index := range planner.rootUse.patterns {
-		if planner.rootUse.patterns[index].source == source {
-			return &planner.rootUse.patterns[index]
+	for index := range planner.rootUse.stringLanguages {
+		if planner.rootUse.stringLanguages[index].source == source {
+			return &planner.rootUse.stringLanguages[index]
 		}
 	}
 
@@ -1086,7 +1090,7 @@ func (planner *CasePlanner) finishUnplannedConstraint(
 		opaqueString := constraint.Source.Keyword == "pattern"
 		if constraint.Source.Keyword == "format" {
 			pass, ok := planner.Domains.Domain(constraint.Pass)
-			opaqueString = ok && pass.String.State != KindExcluded && len(pass.String.Formats) > 0
+			opaqueString = ok && domainHasStringFormat(pass)
 		}
 
 		if opaqueString {
@@ -1118,6 +1122,11 @@ func (planner *CasePlanner) finishUnplannedConstraint(
 	if constraint.Reason == "" {
 		constraint.Reason = "no constructive failing partition"
 	}
+}
+
+// domainHasStringFormat reports whether a reachable string kind has a restrictive format.
+func domainHasStringFormat(domain Domain) bool {
+	return domain.String.State != KindExcluded && len(domain.String.Formats) > 0
 }
 
 // numericContextImpliesConstraint proves integer and multipleOf implication.

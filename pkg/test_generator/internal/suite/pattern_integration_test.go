@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/djosh34/klopt/pkg/internal/stringlanguage"
+	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
@@ -107,7 +107,7 @@ components:
 		{Pointer: root + "/allOf/0", Keyword: "pattern"},
 		{Pointer: root + "/allOf/1/allOf/0", Keyword: "pattern"},
 		{Pointer: "#/components/schemas/Base", Keyword: "pattern"},
-	}, patternSources(compiler.rootUse.patterns))
+	}, stringLanguageSources(compiler.rootUse.stringLanguages))
 
 	invalidPatterns := make(map[ConstraintSource]bool)
 
@@ -124,7 +124,7 @@ components:
 				require.LessOrEqual(t, length, 4, plannedCase.Name)
 			}
 
-			for _, pattern := range compiler.rootUse.patterns {
+			for _, pattern := range compiler.rootUse.stringLanguages {
 				want := true
 				if plannedCase.Expect == ExpectRejected && plannedCase.Source.Keyword == "pattern" &&
 					plannedCase.Source == pattern.source {
@@ -145,7 +145,7 @@ components:
 		}
 	}
 
-	require.Len(t, invalidPatterns, len(compiler.rootUse.patterns))
+	require.Len(t, invalidPatterns, len(compiler.rootUse.stringLanguages))
 }
 
 // TestPatternSuiteKeepsDuplicateOccurrencesAndSkipsOnlyEmptySignedCases covers exact per-occurrence skipping.
@@ -163,10 +163,10 @@ allOf:
 
 	compiled, err := compiler.CompileSuite()
 	require.NoError(t, err)
-	require.Len(t, compiler.rootUse.patterns, 3)
+	require.Len(t, compiler.rootUse.stringLanguages, 3)
 	require.Equal(t, 2, countCases(compiled.Unavailable, ExpectRejected, "pattern"))
-	require.Equal(t, compiler.rootUse.patterns[0].value, compiler.rootUse.patterns[1].value)
-	require.NotEqual(t, compiler.rootUse.patterns[0].id, compiler.rootUse.patterns[1].id)
+	require.Equal(t, compiler.rootUse.stringLanguages[0].value, compiler.rootUse.stringLanguages[1].value)
+	require.NotEqual(t, compiler.rootUse.stringLanguages[0].id, compiler.rootUse.stringLanguages[1].id)
 
 	root := compiler.Source.RequestSchema.Pointer
 	wantConstructed := ConstraintSource{Pointer: root + "/allOf/2", Keyword: "pattern"}
@@ -281,11 +281,11 @@ func countCases(cases []CasePlan, expect ExpectedResult, keyword string) int {
 	return count
 }
 
-// patternSources returns declaration sources in composition order.
-func patternSources(patterns []patternOccurrence) []ConstraintSource {
-	result := make([]ConstraintSource, 0, len(patterns))
-	for _, pattern := range patterns {
-		result = append(result, pattern.source)
+// stringLanguageSources returns declaration sources in composition order.
+func stringLanguageSources(occurrences []stringLanguageOccurrence) []ConstraintSource {
+	result := make([]ConstraintSource, 0, len(occurrences))
+	for _, occurrence := range occurrences {
+		result = append(result, occurrence.source)
 	}
 
 	return result

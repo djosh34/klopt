@@ -187,7 +187,10 @@ func TestCompilerAcceptsDiscriminatorAsAnInertHint(t *testing.T) {
 		t.Run(discriminator, func(t *testing.T) {
 			t.Parallel()
 
-			_, _ = compileSchemaYAML(t, "type: object\n"+discriminator, "")
+			compiler, rootID := compileSchemaYAML(t, "type: object\n"+discriminator, "")
+			root, ok := compiler.Domains.Domain(rootID)
+			require.True(t, ok)
+			require.Equal(t, KindUnrestricted, root.Object.State)
 		})
 	}
 

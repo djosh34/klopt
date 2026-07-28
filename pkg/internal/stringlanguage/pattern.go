@@ -79,7 +79,6 @@ type constructionLimits struct {
 	graphBytes            uint64
 	certificationWork     uint64
 	generatedBytes        uint64
-	extraLength           uint64
 }
 
 func defaultLimits() constructionLimits {
@@ -96,7 +95,6 @@ func defaultLimits() constructionLimits {
 		graphBytes:            maximumGraphBytes,
 		certificationWork:     maximumCertificationWork,
 		generatedBytes:        maximumGeneratedBytes,
-		extraLength:           maximumExtraLength,
 	}
 }
 
@@ -395,18 +393,7 @@ func (work *budget) add(
 	phase string,
 	limit string,
 ) error {
-	if amount > ^uint64(0)-*counter {
-		return limitError(phase, limit, maximum, ^uint64(0))
-	}
-
-	observed := *counter + amount
-	if observed > maximum {
-		return limitError(phase, limit, maximum, observed)
-	}
-
-	*counter = observed
-
-	return nil
+	return addLimited(counter, amount, maximum, phase, limit)
 }
 
 func limitError(phase string, limit string, maximum uint64, observed uint64) *ComplexityError {
