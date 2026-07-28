@@ -13,7 +13,7 @@ func dateLanguage() (Language, error) {
 }
 
 func dateTimeLanguage() (Language, error) {
-	timePattern := `(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.,][0-9]+)?`
+	timePattern := `(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]+)?`
 	offsetPattern := `(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])`
 
 	return formatPattern(`^` + datePattern + `T` + timePattern + offsetPattern + `$`)

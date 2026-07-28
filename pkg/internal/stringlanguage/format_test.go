@@ -192,7 +192,7 @@ func TestDateMatchesRealCalendarDatesAndIntersectsPatterns(t *testing.T) {
 	}
 }
 
-func TestDateTimeMatchesCurrentRFC3339ValidatorAndIntersectsPatterns(t *testing.T) {
+func TestDateTimeMatchesSupportedRFC3339ProfileAndIntersectsPatterns(t *testing.T) {
 	t.Parallel()
 
 	format, err := stringlanguage.Format("date-time")
@@ -205,7 +205,6 @@ func TestDateTimeMatchesCurrentRFC3339ValidatorAndIntersectsPatterns(t *testing.
 	for _, value := range []string{
 		"2026-07-14T12:30:00Z",
 		"2024-02-29T23:59:59.123Z",
-		"2026-07-14T12:30:00,5+02:30",
 	} {
 		require.True(t, set.Matches(value), value)
 	}
@@ -217,6 +216,7 @@ func TestDateTimeMatchesCurrentRFC3339ValidatorAndIntersectsPatterns(t *testing.
 		"2026-07-14T24:00:00Z",
 		"2026-07-14T12:30:00+24:00",
 		"2026-07-14T12:30:00+23:60",
+		"2026-07-14T12:30:00,5+02:30",
 	} {
 		require.False(t, set.Matches(value), value)
 	}

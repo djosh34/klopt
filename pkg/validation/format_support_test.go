@@ -99,6 +99,9 @@ func TestRuntimeEnforcesNativeStringFormatsAndRecursiveAllOf(t *testing.T) {
 	)
 	require.Empty(t, password.Validate(json.RawMessage(`"a"`)))
 	require.NotEmpty(t, password.Validate(json.RawMessage(`"b"`)))
+
+	dateTime := mustParseSchema(t, `{"type":"string","format":"date-time"}`, "")
+	require.NotEmpty(t, dateTime.Validate(json.RawMessage(`"2026-07-14T12:30:00,5+02:30"`)))
 }
 
 func TestRuntimeEnforcesNumericFormatsExactly(t *testing.T) {
