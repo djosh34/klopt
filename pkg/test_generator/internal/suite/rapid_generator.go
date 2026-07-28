@@ -366,6 +366,10 @@ func float64NumberGenerator(constraints NumberConstraints) (*rapid.Generator[jso
 
 // float32Minimum returns the first encoded binary32 value allowed by bound.
 func float32Minimum(bound *NumberBound) (float32, error) {
+	if bound == nil {
+		return -math.MaxFloat32, nil
+	}
+
 	value, err := strconv.ParseFloat(bound.Value.Lexeme, suiteFloat32BitSize)
 	if err != nil {
 		return 0, fmt.Errorf("parse float32 minimum: %w", err)
@@ -397,6 +401,10 @@ func float32Minimum(bound *NumberBound) (float32, error) {
 
 // float32Maximum returns the last encoded binary32 value allowed by bound.
 func float32Maximum(bound *NumberBound) (float32, error) {
+	if bound == nil {
+		return math.MaxFloat32, nil
+	}
+
 	value, err := strconv.ParseFloat(bound.Value.Lexeme, suiteFloat32BitSize)
 	if err != nil {
 		return 0, fmt.Errorf("parse float32 maximum: %w", err)
@@ -428,6 +436,10 @@ func float32Maximum(bound *NumberBound) (float32, error) {
 
 // float64Minimum returns the first encoded binary64 value allowed by bound.
 func float64Minimum(bound *NumberBound) (float64, error) {
+	if bound == nil {
+		return -math.MaxFloat64, nil
+	}
+
 	result, err := strconv.ParseFloat(bound.Value.Lexeme, suiteFloat64BitSize)
 	if err != nil {
 		return 0, fmt.Errorf("parse float64 minimum: %w", err)
@@ -454,6 +466,10 @@ func float64Minimum(bound *NumberBound) (float64, error) {
 
 // float64Maximum returns the last encoded binary64 value allowed by bound.
 func float64Maximum(bound *NumberBound) (float64, error) {
+	if bound == nil {
+		return math.MaxFloat64, nil
+	}
+
 	result, err := strconv.ParseFloat(bound.Value.Lexeme, suiteFloat64BitSize)
 	if err != nil {
 		return 0, fmt.Errorf("parse float64 maximum: %w", err)

@@ -101,7 +101,9 @@ func TestRuntimeEnforcesNativeStringFormatsAndRecursiveAllOf(t *testing.T) {
 	require.NotEmpty(t, password.Validate(json.RawMessage(`"b"`)))
 
 	dateTime := mustParseSchema(t, `{"type":"string","format":"date-time"}`, "")
-	require.NotEmpty(t, dateTime.Validate(json.RawMessage(`"2026-07-14T12:30:00,5+02:30"`)))
+	commaFraction := errors.Join(dateTime.Validate(json.RawMessage(`"2026-07-14T12:30:00,5+02:30"`))...)
+	require.Error(t, commaFraction)
+	require.ErrorContains(t, commaFraction, "keyword format")
 }
 
 func TestRuntimeEnforcesNumericFormatsExactly(t *testing.T) {

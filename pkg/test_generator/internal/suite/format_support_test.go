@@ -181,16 +181,22 @@ pattern: '^2024-02-29$'`, "", "create"))
 	leapSuite, err := leapCompiler.CompileSuite()
 	require.NoError(t, err)
 
+	seenLeap := false
+
 	for _, plannedCase := range leapSuite.Cases {
 		if plannedCase.Expect != ExpectAccepted {
 			continue
 		}
+
+		seenLeap = true
 
 		rapid.Check(t, func(rt *rapid.T) {
 			value := plannedCase.Generator.Draw(rt, "leap date")
 			require.Equal(rt, jsonvalue.String("2024-02-29"), value)
 		})
 	}
+
+	require.True(t, seenLeap)
 }
 
 func TestSuiteFloatFormatsUseFiniteNativeWidthsAndRejectEmptyRanges(t *testing.T) {
@@ -219,10 +225,14 @@ func TestSuiteFloatFormatsUseFiniteNativeWidthsAndRejectEmptyRanges(t *testing.T
 			compiled, err := compiler.CompileSuite()
 			require.NoError(t, err)
 
+			seenAccepted := false
+
 			for _, plannedCase := range compiled.Cases {
 				if plannedCase.Expect != ExpectAccepted {
 					continue
 				}
+
+				seenAccepted = true
 
 				rapid.Check(t, func(rt *rapid.T) {
 					value := plannedCase.Generator.Draw(rt, "value")
@@ -237,6 +247,8 @@ func TestSuiteFloatFormatsUseFiniteNativeWidthsAndRejectEmptyRanges(t *testing.T
 					require.Equal(rt, native.Lexeme, value.Number.Lexeme)
 				})
 			}
+
+			require.True(t, seenAccepted)
 		})
 	}
 }

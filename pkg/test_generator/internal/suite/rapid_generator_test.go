@@ -2,6 +2,7 @@ package suite
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
 	"testing"
 
@@ -9,6 +10,34 @@ import (
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
+
+// TestNumberGeneratorSupportsUnboundedNativeFloats covers absent schema bounds.
+func TestNumberGeneratorSupportsUnboundedNativeFloats(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		format  string
+		bitSize int
+	}{
+		{format: "float", bitSize: suiteFloat32BitSize},
+		{format: "double", bitSize: suiteFloat64BitSize},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			t.Parallel()
+
+			generator, err := numberGenerator(NumberConstraints{Formats: []string{test.format}})
+			require.NoError(t, err)
+
+			rapid.Check(t, func(rt *rapid.T) {
+				value := generator.Draw(rt, "value")
+				parsed, parseErr := strconv.ParseFloat(value.Number.Lexeme, test.bitSize)
+				require.NoError(rt, parseErr)
+				require.False(rt, math.IsInf(parsed, 0))
+				require.False(rt, math.IsNaN(parsed))
+			})
+		})
+	}
+}
 
 // TestRapidGeneratorBuilderMemoizesOccurrences verifies that each occurrence generator is built once.
 func TestRapidGeneratorBuilderMemoizesOccurrences(t *testing.T) {
