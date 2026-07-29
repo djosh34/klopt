@@ -610,14 +610,34 @@ func convertQueryAlternatives(
 		return convert(parameter.conversions[0])
 	}
 
-	return convertValidationProfiles(parameter.validation, func(validation *Validation) (jsontext.Value, error) {
-		candidate, err := queryConversionForValidation(parameter, validation)
+	var firstErr error
+
+	for _, candidate := range parameter.conversions {
+		value, err := convert(candidate)
 		if err != nil {
-			return nil, err
+			if firstErr == nil {
+				firstErr = err
+			}
+
+			continue
 		}
 
-		return convert(candidate)
-	})
+		if errs := validateRaw(candidate.validation, json.RawMessage(value), "#"); len(errs) != 0 {
+			if firstErr == nil {
+				firstErr = errors.Join(errs...)
+			}
+
+			continue
+		}
+
+		return value, nil
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	return nil, errors.New("value does not match anyOf")
 }
 
 // convertAnyOfValue tries ordered branch conversion and acceptance.
@@ -636,44 +656,37 @@ func convertValidationProfiles(
 	validation *Validation,
 	convert func(*Validation) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	var (
-		branchErrs []error
-		result     jsontext.Value
-	)
+	profiles, err := boundedConversionProfiles(validation)
+	if err != nil {
+		return nil, err
+	}
 
-	found := false
+	var firstErr error
 
-	visitConversionAlternatives(validation, func(alternative *Validation) bool {
-		if validationImpossible(alternative) {
-			return true
-		}
-
-		value, err := convert(alternative)
+	for _, profile := range profiles {
+		value, err := convert(profile)
 		if err != nil {
-			branchErrs = append(branchErrs, err)
+			if firstErr == nil {
+				firstErr = err
+			}
 
-			return true
+			continue
 		}
 
-		if errs := validateRaw(alternative, json.RawMessage(value), "#"); len(errs) != 0 {
-			branchErrs = append(branchErrs, errors.Join(errs...))
+		if errs := validateRaw(profile, json.RawMessage(value), "#"); len(errs) != 0 {
+			if firstErr == nil {
+				firstErr = errors.Join(errs...)
+			}
 
-			return true
+			continue
 		}
 
-		result = value
-		found = true
-
-		return false
-	})
-
-	if found {
-		return result, nil
+		return value, nil
 	}
 
-	if len(branchErrs) == 0 {
-		return nil, errors.New("value does not match anyOf")
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
-	return nil, errors.Join(branchErrs...)
+	return nil, errors.New("value does not match anyOf")
 }

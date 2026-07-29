@@ -390,7 +390,47 @@ func TestPathDecoderInfersWireShapeFromSatisfiableConjunctiveAnyOfProfiles(t *te
 	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
 }
 
-func TestPreparePathConversionsKeepsIndependentChoiceMetadataLinear(t *testing.T) {
+func TestPathDecoderSkipsProfilesMadeImpossibleByConjunctiveBounds(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            allOf:
+              - anyOf:
+                  - {type: object, minProperties: 1}
+                  - {type: string}
+              - {maxProperties: 0}
+`)
+	require.NoError(t, err)
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"x"}`, string(actual))
+}
+
+func TestPathDecoderSkipsIntegerAnyOfProfilesWithoutAnInteger(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - {type: integer, minimum: 0.1, maximum: 0.9}
+              - {type: array, items: {type: string}}
+`)
+	require.NoError(t, err)
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x,y"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
+}
+
+func TestPreparePathConversionsBoundsIndependentChoiceProfiles(t *testing.T) {
 	t.Parallel()
 
 	root := &Validation{
@@ -427,7 +467,11 @@ func TestPreparePathConversionsKeepsIndependentChoiceMetadataLinear(t *testing.T
 
 	parameter := pathParameter{wire: pathWireSimpleObject, validation: root}
 	require.NoError(t, preparePathConversions(&parameter))
-	require.LessOrEqual(t, len(parameter.conversions), 16)
+	require.Len(t, parameter.conversions, 256)
+
+	root.AllOfValidations = append(root.AllOfValidations, root.AllOfValidations[0])
+	parameter = pathParameter{wire: pathWireSimpleObject, validation: root}
+	require.ErrorContains(t, preparePathConversions(&parameter), "at most 256")
 }
 
 func TestPathDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {

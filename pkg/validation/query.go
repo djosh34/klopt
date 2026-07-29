@@ -751,7 +751,15 @@ func prepareQueryConversions(parameter *queryParameter) error {
 		return nil
 	}
 
-	alternatives := conversionComponents(parameter.validation)
+	if err := validateConversionProfileBounds(parameter.validation); err != nil {
+		return err
+	}
+
+	alternatives, err := boundedConversionProfiles(parameter.validation)
+	if err != nil {
+		return err
+	}
+
 	if !containsAnyOf(parameter.validation) {
 		parameter.conversions = []queryConversion{{
 			validation: parameter.validation, scalarType: parameter.scalarType,

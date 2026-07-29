@@ -403,6 +403,55 @@ func TestQueryDecoderInfersWireShapeFromSatisfiableConjunctiveAnyOfProfiles(t *t
 	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
 }
 
+func TestQueryDecoderSkipsProfilesMadeImpossibleByConjunctiveBounds(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {allOf: [
+      {anyOf: [{type: object, minProperties: 1}, {type: string}]},
+      {maxProperties: 0}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"x"}`, string(actual))
+}
+
+func TestQueryDecoderSkipsIntegerAnyOfProfilesWithoutAnInteger(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+      {type: integer, minimum: 0.1, maximum: 0.9},
+      {type: array, items: {type: string}}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x&q=y`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
+}
+
+func TestParseRejectsExcessiveConjunctiveAnyOfConversionProfiles(t *testing.T) {
+	t.Parallel()
+
+	var groups strings.Builder
+	for range 9 {
+		_, writeErr := groups.WriteString("              - anyOf: [{type: string}, {type: integer}]\n")
+		require.NoError(t, writeErr)
+	}
+
+	document := fmt.Sprintf(`openapi: 3.0.3
+paths:
+  /items:
+    get:
+      operationId: items
+      parameters:
+        - name: q
+          in: query
+          schema:
+            allOf:
+%s`, groups.String())
+
+	_, err := validation.Parse([]byte(document))
+	require.ErrorContains(t, err, "at most 256 conjunctive anyOf conversion profiles")
+}
+
 func TestQueryDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
 	t.Parallel()
 

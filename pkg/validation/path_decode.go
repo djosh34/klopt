@@ -289,14 +289,34 @@ func convertPathAlternatives(
 		return convert(parameter.conversions[0])
 	}
 
-	return convertValidationProfiles(parameter.validation, func(validation *Validation) (jsontext.Value, error) {
-		candidate, err := pathConversionForValidation(parameter, validation)
+	var firstErr error
+
+	for _, candidate := range parameter.conversions {
+		value, err := convert(candidate)
 		if err != nil {
-			return nil, err
+			if firstErr == nil {
+				firstErr = err
+			}
+
+			continue
 		}
 
-		return convert(candidate)
-	})
+		if errs := validateRaw(candidate.validation, json.RawMessage(value), "#"); len(errs) != 0 {
+			if firstErr == nil {
+				firstErr = errors.Join(errs...)
+			}
+
+			continue
+		}
+
+		return value, nil
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	return nil, errors.New("value does not match anyOf")
 }
 
 func (parameter *pathParameter) pathStyleBody(raw string) (string, error) {

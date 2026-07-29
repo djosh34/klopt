@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/big"
 	"mime"
 	"regexp"
 	"slices"
@@ -32,6 +33,8 @@ const (
 	pathWireMatrixObject
 	pathWireJSONContent
 )
+
+const maximumConversionProfiles = 256
 
 const (
 	pathShapePrimitive pathShape = iota
@@ -414,16 +417,22 @@ func compiledScalarType(validations ...*Validation) (string, error) {
 		return "string", nil
 	}
 
-	profiles := conversionTypeProfiles(conjunctiveValidation(validations...))
+	profiles, err := boundedConversionProfiles(conjunctiveValidation(validations...))
+	if err != nil {
+		return "", err
+	}
 
 	types := make([]string, 0, len(profiles))
 	for _, profile := range profiles {
-		typeName := conversionTypeName(profile.mask)
+		typeName := compiledValidationType(profile)
+		if typeName == "" {
+			typeName = "string"
+		}
 
 		if !isScalarType(typeName) {
 			return "", fmt.Errorf(
 				"style scalar slot at %s must have a primitive type; unsupported compiled type %q",
-				profile.pointer,
+				profile.SchemaPointer,
 				typeName,
 			)
 		}
@@ -663,7 +672,7 @@ func validationCompositionImpossible(validation *Validation) bool {
 func validationBoundsImpossible(validation *Validation, typeName string) bool {
 	switch typeName {
 	case "number", "integer":
-		return validationNumberBoundsImpossible(validation)
+		return validationNumberBoundsImpossible(validation, typeName)
 	case "string":
 		return validationCountBoundsImpossible(validation, func(current *Validation) (*CountBound, *CountBound) {
 			return current.StringValidation.MinLength, current.StringValidation.MaxLength
@@ -681,7 +690,7 @@ func validationBoundsImpossible(validation *Validation, typeName string) bool {
 	}
 }
 
-func validationNumberBoundsImpossible(validation *Validation) bool {
+func validationNumberBoundsImpossible(validation *Validation, typeName string) bool {
 	minimums := make([]*NumberBound, 0)
 	maximums := make([]*NumberBound, 0)
 	collectValidationNumberBounds(validation, &minimums, &maximums)
@@ -695,7 +704,65 @@ func validationNumberBoundsImpossible(validation *Validation) bool {
 		}
 	}
 
-	return false
+	return typeName == "integer" && integerBoundsImpossible(minimums, maximums)
+}
+
+func integerBoundsImpossible(minimums []*NumberBound, maximums []*NumberBound) bool {
+	minimum := strongestMinimum(minimums)
+
+	maximum := strongestMaximum(maximums)
+	if minimum == nil || maximum == nil ||
+		minimum.ExactValue.Rational == nil || maximum.ExactValue.Rational == nil {
+		return false
+	}
+
+	lower := floorRational(minimum.ExactValue.Rational)
+	if minimum.Exclusive || !minimum.ExactValue.IsInteger() {
+		lower.Add(lower, big.NewInt(1))
+	}
+
+	upper := floorRational(maximum.ExactValue.Rational)
+	if maximum.Exclusive && maximum.ExactValue.IsInteger() {
+		upper.Sub(upper, big.NewInt(1))
+	}
+
+	return lower.Cmp(upper) > 0
+}
+
+func strongestMinimum(bounds []*NumberBound) *NumberBound {
+	var result *NumberBound
+	for _, bound := range bounds {
+		if result == nil || bound.ExactValue.Compare(result.ExactValue) > 0 ||
+			bound.ExactValue.Compare(result.ExactValue) == 0 && bound.Exclusive && !result.Exclusive {
+			result = bound
+		}
+	}
+
+	return result
+}
+
+func strongestMaximum(bounds []*NumberBound) *NumberBound {
+	var result *NumberBound
+	for _, bound := range bounds {
+		if result == nil || bound.ExactValue.Compare(result.ExactValue) < 0 ||
+			bound.ExactValue.Compare(result.ExactValue) == 0 && bound.Exclusive && !result.Exclusive {
+			result = bound
+		}
+	}
+
+	return result
+}
+
+func floorRational(value *big.Rat) *big.Int {
+	quotient := new(big.Int)
+	remainder := new(big.Int)
+	quotient.QuoRem(value.Num(), value.Denom(), remainder)
+
+	if value.Sign() < 0 && remainder.Sign() != 0 {
+		quotient.Sub(quotient, big.NewInt(1))
+	}
+
+	return quotient
 }
 
 func collectValidationNumberBounds(
@@ -775,12 +842,19 @@ func conjunctiveValidation(validations ...*Validation) *Validation {
 
 //nolint:cyclop // OpenAPI style types require ordered inference across all AnyOf candidates.
 func compiledStyleType(validation *Validation) (string, error) {
-	profiles := conversionTypeProfiles(validation)
+	profiles, err := boundedConversionProfiles(validation)
+	if err != nil {
+		return "", err
+	}
+
 	types := make([]string, 0, len(profiles))
 	shape := ""
 
 	for _, profile := range profiles {
-		typeName := conversionTypeName(profile.mask)
+		typeName := compiledValidationType(profile)
+		if typeName == "" {
+			typeName = "string"
+		}
 
 		candidateShape := "primitive"
 		if typeName == "array" || typeName == "object" {
@@ -790,12 +864,12 @@ func compiledStyleType(validation *Validation) (string, error) {
 		if shape != "" && candidateShape != shape {
 			return "", fmt.Errorf(
 				"schema at %s has unrepresentable anyOf wire shape %q beside %q",
-				profile.pointer, candidateShape, shape,
+				profile.SchemaPointer, candidateShape, shape,
 			)
 		}
 
 		if candidateShape == "array" {
-			if _, err := compiledArrayScalarType(validation); err != nil {
+			if _, err := compiledArrayScalarType(profile); err != nil {
 				return "", err
 			}
 		}
@@ -817,169 +891,82 @@ func compiledStyleType(validation *Validation) (string, error) {
 	return typeName, nil
 }
 
-type conversionTypeMask uint8
+func boundedConversionProfiles(validation *Validation) ([]*Validation, error) {
+	if validation == nil || !containsAnyOf(validation) {
+		return []*Validation{validation}, nil
+	}
 
-const (
-	conversionBoolean conversionTypeMask = 1 << iota
-	conversionInteger
-	conversionNumber
-	conversionString
-	conversionArray
-	conversionObject
-	conversionAny = conversionBoolean | conversionInteger | conversionNumber |
-		conversionString | conversionArray | conversionObject
-)
+	profiles := make([]*Validation, 0)
+	visited := 0
+	tooMany := false
 
-type conversionTypeProfile struct {
-	mask    conversionTypeMask
-	pointer string
+	visitConversionAlternatives(validation, func(profile *Validation) bool {
+		visited++
+		if visited > maximumConversionProfiles {
+			tooMany = true
+
+			return false
+		}
+
+		if !validationImpossible(profile) {
+			profiles = append(profiles, profile)
+		}
+
+		return true
+	})
+
+	if tooMany {
+		return nil, fmt.Errorf(
+			"schema at %s supports at most %d conjunctive anyOf conversion profiles",
+			validation.SchemaPointer,
+			maximumConversionProfiles,
+		)
+	}
+
+	return profiles, nil
 }
 
-func conversionTypeProfiles(validation *Validation) []conversionTypeProfile {
-	if validationImpossible(validation) {
+func validateConversionProfileBounds(validation *Validation) error {
+	return validateConversionProfileBoundsAt(validation, make(map[*Validation]struct{}))
+}
+
+func validateConversionProfileBoundsAt(
+	validation *Validation,
+	seen map[*Validation]struct{},
+) error {
+	if validation == nil {
 		return nil
 	}
 
-	local := conversionTypeProfile{mask: localConversionTypeMask(validation), pointer: validation.SchemaPointer}
-	profiles := []conversionTypeProfile{local}
+	if _, visited := seen[validation]; visited {
+		return nil
+	}
 
-	if len(validation.AnyOfValidations) != 0 {
-		profiles = make([]conversionTypeProfile, 0)
-		for _, branch := range validation.AnyOfValidations {
-			profiles = appendConversionTypeProducts(profiles, []conversionTypeProfile{local}, conversionTypeProfiles(branch))
+	seen[validation] = struct{}{}
+
+	if _, err := boundedConversionProfiles(validation); err != nil {
+		return err
+	}
+
+	children := make([]*Validation, 0, 1+len(validation.ObjectValidation.Properties)+
+		len(validation.AllOfValidations)+len(validation.AnyOfValidations))
+
+	children = append(children, validation.ArrayValidation.Items)
+	for _, property := range validation.ObjectValidation.Properties {
+		children = append(children, property.Validation)
+	}
+
+	children = append(children, validation.ObjectValidation.AdditionalPropertiesValidation)
+	children = append(children, validation.AllOfValidations...)
+	children = append(children, validation.AnyOfValidations...)
+
+	for _, child := range children {
+		if err := validateConversionProfileBoundsAt(child, seen); err != nil {
+			return err
 		}
 	}
 
-	for _, child := range validation.AllOfValidations {
-		profiles = appendConversionTypeProducts(nil, profiles, conversionTypeProfiles(child))
-	}
-
-	return profiles
-}
-
-func appendConversionTypeProducts(
-	result []conversionTypeProfile,
-	left []conversionTypeProfile,
-	right []conversionTypeProfile,
-) []conversionTypeProfile {
-	seen := make(map[conversionTypeMask]struct{}, len(result)+len(left)+len(right))
-	for _, profile := range result {
-		seen[profile.mask] = struct{}{}
-	}
-
-	for _, leftProfile := range left {
-		for _, rightProfile := range right {
-			mask := leftProfile.mask & rightProfile.mask
-			if mask == 0 {
-				continue
-			}
-
-			if _, duplicate := seen[mask]; duplicate {
-				continue
-			}
-
-			seen[mask] = struct{}{}
-			result = append(result, conversionTypeProfile{mask: mask, pointer: rightProfile.pointer})
-		}
-	}
-
-	return result
-}
-
-func localConversionTypeMask(validation *Validation) conversionTypeMask {
-	typeMask := conversionAny
-	if validation.KindValidation.Type != "" {
-		typeMask = conversionTypeMaskForName(validation.KindValidation.Type)
-	}
-
-	if enumType := homogeneousEnumType(validation.EnumValidation.ExactValues); enumType != "" {
-		typeMask &= conversionTypeMaskForName(enumType)
-	}
-
-	return typeMask
-}
-
-func conversionTypeMaskForName(typeName string) conversionTypeMask {
-	switch typeName {
-	case "boolean":
-		return conversionBoolean
-	case "integer":
-		return conversionInteger
-	case "number":
-		return conversionInteger | conversionNumber
-	case "string":
-		return conversionString
-	case "array":
-		return conversionArray
-	case "object":
-		return conversionObject
-	default:
-		return conversionAny
-	}
-}
-
-func conversionTypeName(mask conversionTypeMask) string {
-	switch mask {
-	case conversionBoolean:
-		return "boolean"
-	case conversionInteger:
-		return "integer"
-	case conversionInteger | conversionNumber:
-		return "number"
-	case conversionString, conversionAny:
-		return "string"
-	case conversionArray:
-		return "array"
-	case conversionObject:
-		return "object"
-	default:
-		return ""
-	}
-}
-
-func conversionComponents(validation *Validation) []*Validation {
-	if validation == nil || !containsAnyOf(validation) {
-		return []*Validation{validation}
-	}
-
-	local := *validation
-	local.AllOfValidations = nil
-	local.AnyOfValidations = nil
-	base := &local
-	composedChildren := make([]*Validation, 0)
-
-	for _, child := range validation.AllOfValidations {
-		if containsAnyOf(child) {
-			composedChildren = append(composedChildren, child)
-
-			continue
-		}
-
-		base = conjunctiveValidation(base, child)
-	}
-
-	result := make([]*Validation, 0)
-	appendComponents := func(composed *Validation) {
-		for _, alternative := range conversionComponents(composed) {
-			combined := conjunctiveValidation(base, alternative)
-			combined.SchemaPointer = alternative.SchemaPointer
-			result = append(result, combined)
-		}
-	}
-
-	for _, branch := range validation.AnyOfValidations {
-		appendComponents(branch)
-	}
-
-	for _, child := range composedChildren {
-		appendComponents(child)
-	}
-
-	if len(result) == 0 {
-		return []*Validation{base}
-	}
-
-	return result
+	return nil
 }
 
 func visitConversionAlternatives(validation *Validation, visit func(*Validation) bool) bool {
@@ -1261,12 +1248,21 @@ func attachPathConversionValidations(parameter *pathParameter) {
 	}
 }
 
+//nolint:cyclop // Bounded profile preparation dispatches the three path wire shapes.
 func preparePathConversions(parameter *pathParameter) error {
 	if parameter == nil || parameter.validation == nil || parameter.wire == pathWireJSONContent {
 		return nil
 	}
 
-	alternatives := conversionComponents(parameter.validation)
+	if err := validateConversionProfileBounds(parameter.validation); err != nil {
+		return err
+	}
+
+	alternatives, err := boundedConversionProfiles(parameter.validation)
+	if err != nil {
+		return err
+	}
+
 	if !containsAnyOf(parameter.validation) {
 		parameter.conversions = []pathConversion{{
 			validation: parameter.validation, scalarType: parameter.scalarType,
