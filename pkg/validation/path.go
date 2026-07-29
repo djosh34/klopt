@@ -414,27 +414,16 @@ func compiledScalarType(validations ...*Validation) (string, error) {
 		return "string", nil
 	}
 
-	alternatives := conversionComponents(conjunctiveValidation(validations...))
+	profiles := conversionTypeProfiles(conjunctiveValidation(validations...))
 
-	types := make([]string, 0, len(alternatives))
-	for _, alternative := range alternatives {
-		if validationImpossible(alternative) {
-			continue
-		}
-
-		typeName, possible := compiledValidationTypeState(alternative)
-		if !possible {
-			continue
-		}
-
-		if typeName == "" {
-			typeName = "string"
-		}
+	types := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		typeName := conversionTypeName(profile.mask)
 
 		if !isScalarType(typeName) {
 			return "", fmt.Errorf(
 				"style scalar slot at %s must have a primitive type; unsupported compiled type %q",
-				alternative.SchemaPointer,
+				profile.pointer,
 				typeName,
 			)
 		}
@@ -674,33 +663,96 @@ func validationCompositionImpossible(validation *Validation) bool {
 func validationBoundsImpossible(validation *Validation, typeName string) bool {
 	switch typeName {
 	case "number", "integer":
-		return numberBoundsImpossible(validation.NumberValidation.Minimum, validation.NumberValidation.Maximum)
+		return validationNumberBoundsImpossible(validation)
 	case "string":
-		return countBoundsImpossible(validation.StringValidation.MinLength, validation.StringValidation.MaxLength)
+		return validationCountBoundsImpossible(validation, func(current *Validation) (*CountBound, *CountBound) {
+			return current.StringValidation.MinLength, current.StringValidation.MaxLength
+		})
 	case "array":
-		return countBoundsImpossible(validation.ArrayValidation.MinItems, validation.ArrayValidation.MaxItems)
+		return validationCountBoundsImpossible(validation, func(current *Validation) (*CountBound, *CountBound) {
+			return current.ArrayValidation.MinItems, current.ArrayValidation.MaxItems
+		})
 	case "object":
-		return countBoundsImpossible(
-			validation.ObjectValidation.MinProperties,
-			validation.ObjectValidation.MaxProperties,
-		)
+		return validationCountBoundsImpossible(validation, func(current *Validation) (*CountBound, *CountBound) {
+			return current.ObjectValidation.MinProperties, current.ObjectValidation.MaxProperties
+		})
 	default:
 		return false
 	}
 }
 
-func numberBoundsImpossible(minimum *NumberBound, maximum *NumberBound) bool {
-	if minimum == nil || maximum == nil {
-		return false
+func validationNumberBoundsImpossible(validation *Validation) bool {
+	minimums := make([]*NumberBound, 0)
+	maximums := make([]*NumberBound, 0)
+	collectValidationNumberBounds(validation, &minimums, &maximums)
+
+	for _, minimum := range minimums {
+		for _, maximum := range maximums {
+			comparison := minimum.ExactValue.Compare(maximum.ExactValue)
+			if comparison > 0 || comparison == 0 && (minimum.Exclusive || maximum.Exclusive) {
+				return true
+			}
+		}
 	}
 
-	comparison := minimum.ExactValue.Compare(maximum.ExactValue)
-
-	return comparison > 0 || comparison == 0 && (minimum.Exclusive || maximum.Exclusive)
+	return false
 }
 
-func countBoundsImpossible(minimum *CountBound, maximum *CountBound) bool {
-	return minimum != nil && maximum != nil && minimum.ExactValue.Compare(maximum.ExactValue) > 0
+func collectValidationNumberBounds(
+	validation *Validation,
+	minimums *[]*NumberBound,
+	maximums *[]*NumberBound,
+) {
+	if validation.NumberValidation.Minimum != nil {
+		*minimums = append(*minimums, validation.NumberValidation.Minimum)
+	}
+
+	if validation.NumberValidation.Maximum != nil {
+		*maximums = append(*maximums, validation.NumberValidation.Maximum)
+	}
+
+	for _, child := range validation.AllOfValidations {
+		collectValidationNumberBounds(child, minimums, maximums)
+	}
+}
+
+func validationCountBoundsImpossible(
+	validation *Validation,
+	bounds func(*Validation) (*CountBound, *CountBound),
+) bool {
+	minimums := make([]*CountBound, 0)
+	maximums := make([]*CountBound, 0)
+	collectValidationCountBounds(validation, bounds, &minimums, &maximums)
+
+	for _, minimum := range minimums {
+		for _, maximum := range maximums {
+			if minimum.ExactValue.Compare(maximum.ExactValue) > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func collectValidationCountBounds(
+	validation *Validation,
+	bounds func(*Validation) (*CountBound, *CountBound),
+	minimums *[]*CountBound,
+	maximums *[]*CountBound,
+) {
+	minimum, maximum := bounds(validation)
+	if minimum != nil {
+		*minimums = append(*minimums, minimum)
+	}
+
+	if maximum != nil {
+		*maximums = append(*maximums, maximum)
+	}
+
+	for _, child := range validation.AllOfValidations {
+		collectValidationCountBounds(child, bounds, minimums, maximums)
+	}
 }
 
 func conjunctiveValidation(validations ...*Validation) *Validation {
@@ -723,23 +775,12 @@ func conjunctiveValidation(validations ...*Validation) *Validation {
 
 //nolint:cyclop // OpenAPI style types require ordered inference across all AnyOf candidates.
 func compiledStyleType(validation *Validation) (string, error) {
-	alternatives := conversionComponents(validation)
-	types := make([]string, 0, len(alternatives))
+	profiles := conversionTypeProfiles(validation)
+	types := make([]string, 0, len(profiles))
 	shape := ""
 
-	for _, alternative := range alternatives {
-		if validationImpossible(alternative) {
-			continue
-		}
-
-		typeName, possible := compiledValidationTypeState(alternative)
-		if !possible {
-			continue
-		}
-
-		if typeName == "" {
-			typeName = "string"
-		}
+	for _, profile := range profiles {
+		typeName := conversionTypeName(profile.mask)
 
 		candidateShape := "primitive"
 		if typeName == "array" || typeName == "object" {
@@ -749,12 +790,12 @@ func compiledStyleType(validation *Validation) (string, error) {
 		if shape != "" && candidateShape != shape {
 			return "", fmt.Errorf(
 				"schema at %s has unrepresentable anyOf wire shape %q beside %q",
-				alternative.SchemaPointer, candidateShape, shape,
+				profile.pointer, candidateShape, shape,
 			)
 		}
 
 		if candidateShape == "array" {
-			if _, err := compiledArrayScalarType(alternative); err != nil {
+			if _, err := compiledArrayScalarType(validation); err != nil {
 				return "", err
 			}
 		}
@@ -774,6 +815,126 @@ func compiledStyleType(validation *Validation) (string, error) {
 	}
 
 	return typeName, nil
+}
+
+type conversionTypeMask uint8
+
+const (
+	conversionBoolean conversionTypeMask = 1 << iota
+	conversionInteger
+	conversionNumber
+	conversionString
+	conversionArray
+	conversionObject
+	conversionAny = conversionBoolean | conversionInteger | conversionNumber |
+		conversionString | conversionArray | conversionObject
+)
+
+type conversionTypeProfile struct {
+	mask    conversionTypeMask
+	pointer string
+}
+
+func conversionTypeProfiles(validation *Validation) []conversionTypeProfile {
+	if validationImpossible(validation) {
+		return nil
+	}
+
+	local := conversionTypeProfile{mask: localConversionTypeMask(validation), pointer: validation.SchemaPointer}
+	profiles := []conversionTypeProfile{local}
+
+	if len(validation.AnyOfValidations) != 0 {
+		profiles = make([]conversionTypeProfile, 0)
+		for _, branch := range validation.AnyOfValidations {
+			profiles = appendConversionTypeProducts(profiles, []conversionTypeProfile{local}, conversionTypeProfiles(branch))
+		}
+	}
+
+	for _, child := range validation.AllOfValidations {
+		profiles = appendConversionTypeProducts(nil, profiles, conversionTypeProfiles(child))
+	}
+
+	return profiles
+}
+
+func appendConversionTypeProducts(
+	result []conversionTypeProfile,
+	left []conversionTypeProfile,
+	right []conversionTypeProfile,
+) []conversionTypeProfile {
+	seen := make(map[conversionTypeMask]struct{}, len(result)+len(left)+len(right))
+	for _, profile := range result {
+		seen[profile.mask] = struct{}{}
+	}
+
+	for _, leftProfile := range left {
+		for _, rightProfile := range right {
+			mask := leftProfile.mask & rightProfile.mask
+			if mask == 0 {
+				continue
+			}
+
+			if _, duplicate := seen[mask]; duplicate {
+				continue
+			}
+
+			seen[mask] = struct{}{}
+			result = append(result, conversionTypeProfile{mask: mask, pointer: rightProfile.pointer})
+		}
+	}
+
+	return result
+}
+
+func localConversionTypeMask(validation *Validation) conversionTypeMask {
+	typeMask := conversionAny
+	if validation.KindValidation.Type != "" {
+		typeMask = conversionTypeMaskForName(validation.KindValidation.Type)
+	}
+
+	if enumType := homogeneousEnumType(validation.EnumValidation.ExactValues); enumType != "" {
+		typeMask &= conversionTypeMaskForName(enumType)
+	}
+
+	return typeMask
+}
+
+func conversionTypeMaskForName(typeName string) conversionTypeMask {
+	switch typeName {
+	case "boolean":
+		return conversionBoolean
+	case "integer":
+		return conversionInteger
+	case "number":
+		return conversionInteger | conversionNumber
+	case "string":
+		return conversionString
+	case "array":
+		return conversionArray
+	case "object":
+		return conversionObject
+	default:
+		return conversionAny
+	}
+}
+
+func conversionTypeName(mask conversionTypeMask) string {
+	switch mask {
+	case conversionBoolean:
+		return "boolean"
+	case conversionInteger:
+		return "integer"
+	case conversionInteger | conversionNumber:
+		return "number"
+	case conversionString, conversionAny:
+		return "string"
+	case conversionArray:
+		return "array"
+	case conversionObject:
+		return "object"
+	default:
+		return ""
+	}
 }
 
 func conversionComponents(validation *Validation) []*Validation {

@@ -509,7 +509,35 @@ func (builder *RapidGeneratorBuilder) objectGeneratorExcluding(
 		}
 	}
 
+	for index, property := range constraints.Properties {
+		if property.Required || property.State == PropertyForbidden ||
+			!objectPropertyAppearsInAll(excluded, property.Name) {
+			continue
+		}
+
+		forced := constraints
+		forced.Properties = append([]NamedProperty(nil), constraints.Properties...)
+		forced.Properties[index].State = PropertyForbidden
+
+		generator, err := builder.expressionObjectGenerator(forced, &clean)
+
+		var empty *stringlanguage.EmptyError
+
+		if err == nil {
+			return generator, nil
+		}
+
+		if !errors.As(err, &empty) {
+			return nil, err
+		}
+	}
+
 	forced, ok := forceObjectPropertyAbsentFromAll(constraints, excluded)
+	if ok {
+		return builder.expressionObjectGenerator(forced, &clean)
+	}
+
+	forced, ok = forceObjectPropertyCountAboveAll(constraints, excluded)
 	if ok {
 		return builder.expressionObjectGenerator(forced, &clean)
 	}
@@ -606,6 +634,37 @@ func objectPropertyAppears(objects [][]jsonvalue.Member, name string) bool {
 	}
 
 	return false
+}
+
+// objectPropertyAppearsInAll reports whether every excluded object contains name.
+func objectPropertyAppearsInAll(objects [][]jsonvalue.Member, name string) bool {
+	for _, object := range objects {
+		if _, ok := membersByName(object)[name]; !ok {
+			return false
+		}
+	}
+
+	return len(objects) != 0
+}
+
+// forceObjectPropertyCountAboveAll requires a size distinct from every exclusion.
+func forceObjectPropertyCountAboveAll(
+	constraints ObjectConstraints,
+	excluded [][]jsonvalue.Member,
+) (ObjectConstraints, bool) {
+	minimum := constraints.MinProps
+	for _, object := range excluded {
+		minimum = max(minimum, len(object)+1)
+	}
+
+	if constraints.MaxProps != nil && minimum > *constraints.MaxProps {
+		return ObjectConstraints{}, false
+	}
+
+	forced := constraints
+	forced.MinProps = minimum
+
+	return forced, true
 }
 
 // cloneGenerationTermWithoutKind removes exclusions handled by a structured generator.
@@ -2152,7 +2211,7 @@ func objectPropertyCountRange(
 	}
 
 	if minimum > maximum {
-		return 0, 0, errors.New("object has no feasible property count")
+		return 0, 0, &stringlanguage.EmptyError{}
 	}
 
 	return minimum, maximum, nil

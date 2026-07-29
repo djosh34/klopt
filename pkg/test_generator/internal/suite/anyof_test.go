@@ -376,6 +376,56 @@ anyOf:
 	require.Greater(t, len(distinct), 2)
 }
 
+func TestCompileSuiteAnyOfObjectEnumComplementChangesPropertyPresence(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		excluded string
+		check    func(*testing.T, jsonvalue.Value)
+	}{
+		{
+			name: "open empty object",
+			schema: `type: object
+anyOf: [{enum: [{}]}]`,
+			excluded: `{}`,
+			check: func(t *testing.T, value jsonvalue.Value) {
+				t.Helper()
+				require.NotEmpty(t, value.Object)
+			},
+		},
+		{
+			name: "closed optional property",
+			schema: `type: object
+additionalProperties: false
+properties: {a: {type: string}}
+anyOf: [{enum: [{a: x}]}]`,
+			excluded: `{"a":"x"}`,
+			check: func(t *testing.T, value jsonvalue.Value) {
+				t.Helper()
+				require.Empty(t, value.Object)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			compiled, err := NewCompiler(parseSchemaSource(t, test.schema, "", "create")).CompileSuite()
+			require.NoError(t, err)
+			invalid := anyOfCase(t, compiled.Cases, ExpectRejected)
+			excluded := mustJSONValue(t, test.excluded)
+
+			for seed := range 20 {
+				value := invalid.Generator.Example(seed)
+				require.Equal(t, jsonvalue.KindObject, value.Kind)
+				require.False(t, value.Equal(excluded))
+				test.check(t, value)
+			}
+		})
+	}
+}
+
 func TestCompileSuiteOuterFocusedFailureStillSatisfiesAnyOf(t *testing.T) {
 	t.Parallel()
 

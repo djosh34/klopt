@@ -342,20 +342,52 @@ func TestPathDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
 func TestPathDecoderSkipsAnyOfWireShapesWithImpossibleBounds(t *testing.T) {
 	t.Parallel()
 
-	decoder, err := compilePathDecoderForTest(t, `
+	for _, impossible := range []string{
+		`{type: object, minProperties: 1, maxProperties: 0}`,
+		`{type: object, allOf: [{minProperties: 1}, {maxProperties: 0}]}`,
+	} {
+		t.Run(impossible, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, `
       parameters:
         - name: id
           in: path
           required: true
           schema:
             anyOf:
-              - {type: object, minProperties: 1, maxProperties: 0}
+              - `+impossible+`
               - {type: string}
 `)
+			require.NoError(t, err)
+			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x"})
+			require.NoError(t, err)
+			require.JSONEq(t, `{"id":"x"}`, string(actual))
+		})
+	}
+}
+
+func TestPathDecoderInfersWireShapeFromSatisfiableConjunctiveAnyOfProfiles(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            allOf:
+              - anyOf:
+                  - {type: array, items: {type: string}}
+                  - {type: string}
+              - anyOf:
+                  - {type: array, items: {type: string}}
+                  - {type: object}
+`)
 	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x"})
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x,y"})
 	require.NoError(t, err)
-	require.JSONEq(t, `{"id":"x"}`, string(actual))
+	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
 }
 
 func TestPreparePathConversionsKeepsIndependentChoiceMetadataLinear(t *testing.T) {
