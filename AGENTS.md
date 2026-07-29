@@ -20,3 +20,5 @@ When deviating from the openapi spec, we hard and loudly reject (must return err
 When you are NOT a subagent, always orchastrate EVERYTHING (and i mean EVERYTHING) to subagents. Never do anything yourself.
 All subagents must be told to not make any subagents themselves, also not via codex cli
 When subagents are done, always close them, never reuse them. Always create new ones
+Please leave the subagents alone, do not keep in checking on them every min, instead wait 10 min at minimum for checks and do not interfere with them
+
