@@ -27,6 +27,20 @@ anyOf:
 	require.Contains(t, compiler.rootUse.anyOf[1].pointer, "/anyOf/1")
 }
 
+func TestCompileSuiteRejectsExcessiveConjunctiveAnyOfChoices(t *testing.T) {
+	t.Parallel()
+
+	var groups strings.Builder
+	for range 9 {
+		_, err := groups.WriteString("  - anyOf: [{minLength: 0}, {maxLength: 10}]\n")
+		require.NoError(t, err)
+	}
+
+	schema := "type: string\nallOf:\n" + groups.String()
+	_, err := NewCompiler(parseSchemaSource(t, schema, "", "create")).CompileSuite()
+	require.ErrorContains(t, err, "at most 256 conjunctive anyOf generation profiles")
+}
+
 func TestCompileSuitePreservesAnyOfNestedUnderAllOfReference(t *testing.T) {
 	t.Parallel()
 

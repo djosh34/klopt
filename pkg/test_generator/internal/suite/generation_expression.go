@@ -8,6 +8,8 @@ import (
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
+const maximumConjunctiveGenerationProfiles = 256
+
 func choose(values ...generationExpression) generationExpression {
 	branches := make([]generationExpression, 0, len(values))
 	for _, value := range values {
@@ -83,13 +85,25 @@ func meet(values ...generationExpression) (generationExpression, error) {
 	return result, nil
 }
 
-//nolint:cyclop,gocognit // Choice distribution and term conjunction are the complete expression algebra.
+//nolint:cyclop,gocognit,gocyclo // Choice distribution and term conjunction are the complete expression algebra.
 func meetGenerationExpressions(
 	left generationExpression,
 	right generationExpression,
 ) (generationExpression, error) {
 	if generationExpressionEmpty(left) || generationExpressionEmpty(right) {
 		return generationExpression{}, nil
+	}
+
+	leftProfiles := generationExpressionProfileCount(left)
+
+	rightProfiles := generationExpressionProfileCount(right)
+	if leftProfiles > maximumConjunctiveGenerationProfiles ||
+		rightProfiles > maximumConjunctiveGenerationProfiles ||
+		leftProfiles > maximumConjunctiveGenerationProfiles/rightProfiles {
+		return generationExpression{}, fmt.Errorf(
+			"suite supports at most %d conjunctive anyOf generation profiles",
+			maximumConjunctiveGenerationProfiles,
+		)
 	}
 
 	if left.choice != nil {
@@ -197,6 +211,26 @@ func meetGenerationExpressions(
 	}
 
 	return generationExpression{term: term}, nil
+}
+
+func generationExpressionProfileCount(expression generationExpression) int {
+	if generationExpressionEmpty(expression) {
+		return 0
+	}
+
+	if expression.term != nil {
+		return 1
+	}
+
+	count := 0
+	for _, branch := range expression.choice.branches {
+		count += generationExpressionProfileCount(branch)
+		if count > maximumConjunctiveGenerationProfiles {
+			return count
+		}
+	}
+
+	return count
 }
 
 func mergeGenerationUses(left *schemaUse, right *schemaUse, domain DomainID) *schemaUse {

@@ -640,7 +640,44 @@ func validationImpossible(validation *Validation) bool {
 		return true
 	}
 
+	if validationEnumImpossible(validation) {
+		return true
+	}
+
 	return validationBoundsImpossible(validation, typeName)
+}
+
+func validationEnumImpossible(validation *Validation) bool {
+	enumSets := make([][]json.RawMessage, 0)
+	collectValidationEnumSets(validation, &enumSets)
+
+	for _, values := range enumSets {
+		reachable := false
+
+		for _, value := range values {
+			if len(validateRaw(validation, value, "#")) == 0 {
+				reachable = true
+
+				break
+			}
+		}
+
+		if !reachable {
+			return true
+		}
+	}
+
+	return false
+}
+
+func collectValidationEnumSets(validation *Validation, enumSets *[][]json.RawMessage) {
+	if len(validation.EnumValidation.Values) != 0 {
+		*enumSets = append(*enumSets, validation.EnumValidation.Values)
+	}
+
+	for _, child := range validation.AllOfValidations {
+		collectValidationEnumSets(child, enumSets)
+	}
 }
 
 func validationCompositionImpossible(validation *Validation) bool {

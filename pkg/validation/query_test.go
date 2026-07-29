@@ -427,6 +427,30 @@ func TestQueryDecoderSkipsIntegerAnyOfProfilesWithoutAnInteger(t *testing.T) {
 	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
 }
 
+func TestQueryDecoderSkipsEnumProfilesWhoseMembersViolateBounds(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+      {type: object, enum: [{}], minProperties: 1},
+      {type: string}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"x"}`, string(actual))
+}
+
+func TestQueryDecoderInfersPropertiesFromAnyOfObjectEnums(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: {
+      type: object,
+      anyOf: [{enum: [{count: 2}]}]
+    }}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=count,2`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":{"count":2}}`, string(actual))
+}
+
 func TestParseRejectsExcessiveConjunctiveAnyOfConversionProfiles(t *testing.T) {
 	t.Parallel()
 

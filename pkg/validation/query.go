@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/go-json-experiment/json/jsontext"
 )
 
@@ -671,6 +672,15 @@ func compileQueryProperties(
 	compiledByName := make(map[string][]*Validation)
 	collectCompiledObjectProperties(validation, compiledByName)
 
+	enumValuesByName := make(map[string][]jsonvalue.Value)
+	collectEnumObjectProperties(validation, enumValuesByName)
+
+	for name := range enumValuesByName {
+		if _, declared := compiledByName[name]; !declared {
+			compiledByName[name] = nil
+		}
+	}
+
 	properties := make([]queryProperty, 0, len(compiledByName))
 
 	byName := make(map[string]int, len(compiledByName))
@@ -684,9 +694,22 @@ func compileQueryProperties(
 
 		propertyValidations := compiledByName[name]
 
-		typeName, err := compiledStyleType(conjunctiveValidation(propertyValidations...))
-		if err != nil {
-			return nil, nil, fmt.Errorf("style-based object property %q: %w", name, err)
+		typeName := ""
+
+		if len(propertyValidations) != 0 {
+			var err error
+
+			typeName, err = compiledStyleType(conjunctiveValidation(propertyValidations...))
+			if err != nil {
+				return nil, nil, fmt.Errorf("style-based object property %q: %w", name, err)
+			}
+		}
+
+		if len(propertyValidations) == 0 ||
+			compiledValidationType(conjunctiveValidation(propertyValidations...)) == "" {
+			if enumType := homogeneousEnumType(enumValuesByName[name]); enumType != "" {
+				typeName = enumType
+			}
 		}
 
 		property := queryProperty{
