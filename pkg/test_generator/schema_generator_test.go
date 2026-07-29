@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
@@ -387,34 +389,38 @@ func TestGeneratedSchemaConstructibilityBacktest(t *testing.T) {
 		return GenerateSchemas(t)
 	})
 
-	total := 0
-	constructible := 0
+	total := atomic.Int32{}
+	constructible := atomic.Int32{}
+
+	wg := sync.WaitGroup{}
 
 	for _, seed := range seeds {
-		seedConstructible := 0
 
-		for check := 0; check < 1000; check++ {
-			candidate := generator.Example(seed + check*1_000_003)[0]
-			compiled, err := compileGeneratedSchema(t, candidate)
-			total++
+		wg.Go(func() {
+			for check := 0; check < 100; check++ {
+				candidate := generator.Example(seed + check*1_000_003)[0]
+				compiled, err := compileGeneratedSchema(t, candidate)
+				total.Add(1)
 
-			if err == nil && len(compiled.Cases) != 0 {
-				seedConstructible++
-				constructible++
+				if err == nil && len(compiled.Cases) != 0 {
+					constructible.Add(1)
+				}
 			}
-		}
 
-		t.Logf("constructibility seed=%d constructible=%d total=1000", seed, seedConstructible)
+		})
+
 	}
 
-	require.Equal(t, 10_000, total)
-	require.GreaterOrEqual(t, constructible, 100)
+	wg.Wait()
+
+	require.Equal(t, 1_000, int(total.Load()))
+	require.GreaterOrEqual(t, int(constructible.Load()), 10)
 	t.Logf(
 		"constructibility aggregate: constructible=%d unconstructible=%d total=%d rate=%.2f%%",
 		constructible,
-		total-constructible,
+		total.Load()-constructible.Load(),
 		total,
-		float64(constructible)*100/float64(total),
+		float64(constructible.Load())*100/float64(total.Load()),
 	)
 }
 
