@@ -1513,7 +1513,7 @@ func newCaseSet() *caseSet {
 
 // add records plan unless its exact observable plan key already exists.
 func (set *caseSet) add(plan CasePlan) {
-	if plan.Values == NoDomain || plan.Values == EmptyDomainID {
+	if generationExpressionEmpty(plan.Expression) && (plan.Values == NoDomain || plan.Values == EmptyDomainID) {
 		return
 	}
 

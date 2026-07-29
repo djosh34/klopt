@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
@@ -22,18 +23,19 @@ const halfDenominator = 2
 
 // RapidGeneratorBuilder links canonical Domains to shared constructive Rapid generators.
 type RapidGeneratorBuilder struct {
-	domains              *DomainRegistry
-	patternOption        patternvalidator.Option
-	targetStringLanguage *stringLanguageOccurrence
-	generators           map[generatorKey]*rapid.Generator[jsonvalue.Value]
-	stringLanguages      map[stringLanguageSetKey][]stringlanguage.Language
+	domains               *DomainRegistry
+	patternOption         patternvalidator.Option
+	targetStringLanguage  *stringLanguageOccurrence
+	targetStringLanguages []*stringLanguageOccurrence
+	generators            map[generatorKey]*rapid.Generator[jsonvalue.Value]
+	stringLanguages       map[stringLanguageSetKey][]stringlanguage.Language
 }
 
 // generatorKey identifies one Domain at one exact occurrence.
 type generatorKey struct {
-	domain           DomainID
-	use              *schemaUse
-	stringLanguageID uint64
+	domain                  DomainID
+	use                     *schemaUse
+	stringLanguageSignature string
 }
 
 // stringLanguageSetKey identifies one ordered list of original pattern and format occurrences.
@@ -72,6 +74,234 @@ func (builder *RapidGeneratorBuilder) Generator(
 	return builder.generator(id, use)
 }
 
+// expression renders one recursive generation expression.
+func (builder *RapidGeneratorBuilder) expression(
+	expression generationExpression,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if expression.term != nil {
+		return builder.term(expression.term)
+	}
+
+	if expression.choice == nil || len(expression.choice.branches) == 0 {
+		return nil, errors.New("build Rapid generator: generation expression is empty")
+	}
+
+	branches := make([]*rapid.Generator[jsonvalue.Value], 0, len(expression.choice.branches))
+	for _, branch := range expression.choice.branches {
+		generator, err := builder.expression(branch)
+		if err != nil {
+			return nil, err
+		}
+
+		branches = append(branches, generator)
+	}
+
+	return rapid.OneOf(branches...), nil
+}
+
+// term renders one constructive conjunction.
+func (builder *RapidGeneratorBuilder) term(
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if term == nil {
+		return nil, errors.New("build Rapid generator: generation term is nil")
+	}
+
+	if term.items == nil && len(term.properties) == 0 && term.additional == nil {
+		builder.targetStringLanguage = nil
+		builder.targetStringLanguages = term.stringLanguages
+
+		return builder.generator(term.domain, term.use)
+	}
+
+	domain, ok := builder.domains.Domain(term.domain)
+	if !ok || domain.Status != DomainProductive {
+		return nil, fmt.Errorf("build Rapid generator: term Domain %d is not productive", term.domain)
+	}
+
+	return builder.expressionDomainGenerator(domain, term)
+}
+
+// expressionDomainGenerator renders every reachable JSON kind in one term.
+//
+//nolint:cyclop // Each JSON kind contributes one constructive generator.
+func (builder *RapidGeneratorBuilder) expressionDomainGenerator(
+	domain Domain,
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if domain.Enum != nil {
+		return builder.enumGenerator(domain, term.use)
+	}
+
+	var generators []*rapid.Generator[jsonvalue.Value]
+	if domain.Null != KindExcluded {
+		generators = append(generators, rapid.Just(jsonvalue.Null()))
+	}
+
+	if domain.Boolean != KindExcluded {
+		generators = append(generators, rapid.Map(rapid.Bool(), jsonvalue.Bool))
+	}
+
+	if domain.Number.State != KindExcluded {
+		generator, err := numberGenerator(domain.Number)
+		if err != nil {
+			return nil, err
+		}
+
+		generators = append(generators, generator)
+	}
+
+	if domain.String.State != KindExcluded {
+		generator, err := builder.stringGenerator(domain.String, term.use)
+		if err != nil {
+			return nil, err
+		}
+
+		generators = append(generators, generator)
+	}
+
+	if domain.Array.State != KindExcluded {
+		generator, err := builder.expressionArrayGenerator(domain.Array, term)
+		if err != nil {
+			return nil, err
+		}
+
+		generators = append(generators, generator)
+	}
+
+	if domain.Object.State != KindExcluded {
+		generator, err := builder.expressionObjectGenerator(domain.Object, term)
+		if err != nil {
+			return nil, err
+		}
+
+		generators = append(generators, generator)
+	}
+
+	if len(generators) == 0 {
+		return nil, errors.New("generation term has no reachable JSON kind")
+	}
+
+	return rapid.OneOf(generators...), nil
+}
+
+// expressionArrayGenerator renders an array with an expression-backed item generator.
+func (builder *RapidGeneratorBuilder) expressionArrayGenerator(
+	constraints ArrayConstraints,
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if term.items == nil {
+		return builder.arrayGenerator(constraints, term.use)
+	}
+
+	itemsExpression, err := meet(
+		generationExpression{term: &generationTerm{domain: constraints.Items, use: term.use.items}},
+		*term.items,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("array items: %w", err)
+	}
+
+	items, err := builder.expression(itemsExpression)
+	if err != nil {
+		return nil, fmt.Errorf("array items: %w", err)
+	}
+
+	maximum := generatedCollectionMaximum(constraints.MinItems, constraints.MaxItems)
+
+	return rapid.Map(rapid.SliceOfN(items, constraints.MinItems, maximum), jsonvalue.Array), nil
+}
+
+// expressionObjectGenerator renders expression-backed object children.
+//
+//nolint:cyclop // Required, optional, and additional properties share one builder.
+func (builder *RapidGeneratorBuilder) expressionObjectGenerator(
+	constraints ObjectConstraints,
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if len(term.properties) == 0 && term.additional == nil {
+		return builder.objectGenerator(constraints, term.use)
+	}
+
+	required := make([]objectPropertyGenerator, 0)
+	optional := make([]objectPropertyGenerator, 0)
+
+	for _, property := range constraints.Properties {
+		if property.State == PropertyForbidden {
+			continue
+		}
+
+		var (
+			generator *rapid.Generator[jsonvalue.Value]
+			err       error
+		)
+
+		if expression, ok := term.properties[property.Name]; ok {
+			propertyExpression, meetErr := meet(
+				generationExpression{term: &generationTerm{
+					domain: property.Values,
+					use:    term.use.property(property.Name),
+				}},
+				expression,
+			)
+			if meetErr != nil {
+				return nil, fmt.Errorf("object property %q: %w", property.Name, meetErr)
+			}
+
+			generator, err = builder.expression(propertyExpression)
+		} else {
+			generator, err = builder.generator(property.Values, term.use.property(property.Name))
+		}
+
+		if err != nil {
+			if property.Required {
+				return nil, err
+			}
+
+			continue
+		}
+
+		entry := objectPropertyGenerator{name: property.Name, values: generator}
+		if property.Required {
+			required = append(required, entry)
+		} else {
+			optional = append(optional, entry)
+		}
+	}
+
+	var (
+		additional    *rapid.Generator[jsonvalue.Value]
+		additionalErr error
+	)
+	if term.additional != nil {
+		additionalExpression, meetErr := meet(
+			generationExpression{term: &generationTerm{
+				domain: constraints.Additional.Values,
+				use:    term.use.additional,
+			}},
+			*term.additional,
+		)
+		if meetErr != nil {
+			return nil, fmt.Errorf("additional object property: %w", meetErr)
+		}
+
+		additional, additionalErr = builder.expression(additionalExpression)
+	} else {
+		additional, additionalErr = builder.generator(constraints.Additional.Values, term.use.additional)
+	}
+
+	minimum, maximum, err := objectPropertyCountRange(
+		constraints, len(required), len(optional), additionalErr == nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return rapid.Custom(func(t *rapid.T) jsonvalue.Value {
+		return drawGeneratedObject(t, constraints.Properties, required, optional, additional, minimum, maximum)
+	}), nil
+}
+
 // generator builds one exact schema occurrence.
 func (builder *RapidGeneratorBuilder) generator(
 	id DomainID,
@@ -81,7 +311,7 @@ func (builder *RapidGeneratorBuilder) generator(
 		return nil, errors.New("build Rapid generator: Domain registry is nil")
 	}
 
-	key := generatorKey{domain: id, use: use, stringLanguageID: builder.stringLanguageID()}
+	key := generatorKey{domain: id, use: use, stringLanguageSignature: builder.stringLanguageSignature()}
 	if generator, ok := builder.generators[key]; ok {
 		return generator, nil
 	}
@@ -123,13 +353,20 @@ func (builder *RapidGeneratorBuilder) generator(
 	return generator, nil
 }
 
-// stringLanguageID returns the selected isolated string-language occurrence or the aggregate sentinel.
-func (builder *RapidGeneratorBuilder) stringLanguageID() uint64 {
-	if builder.targetStringLanguage == nil {
-		return 0
+// stringLanguageSignature identifies one signed language conjunction for memoization.
+func (builder *RapidGeneratorBuilder) stringLanguageSignature() string {
+	parts := make([]string, 0, len(builder.targetStringLanguages)+1)
+	if builder.targetStringLanguage != nil {
+		parts = append(parts, strconv.FormatUint(builder.targetStringLanguage.id, 10))
 	}
 
-	return builder.targetStringLanguage.id
+	for _, occurrence := range builder.targetStringLanguages {
+		if occurrence != nil {
+			parts = append(parts, strconv.FormatUint(occurrence.id, 10))
+		}
+	}
+
+	return strings.Join(parts, ",")
 }
 
 // domainGenerator builds a generator from every reachable JSON kind in domain.
@@ -214,7 +451,7 @@ func (builder *RapidGeneratorBuilder) enumGenerator(
 		return nil, newStringLanguageConstructionError(
 			occurrences,
 			use,
-			builder.targetStringLanguage,
+			builder.firstTargetStringLanguage(),
 			&stringlanguage.EmptyError{},
 		)
 	}
@@ -233,7 +470,7 @@ func (builder *RapidGeneratorBuilder) matchingStringLanguageEnumValues(
 	for _, occurrence := range occurrences {
 		wantMatches = append(
 			wantMatches,
-			builder.targetStringLanguage == nil || builder.targetStringLanguage.id != occurrence.id,
+			builder.wantStringLanguageMatch(occurrence),
 		)
 	}
 
@@ -242,7 +479,7 @@ func (builder *RapidGeneratorBuilder) matchingStringLanguageEnumValues(
 		Max: domain.String.MaxLength,
 	})
 	if err != nil {
-		return nil, newStringLanguageConstructionError(occurrences, use, builder.targetStringLanguage, err)
+		return nil, newStringLanguageConstructionError(occurrences, use, builder.firstTargetStringLanguage(), err)
 	}
 
 	matching := make([]jsonvalue.Value, 0, len(values))
@@ -261,7 +498,7 @@ func (builder *RapidGeneratorBuilder) stringLanguageEnumValueMatches(
 	value jsonvalue.Value,
 ) bool {
 	if value.Kind != jsonvalue.KindString {
-		return builder.targetStringLanguage == nil
+		return builder.firstTargetStringLanguage() == nil
 	}
 
 	return set.Matches(value.String)
@@ -807,7 +1044,7 @@ func (builder *RapidGeneratorBuilder) stringLanguageStringGenerator(
 	for _, occurrence := range occurrences {
 		wantMatches = append(
 			wantMatches,
-			builder.targetStringLanguage == nil || builder.targetStringLanguage.id != occurrence.id,
+			builder.wantStringLanguageMatch(occurrence),
 		)
 	}
 
@@ -816,12 +1053,42 @@ func (builder *RapidGeneratorBuilder) stringLanguageStringGenerator(
 		Max: constraints.MaxLength,
 	})
 	if err != nil {
-		return nil, newStringLanguageConstructionError(occurrences, use, builder.targetStringLanguage, err)
+		return nil, newStringLanguageConstructionError(occurrences, use, builder.firstTargetStringLanguage(), err)
 	}
 
 	return rapid.Map(rapid.Uint64(), func(seed uint64) jsonvalue.Value {
 		return jsonvalue.String(set.Generate(seed))
 	}), nil
+}
+
+// wantStringLanguageMatch reports the sign of one language occurrence.
+func (builder *RapidGeneratorBuilder) wantStringLanguageMatch(occurrence stringLanguageOccurrence) bool {
+	if builder.targetStringLanguage != nil && builder.targetStringLanguage.id == occurrence.id {
+		return false
+	}
+
+	for _, target := range builder.targetStringLanguages {
+		if target != nil && target.id == occurrence.id {
+			return false
+		}
+	}
+
+	return true
+}
+
+// firstTargetStringLanguage locates diagnostics for a signed conjunction.
+func (builder *RapidGeneratorBuilder) firstTargetStringLanguage() *stringLanguageOccurrence {
+	if builder.targetStringLanguage != nil {
+		return builder.targetStringLanguage
+	}
+
+	for _, target := range builder.targetStringLanguages {
+		if target != nil {
+			return target
+		}
+	}
+
+	return nil
 }
 
 // stringLanguageSet compiles one exact signed request from cached occurrence languages.

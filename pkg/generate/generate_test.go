@@ -156,7 +156,7 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 		"      requestBody:",
 		"        content:",
 		"          application/json:",
-		"            schema: {type: boolean}",
+		"            schema: {type: boolean, anyOf: [{enum: [true]}, {enum: [false]}]}",
 		"      responses:",
 		"        '204': {description: empty}",
 		"  /alpha:",
@@ -233,7 +233,7 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 		"MinLength:", "MaxLength:", "Pattern:", "Format:", "CompiledPattern:",
 		"ArrayValidation:", "MinItems:", "MaxItems:", "Items:", "UniqueItems:",
 		"ObjectValidation:", "MinProperties:", "MaxProperties:", "Required:", "Properties:", "Name:", "Validation:",
-		"AdditionalPropertiesAllowed:", "AdditionalPropertiesValidation:", "AllOfValidations:",
+		"AdditionalPropertiesAllowed:", "AdditionalPropertiesValidation:", "AllOfValidations:", "AnyOfValidations:",
 	} {
 		require.Contains(t, generatedSource, field)
 	}
@@ -243,6 +243,7 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 		"/properties/closed/properties/child",
 		"/additionalProperties",
 		"/allOf/0",
+		"/anyOf/0",
 	} {
 		require.Contains(t, generatedSource, nestedLocation)
 	}

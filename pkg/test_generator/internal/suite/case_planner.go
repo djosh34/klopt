@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"pgregory.net/rapid"
 )
 
 // CompileSuite compiles, plans, and links the request schema to Rapid generators.
@@ -52,11 +54,16 @@ func (compiler *Compiler) linkCases(
 	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.patternOption)
 
 	for index := range cases {
-		generators.targetStringLanguage = cases[index].stringLanguage
-		generator, generatorErr := generators.generator(
-			cases[index].Values,
-			compiler.rootUse,
+		var (
+			generator    *rapid.Generator[jsonvalue.Value]
+			generatorErr error
 		)
+		if !generationExpressionEmpty(cases[index].Expression) {
+			generator, generatorErr = generators.expression(cases[index].Expression)
+		} else {
+			generators.targetStringLanguage = cases[index].stringLanguage
+			generator, generatorErr = generators.generator(cases[index].Values, compiler.rootUse)
+		}
 
 		var emptyError *stringlanguage.EmptyError
 		if errors.As(generatorErr, &emptyError) {
@@ -187,6 +194,15 @@ func hasAcceptedCase(cases []CasePlan) bool {
 
 // Plan builds aggregate-valid, valid-partition, and isolated invalid CasePlans.
 func (planner *CasePlanner) Plan(rootUse *schemaUse) ([]CasePlan, error) {
+	if containsAnyOfUse(rootUse) {
+		return planner.planAnyOf(rootUse)
+	}
+
+	return planner.planWithoutAnyOf(rootUse)
+}
+
+// planWithoutAnyOf retains the established partition planner for one constructive term.
+func (planner *CasePlanner) planWithoutAnyOf(rootUse *schemaUse) ([]CasePlan, error) {
 	if planner == nil || planner.Domains == nil {
 		return nil, errors.New("plan cases: Domain registry is nil")
 	}
@@ -227,6 +243,74 @@ func (planner *CasePlanner) Plan(rootUse *schemaUse) ([]CasePlan, error) {
 		if err := planner.addValidPartitions(result, rootUse, make(map[DomainID]bool)); err != nil {
 			return nil, err
 		}
+	}
+
+	return result.cases, nil
+}
+
+// planAnyOf links the valid, invalid, and outer-focused properties for a composed occurrence.
+//
+//nolint:cyclop // The three property classes are one planning transaction.
+func (planner *CasePlanner) planAnyOf(rootUse *schemaUse) ([]CasePlan, error) {
+	if planner == nil || planner.Domains == nil {
+		return nil, errors.New("plan cases: Domain registry is nil")
+	}
+
+	planner.rootUse = rootUse
+
+	valid, err := validGenerationExpression(rootUse)
+	if err != nil {
+		return nil, err
+	}
+
+	result := newCaseSet()
+	result.add(CasePlan{
+		Name: caseName("valid anyOf", rootUse.pointer, "anyOf"), Expect: ExpectAccepted,
+		Expression: valid, Source: ConstraintSource{Pointer: rootUse.pointer, Keyword: "anyOf"},
+	})
+
+	invalid, err := invalidAnyOfExpression(rootUse)
+	if err != nil {
+		return nil, err
+	}
+
+	result.add(CasePlan{
+		Name: caseName("invalid anyOf", rootUse.pointer, "anyOf"), Expect: ExpectRejected,
+		Expression: invalid, Source: ConstraintSource{Pointer: rootUse.pointer, Keyword: "anyOf"},
+	})
+
+	legacyPlanner := &CasePlanner{Domains: planner.Domains}
+
+	legacyCases, err := legacyPlanner.planWithoutAnyOf(rootUse)
+	if err != nil {
+		return nil, err
+	}
+
+	planner.Constraints = legacyPlanner.Constraints
+
+	requirements, err := anyOfRequirementsExpression(rootUse)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, plannedCase := range legacyCases {
+		if plannedCase.Expect != ExpectRejected || strings.Contains(plannedCase.Source.Pointer, "/anyOf/") {
+			continue
+		}
+
+		failure := generationExpression{term: &generationTerm{
+			domain: plannedCase.Values, use: rootUse,
+			stringLanguages: []*stringLanguageOccurrence{plannedCase.stringLanguage},
+		}}
+
+		isolated, meetErr := meet(failure, requirements)
+		if meetErr != nil {
+			return nil, meetErr
+		}
+
+		plannedCase.Values = NoDomain
+		plannedCase.Expression = isolated
+		result.add(plannedCase)
 	}
 
 	return result.cases, nil

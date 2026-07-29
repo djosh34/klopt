@@ -78,6 +78,46 @@ paths:
 	}, validation.PatternOptions())
 }
 
+func TestCheckJSONRequestBodiesSupportsAnyOfValidAndInvalidProperties(t *testing.T) {
+	t.Parallel()
+
+	spec := requestBodySpec(`
+      type: object
+      required: [choice, values]
+      additionalProperties: false
+      properties:
+        choice:
+          $ref: '#/components/schemas/Choice'
+        values:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            anyOf:
+              - {type: boolean}
+              - {type: integer, minimum: 10}
+`)
+	spec = append(spec, []byte(`components:
+  schemas:
+    Choice:
+      type: string
+      minLength: 2
+      allOf: [{maxLength: 5}]
+      anyOf:
+        - {pattern: '^a'}
+        - {pattern: 'z$'}
+`)...)
+
+	adapter, err := newRuntimeValidationRequestBodyValidator(spec)
+	require.NoError(t, err)
+
+	CheckJSONRequestBodies(t, spec, func(operationID string, body []byte) error {
+		require.Equal(t, "checkThing", operationID)
+
+		return adapter.validator.Validate(body)
+	}, validation.PatternOptions())
+}
+
 // TestCheckJSONRequestBodiesRunsCompiledPartitionsAsValidJSON verifies compiled partitions and operation routing.
 func TestCheckJSONRequestBodiesRunsCompiledPartitionsAsValidJSON(t *testing.T) {
 	t.Parallel()

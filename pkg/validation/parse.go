@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
@@ -304,7 +305,7 @@ func schemaMembers(schema oas.LocatedSchema) (map[string]json.RawMessage, error)
 
 // rejectUnsupportedKeywords rejects behavior outside the runtime validator contract.
 func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessage) error {
-	for _, keyword := range []string{"oneOf", "anyOf", "not"} {
+	for _, keyword := range []string{"oneOf", "not"} {
 		if _, ok := members[keyword]; ok {
 			return fmt.Errorf("compile schema at %s/%s: unsupported keyword", pointer, keyword)
 		}
@@ -316,7 +317,7 @@ func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessag
 		"minLength": {}, "maxLength": {}, "pattern": {}, "format": {},
 		"minItems": {}, "maxItems": {}, "items": {}, "uniqueItems": {},
 		"minProperties": {}, "maxProperties": {}, "required": {}, "properties": {}, "additionalProperties": {},
-		"allOf": {}, "title": {}, "description": {}, "default": {}, "example": {}, "deprecated": {},
+		"allOf": {}, "anyOf": {}, "title": {}, "description": {}, "default": {}, "example": {}, "deprecated": {},
 		"readOnly": {}, "writeOnly": {}, "discriminator": {}, "xml": {}, "externalDocs": {},
 	}
 
@@ -369,7 +370,11 @@ func (compiler *schemaCompiler) compileKeywords(
 		return err
 	}
 
-	return compiler.compileAllOf(validation, schema, members)
+	if err := compiler.compileAllOf(validation, schema, members); err != nil {
+		return err
+	}
+
+	return compiler.compileAnyOf(validation, schema, members)
 }
 
 // compileDocumentation validates documentation-only field shapes.
@@ -1047,6 +1052,40 @@ func (compiler *schemaCompiler) compileAllOf(
 		}
 
 		validation.AllOfValidations = append(validation.AllOfValidations, parsed)
+	}
+
+	return nil
+}
+
+// compileAnyOf preserves alternative source order without flattening.
+func (compiler *schemaCompiler) compileAnyOf(
+	validation *Validation,
+	schema oas.LocatedSchema,
+	members map[string]json.RawMessage,
+) error {
+	raw, ok := members["anyOf"]
+	if !ok {
+		return nil
+	}
+
+	var children []json.RawMessage
+	if err := json.Unmarshal(raw, &children); err != nil || len(children) == 0 {
+		return keywordError(schema.Pointer, "anyOf", errors.New("must be a non-empty array"))
+	}
+
+	validation.AnyOfValidations = make([]*Validation, 0, len(children))
+	for index := range children {
+		child, err := compiler.source.Child(schema, "anyOf", strconv.Itoa(index))
+		if err != nil {
+			return keywordError(schema.Pointer, "anyOf", err)
+		}
+
+		parsed, err := compiler.compile(child)
+		if err != nil {
+			return err
+		}
+
+		validation.AnyOfValidations = append(validation.AnyOfValidations, parsed)
 	}
 
 	return nil

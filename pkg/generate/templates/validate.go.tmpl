@@ -97,6 +97,14 @@
 }{{end}}
 
 {{define "validation"}}&validation.Validation{
+{{template "validationFields" . -}}
+}{{end}}
+
+{{define "validationElement"}}{
+{{template "validationFields" . -}}
+}{{end}}
+
+{{define "validationFields" -}}
 	SchemaPointer: {{printf "%q" .SchemaPointer}},
 	{{if .BodyRequired}}BodyRequired: true,{{end}}
 
@@ -129,10 +137,16 @@
 
 	{{with .AllOfValidations}}
 	AllOfValidations: []*validation.Validation{
-		{{range .}}{{template "validation" .}},{{end}}
+		{{range .}}{{template "validationElement" .}},{{end}}
 	},
 	{{end}}
-}{{end}}
+
+	{{with .AnyOfValidations}}
+	AnyOfValidations: []*validation.Validation{
+		{{range .}}{{template "validationElement" .}},{{end}}
+	},
+	{{end}}
+{{end}}
 
 {{define "queryProperty"}}validation.QueryPropertyDefinition{
 	Name: {{printf "%q" .Name}},

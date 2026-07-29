@@ -164,6 +164,7 @@ type CasePlan struct {
 	Name           string
 	Expect         ExpectedResult
 	Values         DomainID
+	Expression     generationExpression
 	Source         ConstraintSource
 	Generator      *rapid.Generator[jsonvalue.Value]
 	stringLanguage *stringLanguageOccurrence
@@ -199,6 +200,7 @@ type ConstraintSource struct {
 
 // schemaUse preserves one exact schema occurrence separately from its canonical Domain.
 type schemaUse struct {
+	domains         *DomainRegistry
 	pointer         string
 	domain          DomainID
 	localDomain     DomainID
@@ -208,10 +210,32 @@ type schemaUse struct {
 	stringLanguages []stringLanguageOccurrence
 	atomic          map[string]DomainID
 	allOf           []*schemaUse
+	anyOf           []*schemaUse
 	items           *schemaUse
 	properties      []schemaPropertyUse
 	additional      *schemaUse
 	resolved        *schemaUse
+}
+
+// generationTerm is one constructive conjunction with optional child expressions.
+type generationTerm struct {
+	domain          DomainID
+	use             *schemaUse
+	stringLanguages []*stringLanguageOccurrence
+	items           *generationExpression
+	properties      map[string]generationExpression
+	additional      *generationExpression
+}
+
+// generationExpression is exactly one term or one grouped choice.
+type generationExpression struct {
+	term   *generationTerm
+	choice *generationChoice
+}
+
+// generationChoice preserves ordered immediate branch boundaries.
+type generationChoice struct {
+	branches []generationExpression
 }
 
 // stringLanguageOccurrence preserves one original pattern or format declaration with its source.

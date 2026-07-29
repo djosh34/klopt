@@ -727,7 +727,6 @@ func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
 		want       string
 	}{
 		{name: "oneOf", schema: `{"oneOf":[{}]}`, want: "oneOf"},
-		{name: "anyOf", schema: `{"anyOf":[{}]}`, want: "anyOf"},
 		{name: "not", schema: `{"not":{}}`, want: "not"},
 		{name: "externalRef", schema: `{"$ref":"other.yaml#/Thing"}`, want: "external reference"},
 		{name: "unsupportedPattern", schema: `{"pattern":"x(?=a)"}`, want: "unsupported"},

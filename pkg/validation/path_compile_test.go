@@ -106,6 +106,110 @@ func TestCompilePathDecoderSupportsSchemaLessJSONContent(t *testing.T) {
 	require.JSONEq(t, `{"id":null}`, string(actual))
 }
 
+func TestPathDecoderAnyOfUsesFirstCompleteSchemaStyleConversion(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		expected string
+	}{
+		{name: "integer first", schema: `{anyOf: [{type: integer}, {type: string}]}`, expected: `{"id":7}`},
+		{name: "string first", schema: `{anyOf: [{type: string}, {type: integer}]}`, expected: `{"id":"7"}`},
+		{
+			name:     "later branch after validation failure",
+			schema:   `{anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}`,
+			expected: `{"id":"7"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: `+test.schema+`}
+`)
+			require.NoError(t, err)
+
+			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestPathDecoderAnyOfConvertsNestedSchemaStyleValues(t *testing.T) {
+	t.Parallel()
+
+	choice := `{anyOf: [{type: integer}, {type: string}]}`
+	for _, test := range []struct {
+		name      string
+		parameter string
+		path      string
+		expected  string
+	}{
+		{
+			name: "array items", parameter: `{name: id, in: path, required: true, schema: {type: array, items: ` + choice + `}}`,
+			path: "/items/7,x", expected: `{"id":[7,"x"]}`,
+		},
+		{
+			name: "declared property", parameter: `{name: id, in: path, required: true, explode: true, schema: {type: object, additionalProperties: false, properties: {value: ` + choice + `}}}`,
+			path: "/items/value=7", expected: `{"id":{"value":7}}`,
+		},
+		{
+			name: "additional property", parameter: `{name: id, in: path, required: true, explode: true, schema: {type: object, additionalProperties: ` + choice + `}}`,
+			path: "/items/value=7", expected: `{"id":{"value":7}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, "\n      parameters:\n        - "+test.parameter+"\n")
+			require.NoError(t, err)
+			actual, err := decoder.DecodePathParams(&url.URL{Path: test.path})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestPathDecoderAnyOfPreservesNestedChoiceOrderAndShape(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		path     string
+		expected string
+	}{
+		{
+			name: "anyOf inside allOf", schema: `{allOf: [{anyOf: [{type: integer}, {type: string}]}]}`,
+			path: "/items/7", expected: `{"id":7}`,
+		},
+		{
+			name: "nested anyOf", schema: `{anyOf: [{anyOf: [{type: integer}, {type: string}]}, {type: boolean}]}`,
+			path: "/items/7", expected: `{"id":7}`,
+		},
+		{
+			name: "array alternatives", schema: `{anyOf: [{type: array, items: {type: integer}}, {type: array, items: {type: string}}]}`,
+			path: "/items/7,8", expected: `{"id":[7,8]}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: `+test.schema+`}
+`)
+			require.NoError(t, err)
+			actual, err := decoder.DecodePathParams(&url.URL{Path: test.path})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
 func TestCompilePathDecoderLeavesJSONContentNullToValidation(t *testing.T) {
 	t.Parallel()
 

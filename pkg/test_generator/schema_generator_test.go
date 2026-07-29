@@ -395,20 +395,18 @@ func TestGeneratedSchemaConstructibilityBacktest(t *testing.T) {
 	wg := sync.WaitGroup{}
 
 	for _, seed := range seeds {
-
 		wg.Go(func() {
 			for check := 0; check < 100; check++ {
 				candidate := generator.Example(seed + check*1_000_003)[0]
 				compiled, err := compileGeneratedSchema(t, candidate)
+
 				total.Add(1)
 
 				if err == nil && len(compiled.Cases) != 0 {
 					constructible.Add(1)
 				}
 			}
-
 		})
-
 	}
 
 	wg.Wait()
@@ -417,9 +415,9 @@ func TestGeneratedSchemaConstructibilityBacktest(t *testing.T) {
 	require.GreaterOrEqual(t, int(constructible.Load()), 10)
 	t.Logf(
 		"constructibility aggregate: constructible=%d unconstructible=%d total=%d rate=%.2f%%",
-		constructible,
+		constructible.Load(),
 		total.Load()-constructible.Load(),
-		total,
+		total.Load(),
 		float64(constructible.Load())*100/float64(total.Load()),
 	)
 }

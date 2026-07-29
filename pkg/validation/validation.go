@@ -34,6 +34,8 @@ type Validation struct {
 	ObjectValidation ObjectValidation
 
 	AllOfValidations []*Validation
+	// AnyOfValidations are ordered alternative Schema Object graphs.
+	AnyOfValidations []*Validation
 }
 
 // KindValidation constrains the JSON kind. An empty Type accepts every kind.

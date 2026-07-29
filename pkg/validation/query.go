@@ -38,23 +38,27 @@ type QueryDecoder struct {
 }
 
 type queryParameter struct {
-	name           string
-	wire           wireKind
-	separator      string
-	required       bool
-	allowEmpty     bool
-	validation     *Validation
-	defaultValue   jsontext.Value
-	scalarType     string
-	dynamicType    string
-	properties     []queryProperty
-	propertyByName map[string]int
+	name              string
+	wire              wireKind
+	separator         string
+	required          bool
+	allowEmpty        bool
+	validation        *Validation
+	defaultValue      jsontext.Value
+	scalarType        string
+	dynamicType       string
+	itemValidation    *Validation
+	dynamicValidation *Validation
+	properties        []queryProperty
+	propertyByName    map[string]int
 }
 
 type queryProperty struct {
-	name       string
-	scalarType string
-	array      bool
+	name           string
+	scalarType     string
+	array          bool
+	validation     *Validation
+	itemValidation *Validation
 }
 
 type queryClaim struct {
@@ -145,6 +149,8 @@ func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDeco
 			}
 			parameter.propertyByName[property.Name] = propertyIndex
 		}
+
+		attachQueryConversionValidations(&parameter)
 
 		parameters[index] = parameter
 	}
@@ -444,9 +450,9 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		return parameter, nil
 	}
 
-	directType := compiledValidationType(parameter.validation)
-	if directType == "" {
-		directType = "string"
+	directType, err := compiledStyleType(parameter.validation)
+	if err != nil {
+		return queryParameter{}, fmt.Errorf("parameter %q: %w", name, err)
 	}
 
 	style := "form"
@@ -480,6 +486,7 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		}
 
 		parameter.scalarType = string(arrayScalarType)
+		parameter.itemValidation = conjunctiveValidation(compiledArrayItems(parameter.validation)...)
 
 		switch {
 		case style == "form" && explode:
@@ -528,6 +535,8 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		if err != nil {
 			return queryParameter{}, fmt.Errorf("parameter %q additionalProperties: %w", name, err)
 		}
+
+		parameter.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(parameter.validation)...)
 	default:
 		return queryParameter{}, fmt.Errorf("parameter %q has unsupported direct type %q", name, directType)
 	}
@@ -674,7 +683,10 @@ func compileQueryProperties(
 			typeName = "string"
 		}
 
-		property := queryProperty{name: name, scalarType: typeName}
+		property := queryProperty{
+			name: name, scalarType: typeName,
+			validation: conjunctiveValidation(propertyValidations...),
+		}
 		if typeName == "array" && allowPrimitiveArrays {
 			items := make([]*Validation, 0)
 			for _, propertyValidation := range propertyValidations {
@@ -689,6 +701,7 @@ func compileQueryProperties(
 			}
 
 			property.array = true
+			property.itemValidation = conjunctiveValidation(items...)
 		} else if !isScalarType(typeName) {
 			return nil, nil, fmt.Errorf("style-based object property %q must have a direct primitive type", name)
 		}
@@ -698,6 +711,32 @@ func compileQueryProperties(
 	}
 
 	return properties, byName, nil
+}
+
+func attachQueryConversionValidations(parameter *queryParameter) {
+	if parameter == nil || parameter.validation == nil {
+		return
+	}
+
+	parameter.itemValidation = conjunctiveValidation(compiledArrayItems(parameter.validation)...)
+	parameter.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(parameter.validation)...)
+
+	byName := make(map[string][]*Validation)
+	collectCompiledObjectProperties(parameter.validation, byName)
+
+	for index := range parameter.properties {
+		property := &parameter.properties[index]
+
+		property.validation = conjunctiveValidation(byName[property.name]...)
+		if property.array {
+			var items []*Validation
+			for _, validation := range byName[property.name] {
+				collectCompiledArrayItems(validation, &items)
+			}
+
+			property.itemValidation = conjunctiveValidation(items...)
+		}
+	}
 }
 
 func locatedRawChild(parent oas.LocatedSchema, raw json.RawMessage, tokens ...string) oas.LocatedSchema {

@@ -260,7 +260,7 @@ func TestCompilerDistinguishesMalformedUnsupportedUnconstructibleAndEmptyAllOf(t
 		code   string
 	}{
 		"malformed":   {schema: `allOf: []`, code: "malformed"},
-		"unsupported": {schema: `allOf: [{anyOf: [{type: string}]}]`, code: "unsupported"},
+		"unsupported": {schema: `allOf: [{oneOf: [{type: string}]}]`, code: "unsupported"},
 	}
 	for name, testCase := range tests {
 		t.Run(name, func(t *testing.T) {

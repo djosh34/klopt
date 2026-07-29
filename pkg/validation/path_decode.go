@@ -153,9 +153,20 @@ func (parameter *pathParameter) decodePathPrimitive(raw string) (jsontext.Value,
 		return nil, err
 	}
 
-	return encodePathScalar(parameter.scalarType, decoded)
+	return convertAnyOfValue(parameter.validation, func(candidate *Validation) (jsontext.Value, error) {
+		typeName := string(parameter.scalarType)
+		if containsAnyOf(parameter.validation) {
+			candidateType := compiledValidationType(candidate)
+			if candidateType != "" {
+				typeName = candidateType
+			}
+		}
+
+		return encodePathScalar(styleScalarType(typeName), decoded)
+	})
 }
 
+//nolint:cyclop // The three path array styles and ordered anyOf conversion form one finite dispatch.
 func (parameter *pathParameter) decodePathArray(raw string) (jsontext.Value, error) {
 	var rawValues []string
 
@@ -193,7 +204,22 @@ func (parameter *pathParameter) decodePathArray(raw string) (jsontext.Value, err
 		return nil, fmt.Errorf("unknown compiled array wire %d", parameter.wire)
 	}
 
-	return encodePathArray(parameter.scalarType, rawValues)
+	return convertAnyOfValue(parameter.validation, func(candidate *Validation) (jsontext.Value, error) {
+		items := parameter.itemValidation
+		if containsAnyOf(parameter.validation) && candidate != nil {
+			items = conjunctiveValidation(compiledArrayItems(candidate)...)
+		}
+
+		typeName := parameter.scalarType
+		if containsAnyOf(parameter.validation) && items != nil {
+			compiledType := compiledValidationType(items)
+			if compiledType != "" {
+				typeName = styleScalarType(compiledType)
+			}
+		}
+
+		return encodePathArray(typeName, items, rawValues)
+	})
 }
 
 //nolint:cyclop,nestif // The six object style/explode grammars form one finite dispatch.
@@ -345,7 +371,11 @@ func splitExplodedPathObject(raw string, separator string) ([][2]string, error) 
 	return pairs, nil
 }
 
-func encodePathArray(typeName styleScalarType, rawValues []string) (jsontext.Value, error) {
+func encodePathArray(
+	typeName styleScalarType,
+	validation *Validation,
+	rawValues []string,
+) (jsontext.Value, error) {
 	var output bytes.Buffer
 
 	encoder := jsontext.NewEncoder(&output)
@@ -359,7 +389,7 @@ func encodePathArray(typeName styleScalarType, rawValues []string) (jsontext.Val
 			return nil, err
 		}
 
-		value, err := encodePathScalar(typeName, decoded)
+		value, err := encodePathScalarWithValidation(typeName, validation, decoded)
 		if err != nil {
 			return nil, err
 		}
@@ -408,13 +438,16 @@ func (parameter *pathParameter) encodePathObjectValue(rawPairs [][2]string) (jso
 		}
 
 		typeName := parameter.dynamicType
+
+		valueValidation := parameter.dynamicValidation
 		if propertyIndex, declared := parameter.propertyByName[name]; declared {
 			typeName = parameter.properties[propertyIndex].scalarType
+			valueValidation = parameter.properties[propertyIndex].validation
 		} else if typeName == "" {
 			typeName = "string"
 		}
 
-		encoded, err := encodePathScalar(typeName, value)
+		encoded, err := encodePathScalarWithValidation(typeName, valueValidation, value)
 		if err != nil {
 			return nil, fmt.Errorf("property %q: %w", name, err)
 		}
@@ -457,6 +490,29 @@ func encodePathScalar(typeName styleScalarType, value string) (jsontext.Value, e
 	}
 
 	return append(jsontext.Value(nil), bytes.TrimSpace(output.Bytes())...), nil
+}
+
+func encodePathScalarWithValidation(
+	typeName styleScalarType,
+	validation *Validation,
+	value string,
+) (jsontext.Value, error) {
+	if validation == nil {
+		return encodePathScalar(typeName, value)
+	}
+
+	return convertAnyOfValue(validation, func(candidate *Validation) (jsontext.Value, error) {
+		candidateType := string(typeName)
+
+		if containsAnyOf(validation) {
+			compiledType := compiledValidationType(candidate)
+			if compiledType != "" {
+				candidateType = compiledType
+			}
+		}
+
+		return encodePathScalar(styleScalarType(candidateType), value)
+	})
 }
 
 func encodePathObject(parameters []pathParameter, values []jsontext.Value) (json.RawMessage, error) {

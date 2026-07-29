@@ -43,19 +43,22 @@ const (
 type styleScalarType string
 
 type pathParameter struct {
-	name           string
-	wire           pathWireKind
-	explode        bool
-	validation     *Validation
-	scalarType     styleScalarType
-	dynamicType    styleScalarType
-	properties     []pathProperty
-	propertyByName map[string]int
+	name              string
+	wire              pathWireKind
+	explode           bool
+	validation        *Validation
+	scalarType        styleScalarType
+	dynamicType       styleScalarType
+	itemValidation    *Validation
+	dynamicValidation *Validation
+	properties        []pathProperty
+	propertyByName    map[string]int
 }
 
 type pathProperty struct {
 	name       string
 	scalarType styleScalarType
+	validation *Validation
 }
 
 func compilePathDecoder(
@@ -204,11 +207,18 @@ func compileSchemaPathMetadata(
 
 	var err error
 
-	switch typeName := compiledValidationType(validation); typeName {
+	typeName, err := compiledStyleType(validation)
+	if err != nil {
+		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, err)
+	}
+
+	switch typeName {
 	case "array":
 		parameter.wire = styleOffset + pathWireKind(pathShapeArray)
 
 		parameter.scalarType, err = compiledArrayScalarType(validation)
+		parameter.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
+
 		if err != nil {
 			return pathParameter{}, fmt.Errorf("path parameter %q array items: %w", name, err)
 		}
@@ -224,6 +234,8 @@ func compileSchemaPathMetadata(
 		if err != nil {
 			return pathParameter{}, fmt.Errorf("path parameter %q additionalProperties: %w", name, err)
 		}
+
+		parameter.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
 	default:
 		parameter.wire = styleOffset + pathWireKind(pathShapePrimitive)
 
@@ -459,7 +471,9 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 		}
 
 		propertyByName[name] = len(properties)
-		properties = append(properties, pathProperty{name: name, scalarType: typeName})
+		properties = append(properties, pathProperty{
+			name: name, scalarType: typeName, validation: conjunctiveValidation(byName[name]...),
+		})
 	}
 
 	return properties, propertyByName, nil
@@ -536,6 +550,122 @@ func compiledValidationType(validations ...*Validation) string {
 	}
 
 	return intersectQuerySchemaTypes(types)
+}
+
+func conjunctiveValidation(validations ...*Validation) *Validation {
+	if len(validations) == 0 {
+		return nil
+	}
+
+	if len(validations) == 1 {
+		return validations[0]
+	}
+
+	return &Validation{
+		SchemaPointer:    validations[0].SchemaPointer,
+		AllOfValidations: append([]*Validation(nil), validations...),
+		ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true},
+	}
+}
+
+func compiledStyleType(validation *Validation) (string, error) {
+	alternatives := conversionAlternatives(validation)
+	types := make([]string, 0, len(alternatives))
+	shape := ""
+
+	for _, alternative := range alternatives {
+		typeName := compiledValidationType(alternative)
+		if typeName == "" {
+			typeName = "string"
+		}
+
+		candidateShape := "primitive"
+		if typeName == "array" || typeName == "object" {
+			candidateShape = typeName
+		}
+
+		if shape != "" && candidateShape != shape {
+			return "", fmt.Errorf(
+				"schema at %s has unrepresentable anyOf wire shape %q beside %q",
+				alternative.SchemaPointer, candidateShape, shape,
+			)
+		}
+
+		shape = candidateShape
+
+		types = append(types, typeName)
+	}
+
+	if shape == "array" || shape == "object" {
+		return shape, nil
+	}
+
+	typeName := intersectQuerySchemaTypes(types)
+	if typeName == "" {
+		return "string", nil
+	}
+
+	return typeName, nil
+}
+
+func conversionAlternatives(validation *Validation) []*Validation {
+	if validation == nil || !containsAnyOf(validation) {
+		return []*Validation{validation}
+	}
+
+	local := *validation
+	local.AllOfValidations = nil
+	local.AnyOfValidations = nil
+	base := []*Validation{&local}
+
+	for _, child := range validation.AllOfValidations {
+		childAlternatives := conversionAlternatives(child)
+
+		next := make([]*Validation, 0, len(base)*len(childAlternatives))
+		for _, current := range base {
+			for _, childAlternative := range childAlternatives {
+				next = append(next, conjunctiveValidation(current, childAlternative))
+			}
+		}
+
+		base = next
+	}
+
+	if len(validation.AnyOfValidations) == 0 {
+		return base
+	}
+
+	result := make([]*Validation, 0)
+
+	for _, branch := range validation.AnyOfValidations {
+		for _, branchAlternative := range conversionAlternatives(branch) {
+			for _, current := range base {
+				combined := conjunctiveValidation(current, branchAlternative)
+				combined.SchemaPointer = branchAlternative.SchemaPointer
+				result = append(result, combined)
+			}
+		}
+	}
+
+	return result
+}
+
+func containsAnyOf(validation *Validation) bool {
+	if validation == nil {
+		return false
+	}
+
+	if len(validation.AnyOfValidations) != 0 {
+		return true
+	}
+
+	for _, child := range validation.AllOfValidations {
+		if containsAnyOf(child) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func collectCompiledValidationTypes(validation *Validation, types *[]string) {
@@ -709,11 +839,29 @@ func pathParameterFromGenerated(compiled PathParameterDefinition) (pathParameter
 		parameter.propertyByName[property.Name] = index
 	}
 
+	attachPathConversionValidations(&parameter)
+
 	if err := validatePathParameterMetadata(parameter); err != nil {
 		return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
 	}
 
 	return parameter, nil
+}
+
+func attachPathConversionValidations(parameter *pathParameter) {
+	if parameter == nil || parameter.validation == nil {
+		return
+	}
+
+	parameter.itemValidation = conjunctiveValidation(compiledArrayItems(parameter.validation)...)
+	parameter.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(parameter.validation)...)
+
+	byName := make(map[string][]*Validation)
+	collectCompiledObjectProperties(parameter.validation, byName)
+
+	for index := range parameter.properties {
+		parameter.properties[index].validation = conjunctiveValidation(byName[parameter.properties[index].name]...)
+	}
 }
 
 //nolint:cyclop,gocognit // The finite wire/shape metadata table is clearest at one invariant boundary.

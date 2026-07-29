@@ -13,6 +13,7 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 	}
 
 	result := &schemaUse{
+		domains:     compiler.Domains,
 		pointer:     left.pointer,
 		domain:      domain,
 		localDomain: left.localDomain,
@@ -25,6 +26,7 @@ func (compiler *Compiler) meet(left *schemaUse, right *schemaUse) (*schemaUse, e
 		),
 		atomic:   left.atomic,
 		allOf:    append(append([]*schemaUse(nil), left.allOf...), right),
+		anyOf:    append([]*schemaUse(nil), left.anyOf...),
 		resolved: left.resolved,
 	}
 
@@ -569,6 +571,8 @@ func (use *schemaUse) property(name string) *schemaUse {
 }
 
 // find returns the exact occurrence at pointer without using semantic Domain identity.
+//
+//nolint:cyclop // Every recursive schema edge is searched explicitly.
 func (use *schemaUse) find(pointer string) *schemaUse {
 	if use == nil {
 		return nil
@@ -583,6 +587,12 @@ func (use *schemaUse) find(pointer string) *schemaUse {
 	}
 
 	for _, member := range use.allOf {
+		if found := member.find(pointer); found != nil {
+			return found
+		}
+	}
+
+	for _, member := range use.anyOf {
 		if found := member.find(pointer); found != nil {
 			return found
 		}

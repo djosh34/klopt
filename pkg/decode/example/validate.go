@@ -13,12 +13,11 @@ var allOfObject = validation.RequestValidation{
 		BodyRequired:  true,
 
 		ObjectValidation: validation.ObjectValidation{
-
 			AdditionalPropertiesAllowed: true,
 		},
 
 		AllOfValidations: []*validation.Validation{
-			&validation.Validation{
+			{
 				SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/0",
 
 				KindValidation: validation.KindValidation{
@@ -26,7 +25,6 @@ var allOfObject = validation.RequestValidation{
 				},
 
 				ObjectValidation: validation.ObjectValidation{
-
 					Required: []string{"first"},
 
 					Properties: []validation.PropertyValidation{
@@ -40,7 +38,6 @@ var allOfObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -49,7 +46,7 @@ var allOfObject = validation.RequestValidation{
 
 					AdditionalPropertiesAllowed: true,
 				},
-			}, &validation.Validation{
+			}, {
 				SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/1",
 
 				KindValidation: validation.KindValidation{
@@ -57,7 +54,6 @@ var allOfObject = validation.RequestValidation{
 				},
 
 				ObjectValidation: validation.ObjectValidation{
-
 					Required: []string{"second"},
 
 					Properties: []validation.PropertyValidation{
@@ -71,7 +67,6 @@ var allOfObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -80,7 +75,7 @@ var allOfObject = validation.RequestValidation{
 
 					AdditionalPropertiesAllowed: true,
 				},
-			}, &validation.Validation{
+			}, {
 				SchemaPointer: "#/paths/~1all-of-object/post/requestBody/content/application~1json/schema/allOf/2",
 
 				KindValidation: validation.KindValidation{
@@ -88,7 +83,6 @@ var allOfObject = validation.RequestValidation{
 				},
 
 				ObjectValidation: validation.ObjectValidation{
-
 					Required: []string{"last"},
 
 					Properties: []validation.PropertyValidation{
@@ -102,7 +96,6 @@ var allOfObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -126,7 +119,6 @@ var arrayNotNullable = validation.RequestValidation{
 		},
 
 		ArrayValidation: validation.ArrayValidation{
-
 			Items: &validation.Validation{
 				SchemaPointer: "#/paths/~1array-not-nullable/post/requestBody/content/application~1json/schema/items",
 
@@ -135,14 +127,12 @@ var arrayNotNullable = validation.RequestValidation{
 				},
 
 				ObjectValidation: validation.ObjectValidation{
-
 					AdditionalPropertiesAllowed: true,
 				},
 			},
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			AdditionalPropertiesAllowed: true,
 		},
 	},
@@ -159,7 +149,6 @@ var arrayNullable = validation.RequestValidation{
 		},
 
 		ArrayValidation: validation.ArrayValidation{
-
 			Items: &validation.Validation{
 				SchemaPointer: "#/paths/~1array-nullable/post/requestBody/content/application~1json/schema/items",
 
@@ -168,14 +157,12 @@ var arrayNullable = validation.RequestValidation{
 				},
 
 				ObjectValidation: validation.ObjectValidation{
-
 					AdditionalPropertiesAllowed: true,
 				},
 			},
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			AdditionalPropertiesAllowed: true,
 		},
 	},
@@ -191,7 +178,6 @@ var compositeObject = validation.RequestValidation{
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			Required: []string{"arrayNotNullableItemsNotNullable", "arrayNotNullableItemsNullable", "arrayNullableItemsNotNullable", "arrayNullableItemsNullable", "boolNotNullable", "boolNullable", "numberNotNullable", "numberNullable", "objectAdditionalPropertiesImplicit", "objectAdditionalPropertiesSchema", "objectAdditionalPropertiesTrue", "stringFormatNotNullable", "stringFormatNullable"},
 
 			Properties: []validation.PropertyValidation{
@@ -205,7 +191,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ArrayValidation: validation.ArrayValidation{
-
 							Items: &validation.Validation{
 								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNotNullable/items",
 
@@ -214,14 +199,12 @@ var compositeObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -235,7 +218,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ArrayValidation: validation.ArrayValidation{
-
 							Items: &validation.Validation{
 								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNotNullableItemsNullable/items",
 
@@ -245,14 +227,12 @@ var compositeObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -267,7 +247,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ArrayValidation: validation.ArrayValidation{
-
 							Items: &validation.Validation{
 								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNotNullable/items",
 
@@ -276,14 +255,12 @@ var compositeObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -298,7 +275,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ArrayValidation: validation.ArrayValidation{
-
 							Items: &validation.Validation{
 								SchemaPointer: "#/paths/~1composite-object/post/requestBody/content/application~1json/schema/properties/arrayNullableItemsNullable/items",
 
@@ -308,14 +284,12 @@ var compositeObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -329,7 +303,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -344,7 +317,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -358,7 +330,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -373,7 +344,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -387,7 +357,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Properties: []validation.PropertyValidation{
 								{
 									Name: "known",
@@ -399,7 +368,6 @@ var compositeObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -419,7 +387,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Properties: []validation.PropertyValidation{
 								{
 									Name: "known",
@@ -431,7 +398,6 @@ var compositeObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -448,7 +414,6 @@ var compositeObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -464,7 +429,6 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Properties: []validation.PropertyValidation{
 								{
 									Name: "known",
@@ -476,7 +440,6 @@ var compositeObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -496,14 +459,12 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						StringValidation: validation.StringValidation{
-
 							Format: "date-time",
 
 							CompiledFormat: validation.MustCompileStringFormat("date-time"),
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -518,14 +479,12 @@ var compositeObject = validation.RequestValidation{
 						},
 
 						StringValidation: validation.StringValidation{
-
 							Format: "date-time",
 
 							CompiledFormat: validation.MustCompileStringFormat("date-time"),
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -546,7 +505,6 @@ var nullableObjectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			Required: []string{"requiredNotNullableString", "requiredNullableString"},
 
 			Properties: []validation.PropertyValidation{
@@ -560,7 +518,6 @@ var nullableObjectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -575,7 +532,6 @@ var nullableObjectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -589,7 +545,6 @@ var nullableObjectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -604,7 +559,6 @@ var nullableObjectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -624,7 +578,6 @@ var objectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			Required: []string{"requiredNotNullableString", "requiredNullableString"},
 
 			Properties: []validation.PropertyValidation{
@@ -638,7 +591,6 @@ var objectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -653,7 +605,6 @@ var objectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -667,7 +618,6 @@ var objectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -682,7 +632,6 @@ var objectKeysAdditionalPropertiesFalse = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -702,7 +651,6 @@ var optionalArrayNullable = validation.RequestValidation{
 		},
 
 		ArrayValidation: validation.ArrayValidation{
-
 			Items: &validation.Validation{
 				SchemaPointer: "#/paths/~1optional-array-nullable/post/requestBody/content/application~1json/schema/items",
 
@@ -711,14 +659,12 @@ var optionalArrayNullable = validation.RequestValidation{
 				},
 
 				ObjectValidation: validation.ObjectValidation{
-
 					AdditionalPropertiesAllowed: true,
 				},
 			},
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			AdditionalPropertiesAllowed: true,
 		},
 	},
@@ -734,7 +680,6 @@ var refObject = validation.RequestValidation{
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			Required: []string{"refRequiredString"},
 
 			Properties: []validation.PropertyValidation{
@@ -749,7 +694,6 @@ var refObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -763,7 +707,6 @@ var refObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 					},
@@ -779,21 +722,19 @@ var refStressObject = validation.RequestValidation{
 		BodyRequired:  true,
 
 		ObjectValidation: validation.ObjectValidation{
-
 			AdditionalPropertiesAllowed: true,
 		},
 
 		AllOfValidations: []*validation.Validation{
-			&validation.Validation{
+			{
 				SchemaPointer: "#/components/schemas/RefStressFirstAllOf",
 
 				ObjectValidation: validation.ObjectValidation{
-
 					AdditionalPropertiesAllowed: true,
 				},
 
 				AllOfValidations: []*validation.Validation{
-					&validation.Validation{
+					{
 						SchemaPointer: "#/components/schemas/RefStressFinal",
 
 						KindValidation: validation.KindValidation{
@@ -801,7 +742,6 @@ var refStressObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Required: []string{"finalCode", "sharedName"},
 
 							Properties: []validation.PropertyValidation{
@@ -815,7 +755,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -830,7 +769,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sameName"},
 
 											Properties: []validation.PropertyValidation{
@@ -844,7 +782,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -859,7 +796,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -880,7 +816,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -894,7 +829,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -903,25 +837,23 @@ var refStressObject = validation.RequestValidation{
 
 							AdditionalPropertiesAllowed: true,
 						},
-					}, &validation.Validation{
+					}, {
 						SchemaPointer: "#/components/schemas/RefStressViaMiddle",
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 
 						AllOfValidations: []*validation.Validation{
-							&validation.Validation{
+							{
 								SchemaPointer: "#/components/schemas/RefStressMiddleAllOf",
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 
 								AllOfValidations: []*validation.Validation{
-									&validation.Validation{
+									{
 										SchemaPointer: "#/components/schemas/RefStressFinal",
 
 										KindValidation: validation.KindValidation{
@@ -929,7 +861,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"finalCode", "sharedName"},
 
 											Properties: []validation.PropertyValidation{
@@ -943,7 +874,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -958,7 +888,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -972,7 +901,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -987,7 +915,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -1008,7 +935,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -1022,7 +948,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -1031,7 +956,7 @@ var refStressObject = validation.RequestValidation{
 
 											AdditionalPropertiesAllowed: true,
 										},
-									}, &validation.Validation{
+									}, {
 										SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1",
 
 										KindValidation: validation.KindValidation{
@@ -1040,7 +965,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sharedName"},
 
 											Properties: []validation.PropertyValidation{
@@ -1054,7 +978,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -1068,7 +991,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -1079,7 +1001,7 @@ var refStressObject = validation.RequestValidation{
 										},
 									},
 								},
-							}, &validation.Validation{
+							}, {
 								SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1",
 
 								KindValidation: validation.KindValidation{
@@ -1087,7 +1009,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									Required: []string{"middleFlag", "sharedName"},
 
 									Properties: []validation.PropertyValidation{
@@ -1101,7 +1022,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -1111,12 +1031,11 @@ var refStressObject = validation.RequestValidation{
 												SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 
 												AllOfValidations: []*validation.Validation{
-													&validation.Validation{
+													{
 														SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
 														KindValidation: validation.KindValidation{
@@ -1125,7 +1044,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -1139,7 +1057,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -1154,7 +1071,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -1163,7 +1079,7 @@ var refStressObject = validation.RequestValidation{
 
 															AdditionalPropertiesAllowed: true,
 														},
-													}, &validation.Validation{
+													}, {
 														SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
 
 														KindValidation: validation.KindValidation{
@@ -1171,7 +1087,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -1185,7 +1100,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -1199,7 +1113,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -1208,7 +1121,7 @@ var refStressObject = validation.RequestValidation{
 
 															AdditionalPropertiesAllowed: true,
 														},
-													}, &validation.Validation{
+													}, {
 														SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
 
 														KindValidation: validation.KindValidation{
@@ -1216,7 +1129,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName", "sealed"},
 
 															Properties: []validation.PropertyValidation{
@@ -1230,7 +1142,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -1244,7 +1155,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			Required: []string{"locked"},
 
 																			Properties: []validation.PropertyValidation{
@@ -1258,7 +1168,6 @@ var refStressObject = validation.RequestValidation{
 																						},
 
 																						ObjectValidation: validation.ObjectValidation{
-
 																							AdditionalPropertiesAllowed: true,
 																						},
 																					},
@@ -1285,7 +1194,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -1296,7 +1204,7 @@ var refStressObject = validation.RequestValidation{
 								},
 							},
 						},
-					}, &validation.Validation{
+					}, {
 						SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2",
 
 						KindValidation: validation.KindValidation{
@@ -1304,7 +1212,6 @@ var refStressObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Required: []string{"final", "nested", "nullableRequired"},
 
 							Properties: []validation.PropertyValidation{
@@ -1318,7 +1225,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"finalCode", "sharedName"},
 
 											Properties: []validation.PropertyValidation{
@@ -1332,7 +1238,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -1347,7 +1252,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -1361,7 +1265,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -1376,7 +1279,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -1397,7 +1299,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -1411,7 +1312,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -1427,12 +1327,11 @@ var refStressObject = validation.RequestValidation{
 										SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 
 										AllOfValidations: []*validation.Validation{
-											&validation.Validation{
+											{
 												SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
 												KindValidation: validation.KindValidation{
@@ -1441,7 +1340,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName"},
 
 													Properties: []validation.PropertyValidation{
@@ -1455,7 +1353,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1470,7 +1367,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1479,7 +1375,7 @@ var refStressObject = validation.RequestValidation{
 
 													AdditionalPropertiesAllowed: true,
 												},
-											}, &validation.Validation{
+											}, {
 												SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
 
 												KindValidation: validation.KindValidation{
@@ -1487,7 +1383,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName"},
 
 													Properties: []validation.PropertyValidation{
@@ -1501,7 +1396,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1515,7 +1409,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1524,7 +1417,7 @@ var refStressObject = validation.RequestValidation{
 
 													AdditionalPropertiesAllowed: true,
 												},
-											}, &validation.Validation{
+											}, {
 												SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
 
 												KindValidation: validation.KindValidation{
@@ -1532,7 +1425,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName", "sealed"},
 
 													Properties: []validation.PropertyValidation{
@@ -1546,7 +1438,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1560,7 +1451,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	Required: []string{"locked"},
 
 																	Properties: []validation.PropertyValidation{
@@ -1574,7 +1464,6 @@ var refStressObject = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -1601,7 +1490,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -1616,7 +1504,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -1631,7 +1518,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -1642,25 +1528,23 @@ var refStressObject = validation.RequestValidation{
 						},
 					},
 				},
-			}, &validation.Validation{
+			}, {
 				SchemaPointer: "#/components/schemas/RefStressSecondAllOf",
 
 				ObjectValidation: validation.ObjectValidation{
-
 					AdditionalPropertiesAllowed: true,
 				},
 
 				AllOfValidations: []*validation.Validation{
-					&validation.Validation{
+					{
 						SchemaPointer: "#/components/schemas/RefStressOtherMiddle",
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 
 						AllOfValidations: []*validation.Validation{
-							&validation.Validation{
+							{
 								SchemaPointer: "#/components/schemas/RefStressFinal",
 
 								KindValidation: validation.KindValidation{
@@ -1668,7 +1552,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									Required: []string{"finalCode", "sharedName"},
 
 									Properties: []validation.PropertyValidation{
@@ -1682,7 +1565,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -1697,7 +1579,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName"},
 
 													Properties: []validation.PropertyValidation{
@@ -1711,7 +1592,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1726,7 +1606,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1747,7 +1626,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -1761,7 +1639,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -1770,7 +1647,7 @@ var refStressObject = validation.RequestValidation{
 
 									AdditionalPropertiesAllowed: true,
 								},
-							}, &validation.Validation{
+							}, {
 								SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1",
 
 								KindValidation: validation.KindValidation{
@@ -1778,7 +1655,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									Required: []string{"metadata", "rootFlag"},
 
 									Properties: []validation.PropertyValidation{
@@ -1792,7 +1668,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"finalCode", "sharedName"},
 
 													Properties: []validation.PropertyValidation{
@@ -1806,7 +1681,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1821,7 +1695,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	Required: []string{"sameName"},
 
 																	Properties: []validation.PropertyValidation{
@@ -1835,7 +1708,6 @@ var refStressObject = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -1850,7 +1722,6 @@ var refStressObject = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -1871,7 +1742,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1885,7 +1755,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -1905,7 +1774,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 
 													AdditionalPropertiesValidation: &validation.Validation{
@@ -1916,7 +1784,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -1932,7 +1799,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -1943,7 +1809,7 @@ var refStressObject = validation.RequestValidation{
 								},
 							},
 						},
-					}, &validation.Validation{
+					}, {
 						SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1",
 
 						KindValidation: validation.KindValidation{
@@ -1951,7 +1817,6 @@ var refStressObject = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Required: []string{"count", "finals", "metadata", "rootFlag"},
 
 							Properties: []validation.PropertyValidation{
@@ -1965,7 +1830,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -1979,7 +1843,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ArrayValidation: validation.ArrayValidation{
-
 											Items: &validation.Validation{
 												SchemaPointer: "#/components/schemas/RefStressFinal",
 
@@ -1988,7 +1851,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"finalCode", "sharedName"},
 
 													Properties: []validation.PropertyValidation{
@@ -2002,7 +1864,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -2017,7 +1878,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	Required: []string{"sameName"},
 
 																	Properties: []validation.PropertyValidation{
@@ -2031,7 +1891,6 @@ var refStressObject = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -2046,7 +1905,6 @@ var refStressObject = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -2067,7 +1925,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -2081,7 +1938,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -2094,7 +1950,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -2108,7 +1963,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 
 											AdditionalPropertiesValidation: &validation.Validation{
@@ -2119,7 +1973,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -2135,7 +1988,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -2149,7 +2001,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -2160,7 +2011,7 @@ var refStressObject = validation.RequestValidation{
 						},
 					},
 				},
-			}, &validation.Validation{
+			}, {
 				SchemaPointer: "#/paths/~1ref-stress-object/post/requestBody/content/application~1json/schema/allOf/2",
 
 				KindValidation: validation.KindValidation{
@@ -2168,7 +2019,6 @@ var refStressObject = validation.RequestValidation{
 				},
 
 				ObjectValidation: validation.ObjectValidation{
-
 					Required: []string{"count", "final", "finalCode", "finals", "metadata", "middleFlag", "nested", "nullableRequired", "rootFlag", "sharedName"},
 
 					Properties: []validation.PropertyValidation{
@@ -2182,7 +2032,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2196,7 +2045,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									Required: []string{"finalCode", "sharedName"},
 
 									Properties: []validation.PropertyValidation{
@@ -2210,7 +2058,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -2225,7 +2072,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName"},
 
 													Properties: []validation.PropertyValidation{
@@ -2239,7 +2085,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -2254,7 +2099,6 @@ var refStressObject = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -2275,7 +2119,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -2289,7 +2132,6 @@ var refStressObject = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -2309,7 +2151,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2323,7 +2164,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ArrayValidation: validation.ArrayValidation{
-
 									Items: &validation.Validation{
 										SchemaPointer: "#/components/schemas/RefStressFinal",
 
@@ -2332,7 +2172,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"finalCode", "sharedName"},
 
 											Properties: []validation.PropertyValidation{
@@ -2346,7 +2185,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2361,7 +2199,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -2375,7 +2212,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -2390,7 +2226,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -2411,7 +2246,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2425,7 +2259,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2438,7 +2271,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2452,7 +2284,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 
 									AdditionalPropertiesValidation: &validation.Validation{
@@ -2463,7 +2294,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -2479,7 +2309,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2489,12 +2318,11 @@ var refStressObject = validation.RequestValidation{
 								SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 
 								AllOfValidations: []*validation.Validation{
-									&validation.Validation{
+									{
 										SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
 										KindValidation: validation.KindValidation{
@@ -2503,7 +2331,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sameName"},
 
 											Properties: []validation.PropertyValidation{
@@ -2517,7 +2344,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2532,7 +2358,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2541,7 +2366,7 @@ var refStressObject = validation.RequestValidation{
 
 											AdditionalPropertiesAllowed: true,
 										},
-									}, &validation.Validation{
+									}, {
 										SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
 
 										KindValidation: validation.KindValidation{
@@ -2549,7 +2374,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sameName"},
 
 											Properties: []validation.PropertyValidation{
@@ -2563,7 +2387,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2577,7 +2400,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2586,7 +2408,7 @@ var refStressObject = validation.RequestValidation{
 
 											AdditionalPropertiesAllowed: true,
 										},
-									}, &validation.Validation{
+									}, {
 										SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
 
 										KindValidation: validation.KindValidation{
@@ -2594,7 +2416,6 @@ var refStressObject = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sameName", "sealed"},
 
 											Properties: []validation.PropertyValidation{
@@ -2608,7 +2429,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2622,7 +2442,6 @@ var refStressObject = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"locked"},
 
 															Properties: []validation.PropertyValidation{
@@ -2636,7 +2455,6 @@ var refStressObject = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -2663,7 +2481,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2677,7 +2494,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2692,7 +2508,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2706,7 +2521,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2720,7 +2534,6 @@ var refStressObject = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -2738,21 +2551,19 @@ var refStressObjectPut = validation.RequestValidation{
 		BodyRequired:  true,
 
 		ObjectValidation: validation.ObjectValidation{
-
 			AdditionalPropertiesAllowed: true,
 		},
 
 		AllOfValidations: []*validation.Validation{
-			&validation.Validation{
+			{
 				SchemaPointer: "#/components/schemas/RefStressFirstAllOf",
 
 				ObjectValidation: validation.ObjectValidation{
-
 					AdditionalPropertiesAllowed: true,
 				},
 
 				AllOfValidations: []*validation.Validation{
-					&validation.Validation{
+					{
 						SchemaPointer: "#/components/schemas/RefStressFinal",
 
 						KindValidation: validation.KindValidation{
@@ -2760,7 +2571,6 @@ var refStressObjectPut = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Required: []string{"finalCode", "sharedName"},
 
 							Properties: []validation.PropertyValidation{
@@ -2774,7 +2584,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -2789,7 +2598,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sameName"},
 
 											Properties: []validation.PropertyValidation{
@@ -2803,7 +2611,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2818,7 +2625,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2839,7 +2645,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -2853,7 +2658,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -2862,25 +2666,23 @@ var refStressObjectPut = validation.RequestValidation{
 
 							AdditionalPropertiesAllowed: true,
 						},
-					}, &validation.Validation{
+					}, {
 						SchemaPointer: "#/components/schemas/RefStressViaMiddle",
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 
 						AllOfValidations: []*validation.Validation{
-							&validation.Validation{
+							{
 								SchemaPointer: "#/components/schemas/RefStressMiddleAllOf",
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 
 								AllOfValidations: []*validation.Validation{
-									&validation.Validation{
+									{
 										SchemaPointer: "#/components/schemas/RefStressFinal",
 
 										KindValidation: validation.KindValidation{
@@ -2888,7 +2690,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"finalCode", "sharedName"},
 
 											Properties: []validation.PropertyValidation{
@@ -2902,7 +2703,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2917,7 +2717,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -2931,7 +2730,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -2946,7 +2744,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -2967,7 +2764,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2981,7 +2777,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -2990,7 +2785,7 @@ var refStressObjectPut = validation.RequestValidation{
 
 											AdditionalPropertiesAllowed: true,
 										},
-									}, &validation.Validation{
+									}, {
 										SchemaPointer: "#/components/schemas/RefStressMiddleAllOf/allOf/1",
 
 										KindValidation: validation.KindValidation{
@@ -2999,7 +2794,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sharedName"},
 
 											Properties: []validation.PropertyValidation{
@@ -3013,7 +2807,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -3027,7 +2820,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -3038,7 +2830,7 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 									},
 								},
-							}, &validation.Validation{
+							}, {
 								SchemaPointer: "#/components/schemas/RefStressViaMiddle/allOf/1",
 
 								KindValidation: validation.KindValidation{
@@ -3046,7 +2838,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									Required: []string{"middleFlag", "sharedName"},
 
 									Properties: []validation.PropertyValidation{
@@ -3060,7 +2851,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -3070,12 +2860,11 @@ var refStressObjectPut = validation.RequestValidation{
 												SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 
 												AllOfValidations: []*validation.Validation{
-													&validation.Validation{
+													{
 														SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
 														KindValidation: validation.KindValidation{
@@ -3084,7 +2873,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -3098,7 +2886,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -3113,7 +2900,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -3122,7 +2908,7 @@ var refStressObjectPut = validation.RequestValidation{
 
 															AdditionalPropertiesAllowed: true,
 														},
-													}, &validation.Validation{
+													}, {
 														SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
 
 														KindValidation: validation.KindValidation{
@@ -3130,7 +2916,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -3144,7 +2929,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -3158,7 +2942,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -3167,7 +2950,7 @@ var refStressObjectPut = validation.RequestValidation{
 
 															AdditionalPropertiesAllowed: true,
 														},
-													}, &validation.Validation{
+													}, {
 														SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
 
 														KindValidation: validation.KindValidation{
@@ -3175,7 +2958,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName", "sealed"},
 
 															Properties: []validation.PropertyValidation{
@@ -3189,7 +2971,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -3203,7 +2984,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			Required: []string{"locked"},
 
 																			Properties: []validation.PropertyValidation{
@@ -3217,7 +2997,6 @@ var refStressObjectPut = validation.RequestValidation{
 																						},
 
 																						ObjectValidation: validation.ObjectValidation{
-
 																							AdditionalPropertiesAllowed: true,
 																						},
 																					},
@@ -3244,7 +3023,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -3255,7 +3033,7 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 							},
 						},
-					}, &validation.Validation{
+					}, {
 						SchemaPointer: "#/components/schemas/RefStressFirstAllOf/allOf/2",
 
 						KindValidation: validation.KindValidation{
@@ -3263,7 +3041,6 @@ var refStressObjectPut = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Required: []string{"final", "nested", "nullableRequired"},
 
 							Properties: []validation.PropertyValidation{
@@ -3277,7 +3054,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"finalCode", "sharedName"},
 
 											Properties: []validation.PropertyValidation{
@@ -3291,7 +3067,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -3306,7 +3081,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -3320,7 +3094,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -3335,7 +3108,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -3356,7 +3128,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -3370,7 +3141,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -3386,12 +3156,11 @@ var refStressObjectPut = validation.RequestValidation{
 										SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 
 										AllOfValidations: []*validation.Validation{
-											&validation.Validation{
+											{
 												SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
 												KindValidation: validation.KindValidation{
@@ -3400,7 +3169,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName"},
 
 													Properties: []validation.PropertyValidation{
@@ -3414,7 +3182,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3429,7 +3196,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3438,7 +3204,7 @@ var refStressObjectPut = validation.RequestValidation{
 
 													AdditionalPropertiesAllowed: true,
 												},
-											}, &validation.Validation{
+											}, {
 												SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
 
 												KindValidation: validation.KindValidation{
@@ -3446,7 +3212,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName"},
 
 													Properties: []validation.PropertyValidation{
@@ -3460,7 +3225,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3474,7 +3238,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3483,7 +3246,7 @@ var refStressObjectPut = validation.RequestValidation{
 
 													AdditionalPropertiesAllowed: true,
 												},
-											}, &validation.Validation{
+											}, {
 												SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
 
 												KindValidation: validation.KindValidation{
@@ -3491,7 +3254,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName", "sealed"},
 
 													Properties: []validation.PropertyValidation{
@@ -3505,7 +3267,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3519,7 +3280,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	Required: []string{"locked"},
 
 																	Properties: []validation.PropertyValidation{
@@ -3533,7 +3293,6 @@ var refStressObjectPut = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -3560,7 +3319,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -3575,7 +3333,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -3590,7 +3347,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -3601,25 +3357,23 @@ var refStressObjectPut = validation.RequestValidation{
 						},
 					},
 				},
-			}, &validation.Validation{
+			}, {
 				SchemaPointer: "#/components/schemas/RefStressSecondAllOf",
 
 				ObjectValidation: validation.ObjectValidation{
-
 					AdditionalPropertiesAllowed: true,
 				},
 
 				AllOfValidations: []*validation.Validation{
-					&validation.Validation{
+					{
 						SchemaPointer: "#/components/schemas/RefStressOtherMiddle",
 
 						ObjectValidation: validation.ObjectValidation{
-
 							AdditionalPropertiesAllowed: true,
 						},
 
 						AllOfValidations: []*validation.Validation{
-							&validation.Validation{
+							{
 								SchemaPointer: "#/components/schemas/RefStressFinal",
 
 								KindValidation: validation.KindValidation{
@@ -3627,7 +3381,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									Required: []string{"finalCode", "sharedName"},
 
 									Properties: []validation.PropertyValidation{
@@ -3641,7 +3394,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -3656,7 +3408,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName"},
 
 													Properties: []validation.PropertyValidation{
@@ -3670,7 +3421,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3685,7 +3435,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3706,7 +3455,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -3720,7 +3468,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -3729,7 +3476,7 @@ var refStressObjectPut = validation.RequestValidation{
 
 									AdditionalPropertiesAllowed: true,
 								},
-							}, &validation.Validation{
+							}, {
 								SchemaPointer: "#/components/schemas/RefStressOtherMiddle/allOf/1",
 
 								KindValidation: validation.KindValidation{
@@ -3737,7 +3484,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									Required: []string{"metadata", "rootFlag"},
 
 									Properties: []validation.PropertyValidation{
@@ -3751,7 +3497,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"finalCode", "sharedName"},
 
 													Properties: []validation.PropertyValidation{
@@ -3765,7 +3510,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3780,7 +3524,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	Required: []string{"sameName"},
 
 																	Properties: []validation.PropertyValidation{
@@ -3794,7 +3537,6 @@ var refStressObjectPut = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -3809,7 +3551,6 @@ var refStressObjectPut = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -3830,7 +3571,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3844,7 +3584,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3864,7 +3603,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 
 													AdditionalPropertiesValidation: &validation.Validation{
@@ -3875,7 +3613,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -3891,7 +3628,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -3902,7 +3638,7 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 							},
 						},
-					}, &validation.Validation{
+					}, {
 						SchemaPointer: "#/components/schemas/RefStressSecondAllOf/allOf/1",
 
 						KindValidation: validation.KindValidation{
@@ -3910,7 +3646,6 @@ var refStressObjectPut = validation.RequestValidation{
 						},
 
 						ObjectValidation: validation.ObjectValidation{
-
 							Required: []string{"count", "finals", "metadata", "rootFlag"},
 
 							Properties: []validation.PropertyValidation{
@@ -3924,7 +3659,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -3938,7 +3672,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ArrayValidation: validation.ArrayValidation{
-
 											Items: &validation.Validation{
 												SchemaPointer: "#/components/schemas/RefStressFinal",
 
@@ -3947,7 +3680,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"finalCode", "sharedName"},
 
 													Properties: []validation.PropertyValidation{
@@ -3961,7 +3693,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -3976,7 +3707,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	Required: []string{"sameName"},
 
 																	Properties: []validation.PropertyValidation{
@@ -3990,7 +3720,6 @@ var refStressObjectPut = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -4005,7 +3734,6 @@ var refStressObjectPut = validation.RequestValidation{
 																				},
 
 																				ObjectValidation: validation.ObjectValidation{
-
 																					AdditionalPropertiesAllowed: true,
 																				},
 																			},
@@ -4026,7 +3754,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -4040,7 +3767,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -4053,7 +3779,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -4067,7 +3792,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 
 											AdditionalPropertiesValidation: &validation.Validation{
@@ -4078,7 +3802,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -4094,7 +3817,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -4108,7 +3830,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -4119,7 +3840,7 @@ var refStressObjectPut = validation.RequestValidation{
 						},
 					},
 				},
-			}, &validation.Validation{
+			}, {
 				SchemaPointer: "#/paths/~1ref-stress-object-put/put/requestBody/content/application~1json/schema/allOf/2",
 
 				KindValidation: validation.KindValidation{
@@ -4127,7 +3848,6 @@ var refStressObjectPut = validation.RequestValidation{
 				},
 
 				ObjectValidation: validation.ObjectValidation{
-
 					Required: []string{"count", "final", "finalCode", "finals", "metadata", "middleFlag", "nested", "nullableRequired", "rootFlag", "sharedName"},
 
 					Properties: []validation.PropertyValidation{
@@ -4141,7 +3861,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4155,7 +3874,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									Required: []string{"finalCode", "sharedName"},
 
 									Properties: []validation.PropertyValidation{
@@ -4169,7 +3887,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -4184,7 +3901,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													Required: []string{"sameName"},
 
 													Properties: []validation.PropertyValidation{
@@ -4198,7 +3914,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -4213,7 +3928,6 @@ var refStressObjectPut = validation.RequestValidation{
 																},
 
 																ObjectValidation: validation.ObjectValidation{
-
 																	AdditionalPropertiesAllowed: true,
 																},
 															},
@@ -4234,7 +3948,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -4248,7 +3961,6 @@ var refStressObjectPut = validation.RequestValidation{
 												},
 
 												ObjectValidation: validation.ObjectValidation{
-
 													AdditionalPropertiesAllowed: true,
 												},
 											},
@@ -4268,7 +3980,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4282,7 +3993,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ArrayValidation: validation.ArrayValidation{
-
 									Items: &validation.Validation{
 										SchemaPointer: "#/components/schemas/RefStressFinal",
 
@@ -4291,7 +4001,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"finalCode", "sharedName"},
 
 											Properties: []validation.PropertyValidation{
@@ -4305,7 +4014,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -4320,7 +4028,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"sameName"},
 
 															Properties: []validation.PropertyValidation{
@@ -4334,7 +4041,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -4349,7 +4055,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -4370,7 +4075,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -4384,7 +4088,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -4397,7 +4100,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4411,7 +4113,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 
 									AdditionalPropertiesValidation: &validation.Validation{
@@ -4422,7 +4123,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											AdditionalPropertiesAllowed: true,
 										},
 									},
@@ -4438,7 +4138,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4448,12 +4147,11 @@ var refStressObjectPut = validation.RequestValidation{
 								SchemaPointer: "#/components/schemas/RefStressNestedCombined",
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 
 								AllOfValidations: []*validation.Validation{
-									&validation.Validation{
+									{
 										SchemaPointer: "#/components/schemas/RefStressNestedBase",
 
 										KindValidation: validation.KindValidation{
@@ -4462,7 +4160,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sameName"},
 
 											Properties: []validation.PropertyValidation{
@@ -4476,7 +4173,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -4491,7 +4187,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -4500,7 +4195,7 @@ var refStressObjectPut = validation.RequestValidation{
 
 											AdditionalPropertiesAllowed: true,
 										},
-									}, &validation.Validation{
+									}, {
 										SchemaPointer: "#/components/schemas/RefStressNestedOverlay",
 
 										KindValidation: validation.KindValidation{
@@ -4508,7 +4203,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sameName"},
 
 											Properties: []validation.PropertyValidation{
@@ -4522,7 +4216,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -4536,7 +4229,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -4545,7 +4237,7 @@ var refStressObjectPut = validation.RequestValidation{
 
 											AdditionalPropertiesAllowed: true,
 										},
-									}, &validation.Validation{
+									}, {
 										SchemaPointer: "#/components/schemas/RefStressNestedCombined/allOf/2",
 
 										KindValidation: validation.KindValidation{
@@ -4553,7 +4245,6 @@ var refStressObjectPut = validation.RequestValidation{
 										},
 
 										ObjectValidation: validation.ObjectValidation{
-
 											Required: []string{"sameName", "sealed"},
 
 											Properties: []validation.PropertyValidation{
@@ -4567,7 +4258,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															AdditionalPropertiesAllowed: true,
 														},
 													},
@@ -4581,7 +4271,6 @@ var refStressObjectPut = validation.RequestValidation{
 														},
 
 														ObjectValidation: validation.ObjectValidation{
-
 															Required: []string{"locked"},
 
 															Properties: []validation.PropertyValidation{
@@ -4595,7 +4284,6 @@ var refStressObjectPut = validation.RequestValidation{
 																		},
 
 																		ObjectValidation: validation.ObjectValidation{
-
 																			AdditionalPropertiesAllowed: true,
 																		},
 																	},
@@ -4622,7 +4310,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4636,7 +4323,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4651,7 +4337,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4665,7 +4350,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4679,7 +4363,6 @@ var refStressObjectPut = validation.RequestValidation{
 								},
 
 								ObjectValidation: validation.ObjectValidation{
-
 									AdditionalPropertiesAllowed: true,
 								},
 							},
@@ -4701,7 +4384,6 @@ var stringNoFormatNotNullable = validation.RequestValidation{
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			AdditionalPropertiesAllowed: true,
 		},
 	},
@@ -4718,7 +4400,6 @@ var stringNoFormatNullable = validation.RequestValidation{
 		},
 
 		ObjectValidation: validation.ObjectValidation{
-
 			AdditionalPropertiesAllowed: true,
 		},
 	},
@@ -4726,7 +4407,6 @@ var stringNoFormatNullable = validation.RequestValidation{
 
 // RequestValidations contains every compiled request validation by exact operation ID.
 var RequestValidations = map[string]validation.RequestValidation{
-
 	"allOfObject": allOfObject,
 
 	"arrayNotNullable": arrayNotNullable,

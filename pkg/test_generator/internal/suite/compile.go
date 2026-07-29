@@ -105,6 +105,7 @@ func (compiler *Compiler) compileSchema(
 // referenceUse records one Reference Object occurrence without copying its resolved occurrence graph.
 func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *schemaUse {
 	use := &schemaUse{
+		domains:         compiler.Domains,
 		pointer:         pointer,
 		domain:          resolved.domain,
 		localDomain:     resolved.localDomain,
@@ -113,6 +114,7 @@ func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *sch
 		constraints:     append([]ConstraintSource(nil), resolved.constraints...),
 		stringLanguages: append([]stringLanguageOccurrence(nil), resolved.stringLanguages...),
 		atomic:          resolved.atomic,
+		anyOf:           append([]*schemaUse(nil), resolved.anyOf...),
 		items:           resolved.items,
 		properties:      append([]schemaPropertyUse(nil), resolved.properties...),
 		additional:      resolved.additional,
@@ -160,7 +162,7 @@ func (compiler *Compiler) compileResolvedSchema(
 		return nil, compiler.unsupportedKeywordFailure(resolved.Pointer, keyword)
 	}
 
-	use := &schemaUse{pointer: resolved.Pointer, atomic: make(map[string]DomainID)}
+	use := &schemaUse{domains: compiler.Domains, pointer: resolved.Pointer, atomic: make(map[string]DomainID)}
 
 	domain, constraints, err := compiler.compileSchemaDomain(use, resolved, members, active)
 	if err != nil {
@@ -178,6 +180,10 @@ func (compiler *Compiler) compileResolvedSchema(
 
 	use, err = compiler.compileAllOf(resolved, members, active, use)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := compiler.compileAnyOf(resolved, members, active, use); err != nil {
 		return nil, err
 	}
 
@@ -564,7 +570,7 @@ func validateReadWriteOnlyShape(members map[string]json.RawMessage) error {
 
 // unsupportedKeyword returns the first recognized keyword unsupported by this step.
 func unsupportedKeyword(members map[string]json.RawMessage) string {
-	for _, keyword := range []string{"oneOf", "anyOf", "not"} {
+	for _, keyword := range []string{"oneOf", "not"} {
 		if _, ok := members[keyword]; ok {
 			return keyword
 		}

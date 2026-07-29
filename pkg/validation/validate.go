@@ -67,6 +67,27 @@ type rawMember struct {
 
 // validateRaw applies one compiled schema node to one raw instance node.
 func validateRaw(validation *Validation, raw json.RawMessage, pointer string) []error {
+	errs := validateLocalAndAllOf(validation, raw, pointer)
+	if len(validation.AnyOfValidations) == 0 {
+		return errs
+	}
+
+	for _, child := range validation.AnyOfValidations {
+		if len(validateRaw(child, raw, pointer)) == 0 {
+			return errs
+		}
+	}
+
+	return append(errs, newValidationError(
+		validation,
+		pointer,
+		"anyOf",
+		"value must validate against at least one alternative",
+	))
+}
+
+// validateLocalAndAllOf applies local rules and every conjunctive child.
+func validateLocalAndAllOf(validation *Validation, raw json.RawMessage, pointer string) []error {
 	value, err := decodeInstance(raw)
 	if err != nil {
 		return []error{newValidationError(validation, pointer, "body", err.Error())}

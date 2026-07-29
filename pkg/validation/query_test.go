@@ -121,6 +121,128 @@ func TestQueryDecoderUnknownScalarSlotsUseStrings(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderAnyOfUsesFirstCompleteSchemaStyleConversion(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		expected string
+	}{
+		{name: "integer first", schema: `{anyOf: [{type: integer}, {type: string}]}`, expected: `{"q":7}`},
+		{name: "string first", schema: `{anyOf: [{type: string}, {type: integer}]}`, expected: `{"q":"7"}`},
+		{
+			name:     "later branch after validation failure",
+			schema:   `{anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}`,
+			expected: `{"q":"7"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, `{name: q, in: query, schema: `+test.schema+`}`)
+			actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderAnyOfKeepsJSONContentKind(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `name: q
+      in: query
+      content:
+        application/json:
+          schema: {anyOf: [{type: string}, {type: integer}]}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":7}`, string(actual))
+}
+
+func TestQueryDecoderAnyOfConvertsNestedSchemaStyleValues(t *testing.T) {
+	t.Parallel()
+
+	choice := `{anyOf: [{type: integer}, {type: string}]}`
+	for _, test := range []struct {
+		name      string
+		parameter string
+		rawQuery  string
+		expected  string
+	}{
+		{
+			name: "array items", parameter: `{name: q, in: query, explode: false, schema: {type: array, items: ` + choice + `}}`,
+			rawQuery: `q=7,x`, expected: `{"q":[7,"x"]}`,
+		},
+		{
+			name: "declared property", parameter: `{name: q, in: query, explode: false, schema: {type: object, additionalProperties: false, properties: {value: ` + choice + `}}}`,
+			rawQuery: `q=value,7`, expected: `{"q":{"value":7}}`,
+		},
+		{
+			name: "additional property", parameter: `{name: q, in: query, explode: false, schema: {type: object, additionalProperties: ` + choice + `}}`,
+			rawQuery: `q=value,7`, expected: `{"q":{"value":7}}`,
+		},
+		{
+			name: "deep object primitive array", parameter: `{name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {value: {type: array, items: ` + choice + `}}}}`,
+			rawQuery: `q%5Bvalue%5D=7&q%5Bvalue%5D=x`, expected: `{"q":{"value":[7,"x"]}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, test.parameter)
+			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderAnyOfPreservesNestedChoiceOrderAndShape(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		parameter string
+		rawQuery  string
+		expected  string
+	}{
+		{
+			name:      "anyOf inside allOf",
+			parameter: `{name: q, in: query, schema: {allOf: [{anyOf: [{type: integer}, {type: string}]}]}}`,
+			rawQuery:  `q=7`, expected: `{"q":7}`,
+		},
+		{
+			name:      "nested anyOf",
+			parameter: `{name: q, in: query, schema: {anyOf: [{anyOf: [{type: integer}, {type: string}]}, {type: boolean}]}}`,
+			rawQuery:  `q=7`, expected: `{"q":7}`,
+		},
+		{
+			name:      "array alternatives retain array wire shape",
+			parameter: `{name: q, in: query, explode: false, schema: {anyOf: [{type: array, items: {type: integer}}, {type: array, items: {type: string}}]}}`,
+			rawQuery:  `q=7,8`, expected: `{"q":[7,8]}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, test.parameter)
+			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderRejectsAnyOfWithUnrepresentableWireShapes(t *testing.T) {
+	t.Parallel()
+
+	_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: {anyOf: [{type: array, items: {}}, {type: object}]}}`))
+	require.ErrorContains(t, err, "/anyOf/1")
+	require.ErrorContains(t, err, "wire shape")
+}
+
 func TestQueryDecoderInfersEnumOnlyArrayScalarSlots(t *testing.T) {
 	t.Parallel()
 
