@@ -401,23 +401,45 @@ func rejectPathBinary(validation *Validation) error {
 }
 
 func compiledPathScalarType(validations ...*Validation) (styleScalarType, error) {
-	typeName := compiledValidationType(validations...)
-	if typeName == "" {
-		typeName = "string"
-	}
-
-	if !isScalarType(typeName) {
-		pointer := ""
-		if len(validations) != 0 && validations[0] != nil {
-			pointer = validations[0].SchemaPointer
-		}
-
-		return "", fmt.Errorf(
-			"style scalar slot at %s must have a primitive type; unsupported compiled type %q", pointer, typeName,
-		)
+	typeName, err := compiledScalarType(validations...)
+	if err != nil {
+		return "", err
 	}
 
 	return styleScalarType(typeName), nil
+}
+
+func compiledScalarType(validations ...*Validation) (string, error) {
+	if len(validations) == 0 {
+		return "string", nil
+	}
+
+	alternatives := conversionAlternatives(conjunctiveValidation(validations...))
+
+	types := make([]string, 0, len(alternatives))
+	for _, alternative := range alternatives {
+		typeName := compiledValidationType(alternative)
+		if typeName == "" {
+			typeName = "string"
+		}
+
+		if !isScalarType(typeName) {
+			return "", fmt.Errorf(
+				"style scalar slot at %s must have a primitive type; unsupported compiled type %q",
+				alternative.SchemaPointer,
+				typeName,
+			)
+		}
+
+		types = append(types, typeName)
+	}
+
+	typeName := intersectQuerySchemaTypes(types)
+	if typeName == "" {
+		return "string", nil
+	}
+
+	return typeName, nil
 }
 
 func compiledArrayScalarType(validation *Validation) (styleScalarType, error) {
@@ -511,6 +533,12 @@ func compiledPathPropertyScalarType(
 	validations []*Validation,
 	enumValues []jsonvalue.Value,
 ) (styleScalarType, error) {
+	for _, validation := range validations {
+		if containsAnyOf(validation) {
+			return compiledPathScalarType(validations...)
+		}
+	}
+
 	types := make([]string, 0)
 	for _, validation := range validations {
 		collectCompiledValidationTypes(validation, &types)

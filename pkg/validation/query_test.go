@@ -304,6 +304,20 @@ func TestQueryDecoderRejectsAnyOfWithUnrepresentableNestedSlots(t *testing.T) {
 	require.ErrorContains(t, err, "primitive type")
 }
 
+func TestQueryDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *testing.T) {
+	t.Parallel()
+
+	for _, parameter := range []string{
+		`- {name: q, in: query, schema: {type: array, items: {anyOf: [{type: object}, {type: string}]}}}`,
+		`- {name: q, in: query, explode: false, schema: {type: object, properties: {value: {anyOf: [{type: object}, {type: string}]}}}}`,
+		`- {name: q, in: query, explode: false, schema: {type: object, additionalProperties: {anyOf: [{type: object}, {type: string}]}}}`,
+	} {
+		_, err := validation.Parse(querySpec(parameter))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "anyOf")
+	}
+}
+
 func TestQueryDecoderInfersEnumOnlyArrayScalarSlots(t *testing.T) {
 	t.Parallel()
 

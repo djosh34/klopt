@@ -592,16 +592,7 @@ func compileQueryParameterSchema(
 }
 
 func compiledQueryScalarType(validations ...*Validation) (string, error) {
-	typeName := compiledValidationType(validations...)
-	if typeName == "" {
-		typeName = "string"
-	}
-
-	if !isScalarType(typeName) {
-		return "", fmt.Errorf("must have a primitive type, got compiled type %q", typeName)
-	}
-
-	return typeName, nil
+	return compiledScalarType(validations...)
 }
 
 func queryAdditionalPropertiesType(validation *Validation) (string, error) {
@@ -614,13 +605,9 @@ func queryAdditionalPropertiesType(validation *Validation) (string, error) {
 		return "string", nil
 	}
 
-	typeName := compiledValidationType(additional...)
-	if typeName == "" {
-		return "string", nil
-	}
-
-	if !isScalarType(typeName) {
-		return "", fmt.Errorf("style-based dynamic properties cannot have satisfiable type %q", typeName)
+	typeName, err := compiledQueryScalarType(additional...)
+	if err != nil {
+		return "", fmt.Errorf("style-based dynamic properties cannot have satisfiable type: %w", err)
 	}
 
 	return typeName, nil
@@ -697,9 +684,9 @@ func compileQueryProperties(
 
 		propertyValidations := compiledByName[name]
 
-		typeName := compiledValidationType(propertyValidations...)
-		if typeName == "" {
-			typeName = "string"
+		typeName, err := compiledStyleType(conjunctiveValidation(propertyValidations...))
+		if err != nil {
+			return nil, nil, fmt.Errorf("style-based object property %q: %w", name, err)
 		}
 
 		property := queryProperty{

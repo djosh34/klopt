@@ -27,6 +27,35 @@ anyOf:
 	require.Contains(t, compiler.rootUse.anyOf[1].pointer, "/anyOf/1")
 }
 
+func TestCompileSuitePreservesAnyOfNestedUnderAllOfReference(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `$ref: '#/components/schemas/Choice'`, `
+components:
+  schemas:
+    Choice:
+      allOf:
+        - anyOf:
+            - {type: string}
+            - {type: integer}
+`, "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	valid := anyOfCase(t, compiled.Cases, ExpectAccepted)
+	invalid := anyOfCase(t, compiled.Cases, ExpectRejected)
+
+	for seed := 0; seed < 100; seed++ {
+		accepted := valid.Generator.Example(seed)
+		require.True(t, accepted.Kind == jsonvalue.KindString ||
+			accepted.Kind == jsonvalue.KindNumber && accepted.Number.IsInteger())
+
+		rejected := invalid.Generator.Example(seed)
+		require.False(t, rejected.Kind == jsonvalue.KindString ||
+			rejected.Kind == jsonvalue.KindNumber && rejected.Number.IsInteger())
+	}
+}
+
 func TestCompileSuiteBuildsOneFullValidAndExactInvalidAnyOfCase(t *testing.T) {
 	t.Parallel()
 

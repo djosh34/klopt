@@ -114,6 +114,7 @@ func (compiler *Compiler) referenceUse(pointer string, resolved *schemaUse) *sch
 		constraints:     append([]ConstraintSource(nil), resolved.constraints...),
 		stringLanguages: append([]stringLanguageOccurrence(nil), resolved.stringLanguages...),
 		atomic:          resolved.atomic,
+		allOf:           append([]*schemaUse(nil), resolved.allOf...),
 		anyOf:           append([]*schemaUse(nil), resolved.anyOf...),
 		items:           resolved.items,
 		properties:      append([]schemaPropertyUse(nil), resolved.properties...),

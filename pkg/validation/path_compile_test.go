@@ -255,6 +255,24 @@ func TestCompilePathDecoderRejectsAnyOfWithUnrepresentableNestedSlots(t *testing
 	require.ErrorContains(t, err, "primitive type")
 }
 
+func TestCompilePathDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *testing.T) {
+	t.Parallel()
+
+	for _, schema := range []string{
+		`{type: array, items: {anyOf: [{type: object}, {type: string}]}}`,
+		`{type: object, properties: {value: {anyOf: [{type: object}, {type: string}]}}}`,
+		`{type: object, additionalProperties: {anyOf: [{type: object}, {type: string}]}}`,
+	} {
+		decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: `+schema+`}
+`)
+		require.Nil(t, decoder)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "anyOf")
+	}
+}
+
 func TestPathDecoderAnyOfReportsNoMatchingAlternative(t *testing.T) {
 	t.Parallel()
 
