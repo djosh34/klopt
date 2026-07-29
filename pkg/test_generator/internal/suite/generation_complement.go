@@ -159,6 +159,7 @@ type finiteObjectProperty struct {
 	values   []jsonvalue.Value
 }
 
+//nolint:cyclop // Finite object enumeration handles each constraint termination condition directly.
 func finiteObjectValues(
 	registry *DomainRegistry,
 	constraints ObjectConstraints,
@@ -197,8 +198,10 @@ func finiteObjectValues(
 	}
 
 	result := make([]jsonvalue.Value, 0)
-	if !appendFiniteObjects(&result, properties, constraints, 0, nil) {
-		return nil, false, nil
+
+	complete, err := appendFiniteObjects(&result, properties, constraints, 0, nil)
+	if err != nil || !complete {
+		return nil, false, err
 	}
 
 	return result, true, nil
@@ -211,37 +214,42 @@ func appendFiniteObjects(
 	constraints ObjectConstraints,
 	index int,
 	members []jsonvalue.Member,
-) bool {
+) (bool, error) {
 	if len(*result) > maximumFiniteComplementValues {
-		return false
+		return false, nil
 	}
 
 	if index == len(properties) {
 		if len(members) < constraints.MinProps || constraints.MaxProps != nil && len(members) > *constraints.MaxProps {
-			return true
+			return true, nil
 		}
 
 		value, err := jsonvalue.Object(members)
 		if err != nil {
-			return false
+			return false, err
 		}
 
 		*result = append(*result, value)
 
-		return true
+		return true, nil
 	}
 
 	property := properties[index]
-	if !property.required && !appendFiniteObjects(result, properties, constraints, index+1, members) {
-		return false
+	if !property.required {
+		complete, err := appendFiniteObjects(result, properties, constraints, index+1, members)
+		if err != nil || !complete {
+			return complete, err
+		}
 	}
 
 	for _, value := range property.values {
 		next := append(append([]jsonvalue.Member(nil), members...), jsonvalue.Member{Name: property.name, Value: value})
-		if !appendFiniteObjects(result, properties, constraints, index+1, next) {
-			return false
+
+		complete, err := appendFiniteObjects(result, properties, constraints, index+1, next)
+		if err != nil || !complete {
+			return complete, err
 		}
 	}
 
-	return true
+	return true, nil
 }

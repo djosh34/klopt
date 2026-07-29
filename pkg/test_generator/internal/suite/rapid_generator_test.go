@@ -156,6 +156,26 @@ func TestAdditionalPropertyNamesNeverCollide(t *testing.T) {
 	require.Equal(t, "additional4", additionalPropertyName(properties, 2))
 }
 
+// TestFiniteObjectValuesPropagatesObjectConstructionErrors verifies invalid members are reported.
+func TestFiniteObjectValuesPropagatesObjectConstructionErrors(t *testing.T) {
+	t.Parallel()
+
+	registry := NewDomainRegistry()
+	booleans := registry.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindBoolean))
+	constraints := ObjectConstraints{
+		State: KindRestricted,
+		Properties: []NamedProperty{{
+			Name: string([]byte{0xff}), Required: true, State: PropertyAllowed, Values: booleans,
+		}},
+		Additional: AdditionalProperties{Values: EmptyDomainID},
+	}
+
+	values, finite, err := finiteObjectValues(registry, constraints, make(map[DomainID]bool))
+	require.Nil(t, values)
+	require.False(t, finite)
+	require.ErrorContains(t, err, "UTF-8")
+}
+
 // TestCompileSuiteRejectsEmptyRoot verifies the public checker cannot silently execute zero cases.
 func TestCompileSuiteConstructsPatternsAndFormatsWithoutExamples(t *testing.T) {
 	t.Parallel()
