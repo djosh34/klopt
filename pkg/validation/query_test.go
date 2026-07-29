@@ -240,6 +240,14 @@ func TestQueryDecoderAnyOfConvertsRootObjectsPerBranch(t *testing.T) {
             ]}`,
 			rawQuery: `q=value,7`, expected: `{"q":{"value":"7"}}`,
 		},
+		{
+			name: "later additional property overrides another branch declaration",
+			schema: `{anyOf: [
+              {type: object, properties: {a: {type: string, pattern: '^x$'}}, additionalProperties: false},
+              {type: object, additionalProperties: {type: integer}}
+            ]}`,
+			rawQuery: `q=a,7`, expected: `{"q":{"a":7}}`,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -312,9 +320,13 @@ func TestQueryDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *testin
 		`- {name: q, in: query, explode: false, schema: {type: object, properties: {value: {anyOf: [{type: object}, {type: string}]}}}}`,
 		`- {name: q, in: query, explode: false, schema: {type: object, additionalProperties: {anyOf: [{type: object}, {type: string}]}}}`,
 	} {
-		_, err := validation.Parse(querySpec(parameter))
-		require.Error(t, err)
-		require.ErrorContains(t, err, "anyOf")
+		t.Run(parameter, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := validation.Parse(querySpec(parameter))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "anyOf")
+		})
 	}
 }
 
@@ -343,6 +355,27 @@ func TestQueryDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing
 	actual, err := decoder.Decode(&url.URL{RawQuery: `q=a,1,b,2`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"q":{"a":1,"b":2}}`, string(actual))
+}
+
+func TestQueryDecoderFormsCartesianConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: {
+      type: object,
+      allOf: [
+        {anyOf: [
+          {type: object, required: [a], properties: {a: {type: integer}}},
+          {type: object, required: [a], properties: {a: {type: string}}}
+        ]},
+        {anyOf: [
+          {type: object, required: [b], properties: {b: {type: boolean}}},
+          {type: object, required: [b], properties: {b: {type: number}}}
+        ]}
+      ]
+    }}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=a,x,b,7`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":{"a":"x","b":7}}`, string(actual))
 }
 
 func TestQueryDecoderInfersEnumOnlyArrayScalarSlots(t *testing.T) {

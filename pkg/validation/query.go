@@ -844,35 +844,7 @@ func mergeQueryObjectConversions(parameter *queryParameter) error {
 		parameter.properties = append(parameter.properties, properties[name])
 	}
 
-	for index := range parameter.conversions {
-		completeQueryConversionProperties(&parameter.conversions[index], properties, parameter)
-	}
-
 	return nil
-}
-
-func completeQueryConversionProperties(
-	conversion *queryConversion,
-	properties map[string]queryProperty,
-	parameter *queryParameter,
-) {
-	combined := maps.Clone(properties)
-	for _, property := range conversion.properties {
-		combined[property.name] = property
-	}
-
-	conversion.properties = make([]queryProperty, 0, len(combined))
-
-	conversion.propertyByName = make(map[string]int, len(combined))
-	for _, name := range slices.Sorted(maps.Keys(combined)) {
-		conversion.propertyByName[name] = len(conversion.properties)
-		conversion.properties = append(conversion.properties, combined[name])
-	}
-
-	if conversion.dynamicType == "" {
-		conversion.dynamicType = parameter.dynamicType
-		conversion.dynamicValidation = parameter.dynamicValidation
-	}
 }
 
 func locatedRawChild(parent oas.LocatedSchema, raw json.RawMessage, tokens ...string) oas.LocatedSchema {

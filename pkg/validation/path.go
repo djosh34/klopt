@@ -701,38 +701,49 @@ func conversionAlternatives(validation *Validation) []*Validation {
 	local := *validation
 	local.AllOfValidations = nil
 	local.AnyOfValidations = nil
-	base := &local
-	composedChildren := make([]*Validation, 0)
+	profiles := []*Validation{&local}
+
+	if len(validation.AnyOfValidations) != 0 {
+		profiles = make([]*Validation, 0)
+
+		for _, branch := range validation.AnyOfValidations {
+			for _, alternative := range conversionAlternatives(branch) {
+				combined := conjunctiveValidation(&local, alternative)
+				combined.SchemaPointer = alternative.SchemaPointer
+				profiles = append(profiles, combined)
+			}
+		}
+	}
 
 	for _, child := range validation.AllOfValidations {
-		if containsAnyOf(child) {
-			composedChildren = append(composedChildren, child)
-
-			continue
-		}
-
-		base = conjunctiveValidation(base, child)
+		childProfiles := conversionAlternatives(child)
+		profiles = combineConversionProfiles(
+			profiles,
+			childProfiles,
+			len(validation.AnyOfValidations) != 0 || !containsAnyOf(child),
+		)
 	}
 
-	result := make([]*Validation, 0)
-	appendProfiles := func(composed *Validation) {
-		for _, alternative := range conversionAlternatives(composed) {
-			combined := conjunctiveValidation(base, alternative)
-			combined.SchemaPointer = alternative.SchemaPointer
+	return profiles
+}
+
+func combineConversionProfiles(
+	profiles []*Validation,
+	children []*Validation,
+	preserveProfilePointer bool,
+) []*Validation {
+	result := make([]*Validation, 0, len(profiles)*len(children))
+	for _, profile := range profiles {
+		for _, child := range children {
+			combined := conjunctiveValidation(profile, child)
+			if preserveProfilePointer {
+				combined.SchemaPointer = profile.SchemaPointer
+			} else {
+				combined.SchemaPointer = child.SchemaPointer
+			}
+
 			result = append(result, combined)
 		}
-	}
-
-	for _, branch := range validation.AnyOfValidations {
-		appendProfiles(branch)
-	}
-
-	for _, child := range composedChildren {
-		appendProfiles(child)
-	}
-
-	if len(result) == 0 {
-		return []*Validation{base}
 	}
 
 	return result
@@ -1051,34 +1062,6 @@ func mergePathObjectConversions(parameter *pathParameter) {
 	for _, name := range slices.Sorted(maps.Keys(properties)) {
 		parameter.propertyByName[name] = len(parameter.properties)
 		parameter.properties = append(parameter.properties, properties[name])
-	}
-
-	for index := range parameter.conversions {
-		completePathConversionProperties(&parameter.conversions[index], properties, parameter)
-	}
-}
-
-func completePathConversionProperties(
-	conversion *pathConversion,
-	properties map[string]pathProperty,
-	parameter *pathParameter,
-) {
-	combined := maps.Clone(properties)
-	for _, property := range conversion.properties {
-		combined[property.name] = property
-	}
-
-	conversion.properties = make([]pathProperty, 0, len(combined))
-
-	conversion.propertyByName = make(map[string]int, len(combined))
-	for _, name := range slices.Sorted(maps.Keys(combined)) {
-		conversion.propertyByName[name] = len(conversion.properties)
-		conversion.properties = append(conversion.properties, combined[name])
-	}
-
-	if conversion.dynamicType == "" {
-		conversion.dynamicType = parameter.dynamicType
-		conversion.dynamicValidation = parameter.dynamicValidation
 	}
 }
 

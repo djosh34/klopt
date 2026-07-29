@@ -1501,13 +1501,21 @@ func compactDomainIDs(ids []DomainID) []DomainID {
 // caseSet collects CasePlans with unique observable plan keys.
 type caseSet struct {
 	cases []CasePlan
-	seen  map[string]struct{}
+	seen  map[caseKey]struct{}
+}
+
+// caseKey identifies the exact expression behind one observable expectation.
+type caseKey struct {
+	expect ExpectedResult
+	source ConstraintSource
+	term   *generationTerm
+	choice *generationChoice
 }
 
 // newCaseSet returns an empty set of unique CasePlans.
 func newCaseSet() *caseSet {
 	return &caseSet{
-		seen: make(map[string]struct{}),
+		seen: make(map[caseKey]struct{}),
 	}
 }
 
@@ -1517,13 +1525,12 @@ func (set *caseSet) add(plan CasePlan) {
 		return
 	}
 
-	key := fmt.Sprintf(
-		"%d\x00%s\x00%s\x00%s",
-		plan.Expect,
-		plan.Name,
-		plan.Source.Pointer,
-		plan.Source.Keyword,
-	)
+	key := caseKey{
+		expect: plan.Expect,
+		source: plan.Source,
+		term:   plan.expression.term,
+		choice: plan.expression.choice,
+	}
 	if _, duplicate := set.seen[key]; duplicate {
 		return
 	}

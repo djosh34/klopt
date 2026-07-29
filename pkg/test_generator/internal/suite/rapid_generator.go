@@ -192,8 +192,9 @@ func (builder *RapidGeneratorBuilder) expressionObjectGenerator(
 		if expression, ok := term.properties[property.Name]; ok {
 			propertyExpression, meetErr := meet(
 				generationExpression{term: &generationTerm{
-					domain: property.Values,
-					use:    term.use.property(property.Name),
+					domain:          property.Values,
+					use:             term.use.property(property.Name),
+					stringLanguages: term.stringLanguages,
 				}},
 				expression,
 			)
@@ -231,8 +232,9 @@ func (builder *RapidGeneratorBuilder) expressionObjectGenerator(
 	if term.additional != nil {
 		additionalExpression, meetErr := meet(
 			generationExpression{term: &generationTerm{
-				domain: constraints.Additional.Values,
-				use:    term.use.additional,
+				domain:          constraints.Additional.Values,
+				use:             term.use.additional,
+				stringLanguages: term.stringLanguages,
 			}},
 			*term.additional,
 		)

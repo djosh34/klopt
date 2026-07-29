@@ -12,6 +12,27 @@ import (
 	"pgregory.net/rapid"
 )
 
+// TestCaseSetKeepsDistinctExpressionsWithSameDisplayMetadata verifies display labels do not define identity.
+func TestCaseSetKeepsDistinctExpressionsWithSameDisplayMetadata(t *testing.T) {
+	t.Parallel()
+
+	registry := NewDomainRegistry()
+	use := &schemaUse{domains: registry, pointer: "#/schema"}
+	first := registry.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{jsonvalue.Bool(false)}))
+	second := registry.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{jsonvalue.Bool(true)}))
+
+	cases := newCaseSet()
+	for _, domain := range []DomainID{first, second} {
+		cases.add(CasePlan{
+			Name: "display label", Expect: ExpectAccepted,
+			Source:     ConstraintSource{Pointer: "#/schema", Keyword: "enum"},
+			expression: domainGenerationExpression(domain, use, nil),
+		})
+	}
+
+	require.Len(t, cases.cases, 2)
+}
+
 // TestCasePlannerBuildsCanonicalSemanticPartitions verifies distinct accepted and rejected partitions.
 func TestCasePlannerRecordsAllOfDominanceAndSourceProvenance(t *testing.T) {
 	t.Parallel()

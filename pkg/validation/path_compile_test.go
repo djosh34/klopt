@@ -214,6 +214,14 @@ func TestPathDecoderAnyOfConvertsRootObjectsPerBranch(t *testing.T) {
             ]}`,
 			path: "/items/value,7", expected: `{"id":{"value":"7"}}`,
 		},
+		{
+			name: "later additional property overrides another branch declaration",
+			schema: `{anyOf: [
+              {type: object, properties: {a: {type: string, pattern: '^x$'}}, additionalProperties: false},
+              {type: object, additionalProperties: {type: integer}}
+            ]}`,
+			path: "/items/a,7", expected: `{"id":{"a":7}}`,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -263,13 +271,17 @@ func TestCompilePathDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *
 		`{type: object, properties: {value: {anyOf: [{type: object}, {type: string}]}}}`,
 		`{type: object, additionalProperties: {anyOf: [{type: object}, {type: string}]}}`,
 	} {
-		decoder, err := compilePathDecoderForTest(t, `
+		t.Run(schema, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, `
       parameters:
         - {name: id, in: path, required: true, schema: `+schema+`}
 `)
-		require.Nil(t, decoder)
-		require.Error(t, err)
-		require.ErrorContains(t, err, "anyOf")
+			require.Nil(t, decoder)
+			require.Error(t, err)
+			require.ErrorContains(t, err, "anyOf")
+		})
 	}
 }
 
@@ -292,11 +304,11 @@ func TestPathDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
 	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
 }
 
-func TestConversionAlternativesDoNotMaterializeIndependentCartesianProduct(t *testing.T) {
+func TestConversionAlternativesFormIndependentCartesianProduct(t *testing.T) {
 	t.Parallel()
 
 	root := &Validation{ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true}}
-	for index := 0; index < 8; index++ {
+	for index := 0; index < 4; index++ {
 		root.AllOfValidations = append(root.AllOfValidations, &Validation{
 			AnyOfValidations: []*Validation{
 				{KindValidation: KindValidation{Type: "string"}},
@@ -306,7 +318,7 @@ func TestConversionAlternativesDoNotMaterializeIndependentCartesianProduct(t *te
 		})
 	}
 
-	require.LessOrEqual(t, len(conversionAlternatives(root)), 16)
+	require.Len(t, conversionAlternatives(root), 16)
 }
 
 func TestPathDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
@@ -329,6 +341,30 @@ func TestPathDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.
 	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/a,1,b,2"})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"id":{"a":1,"b":2}}`, string(actual))
+}
+
+func TestPathDecoderFormsCartesianConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: object
+            allOf:
+              - anyOf:
+                  - {type: object, required: [a], properties: {a: {type: integer}}}
+                  - {type: object, required: [a], properties: {a: {type: string}}}
+              - anyOf:
+                  - {type: object, required: [b], properties: {b: {type: boolean}}}
+                  - {type: object, required: [b], properties: {b: {type: number}}}
+`)
+	require.NoError(t, err)
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/a,x,b,7"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":{"a":"x","b":7}}`, string(actual))
 }
 
 func TestPathDecoderAnyOfReportsNoMatchingAlternative(t *testing.T) {

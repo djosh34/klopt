@@ -142,6 +142,39 @@ anyOf:
 	})
 }
 
+func TestCompileSuiteUsesOneFullValidPropertyForAnyOfWithSiblingBoundaries(t *testing.T) {
+	t.Parallel()
+
+	compiled, err := NewCompiler(parseSchemaSource(t, `
+type: string
+minLength: 2
+maxLength: 5
+anyOf:
+  - {pattern: '^a'}
+  - {pattern: 'z$'}
+`, "", "create")).CompileSuite()
+	require.NoError(t, err)
+
+	accepted := make([]CasePlan, 0)
+
+	for _, plannedCase := range compiled.Cases {
+		if plannedCase.Expect == ExpectAccepted {
+			accepted = append(accepted, plannedCase)
+		}
+	}
+
+	require.Len(t, accepted, 1)
+	require.Equal(t, "anyOf", accepted[0].Source.Keyword)
+
+	for seed := range 100 {
+		value := accepted[0].Generator.Example(seed)
+		require.Equal(t, jsonvalue.KindString, value.Kind)
+		require.GreaterOrEqual(t, len([]rune(value.String)), 2)
+		require.LessOrEqual(t, len([]rune(value.String)), 5)
+		require.True(t, strings.HasPrefix(value.String, "a") || strings.HasSuffix(value.String, "z"))
+	}
+}
+
 func matchesStringOrLargeInteger(value jsonvalue.Value) bool {
 	if value.Kind == jsonvalue.KindString {
 		return len([]rune(value.String)) >= 2
@@ -382,6 +415,75 @@ anyOf:
 		require.NoError(rt, parseErr)
 		require.True(rt, value.Number.IsMultipleOf(two) || value.Number.IsMultipleOf(three))
 	})
+}
+
+func TestCompileSuiteOuterPatternFailureReachesExpressionBackedObjectChildren(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		schema string
+		child  func(jsonvalue.Value) jsonvalue.Value
+	}{
+		{
+			name: "declared property",
+			schema: `type: object
+required: [value]
+maxProperties: 1
+additionalProperties: false
+properties:
+  value:
+    type: string
+    pattern: '^x$'
+    anyOf: [{}]`,
+			child: func(value jsonvalue.Value) jsonvalue.Value {
+				return value.Object[0].Value
+			},
+		},
+		{
+			name: "additional property",
+			schema: `type: object
+minProperties: 1
+maxProperties: 1
+additionalProperties:
+  type: string
+  pattern: '^x$'
+  anyOf: [{}]`,
+			child: func(value jsonvalue.Value) jsonvalue.Value {
+				return value.Object[0].Value
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			compiled, err := NewCompiler(parseSchemaSource(t, test.schema, "", "create")).CompileSuite()
+			require.NoError(t, err)
+
+			var patternFailure *CasePlan
+
+			for index := range compiled.Cases {
+				if compiled.Cases[index].Expect == ExpectRejected &&
+					compiled.Cases[index].Source.Keyword == "pattern" {
+					patternFailure = &compiled.Cases[index]
+
+					break
+				}
+			}
+
+			require.NotNil(t, patternFailure)
+
+			for seed := range 20 {
+				value := patternFailure.Generator.Example(seed)
+				require.Equal(t, jsonvalue.KindObject, value.Kind)
+				require.Len(t, value.Object, 1)
+
+				child := test.child(value)
+				require.Equal(t, jsonvalue.KindString, child.Kind)
+				require.NotEqual(t, "x", child.String)
+			}
+		})
+	}
 }
 
 func TestCompileSuiteDistinguishesEmptyAndUnsupportedAnyOfComplements(t *testing.T) {
