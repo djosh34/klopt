@@ -148,6 +148,36 @@ func TestQueryDecoderAnyOfUsesFirstCompleteSchemaStyleConversion(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderAnyOfConversionMustSatisfySelectedBranch(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		parameter string
+		expected  string
+	}{
+		{
+			name:      "root",
+			parameter: `{name: q, in: query, schema: {anyOf: [{type: boolean, enum: [false]}, {}]}}`,
+			expected:  `{"q":"true"}`,
+		},
+		{
+			name:      "array item",
+			parameter: `{name: q, in: query, explode: false, schema: {type: array, items: {anyOf: [{type: boolean, enum: [false]}, {}]}}}`,
+			expected:  `{"q":["true"]}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, test.parameter)
+			actual, err := decoder.Decode(&url.URL{RawQuery: `q=true`})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
 func TestQueryDecoderAnyOfKeepsJSONContentKind(t *testing.T) {
 	t.Parallel()
 

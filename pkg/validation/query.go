@@ -770,7 +770,7 @@ func prepareQueryConversions(parameter *queryParameter) error {
 			continue
 		}
 
-		conversion := queryConversion{validation: parameter.validation, scalarType: parameter.scalarType}
+		conversion := queryConversion{validation: validation, scalarType: parameter.scalarType}
 
 		switch parameter.wire {
 		case wirePrimitive:

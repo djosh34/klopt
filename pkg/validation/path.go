@@ -993,7 +993,7 @@ func preparePathConversions(parameter *pathParameter) error {
 			continue
 		}
 
-		conversion := pathConversion{validation: parameter.validation, scalarType: parameter.scalarType}
+		conversion := pathConversion{validation: validation, scalarType: parameter.scalarType}
 
 		switch shape {
 		case pathShapePrimitive:

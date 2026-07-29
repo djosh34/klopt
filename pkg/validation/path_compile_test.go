@@ -138,6 +138,41 @@ func TestPathDecoderAnyOfUsesFirstCompleteSchemaStyleConversion(t *testing.T) {
 	}
 }
 
+func TestPathDecoderAnyOfConversionMustSatisfySelectedBranch(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		expected string
+	}{
+		{
+			name:     "root",
+			schema:   `{anyOf: [{type: boolean, enum: [false]}, {enum: [true, 'true']}]}`,
+			expected: `{"id":"true"}`,
+		},
+		{
+			name:     "array item",
+			schema:   `{type: array, items: {anyOf: [{type: boolean, enum: [false]}, {}]}}`,
+			expected: `{"id":["true"]}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: `+test.schema+`}
+`)
+			require.NoError(t, err)
+
+			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/true"})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
 func TestPathDecoderAnyOfConvertsNestedSchemaStyleValues(t *testing.T) {
 	t.Parallel()
 
