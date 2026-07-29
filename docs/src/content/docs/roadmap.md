@@ -9,7 +9,7 @@ description: Known hard problems and likely next steps for validation test gener
 
 ## Composition
 
-- Potentially support `anyOf`, `oneOf`, and `not`.
+- Potentially support `oneOf` and `not`.
 - Validation is easier than generating useful random JSON for these branches. Test generation is the limiting problem.
 
 ## Ongoing quality

@@ -339,21 +339,63 @@ func TestPathDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
 	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
 }
 
-func TestConversionAlternativesFormIndependentCartesianProduct(t *testing.T) {
+func TestPathDecoderSkipsAnyOfWireShapesWithImpossibleBounds(t *testing.T) {
 	t.Parallel()
 
-	root := &Validation{ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true}}
-	for index := 0; index < 4; index++ {
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - {type: object, minProperties: 1, maxProperties: 0}
+              - {type: string}
+`)
+	require.NoError(t, err)
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"x"}`, string(actual))
+}
+
+func TestPreparePathConversionsKeepsIndependentChoiceMetadataLinear(t *testing.T) {
+	t.Parallel()
+
+	root := &Validation{
+		KindValidation:   KindValidation{Type: "object"},
+		ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true},
+	}
+
+	for index := range 8 {
+		name := fmt.Sprintf("value%d", index)
 		root.AllOfValidations = append(root.AllOfValidations, &Validation{
 			AnyOfValidations: []*Validation{
-				{KindValidation: KindValidation{Type: "string"}},
-				{KindValidation: KindValidation{Type: "integer"}},
+				{
+					KindValidation: KindValidation{Type: "object"},
+					ObjectValidation: ObjectValidation{
+						AdditionalPropertiesAllowed: true,
+						Properties: []PropertyValidation{{
+							Name: name, Validation: &Validation{KindValidation: KindValidation{Type: "string"}},
+						}},
+					},
+				},
+				{
+					KindValidation: KindValidation{Type: "object"},
+					ObjectValidation: ObjectValidation{
+						AdditionalPropertiesAllowed: true,
+						Properties: []PropertyValidation{{
+							Name: name, Validation: &Validation{KindValidation: KindValidation{Type: "integer"}},
+						}},
+					},
+				},
 			},
 			ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true},
 		})
 	}
 
-	require.Len(t, conversionAlternatives(root), 16)
+	parameter := pathParameter{wire: pathWireSimpleObject, validation: root}
+	require.NoError(t, preparePathConversions(&parameter))
+	require.LessOrEqual(t, len(parameter.conversions), 16)
 }
 
 func TestPathDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {

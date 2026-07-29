@@ -751,7 +751,7 @@ func prepareQueryConversions(parameter *queryParameter) error {
 		return nil
 	}
 
-	alternatives := conversionAlternatives(parameter.validation)
+	alternatives := conversionComponents(parameter.validation)
 	if !containsAnyOf(parameter.validation) {
 		parameter.conversions = []queryConversion{{
 			validation: parameter.validation, scalarType: parameter.scalarType,
@@ -766,40 +766,13 @@ func prepareQueryConversions(parameter *queryParameter) error {
 	parameter.conversions = make([]queryConversion, 0, len(alternatives))
 
 	for _, validation := range alternatives {
-		if _, possible := compiledValidationTypeState(validation); !possible {
+		if validationImpossible(validation) {
 			continue
 		}
 
-		conversion := queryConversion{validation: validation, scalarType: parameter.scalarType}
-
-		switch parameter.wire {
-		case wirePrimitive:
-			if typeName := compiledValidationType(validation); typeName != "" {
-				conversion.scalarType = typeName
-			}
-		case wireFormArrayRepeated, wireDelimitedArray:
-			typeName, err := compiledArrayScalarType(validation)
-			if err != nil {
-				return err
-			}
-
-			conversion.scalarType = string(typeName)
-			conversion.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
-		case wireFormObjectNamed, wireFormObjectExploded, wireDelimitedObject, wireDeepObject:
-			properties, byName, err := compileQueryProperties(validation, parameter.wire == wireDeepObject)
-			if err != nil {
-				return err
-			}
-
-			conversion.properties = properties
-			conversion.propertyByName = byName
-
-			conversion.dynamicType, err = queryAdditionalPropertiesType(validation)
-			if err != nil {
-				return fmt.Errorf("additionalProperties: %w", err)
-			}
-
-			conversion.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
+		conversion, err := queryConversionForValidation(parameter, validation)
+		if err != nil {
+			return err
 		}
 
 		parameter.conversions = append(parameter.conversions, conversion)
@@ -811,6 +784,45 @@ func prepareQueryConversions(parameter *queryParameter) error {
 	}
 
 	return nil
+}
+
+func queryConversionForValidation(
+	parameter *queryParameter,
+	validation *Validation,
+) (queryConversion, error) {
+	conversion := queryConversion{validation: validation, scalarType: parameter.scalarType}
+
+	switch parameter.wire {
+	case wirePrimitive:
+		if typeName := compiledValidationType(validation); typeName != "" {
+			conversion.scalarType = typeName
+		}
+	case wireFormArrayRepeated, wireDelimitedArray:
+		typeName, err := compiledArrayScalarType(validation)
+		if err != nil {
+			return queryConversion{}, err
+		}
+
+		conversion.scalarType = string(typeName)
+		conversion.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
+	case wireFormObjectNamed, wireFormObjectExploded, wireDelimitedObject, wireDeepObject:
+		properties, byName, err := compileQueryProperties(validation, parameter.wire == wireDeepObject)
+		if err != nil {
+			return queryConversion{}, err
+		}
+
+		conversion.properties = properties
+		conversion.propertyByName = byName
+
+		conversion.dynamicType, err = queryAdditionalPropertiesType(validation)
+		if err != nil {
+			return queryConversion{}, fmt.Errorf("additionalProperties: %w", err)
+		}
+
+		conversion.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
+	}
+
+	return conversion, nil
 }
 
 func mergeQueryObjectConversions(parameter *queryParameter) error {

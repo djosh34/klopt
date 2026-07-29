@@ -153,7 +153,7 @@ func (parameter *pathParameter) decodePathPrimitive(raw string) (jsontext.Value,
 		return nil, err
 	}
 
-	return convertPathAlternatives(parameter.conversions, func(candidate pathConversion) (jsontext.Value, error) {
+	return convertPathAlternatives(parameter, func(candidate pathConversion) (jsontext.Value, error) {
 		return encodePathScalar(candidate.scalarType, decoded)
 	})
 }
@@ -195,7 +195,7 @@ func (parameter *pathParameter) decodePathArray(raw string) (jsontext.Value, err
 		return nil, fmt.Errorf("unknown compiled array wire %d", parameter.wire)
 	}
 
-	return convertPathAlternatives(parameter.conversions, func(candidate pathConversion) (jsontext.Value, error) {
+	return convertPathAlternatives(parameter, func(candidate pathConversion) (jsontext.Value, error) {
 		return encodePathArray(candidate.scalarType, candidate.itemValidation, rawValues)
 	})
 }
@@ -265,7 +265,7 @@ func (parameter *pathParameter) decodePathObject(raw string) (jsontext.Value, er
 		return nil, fmt.Errorf("unknown compiled object wire %d", parameter.wire)
 	}
 
-	return convertPathAlternatives(parameter.conversions, func(conversion pathConversion) (jsontext.Value, error) {
+	return convertPathAlternatives(parameter, func(conversion pathConversion) (jsontext.Value, error) {
 		candidate := *parameter
 		candidate.validation = conversion.validation
 		candidate.dynamicType = conversion.dynamicType
@@ -278,20 +278,24 @@ func (parameter *pathParameter) decodePathObject(raw string) (jsontext.Value, er
 }
 
 func convertPathAlternatives(
-	alternatives []pathConversion,
+	parameter *pathParameter,
 	convert func(pathConversion) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	if len(alternatives) == 1 && !containsAnyOf(alternatives[0].validation) {
-		return convert(alternatives[0])
+	if !containsAnyOf(parameter.validation) {
+		if len(parameter.conversions) != 1 {
+			return nil, errors.New("path conversion metadata is missing")
+		}
+
+		return convert(parameter.conversions[0])
 	}
 
-	validations := make([]*Validation, len(alternatives))
-	for index := range alternatives {
-		validations[index] = alternatives[index].validation
-	}
+	return convertValidationProfiles(parameter.validation, func(validation *Validation) (jsontext.Value, error) {
+		candidate, err := pathConversionForValidation(parameter, validation)
+		if err != nil {
+			return nil, err
+		}
 
-	return convertValidationAlternatives(validations, func(index int, _ *Validation) (jsontext.Value, error) {
-		return convert(alternatives[index])
+		return convert(candidate)
 	})
 }
 

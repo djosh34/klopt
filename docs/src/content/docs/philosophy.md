@@ -71,7 +71,7 @@ Fully generated validation code is difficult to make bug-free and difficult to t
 
 ## A deliberate subset
 
-OpenAPI 3.0.3 is large. This library rejects unsupported behavior during parsing instead of guessing. Current examples include `oneOf`, `anyOf`, `not`, and reference cycles.
+OpenAPI 3.0.3 is large. This library rejects unsupported behavior during parsing instead of guessing. Current examples include `oneOf`, `not`, and reference cycles.
 
 This is intentional. Clear rejection is safer than accepting a document with partial semantics. The supported model can grow as its behavior becomes testable.
 

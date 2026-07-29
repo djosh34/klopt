@@ -414,10 +414,14 @@ func compiledScalarType(validations ...*Validation) (string, error) {
 		return "string", nil
 	}
 
-	alternatives := conversionAlternatives(conjunctiveValidation(validations...))
+	alternatives := conversionComponents(conjunctiveValidation(validations...))
 
 	types := make([]string, 0, len(alternatives))
 	for _, alternative := range alternatives {
+		if validationImpossible(alternative) {
+			continue
+		}
+
 		typeName, possible := compiledValidationTypeState(alternative)
 		if !possible {
 			continue
@@ -624,6 +628,81 @@ func compiledValidationTypeState(validations ...*Validation) (string, bool) {
 	return typeName, typeName != ""
 }
 
+func validationImpossible(validation *Validation) bool {
+	if validation == nil {
+		return false
+	}
+
+	typeName, possible := compiledValidationTypeState(validation)
+	if !possible {
+		return true
+	}
+
+	if validationCompositionImpossible(validation) {
+		return true
+	}
+
+	return validationBoundsImpossible(validation, typeName)
+}
+
+func validationCompositionImpossible(validation *Validation) bool {
+	for _, child := range validation.AllOfValidations {
+		if validationImpossible(child) {
+			return true
+		}
+	}
+
+	if len(validation.AnyOfValidations) != 0 {
+		allImpossible := true
+
+		for _, branch := range validation.AnyOfValidations {
+			if !validationImpossible(branch) {
+				allImpossible = false
+
+				break
+			}
+		}
+
+		if allImpossible {
+			return true
+		}
+	}
+
+	return false
+}
+
+func validationBoundsImpossible(validation *Validation, typeName string) bool {
+	switch typeName {
+	case "number", "integer":
+		return numberBoundsImpossible(validation.NumberValidation.Minimum, validation.NumberValidation.Maximum)
+	case "string":
+		return countBoundsImpossible(validation.StringValidation.MinLength, validation.StringValidation.MaxLength)
+	case "array":
+		return countBoundsImpossible(validation.ArrayValidation.MinItems, validation.ArrayValidation.MaxItems)
+	case "object":
+		return countBoundsImpossible(
+			validation.ObjectValidation.MinProperties,
+			validation.ObjectValidation.MaxProperties,
+		)
+	default:
+		return false
+	}
+}
+
+func numberBoundsImpossible(minimum *NumberBound, maximum *NumberBound) bool {
+	if minimum == nil || maximum == nil {
+		return false
+	}
+
+	comparison := minimum.ExactValue.Compare(maximum.ExactValue)
+
+	return comparison > 0 || comparison == 0 && (minimum.Exclusive || maximum.Exclusive)
+}
+
+func countBoundsImpossible(minimum *CountBound, maximum *CountBound) bool {
+	return minimum != nil && maximum != nil && minimum.ExactValue.Compare(maximum.ExactValue) > 0
+}
+
 func conjunctiveValidation(validations ...*Validation) *Validation {
 	if len(validations) == 0 {
 		return nil
@@ -644,11 +723,15 @@ func conjunctiveValidation(validations ...*Validation) *Validation {
 
 //nolint:cyclop // OpenAPI style types require ordered inference across all AnyOf candidates.
 func compiledStyleType(validation *Validation) (string, error) {
-	alternatives := conversionAlternatives(validation)
+	alternatives := conversionComponents(validation)
 	types := make([]string, 0, len(alternatives))
 	shape := ""
 
 	for _, alternative := range alternatives {
+		if validationImpossible(alternative) {
+			continue
+		}
+
 		typeName, possible := compiledValidationTypeState(alternative)
 		if !possible {
 			continue
@@ -693,7 +776,7 @@ func compiledStyleType(validation *Validation) (string, error) {
 	return typeName, nil
 }
 
-func conversionAlternatives(validation *Validation) []*Validation {
+func conversionComponents(validation *Validation) []*Validation {
 	if validation == nil || !containsAnyOf(validation) {
 		return []*Validation{validation}
 	}
@@ -701,52 +784,102 @@ func conversionAlternatives(validation *Validation) []*Validation {
 	local := *validation
 	local.AllOfValidations = nil
 	local.AnyOfValidations = nil
-	profiles := []*Validation{&local}
-
-	if len(validation.AnyOfValidations) != 0 {
-		profiles = make([]*Validation, 0)
-
-		for _, branch := range validation.AnyOfValidations {
-			for _, alternative := range conversionAlternatives(branch) {
-				combined := conjunctiveValidation(&local, alternative)
-				combined.SchemaPointer = alternative.SchemaPointer
-				profiles = append(profiles, combined)
-			}
-		}
-	}
+	base := &local
+	composedChildren := make([]*Validation, 0)
 
 	for _, child := range validation.AllOfValidations {
-		childProfiles := conversionAlternatives(child)
-		profiles = combineConversionProfiles(
-			profiles,
-			childProfiles,
-			len(validation.AnyOfValidations) != 0 || !containsAnyOf(child),
-		)
+		if containsAnyOf(child) {
+			composedChildren = append(composedChildren, child)
+
+			continue
+		}
+
+		base = conjunctiveValidation(base, child)
 	}
 
-	return profiles
-}
-
-func combineConversionProfiles(
-	profiles []*Validation,
-	children []*Validation,
-	preserveProfilePointer bool,
-) []*Validation {
-	result := make([]*Validation, 0, len(profiles)*len(children))
-	for _, profile := range profiles {
-		for _, child := range children {
-			combined := conjunctiveValidation(profile, child)
-			if preserveProfilePointer {
-				combined.SchemaPointer = profile.SchemaPointer
-			} else {
-				combined.SchemaPointer = child.SchemaPointer
-			}
-
+	result := make([]*Validation, 0)
+	appendComponents := func(composed *Validation) {
+		for _, alternative := range conversionComponents(composed) {
+			combined := conjunctiveValidation(base, alternative)
+			combined.SchemaPointer = alternative.SchemaPointer
 			result = append(result, combined)
 		}
 	}
 
+	for _, branch := range validation.AnyOfValidations {
+		appendComponents(branch)
+	}
+
+	for _, child := range composedChildren {
+		appendComponents(child)
+	}
+
+	if len(result) == 0 {
+		return []*Validation{base}
+	}
+
 	return result
+}
+
+func visitConversionAlternatives(validation *Validation, visit func(*Validation) bool) bool {
+	if validation == nil || !containsAnyOf(validation) {
+		return visit(validation)
+	}
+
+	local := *validation
+	local.AllOfValidations = nil
+	local.AnyOfValidations = nil
+
+	return visitLocalConversionChoices(validation, &local, func(profile *Validation) bool {
+		return visitConjunctiveConversionChildren(validation.AllOfValidations, 0, profile, visit)
+	})
+}
+
+func visitLocalConversionChoices(
+	validation *Validation,
+	local *Validation,
+	visit func(*Validation) bool,
+) bool {
+	if len(validation.AnyOfValidations) == 0 {
+		return visit(local)
+	}
+
+	for _, branch := range validation.AnyOfValidations {
+		if !visitConversionAlternatives(branch, func(alternative *Validation) bool {
+			combined := conjunctiveValidation(local, alternative)
+			combined.SchemaPointer = alternative.SchemaPointer
+
+			return visit(combined)
+		}) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func visitConjunctiveConversionChildren(
+	children []*Validation,
+	index int,
+	profile *Validation,
+	visit func(*Validation) bool,
+) bool {
+	if index == len(children) {
+		return visit(profile)
+	}
+
+	child := children[index]
+
+	return visitConversionAlternatives(child, func(childProfile *Validation) bool {
+		combined := conjunctiveValidation(profile, childProfile)
+		if containsAnyOf(child) {
+			combined.SchemaPointer = childProfile.SchemaPointer
+		} else {
+			combined.SchemaPointer = profile.SchemaPointer
+		}
+
+		return visitConjunctiveConversionChildren(children, index+1, combined, visit)
+	})
 }
 
 func containsAnyOf(validation *Validation) bool {
@@ -967,13 +1100,12 @@ func attachPathConversionValidations(parameter *pathParameter) {
 	}
 }
 
-//nolint:cyclop // Each AnyOf candidate has separate primitive, array, and object metadata.
 func preparePathConversions(parameter *pathParameter) error {
 	if parameter == nil || parameter.validation == nil || parameter.wire == pathWireJSONContent {
 		return nil
 	}
 
-	alternatives := conversionAlternatives(parameter.validation)
+	alternatives := conversionComponents(parameter.validation)
 	if !containsAnyOf(parameter.validation) {
 		parameter.conversions = []pathConversion{{
 			validation: parameter.validation, scalarType: parameter.scalarType,
@@ -989,43 +1121,13 @@ func preparePathConversions(parameter *pathParameter) error {
 	shape := pathShape(parameter.wire % pathWireKind(pathShapeCount))
 
 	for _, validation := range alternatives {
-		if _, possible := compiledValidationTypeState(validation); !possible {
+		if validationImpossible(validation) {
 			continue
 		}
 
-		conversion := pathConversion{validation: validation, scalarType: parameter.scalarType}
-
-		switch shape {
-		case pathShapePrimitive:
-			typeName, err := compiledPathScalarType(validation)
-			if err != nil {
-				return err
-			}
-
-			conversion.scalarType = typeName
-		case pathShapeArray:
-			typeName, err := compiledArrayScalarType(validation)
-			if err != nil {
-				return err
-			}
-
-			conversion.scalarType = typeName
-			conversion.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
-		case pathShapeObject:
-			properties, byName, err := compiledPathProperties(validation)
-			if err != nil {
-				return err
-			}
-
-			conversion.properties = properties
-			conversion.propertyByName = byName
-
-			conversion.dynamicType, err = compiledPathScalarType(compiledAdditionalProperties(validation)...)
-			if err != nil {
-				return fmt.Errorf("additionalProperties: %w", err)
-			}
-
-			conversion.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
+		conversion, err := pathConversionForValidation(parameter, validation)
+		if err != nil {
+			return err
 		}
 
 		parameter.conversions = append(parameter.conversions, conversion)
@@ -1036,6 +1138,49 @@ func preparePathConversions(parameter *pathParameter) error {
 	}
 
 	return nil
+}
+
+func pathConversionForValidation(
+	parameter *pathParameter,
+	validation *Validation,
+) (pathConversion, error) {
+	conversion := pathConversion{validation: validation, scalarType: parameter.scalarType}
+	shape := pathShape(parameter.wire % pathWireKind(pathShapeCount))
+
+	switch shape {
+	case pathShapePrimitive:
+		typeName, err := compiledPathScalarType(validation)
+		if err != nil {
+			return pathConversion{}, err
+		}
+
+		conversion.scalarType = typeName
+	case pathShapeArray:
+		typeName, err := compiledArrayScalarType(validation)
+		if err != nil {
+			return pathConversion{}, err
+		}
+
+		conversion.scalarType = typeName
+		conversion.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
+	case pathShapeObject:
+		properties, byName, err := compiledPathProperties(validation)
+		if err != nil {
+			return pathConversion{}, err
+		}
+
+		conversion.properties = properties
+		conversion.propertyByName = byName
+
+		conversion.dynamicType, err = compiledPathScalarType(compiledAdditionalProperties(validation)...)
+		if err != nil {
+			return pathConversion{}, fmt.Errorf("additionalProperties: %w", err)
+		}
+
+		conversion.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
+	}
+
+	return conversion, nil
 }
 
 func mergePathObjectConversions(parameter *pathParameter) {

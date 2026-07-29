@@ -241,7 +241,7 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 			return errors.New("duplicate scalar occurrence")
 		}
 
-		value, err := convertQueryAlternatives(parameter.conversions, func(candidate queryConversion) (jsontext.Value, error) {
+		value, err := convertQueryAlternatives(parameter, func(candidate queryConversion) (jsontext.Value, error) {
 			return encodeQueryScalar(candidate.scalarType, occurrences[0].decodedValue, parameter.allowEmpty)
 		})
 		if err != nil {
@@ -294,7 +294,7 @@ func (parameter *queryParameter) writeConvertedObject(
 	encoder *jsontext.Encoder,
 	write func(*queryParameter, *jsontext.Encoder) error,
 ) error {
-	value, err := convertQueryAlternatives(parameter.conversions, func(conversion queryConversion) (jsontext.Value, error) {
+	value, err := convertQueryAlternatives(parameter, func(conversion queryConversion) (jsontext.Value, error) {
 		candidate := *parameter
 		candidate.validation = conversion.validation
 		candidate.dynamicType = conversion.dynamicType
@@ -568,7 +568,7 @@ func writeConvertedArray(
 	parameter *queryParameter,
 	values []string,
 ) error {
-	converted, err := convertQueryAlternatives(parameter.conversions, func(candidate queryConversion) (jsontext.Value, error) {
+	converted, err := convertQueryAlternatives(parameter, func(candidate queryConversion) (jsontext.Value, error) {
 		items := candidate.itemValidation
 		typeName := candidate.scalarType
 
@@ -599,20 +599,24 @@ func writeConvertedArray(
 }
 
 func convertQueryAlternatives(
-	alternatives []queryConversion,
+	parameter *queryParameter,
 	convert func(queryConversion) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	if len(alternatives) == 1 && !containsAnyOf(alternatives[0].validation) {
-		return convert(alternatives[0])
+	if !containsAnyOf(parameter.validation) {
+		if len(parameter.conversions) != 1 {
+			return nil, errors.New("query conversion metadata is missing")
+		}
+
+		return convert(parameter.conversions[0])
 	}
 
-	validations := make([]*Validation, len(alternatives))
-	for index := range alternatives {
-		validations[index] = alternatives[index].validation
-	}
+	return convertValidationProfiles(parameter.validation, func(validation *Validation) (jsontext.Value, error) {
+		candidate, err := queryConversionForValidation(parameter, validation)
+		if err != nil {
+			return nil, err
+		}
 
-	return convertValidationAlternatives(validations, func(index int, _ *Validation) (jsontext.Value, error) {
-		return convert(alternatives[index])
+		return convert(candidate)
 	})
 }
 
@@ -621,39 +625,50 @@ func convertAnyOfValue(
 	validation *Validation,
 	convert func(*Validation) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	alternatives := conversionAlternatives(validation)
-	if len(alternatives) == 1 && alternatives[0] == validation {
+	if !containsAnyOf(validation) {
 		return convert(validation)
 	}
 
-	return convertValidationAlternatives(alternatives, func(index int, _ *Validation) (jsontext.Value, error) {
-		alternative := alternatives[index]
-
-		return convert(alternative)
-	})
+	return convertValidationProfiles(validation, convert)
 }
 
-func convertValidationAlternatives(
-	alternatives []*Validation,
-	convert func(int, *Validation) (jsontext.Value, error),
+func convertValidationProfiles(
+	validation *Validation,
+	convert func(*Validation) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	var branchErrs []error
+	var (
+		branchErrs []error
+		result     jsontext.Value
+	)
 
-	for index, alternative := range alternatives {
-		value, err := convert(index, alternative)
+	found := false
+
+	visitConversionAlternatives(validation, func(alternative *Validation) bool {
+		if validationImpossible(alternative) {
+			return true
+		}
+
+		value, err := convert(alternative)
 		if err != nil {
 			branchErrs = append(branchErrs, err)
 
-			continue
+			return true
 		}
 
 		if errs := validateRaw(alternative, json.RawMessage(value), "#"); len(errs) != 0 {
 			branchErrs = append(branchErrs, errors.Join(errs...))
 
-			continue
+			return true
 		}
 
-		return value, nil
+		result = value
+		found = true
+
+		return false
+	})
+
+	if found {
+		return result, nil
 	}
 
 	if len(branchErrs) == 0 {

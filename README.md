@@ -167,7 +167,7 @@ Klopt undergoes extensive fuzz testing using its own [JSON test generator](https
 
 - [ ] Add proper format support for Int32 (`int32`), Int64 (`int64`), `float`, `double`, UUID, CIDR, IPv4, and possibly more, including the required test-generation additions.
 - [ ] Continue improving test generation.
-- [ ] Broaden OpenAPI support with `anyOf` and perhaps `oneOf` and `not`.
+- [ ] Broaden OpenAPI support with `oneOf` and `not`.
 
 # Contributing
 

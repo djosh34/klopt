@@ -372,6 +372,18 @@ func TestQueryDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
 	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
 }
 
+func TestQueryDecoderSkipsAnyOfWireShapesWithImpossibleBounds(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+      {type: object, minProperties: 1, maxProperties: 0},
+      {type: string}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"x"}`, string(actual))
+}
+
 func TestQueryDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
 	t.Parallel()
 
