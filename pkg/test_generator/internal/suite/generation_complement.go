@@ -165,17 +165,26 @@ func finiteObjectValues(
 	constraints ObjectConstraints,
 	active map[DomainID]bool,
 ) ([]jsonvalue.Value, bool, error) {
-	if constraints.Additional.Values != EmptyDomainID {
+	required := 0
+
+	for _, property := range constraints.Properties {
+		if property.Required && property.State == PropertyForbidden {
+			return nil, true, nil
+		}
+
+		if property.Required {
+			required++
+		}
+	}
+
+	if constraints.Additional.Values != EmptyDomainID &&
+		(constraints.MaxProps == nil || *constraints.MaxProps > required) {
 		return nil, false, nil
 	}
 
 	properties := make([]finiteObjectProperty, 0, len(constraints.Properties))
 	for _, property := range constraints.Properties {
 		if property.State == PropertyForbidden {
-			if property.Required {
-				return nil, true, nil
-			}
-
 			continue
 		}
 

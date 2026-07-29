@@ -449,6 +449,25 @@ func TestPathDecoderSkipsEnumProfilesWhoseMembersViolateBounds(t *testing.T) {
 	require.JSONEq(t, `{"id":"x"}`, string(actual))
 }
 
+func TestPathDecoderSkipsProfilesWithoutAnAllowedMultiple(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - {type: integer, minimum: 1, maximum: 1, multipleOf: 2}
+              - {type: array, items: {type: string}}
+`)
+	require.NoError(t, err)
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x,y"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
+}
+
 func TestPreparePathConversionsBoundsIndependentChoiceProfiles(t *testing.T) {
 	t.Parallel()
 

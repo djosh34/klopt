@@ -41,6 +41,36 @@ func TestCompileSuiteRejectsExcessiveConjunctiveAnyOfChoices(t *testing.T) {
 	require.ErrorContains(t, err, "at most 256 conjunctive anyOf generation profiles")
 }
 
+func TestCompileSuiteMergesPropertyOccurrencesAcrossAnyOfConjunctions(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `
+type: object
+required: [fixed]
+properties:
+  fixed: {type: string}
+anyOf:
+  - type: object
+    required: [choice]
+    properties:
+      choice:
+        anyOf:
+          - {type: string}
+          - {type: integer}
+`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	valid := anyOfCase(t, compiled.Cases, ExpectAccepted)
+	for seed := range 20 {
+		value := valid.Generator.Example(seed)
+		require.Equal(t, jsonvalue.KindObject, value.Kind)
+		members := membersByName(value.Object)
+		require.Contains(t, members, "fixed")
+		require.Contains(t, members, "choice")
+	}
+}
+
 func TestCompileSuitePreservesAnyOfNestedUnderAllOfReference(t *testing.T) {
 	t.Parallel()
 
@@ -626,6 +656,14 @@ anyOf: [{enum: [[], [false], [true]]}]`,
 			schema: `type: object
 required: [flag]
 additionalProperties: false
+properties: {flag: {type: boolean}}
+anyOf: [{enum: [{flag: false}, {flag: true}]}]`,
+		},
+		{
+			name: "object effectively closed by cardinality",
+			schema: `type: object
+required: [flag]
+maxProperties: 1
 properties: {flag: {type: boolean}}
 anyOf: [{enum: [{flag: false}, {flag: true}]}]`,
 		},

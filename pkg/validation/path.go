@@ -730,7 +730,8 @@ func validationBoundsImpossible(validation *Validation, typeName string) bool {
 func validationNumberBoundsImpossible(validation *Validation, typeName string) bool {
 	minimums := make([]*NumberBound, 0)
 	maximums := make([]*NumberBound, 0)
-	collectValidationNumberBounds(validation, &minimums, &maximums)
+	multiples := make([]*jsonvalue.Number, 0)
+	collectValidationNumberBounds(validation, &minimums, &maximums, &multiples)
 
 	for _, minimum := range minimums {
 		for _, maximum := range maximums {
@@ -741,10 +742,54 @@ func validationNumberBoundsImpossible(validation *Validation, typeName string) b
 		}
 	}
 
-	return typeName == "integer" && integerBoundsImpossible(minimums, maximums)
+	step := combinedNumberStep(multiples, typeName == "integer")
+
+	return step != nil && numberLatticeBoundsImpossible(minimums, maximums, step)
 }
 
-func integerBoundsImpossible(minimums []*NumberBound, maximums []*NumberBound) bool {
+func combinedNumberStep(multiples []*jsonvalue.Number, integersOnly bool) *big.Rat {
+	if len(multiples) == 0 {
+		if integersOnly {
+			return new(big.Rat).SetInt64(1)
+		}
+
+		return nil
+	}
+
+	numerator := big.NewInt(1)
+
+	var denominator *big.Int
+
+	for _, multiple := range multiples {
+		if multiple.Rational == nil {
+			return nil
+		}
+
+		valueNumerator := new(big.Int).Abs(multiple.Rational.Num())
+		gcd := new(big.Int).GCD(nil, nil, numerator, valueNumerator)
+		numerator.Mul(new(big.Int).Quo(numerator, gcd), valueNumerator)
+
+		valueDenominator := multiple.Rational.Denom()
+		if denominator == nil {
+			denominator = new(big.Int).Set(valueDenominator)
+		} else {
+			denominator.GCD(nil, nil, denominator, valueDenominator)
+		}
+	}
+
+	step := new(big.Rat).SetFrac(numerator, denominator)
+	if integersOnly {
+		step.SetInt(new(big.Int).Abs(step.Num()))
+	}
+
+	return step
+}
+
+func numberLatticeBoundsImpossible(
+	minimums []*NumberBound,
+	maximums []*NumberBound,
+	step *big.Rat,
+) bool {
 	minimum := strongestMinimum(minimums)
 
 	maximum := strongestMaximum(maximums)
@@ -753,13 +798,17 @@ func integerBoundsImpossible(minimums []*NumberBound, maximums []*NumberBound) b
 		return false
 	}
 
-	lower := floorRational(minimum.ExactValue.Rational)
-	if minimum.Exclusive || !minimum.ExactValue.IsInteger() {
+	minimumIndex := new(big.Rat).Quo(minimum.ExactValue.Rational, step)
+
+	lower := floorRational(minimumIndex)
+	if minimum.Exclusive || !minimumIndex.IsInt() {
 		lower.Add(lower, big.NewInt(1))
 	}
 
-	upper := floorRational(maximum.ExactValue.Rational)
-	if maximum.Exclusive && maximum.ExactValue.IsInteger() {
+	maximumIndex := new(big.Rat).Quo(maximum.ExactValue.Rational, step)
+
+	upper := floorRational(maximumIndex)
+	if maximum.Exclusive && maximumIndex.IsInt() {
 		upper.Sub(upper, big.NewInt(1))
 	}
 
@@ -806,6 +855,7 @@ func collectValidationNumberBounds(
 	validation *Validation,
 	minimums *[]*NumberBound,
 	maximums *[]*NumberBound,
+	multiples *[]*jsonvalue.Number,
 ) {
 	if validation.NumberValidation.Minimum != nil {
 		*minimums = append(*minimums, validation.NumberValidation.Minimum)
@@ -815,8 +865,12 @@ func collectValidationNumberBounds(
 		*maximums = append(*maximums, validation.NumberValidation.Maximum)
 	}
 
+	if validation.NumberValidation.ExactMultipleOf != nil {
+		*multiples = append(*multiples, validation.NumberValidation.ExactMultipleOf)
+	}
+
 	for _, child := range validation.AllOfValidations {
-		collectValidationNumberBounds(child, minimums, maximums)
+		collectValidationNumberBounds(child, minimums, maximums, multiples)
 	}
 }
 

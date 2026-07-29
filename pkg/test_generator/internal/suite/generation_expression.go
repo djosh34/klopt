@@ -147,7 +147,10 @@ func meetGenerationExpressions(
 		return generationExpression{}, nil
 	}
 
-	use := mergeGenerationUses(left.term.use, right.term.use, domain)
+	use, err := mergeGenerationUses(left.term.use, right.term.use, domain)
+	if err != nil {
+		return generationExpression{}, err
+	}
 
 	term := &generationTerm{domain: domain, use: use}
 	term.stringLanguages = append(
@@ -233,13 +236,13 @@ func generationExpressionProfileCount(expression generationExpression) int {
 	return count
 }
 
-func mergeGenerationUses(left *schemaUse, right *schemaUse, domain DomainID) *schemaUse {
+func mergeGenerationUses(left *schemaUse, right *schemaUse, domain DomainID) (*schemaUse, error) {
 	if left == nil {
-		return right
+		return right, nil
 	}
 
 	if right == nil {
-		return left
+		return left, nil
 	}
 
 	result := *left
@@ -259,11 +262,68 @@ func mergeGenerationUses(left *schemaUse, right *schemaUse, domain DomainID) *sc
 		result.additional = right.additional
 	}
 
-	if len(result.properties) == 0 {
-		result.properties = append([]schemaPropertyUse(nil), right.properties...)
+	var err error
+
+	result.properties, err = mergeGenerationProperties(left, right, domain)
+	if err != nil {
+		return nil, err
 	}
 
-	return &result
+	return &result, nil
+}
+
+func mergeGenerationProperties(
+	left *schemaUse,
+	right *schemaUse,
+	domain DomainID,
+) ([]schemaPropertyUse, error) {
+	result := append([]schemaPropertyUse(nil), left.properties...)
+	for _, rightProperty := range right.properties {
+		leftIndex := -1
+
+		for index, leftProperty := range result {
+			if leftProperty.name == rightProperty.name {
+				leftIndex = index
+
+				break
+			}
+		}
+
+		if leftIndex == -1 {
+			result = append(result, rightProperty)
+
+			continue
+		}
+
+		propertyDomain, err := generationPropertyDomain(left.domains, domain, rightProperty.name)
+		if err != nil {
+			return nil, err
+		}
+
+		merged, err := mergeGenerationUses(result[leftIndex].use, rightProperty.use, propertyDomain)
+		if err != nil {
+			return nil, err
+		}
+
+		result[leftIndex].use = merged
+	}
+
+	return result, nil
+}
+
+func generationPropertyDomain(registry *DomainRegistry, domain DomainID, name string) (DomainID, error) {
+	compiled, ok := registry.Domain(domain)
+	if !ok {
+		return NoDomain, fmt.Errorf("merge generation uses: Domain %d does not exist", domain)
+	}
+
+	for _, property := range compiled.Object.Properties {
+		if property.Name == name {
+			return property.Values, nil
+		}
+	}
+
+	return compiled.Object.Additional.Values, nil
 }
 
 func meetOptionalExpressions(
