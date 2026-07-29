@@ -77,7 +77,8 @@ func (planner *CasePlanner) addKindPartitions(
 
 		result.add(CasePlan{
 			Name:   caseName("valid kind "+kindName(kind), source.Pointer, ""),
-			Expect: ExpectAccepted, Values: partition, Source: source,
+			Expect: ExpectAccepted, Source: source,
+			expression: domainGenerationExpression(partition, planner.rootUse, nil),
 		})
 	}
 
@@ -141,10 +142,10 @@ func (planner *CasePlanner) addNumberBoundaryPartitions(
 
 		if value != EmptyDomainID {
 			result.add(CasePlan{
-				Name:   caseName("valid number "+entry.label+" boundary", use.pointer, entry.label),
-				Expect: ExpectAccepted,
-				Values: value,
-				Source: ConstraintSource{Pointer: use.pointer, Keyword: entry.label},
+				Name:       caseName("valid number "+entry.label+" boundary", use.pointer, entry.label),
+				Expect:     ExpectAccepted,
+				Source:     ConstraintSource{Pointer: use.pointer, Keyword: entry.label},
+				expression: domainGenerationExpression(value, use, nil),
 			})
 		}
 	}
@@ -200,11 +201,11 @@ func (planner *CasePlanner) addStringLengthPartitions(
 					length.label+"Length",
 				),
 				Expect: ExpectAccepted,
-				Values: value,
 				Source: ConstraintSource{
 					Pointer: use.pointer,
 					Keyword: length.label + "Length",
 				},
+				expression: domainGenerationExpression(value, use, nil),
 			})
 		}
 	}
@@ -291,11 +292,11 @@ func (planner *CasePlanner) addArrayCountPartitions(result *caseSet, domain Doma
 					count.label+"Items",
 				),
 				Expect: ExpectAccepted,
-				Values: value,
 				Source: ConstraintSource{
 					Pointer: use.pointer,
 					Keyword: count.label + "Items",
 				},
+				expression: domainGenerationExpression(value, use, nil),
 			})
 		}
 	}
@@ -350,7 +351,7 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 		lifted.Null, lifted.Boolean = KindExcluded, KindExcluded
 		lifted.Number.State, lifted.String.State, lifted.Object.State =
 			KindExcluded, KindExcluded, KindExcluded
-		lifted.Array.Items = child.Values
+		lifted.Array.Items = generationExpressionDomain(child.expression)
 
 		lifted.Array.MinItems = max(1, lifted.Array.MinItems)
 		if lifted.Array.MaxItems != nil && lifted.Array.MinItems > *lifted.Array.MaxItems {
@@ -359,11 +360,10 @@ func (planner *CasePlanner) addLiftedArrayChildPartitions(
 
 		values := planner.Domains.FindOrAddEquivalentDomain(lifted)
 		result.add(CasePlan{
-			Name:           caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
-			Expect:         child.Expect,
-			Values:         values,
-			Source:         child.Source,
-			stringLanguage: child.stringLanguage,
+			Name:       caseName(expectName(child.Expect)+" array item / "+child.Name, use.pointer, "items"),
+			Expect:     child.Expect,
+			Source:     child.Source,
+			expression: liftedDomainGenerationExpression(values, use, child.expression),
 		})
 	}
 }
@@ -456,11 +456,11 @@ func (planner *CasePlanner) addObjectCountPartitions(result *caseSet, domain Dom
 					count.label+"Properties",
 				),
 				Expect: ExpectAccepted,
-				Values: values,
 				Source: ConstraintSource{
 					Pointer: use.pointer,
 					Keyword: count.label + "Properties",
 				},
+				expression: domainGenerationExpression(values, use, nil),
 			})
 		}
 	}
@@ -521,9 +521,9 @@ func (planner *CasePlanner) addForbiddenPropertyFailure(
 				use.pointer,
 				"additionalProperties",
 			),
-			Expect: ExpectRejected,
-			Values: values,
-			Source: source,
+			Expect:     ExpectRejected,
+			Source:     source,
+			expression: domainGenerationExpression(values, use, nil),
 		})
 	}
 
@@ -602,11 +602,11 @@ func (planner *CasePlanner) addOptionalPropertyPartitions(
 					"properties",
 				),
 				Expect: ExpectAccepted,
-				Values: values,
 				Source: ConstraintSource{
 					Pointer: use.pointer,
 					Keyword: "properties",
 				},
+				expression: domainGenerationExpression(values, use, nil),
 			})
 		}
 	}
@@ -638,7 +638,7 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 		for index := range lifted.Object.Properties {
 			if lifted.Object.Properties[index].Name == property.Name {
 				lifted.Object.Properties[index].Required = true
-				lifted.Object.Properties[index].Values = child.Values
+				lifted.Object.Properties[index].Values = generationExpressionDomain(child.expression)
 			}
 		}
 
@@ -654,10 +654,9 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 				use.pointer,
 				"properties",
 			),
-			Expect:         expect,
-			Values:         values,
-			Source:         child.Source,
-			stringLanguage: child.stringLanguage,
+			Expect:     expect,
+			Source:     child.Source,
+			expression: liftedDomainGenerationExpression(values, use, child.expression),
 		})
 	}
 
@@ -666,7 +665,8 @@ func (planner *CasePlanner) addPropertyChildPartitions(
 
 // isAggregateChildCase identifies the synthetic child aggregate.
 func isAggregateChildCase(child CasePlan, values DomainID) bool {
-	return child.Expect == ExpectAccepted && child.Values == values && child.Source.Keyword == ""
+	return child.Expect == ExpectAccepted && generationExpressionDomain(child.expression) == values &&
+		child.Source.Keyword == ""
 }
 
 // propertyChildPartitions plans one exact declared-property occurrence.
@@ -708,11 +708,11 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 			result.add(CasePlan{
 				Name:   caseName("valid additional property", use.pointer, "additionalProperties"),
 				Expect: ExpectAccepted,
-				Values: values,
 				Source: ConstraintSource{
 					Pointer: use.pointer,
 					Keyword: "additionalProperties",
 				},
+				expression: domainGenerationExpression(values, use, nil),
 			})
 		}
 
@@ -740,7 +740,7 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 			Name:     name,
 			Required: true,
 			State:    PropertyAllowed,
-			Values:   child.Values,
+			Values:   generationExpressionDomain(child.expression),
 		})
 
 		values := planner.Domains.FindOrAddEquivalentDomain(lifted)
@@ -754,10 +754,9 @@ func (planner *CasePlanner) addAdditionalPropertyPartitions(
 				use.pointer,
 				"additionalProperties",
 			),
-			Expect:         child.Expect,
-			Values:         values,
-			Source:         child.Source,
-			stringLanguage: child.stringLanguage,
+			Expect:     child.Expect,
+			Source:     child.Source,
+			expression: liftedDomainGenerationExpression(values, use, child.expression),
 		})
 	}
 
@@ -1088,10 +1087,10 @@ func (planner *CasePlanner) addExactStructuralFailure(
 ) {
 	values := planner.Domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{value}))
 	result.add(CasePlan{
-		Name:   caseName(name, source.Pointer, source.Keyword),
-		Expect: ExpectRejected,
-		Values: values,
-		Source: source,
+		Name:       caseName(name, source.Pointer, source.Keyword),
+		Expect:     ExpectRejected,
+		Source:     source,
+		expression: domainGenerationExpression(values, planner.rootUse, nil),
 	})
 }
 
@@ -1142,10 +1141,10 @@ func (planner *CasePlanner) childPartitions(
 ) ([]CasePlan, error) {
 	children := newCaseSet()
 	children.add(CasePlan{
-		Name:   caseName("valid aggregate", use.pointer, ""),
-		Expect: ExpectAccepted,
-		Values: use.domain,
-		Source: ConstraintSource{Pointer: use.pointer},
+		Name:       caseName("valid aggregate", use.pointer, ""),
+		Expect:     ExpectAccepted,
+		Source:     ConstraintSource{Pointer: use.pointer},
+		expression: domainGenerationExpression(use.domain, use, nil),
 	})
 
 	if err := planner.addValidPartitions(children, use, active); err != nil {

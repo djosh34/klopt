@@ -58,6 +58,10 @@ func (decoder *QueryDecoder) Decode(input *url.URL) (json.RawMessage, error) {
 			}
 
 			pair.property = claim.property
+			if claim.property >= 0 {
+				pair.childName = decoder.parameters[claim.parameter].properties[claim.property].name
+			}
+
 			claimed[claim.parameter] = append(claimed[claim.parameter], pair)
 
 			continue
@@ -237,16 +241,8 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 			return errors.New("duplicate scalar occurrence")
 		}
 
-		value, err := convertAnyOfValue(parameter.validation, func(candidate *Validation) (jsontext.Value, error) {
-			typeName := parameter.scalarType
-			if containsAnyOf(parameter.validation) {
-				candidateType := compiledValidationType(candidate)
-				if candidateType != "" {
-					typeName = candidateType
-				}
-			}
-
-			return encodeQueryScalar(typeName, occurrences[0].decodedValue, parameter.allowEmpty)
+		value, err := convertQueryAlternatives(parameter.conversions, func(candidate queryConversion) (jsontext.Value, error) {
+			return encodeQueryScalar(candidate.scalarType, occurrences[0].decodedValue, parameter.allowEmpty)
 		})
 		if err != nil {
 			return err
@@ -276,9 +272,13 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 			return errors.New("duplicate non-exploded object occurrence")
 		}
 
-		return parameter.writeNamedObject(encoder, occurrences[0])
+		return parameter.writeConvertedObject(encoder, func(candidate *queryParameter, output *jsontext.Encoder) error {
+			return candidate.writeNamedObject(output, occurrences[0])
+		})
 	case wireFormObjectExploded, wireDeepObject:
-		return parameter.writeExplodedObject(encoder, occurrences)
+		return parameter.writeConvertedObject(encoder, func(candidate *queryParameter, output *jsontext.Encoder) error {
+			return candidate.writeExplodedObject(output, occurrences)
+		})
 	case wireJSONContent:
 		if len(occurrences) != 1 {
 			return errors.New("duplicate JSON content occurrence")
@@ -288,6 +288,34 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 	default:
 		return errors.New("unknown compiled wire kind")
 	}
+}
+
+func (parameter *queryParameter) writeConvertedObject(
+	encoder *jsontext.Encoder,
+	write func(*queryParameter, *jsontext.Encoder) error,
+) error {
+	value, err := convertQueryAlternatives(parameter.conversions, func(conversion queryConversion) (jsontext.Value, error) {
+		candidate := *parameter
+		candidate.validation = conversion.validation
+		candidate.dynamicType = conversion.dynamicType
+		candidate.dynamicValidation = conversion.dynamicValidation
+		candidate.properties = conversion.properties
+		candidate.propertyByName = conversion.propertyByName
+
+		var output bytes.Buffer
+
+		candidateEncoder := jsontext.NewEncoder(&output)
+		if err := write(&candidate, candidateEncoder); err != nil {
+			return nil, err
+		}
+
+		return append(jsontext.Value(nil), bytes.TrimSpace(output.Bytes())...), nil
+	})
+	if err != nil {
+		return err
+	}
+
+	return encoder.WriteValue(value)
 }
 
 //nolint:cyclop // Declared and dynamic packed properties share duplicate detection and ordered emission.
@@ -349,11 +377,11 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 		return err
 	}
 
-	for propertyIndex, property := range parameter.properties {
+	for _, property := range parameter.properties {
 		count := 0
 
 		for _, occurrence := range occurrences {
-			if occurrence.property == propertyIndex {
+			if occurrence.childName == property.name {
 				count++
 			}
 		}
@@ -377,7 +405,7 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 		}
 
 		for _, occurrence := range occurrences {
-			if occurrence.property != propertyIndex {
+			if occurrence.childName != property.name {
 				continue
 			}
 
@@ -404,7 +432,7 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 	seen := make(map[string]struct{})
 
 	for _, occurrence := range occurrences {
-		if occurrence.property != -1 {
+		if _, declared := parameter.propertyByName[occurrence.childName]; declared {
 			continue
 		}
 
@@ -535,25 +563,14 @@ func writeConvertedScalar(
 	return encoder.WriteValue(converted)
 }
 
-//nolint:cyclop // Array assembly and ordered alternative conversion stay at one value boundary.
 func writeConvertedArray(
 	encoder *jsontext.Encoder,
 	parameter *queryParameter,
 	values []string,
 ) error {
-	converted, err := convertAnyOfValue(parameter.validation, func(candidate *Validation) (jsontext.Value, error) {
-		items := parameter.itemValidation
-		if containsAnyOf(parameter.validation) && candidate != nil {
-			items = conjunctiveValidation(compiledArrayItems(candidate)...)
-		}
-
-		typeName := parameter.scalarType
-		if containsAnyOf(parameter.validation) && items != nil {
-			compiledType := compiledValidationType(items)
-			if compiledType != "" {
-				typeName = compiledType
-			}
-		}
+	converted, err := convertQueryAlternatives(parameter.conversions, func(candidate queryConversion) (jsontext.Value, error) {
+		items := candidate.itemValidation
+		typeName := candidate.scalarType
 
 		var output bytes.Buffer
 
@@ -581,6 +598,24 @@ func writeConvertedArray(
 	return encoder.WriteValue(converted)
 }
 
+func convertQueryAlternatives(
+	alternatives []queryConversion,
+	convert func(queryConversion) (jsontext.Value, error),
+) (jsontext.Value, error) {
+	if len(alternatives) == 1 && !containsAnyOf(alternatives[0].validation) {
+		return convert(alternatives[0])
+	}
+
+	validations := make([]*Validation, len(alternatives))
+	for index := range alternatives {
+		validations[index] = alternatives[index].validation
+	}
+
+	return convertValidationAlternatives(validations, func(index int, _ *Validation) (jsontext.Value, error) {
+		return convert(alternatives[index])
+	})
+}
+
 // convertAnyOfValue tries ordered branch conversion and acceptance.
 func convertAnyOfValue(
 	validation *Validation,
@@ -591,18 +626,27 @@ func convertAnyOfValue(
 		return convert(validation)
 	}
 
-	var lastErr error
+	return convertValidationAlternatives(alternatives, func(_ int, alternative *Validation) (jsontext.Value, error) {
+		return convert(alternative)
+	})
+}
 
-	for _, alternative := range alternatives {
-		value, err := convert(alternative)
+func convertValidationAlternatives(
+	alternatives []*Validation,
+	convert func(int, *Validation) (jsontext.Value, error),
+) (jsontext.Value, error) {
+	var branchErrs []error
+
+	for index, alternative := range alternatives {
+		value, err := convert(index, alternative)
 		if err != nil {
-			lastErr = err
+			branchErrs = append(branchErrs, err)
 
 			continue
 		}
 
 		if errs := validateRaw(alternative, json.RawMessage(value), "#"); len(errs) != 0 {
-			lastErr = errors.Join(errs...)
+			branchErrs = append(branchErrs, errors.Join(errs...))
 
 			continue
 		}
@@ -610,9 +654,9 @@ func convertAnyOfValue(
 		return value, nil
 	}
 
-	if lastErr == nil {
-		lastErr = errors.New("value does not match anyOf")
+	if len(branchErrs) == 0 {
+		return nil, errors.New("value does not match anyOf")
 	}
 
-	return nil, lastErr
+	return nil, errors.Join(branchErrs...)
 }

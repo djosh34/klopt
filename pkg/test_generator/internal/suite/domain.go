@@ -161,13 +161,11 @@ type ConstraintPlan struct {
 
 // CasePlan names one semantic partition without materializing a JSON case.
 type CasePlan struct {
-	Name           string
-	Expect         ExpectedResult
-	Values         DomainID
-	Expression     generationExpression
-	Source         ConstraintSource
-	Generator      *rapid.Generator[jsonvalue.Value]
-	stringLanguage *stringLanguageOccurrence
+	Name       string
+	Expect     ExpectedResult
+	Source     ConstraintSource
+	Generator  *rapid.Generator[jsonvalue.Value]
+	expression generationExpression
 }
 
 // CasePlanner builds canonical semantic partitions from a compiled Domain graph.
@@ -222,9 +220,17 @@ type generationTerm struct {
 	domain          DomainID
 	use             *schemaUse
 	stringLanguages []*stringLanguageOccurrence
+	excludedValues  []jsonvalue.Value
+	numberFailures  []numberFailure
 	items           *generationExpression
 	properties      map[string]generationExpression
 	additional      *generationExpression
+}
+
+// numberFailure describes one exact arithmetic predicate that generated numbers must fail.
+type numberFailure struct {
+	integer    bool
+	multipleOf *jsonvalue.Number
 }
 
 // generationExpression is exactly one term or one grouped choice.

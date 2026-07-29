@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
@@ -17,6 +18,23 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+// TestExecuteTemplatePreservesUnrelatedBlankLines keeps formatting ownership inside each template.
+func TestExecuteTemplatePreservesUnrelatedBlankLines(t *testing.T) {
+	t.Parallel()
+
+	templates := template.Must(template.New("source.go").Parse(`package generated
+
+func unrelated() {
+
+	println("keep the deliberate blank line")
+}
+`))
+
+	generated, err := executeTemplate(templates, "source.go", nil)
+	require.NoError(t, err)
+	require.Contains(t, string(generated), "func unrelated() {\n\n\tprintln")
+}
 
 // TestGenerateInMemoryReturnsBothSources verifies the public non-filesystem generation boundary.
 func TestGenerateInMemoryReturnsBothSources(t *testing.T) {

@@ -4,6 +4,8 @@ package suite
 import (
 	"errors"
 	"fmt"
+
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
 func choose(values ...generationExpression) generationExpression {
@@ -25,6 +27,44 @@ func choose(values ...generationExpression) generationExpression {
 	return generationExpression{choice: &generationChoice{branches: branches}}
 }
 
+func domainGenerationExpression(
+	domain DomainID,
+	use *schemaUse,
+	stringLanguage *stringLanguageOccurrence,
+) generationExpression {
+	var languages []*stringLanguageOccurrence
+	if stringLanguage != nil {
+		languages = []*stringLanguageOccurrence{stringLanguage}
+	}
+
+	return generationExpression{term: &generationTerm{
+		domain: domain, use: use, stringLanguages: languages,
+	}}
+}
+
+func liftedDomainGenerationExpression(
+	domain DomainID,
+	use *schemaUse,
+	child generationExpression,
+) generationExpression {
+	result := domainGenerationExpression(domain, use, nil)
+	if child.term != nil {
+		result.term.stringLanguages = append(
+			[]*stringLanguageOccurrence(nil), child.term.stringLanguages...,
+		)
+	}
+
+	return result
+}
+
+func generationExpressionDomain(expression generationExpression) DomainID {
+	if expression.term == nil {
+		return NoDomain
+	}
+
+	return expression.term.domain
+}
+
 func meet(values ...generationExpression) (generationExpression, error) {
 	if len(values) == 0 {
 		return generationExpression{}, nil
@@ -43,7 +83,7 @@ func meet(values ...generationExpression) (generationExpression, error) {
 	return result, nil
 }
 
-//nolint:cyclop // Choice distribution and term conjunction are the complete expression algebra.
+//nolint:cyclop,gocognit // Choice distribution and term conjunction are the complete expression algebra.
 func meetGenerationExpressions(
 	left generationExpression,
 	right generationExpression,
@@ -100,6 +140,14 @@ func meetGenerationExpressions(
 		append([]*stringLanguageOccurrence(nil), left.term.stringLanguages...),
 		right.term.stringLanguages...,
 	)
+	term.excludedValues = append(
+		append([]jsonvalue.Value(nil), left.term.excludedValues...),
+		right.term.excludedValues...,
+	)
+	term.numberFailures = append(
+		append([]numberFailure(nil), left.term.numberFailures...),
+		right.term.numberFailures...,
+	)
 
 	term.items, err = meetOptionalExpressions(left.term.items, right.term.items)
 	if err != nil {
@@ -114,6 +162,38 @@ func meetGenerationExpressions(
 	term.properties, err = meetPropertyExpressions(left.term.properties, right.term.properties)
 	if err != nil {
 		return generationExpression{}, err
+	}
+
+	if term.items != nil && generationExpressionEmpty(*term.items) ||
+		term.additional != nil && generationExpressionEmpty(*term.additional) {
+		return generationExpression{}, nil
+	}
+
+	compiledDomain, ok := left.term.use.domains.Domain(domain)
+	if !ok {
+		return generationExpression{}, fmt.Errorf("meet generation expressions: Domain %d does not exist", domain)
+	}
+
+	for name, expression := range term.properties {
+		if !generationExpressionEmpty(expression) {
+			continue
+		}
+
+		required := false
+
+		for _, property := range compiledDomain.Object.Properties {
+			if property.Name == name {
+				required = property.Required
+
+				break
+			}
+		}
+
+		if required {
+			return generationExpression{}, nil
+		}
+
+		delete(term.properties, name)
 	}
 
 	return generationExpression{term: term}, nil
@@ -197,55 +277,264 @@ func meetPropertyExpressions(
 	return result, nil
 }
 
-//nolint:cyclop // Complement construction has distinct empty, unsupported, and composed outcomes.
 func not(use *schemaUse) (generationExpression, error) {
 	if use == nil || use.domains == nil {
 		return generationExpression{}, errors.New("complement schema occurrence is nil")
 	}
 
-	planner := &CasePlanner{Domains: use.domains}
-
-	cases, err := planner.planWithoutAnyOf(use)
+	values, err := atomicComplementExpressions(use)
 	if err != nil {
 		return generationExpression{}, err
 	}
 
-	for _, constraint := range planner.Constraints {
-		if constraint.Outcome == ObligationUnconstructible {
-			return generationExpression{}, fmt.Errorf(
-				"cannot construct exact complement of %s at %s: %s",
-				constraint.Source.Keyword, constraint.Source.Pointer, constraint.Reason,
-			)
-		}
+	compositionFailures, err := anyOfComplementExpressions(use)
+	if err != nil {
+		return generationExpression{}, err
 	}
 
-	values := make([]generationExpression, 0)
+	values = append(values, compositionFailures...)
 
-	for _, plannedCase := range cases {
-		if plannedCase.Expect != ExpectRejected {
+	childFailures, err := childComplementExpressions(use)
+	if err != nil {
+		return generationExpression{}, err
+	}
+
+	values = append(values, childFailures...)
+
+	return choose(values...), nil
+}
+
+//nolint:cyclop,gocognit // Each schema keyword contributes one distinct exact atomic complement.
+func atomicComplementExpressions(use *schemaUse) ([]generationExpression, error) {
+	planner := &CasePlanner{Domains: use.domains, rootUse: use}
+	seen := make(map[ConstraintSource]struct{})
+	result := make([]generationExpression, 0, len(use.constraints))
+
+	for _, source := range use.constraints {
+		if _, duplicate := seen[source]; duplicate {
 			continue
 		}
 
-		values = append(values, generationExpression{term: &generationTerm{
-			domain: plannedCase.Values, use: use,
-			stringLanguages: []*stringLanguageOccurrence{plannedCase.stringLanguage},
+		seen[source] = struct{}{}
+
+		if source.Keyword == "allOf" || source.Keyword == "items" || source.Keyword == "properties" {
+			continue
+		}
+
+		occurrence := use.find(source.Pointer)
+		if occurrence == nil {
+			occurrence = use
+		}
+
+		constraint, include, err := planner.atomicConstraint(source, occurrence)
+		if err != nil {
+			return nil, err
+		}
+
+		if !include {
+			continue
+		}
+
+		if source.Keyword != "format" {
+			for _, domain := range constraint.Fail {
+				result = append(result, generationExpression{term: &generationTerm{domain: domain, use: occurrence}})
+			}
+		}
+
+		switch source.Keyword {
+		case "enum":
+			domain, ok := use.domains.Domain(constraint.Pass)
+			if !ok || domain.Enum == nil {
+				return nil, fmt.Errorf("cannot construct exact complement of enum at %s", source.Pointer)
+			}
+
+			result = append(result, generationExpression{term: &generationTerm{
+				domain: AnyJSONDomainID, use: occurrence,
+				excludedValues: cloneJSONValues(domain.Enum.Values),
+			}})
+		case "type":
+			pass, ok := use.domains.Domain(constraint.Pass)
+			if ok && pass.Number.IntegersOnly {
+				result = append(result, generationExpression{term: &generationTerm{
+					domain: use.domains.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindNumber)),
+					use:    occurrence, numberFailures: []numberFailure{{integer: true}},
+				}})
+			}
+		case "multipleOf":
+			pass, ok := use.domains.Domain(constraint.Pass)
+			if !ok || pass.Number.MultipleOf == nil {
+				return nil, fmt.Errorf("cannot construct exact complement of multipleOf at %s", source.Pointer)
+			}
+
+			result = append(result, generationExpression{term: &generationTerm{
+				domain: use.domains.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindNumber)),
+				use:    occurrence, numberFailures: []numberFailure{{multipleOf: cloneNumber(pass.Number.MultipleOf)}},
+			}})
+		case "pattern":
+			target := planner.stringLanguageOccurrence(source)
+			if target == nil {
+				return nil, fmt.Errorf("cannot construct exact complement of pattern at %s", source.Pointer)
+			}
+
+			targetCopy := *target
+			result = append(result, generationExpression{term: &generationTerm{
+				domain: use.domains.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindString)),
+				use:    occurrence, stringLanguages: []*stringLanguageOccurrence{&targetCopy},
+			}})
+		case "format":
+			pass, ok := use.domains.Domain(constraint.Pass)
+			if ok && domainHasStringFormat(pass) {
+				target := planner.stringLanguageOccurrence(source)
+				if target == nil {
+					return nil, fmt.Errorf("cannot construct exact complement of format at %s", source.Pointer)
+				}
+
+				targetCopy := *target
+				result = append(result, generationExpression{term: &generationTerm{
+					domain: use.domains.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindString)),
+					use:    occurrence, stringLanguages: []*stringLanguageOccurrence{&targetCopy},
+				}})
+			} else if ok && pass.Number.State != KindExcluded {
+				complements, complementErr := numericFormatComplementExpressions(use.domains, occurrence, pass.Number)
+				if complementErr != nil {
+					return nil, fmt.Errorf("numeric format complement at %s: %w", source.Pointer, complementErr)
+				}
+
+				result = append(result, complements...)
+			} else {
+				return nil, fmt.Errorf("cannot construct exact complement of numeric format at %s", source.Pointer)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func numericFormatComplementExpressions(
+	domains *DomainRegistry,
+	use *schemaUse,
+	format NumberConstraints,
+) ([]generationExpression, error) {
+	result := make([]generationExpression, 0)
+
+	if format.IntegersOnly {
+		result = append(result, generationExpression{term: &generationTerm{
+			domain: domains.FindOrAddEquivalentDomain(singleKindDomain(jsonvalue.KindNumber)),
+			use:    use, numberFailures: []numberFailure{{integer: true}},
 		}})
 	}
 
-	if containsAnyOfUse(use) {
-		compositionFailure, err := invalidAnyOfExpression(use)
-		if err != nil {
-			return generationExpression{}, err
+	if format.Minimum != nil {
+		domain := singleKindDomain(jsonvalue.KindNumber)
+		domain.Number.State = KindRestricted
+		domain.Number.Maximum = &NumberBound{
+			Value: format.Minimum.Value, Exclusive: !format.Minimum.Exclusive,
+		}
+		result = append(result, domainGenerationExpression(
+			domains.FindOrAddEquivalentDomain(domain), use, nil,
+		))
+	}
+
+	if format.Maximum != nil {
+		domain := singleKindDomain(jsonvalue.KindNumber)
+		domain.Number.State = KindRestricted
+		domain.Number.Minimum = &NumberBound{
+			Value: format.Maximum.Value, Exclusive: !format.Maximum.Exclusive,
+		}
+		result = append(result, domainGenerationExpression(
+			domains.FindOrAddEquivalentDomain(domain), use, nil,
+		))
+	}
+
+	if len(result) == 0 {
+		return nil, errors.New("numeric format has no restrictive semantics")
+	}
+
+	return result, nil
+}
+
+func anyOfComplementExpressions(use *schemaUse) ([]generationExpression, error) {
+	result := make([]generationExpression, 0)
+	for _, group := range anyOfGroups(use) {
+		branches := make([]generationExpression, 0, len(group))
+		for _, branch := range group {
+			complement, err := not(branch)
+			if err != nil {
+				return nil, err
+			}
+
+			branches = append(branches, complement)
 		}
 
-		values = append(values, compositionFailure)
+		failure, err := meet(branches...)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, failure)
 	}
 
-	if len(values) == 0 && len(use.constraints) != 0 {
-		return generationExpression{}, fmt.Errorf("cannot construct exact complement of schema at %s", use.pointer)
+	return result, nil
+}
+
+func childComplementExpressions(use *schemaUse) ([]generationExpression, error) {
+	result := make([]generationExpression, 0)
+
+	if use.items != nil {
+		complement, err := not(use.items)
+		if err != nil {
+			return nil, err
+		}
+
+		if !generationExpressionEmpty(complement) {
+			domain := singleKindDomain(jsonvalue.KindArray)
+			domain.Array.State = KindRestricted
+			domain.Array.MinItems = 1
+			domain.Array.Items = AnyJSONDomainID
+			result = append(result, generationExpression{term: &generationTerm{
+				domain: use.domains.FindOrAddEquivalentDomain(domain), use: use, items: &complement,
+			}})
+		}
 	}
 
-	return choose(values...), nil
+	for _, property := range use.properties {
+		complement, err := not(property.use)
+		if err != nil {
+			return nil, err
+		}
+
+		if generationExpressionEmpty(complement) {
+			continue
+		}
+
+		domain := singleKindDomain(jsonvalue.KindObject)
+		domain.Object.State = KindRestricted
+		domain.Object.Properties = []NamedProperty{{
+			Name: property.name, Required: true, State: PropertyAllowed, Values: AnyJSONDomainID,
+		}}
+		result = append(result, generationExpression{term: &generationTerm{
+			domain: use.domains.FindOrAddEquivalentDomain(domain), use: use,
+			properties: map[string]generationExpression{property.name: complement},
+		}})
+	}
+
+	if use.additional != nil {
+		complement, err := not(use.additional)
+		if err != nil {
+			return nil, err
+		}
+
+		if !generationExpressionEmpty(complement) {
+			domain := singleKindDomain(jsonvalue.KindObject)
+			domain.Object.State = KindRestricted
+			domain.Object.MinProps = 1
+			result = append(result, generationExpression{term: &generationTerm{
+				domain: use.domains.FindOrAddEquivalentDomain(domain), use: use, additional: &complement,
+			}})
+		}
+	}
+
+	return result, nil
 }
 
 func validGenerationExpression(use *schemaUse) (generationExpression, error) {

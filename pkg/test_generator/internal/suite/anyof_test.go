@@ -2,6 +2,7 @@
 package suite
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
@@ -206,6 +207,64 @@ anyOf:
 	require.Equal(t, 2, compositionCases)
 }
 
+func TestCompileSuiteAnyOfConstructsNumericFormatComplements(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `
+type: number
+anyOf:
+  - {format: float}
+`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	invalid := anyOfCase(t, compiled.Cases, ExpectRejected)
+	format := numericFormatConstraintsForTest(t, "float")
+	distinct := make(map[string]struct{})
+
+	for seed := 0; seed < 100; seed++ {
+		value := invalid.Generator.Example(seed)
+		require.Equal(t, jsonvalue.KindNumber, value.Kind)
+		matches, fitErr := numberFits(value.Number, format)
+		require.NoError(t, fitErr)
+		require.False(t, matches)
+
+		distinct[value.Number.Lexeme] = struct{}{}
+	}
+
+	require.Greater(t, len(distinct), 2)
+}
+
+func TestCompileSuiteAnyOfExcludesObjectEnumValuesConstructively(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `
+type: object
+required: [value]
+additionalProperties: false
+properties:
+  value: {type: string}
+anyOf:
+  - {enum: [{value: blocked}]}
+`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	invalid := anyOfCase(t, compiled.Cases, ExpectRejected)
+	distinct := make(map[string]struct{})
+
+	for seed := 0; seed < 100; seed++ {
+		value := invalid.Generator.Example(seed)
+		require.Equal(t, jsonvalue.KindObject, value.Kind)
+		require.Len(t, value.Object, 1)
+		require.Equal(t, "value", value.Object[0].Name)
+		require.NotEqual(t, "blocked", value.Object[0].Value.String)
+		distinct[value.Object[0].Value.String] = struct{}{}
+	}
+
+	require.Greater(t, len(distinct), 2)
+}
+
 func TestCompileSuiteOuterFocusedFailureStillSatisfiesAnyOf(t *testing.T) {
 	t.Parallel()
 
@@ -258,15 +317,156 @@ func TestCompileSuiteDistinguishesEmptyAndUnsupportedAnyOfComplements(t *testing
 		require.NotEqual(t, ExpectRejected, plannedCase.Expect)
 	}
 
-	unsupportedCompiler := NewCompiler(parseSchemaSource(t, `
+	arrayEnumCompiler := NewCompiler(parseSchemaSource(t, `
 anyOf:
   - type: array
     items: {type: boolean}
     maxItems: 1
     enum: [[], [false], [true]]
 `, "", "create"))
-	_, err = unsupportedCompiler.CompileSuite()
-	require.ErrorContains(t, err, "cannot construct exact complement")
+	arrayEnum, err := arrayEnumCompiler.CompileSuite()
+	require.NoError(t, err)
+
+	invalid := anyOfCase(t, arrayEnum.Cases, ExpectRejected)
+	rapid.Check(t, func(rt *rapid.T) {
+		value := invalid.Generator.Draw(rt, "invalid")
+		for _, raw := range []string{`[]`, `[false]`, `[true]`} {
+			require.False(rt, value.Equal(mustJSONValue(t, raw)))
+		}
+	})
+}
+
+func TestCompileSuiteAnyOfEnumComplementsDoNotCollapseToDifferentWitnesses(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `anyOf: [{enum: [null]}, {enum: [false]}]`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	invalid := anyOfCase(t, compiled.Cases, ExpectRejected)
+	seen := make(map[string]struct{})
+
+	for seed := range 100 {
+		value := invalid.Generator.Example(seed)
+		encoded, marshalErr := value.MarshalJSON()
+		require.NoError(t, marshalErr)
+
+		seen[string(encoded)] = struct{}{}
+	}
+
+	require.Greater(t, len(seen), 2)
+
+	rapid.Check(t, func(rt *rapid.T) {
+		value := invalid.Generator.Draw(rt, "invalid")
+		require.NotEqual(rt, jsonvalue.KindNull, value.Kind)
+		require.False(rt, value.Kind == jsonvalue.KindBoolean && !value.Boolean)
+	})
+}
+
+func TestCompileSuiteProvesExactContainerEnumComplementsEmpty(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		schema string
+	}{
+		{
+			name: "array",
+			schema: `type: array
+items: {type: boolean}
+maxItems: 1
+anyOf: [{enum: [[], [false], [true]]}]`,
+		},
+		{
+			name: "object",
+			schema: `type: object
+required: [flag]
+additionalProperties: false
+properties: {flag: {type: boolean}}
+anyOf: [{enum: [{flag: false}, {flag: true}]}]`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			compiler := NewCompiler(parseSchemaSource(t, test.schema, "", "create"))
+			compiled, err := compiler.CompileSuite()
+			require.NoError(t, err)
+
+			for _, plannedCase := range compiled.Cases {
+				require.False(t, plannedCase.Source.Keyword == "anyOf" && plannedCase.Expect == ExpectRejected)
+			}
+		})
+	}
+}
+
+func TestCompileSuiteExactComplementIncludesValuesFailingMultipleSiblingRules(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `anyOf: [
+  {type: number, minimum: 10, maximum: 0},
+  {type: boolean}
+]`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+	invalid := anyOfCase(t, compiled.Cases, ExpectRejected)
+
+	foundMiddle := false
+	zero, err := jsonvalue.ParseNumber("0")
+	require.NoError(t, err)
+	ten, err := jsonvalue.ParseNumber("10")
+	require.NoError(t, err)
+
+	for seed := range 200 {
+		value := invalid.Generator.Example(seed)
+		if value.Kind == jsonvalue.KindNumber && value.Number.Compare(zero) > 0 && value.Number.Compare(ten) < 0 {
+			foundMiddle = true
+
+			break
+		}
+	}
+
+	require.True(t, foundMiddle)
+}
+
+func anyOfCase(t *testing.T, cases []CasePlan, expect ExpectedResult) CasePlan {
+	t.Helper()
+
+	for _, plannedCase := range cases {
+		if plannedCase.Source.Keyword == "anyOf" && plannedCase.Expect == expect {
+			return plannedCase
+		}
+	}
+
+	require.FailNow(t, "missing anyOf case")
+
+	return CasePlan{}
+}
+
+func TestCompileSuiteKeepsFocusedFailureForPropertyNamedAnyOf(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `
+type: object
+required: [anyOf]
+properties:
+  anyOf: {type: string, allOf: [{minLength: 2}]}
+anyOf:
+  - {type: object}
+`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	found := false
+
+	for _, plannedCase := range compiled.Cases {
+		if plannedCase.Expect == ExpectRejected && plannedCase.Source.Keyword == "minLength" &&
+			strings.Contains(plannedCase.Source.Pointer, "/properties/anyOf") {
+			found = true
+		}
+	}
+
+	require.True(t, found)
 }
 
 func TestCompileSuiteAnyOfEnumComplementRejectsEveryBranch(t *testing.T) {
@@ -339,16 +539,17 @@ func TestGenerationChoiceKeepsImmediateBranchesUniform(t *testing.T) {
 
 	var nestedDraws, singleDraws int
 
-	rapid.Check(t, func(rt *rapid.T) {
-		value := generator.Draw(rt, "value")
+	for seed := range 1_000 {
+		value := generator.Example(seed)
 		if value.Kind == jsonvalue.KindBoolean {
 			singleDraws++
 		} else {
 			nestedDraws++
 		}
-	})
-	require.Greater(t, nestedDraws, 25)
-	require.Greater(t, singleDraws, 25)
+	}
+
+	require.InDelta(t, 500, nestedDraws, 100)
+	require.InDelta(t, 500, singleDraws, 100)
 }
 
 func TestCompilerRejectsMalformedAnyOfAtExactPointer(t *testing.T) {

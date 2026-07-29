@@ -156,7 +156,7 @@ additionalProperties: false`, "", "create"))
 		}
 
 		found = true
-		domain := mustDomain(t, compiled.Domains, plannedCase.Values)
+		domain := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 		properties := propertiesByName(domain.Object.Properties)
 		root := mustDomain(t, compiled.Domains, compiled.Root)
 		require.True(t, properties["id"].Required)
@@ -204,7 +204,7 @@ additionalProperties: false`, "", "create"))
 			continue
 		}
 
-		partition := mustDomain(t, two.Domains, plannedCase.Values)
+		partition := mustDomain(t, two.Domains, generationExpressionDomain(plannedCase.expression))
 		properties := propertiesByName(partition.Object.Properties)
 		require.Equal(t, rootProperties["right"].Values, properties["right"].Values)
 		require.Equal(t, rootProperties["sibling"].Values, properties["sibling"].Values)
@@ -335,7 +335,7 @@ items:
 
 		if strings.Contains(plannedCase.Name, "invalid array item /") {
 			invalid = true
-			partition := mustDomain(t, compiled.Domains, plannedCase.Values)
+			partition := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 			require.NotEqual(t, mustDomain(t, compiled.Domains, compiled.Root).Array.Items, partition.Array.Items)
 		}
 	}
@@ -366,7 +366,7 @@ enum: [1, 2]`, "", "create"))
 			continue
 		}
 
-		domain := mustDomain(t, compiled.Domains, plannedCase.Values)
+		domain := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 		for _, value := range domain.Enum.Values {
 			foundOne = foundOne || value.Kind == jsonvalue.KindNumber && value.Number.Lexeme == "1"
 		}
@@ -406,7 +406,7 @@ enum: [{a: 1}]`, "", "create"))
 			continue
 		}
 
-		domain := mustDomain(t, compiled.Domains, plannedCase.Values)
+		domain := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 		if domain.Enum != nil && len(domain.Enum.Values) == 1 && domain.Enum.Values[0].Kind == jsonvalue.KindObject {
 			return
 		}
@@ -649,7 +649,7 @@ func exactRejectedBodies(t *testing.T, compiled *CompiledSuite, keyword string) 
 			continue
 		}
 
-		domain := mustDomain(t, compiled.Domains, plannedCase.Values)
+		domain := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 		if domain.Enum == nil || len(domain.Enum.Values) != 1 {
 			continue
 		}
@@ -730,7 +730,7 @@ items: {type: string}`, "", "create"))
 
 	for _, plannedCase := range compiled.Cases {
 		if plannedCase.Expect == ExpectRejected && plannedCase.Source.Keyword == "maxItems" {
-			partition := mustDomain(t, compiled.Domains, plannedCase.Values)
+			partition := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 			require.Equal(t, root.Array.Items, partition.Array.Items)
 
 			return
@@ -831,7 +831,7 @@ func requireExactRejectedSource(
 			continue
 		}
 
-		domain := mustDomain(t, compiled.Domains, plannedCase.Values)
+		domain := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 		if domain.Enum != nil && len(domain.Enum.Values) == 1 && domain.Enum.Values[0].Equal(want) {
 			return
 		}
@@ -909,7 +909,7 @@ func hasExactRejectedCase(compiled *CompiledSuite, keyword string, exact string)
 			continue
 		}
 
-		domain, ok := compiled.Domains.Domain(plannedCase.Values)
+		domain, ok := compiled.Domains.Domain(generationExpressionDomain(plannedCase.expression))
 		if !ok || domain.Enum == nil || len(domain.Enum.Values) != 1 {
 			continue
 		}
@@ -1368,7 +1368,7 @@ func TestCompileSuitePlansReachableContradictoryChildren(t *testing.T) {
 					continue
 				}
 
-				domain := mustDomain(t, compiled.Domains, plannedCase.Values)
+				domain := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 				if domain.Enum == nil || len(domain.Enum.Values) != 1 {
 					continue
 				}

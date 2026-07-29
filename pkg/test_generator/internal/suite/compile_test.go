@@ -301,7 +301,7 @@ enum: [{value: 1}, {value: 2}]`,
 				found := false
 
 				for _, plannedCase := range compiled.Cases {
-					caseDomain := mustDomain(t, compiled.Domains, plannedCase.Values)
+					caseDomain := mustDomain(t, compiled.Domains, generationExpressionDomain(plannedCase.expression))
 					if plannedCase.Expect == ExpectAccepted && caseDomain.Enum != nil &&
 						len(caseDomain.Enum.Values) == 1 && enumContains(caseDomain.Enum, value) {
 						found = true

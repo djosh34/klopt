@@ -1513,14 +1513,13 @@ func newCaseSet() *caseSet {
 
 // add records plan unless its exact observable plan key already exists.
 func (set *caseSet) add(plan CasePlan) {
-	if generationExpressionEmpty(plan.Expression) && (plan.Values == NoDomain || plan.Values == EmptyDomainID) {
+	if generationExpressionEmpty(plan.expression) {
 		return
 	}
 
 	key := fmt.Sprintf(
-		"%d\x00%d\x00%s\x00%s\x00%s",
+		"%d\x00%s\x00%s\x00%s",
 		plan.Expect,
-		plan.Values,
 		plan.Name,
 		plan.Source.Pointer,
 		plan.Source.Keyword,

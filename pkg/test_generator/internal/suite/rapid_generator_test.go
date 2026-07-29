@@ -101,7 +101,7 @@ additionalProperties:
 			require.NoError(t, caseErr)
 
 			plannedCase := caseSuite.Cases[index]
-			domain := mustDomain(t, caseSuite.Domains, plannedCase.Values)
+			domain := mustDomain(t, caseSuite.Domains, generationExpressionDomain(plannedCase.expression))
 			domain.String.Patterns = nil
 			domain.String.Formats = nil
 

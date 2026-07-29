@@ -102,26 +102,7 @@ func executeTemplate(templates *template.Template, name string, data any) ([]byt
 		return nil, fmt.Errorf("execute %s: %w", name, err)
 	}
 
-	lines := bytes.Split(output.Bytes(), []byte("\n"))
-
-	compacted := lines[:0]
-
-	var previousNonBlank []byte
-
-	for _, line := range lines {
-		if len(bytes.TrimSpace(line)) > 0 {
-			compacted = append(compacted, line)
-			previousNonBlank = line
-
-			continue
-		}
-
-		if !bytes.HasSuffix(bytes.TrimSpace(previousNonBlank), []byte("{")) {
-			compacted = append(compacted, line)
-		}
-	}
-
-	formatted, err := imports.Process(name, bytes.Join(compacted, []byte("\n")), nil)
+	formatted, err := imports.Process(name, output.Bytes(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("format %s: %w", name, err)
 	}

@@ -199,6 +199,59 @@ func TestQueryDecoderAnyOfConvertsNestedSchemaStyleValues(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderAnyOfConvertsRootObjectsPerBranch(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		rawQuery string
+		expected string
+	}{
+		{
+			name: "branch-only declared integer property",
+			schema: `{anyOf: [
+              {type: object, required: [count], additionalProperties: false, properties: {count: {type: integer}}},
+              {type: object, required: [label], additionalProperties: false, properties: {label: {type: string}}}
+            ]}`,
+			rawQuery: `q=count,7`, expected: `{"q":{"count":7}}`,
+		},
+		{
+			name: "later declared-property branch",
+			schema: `{anyOf: [
+              {type: object, required: [count], additionalProperties: false, properties: {count: {type: integer}}},
+              {type: object, required: [label], additionalProperties: false, properties: {label: {type: string}}}
+            ]}`,
+			rawQuery: `q=label,x`, expected: `{"q":{"label":"x"}}`,
+		},
+		{
+			name: "ordered additional property conversion",
+			schema: `{anyOf: [
+              {type: object, additionalProperties: {type: integer}},
+              {type: object, additionalProperties: {type: string}}
+            ]}`,
+			rawQuery: `q=value,7`, expected: `{"q":{"value":7}}`,
+		},
+		{
+			name: "reversed additional property conversion",
+			schema: `{anyOf: [
+              {type: object, additionalProperties: {type: string}},
+              {type: object, additionalProperties: {type: integer}}
+            ]}`,
+			rawQuery: `q=value,7`, expected: `{"q":{"value":"7"}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: `+test.schema+`}`)
+			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
 func TestQueryDecoderAnyOfPreservesNestedChoiceOrderAndShape(t *testing.T) {
 	t.Parallel()
 
@@ -243,10 +296,27 @@ func TestQueryDecoderRejectsAnyOfWithUnrepresentableWireShapes(t *testing.T) {
 	require.ErrorContains(t, err, "wire shape")
 }
 
+func TestQueryDecoderRejectsAnyOfWithUnrepresentableNestedSlots(t *testing.T) {
+	t.Parallel()
+
+	_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: {anyOf: [{type: array, items: {type: object}}]}}`))
+	require.ErrorContains(t, err, "/anyOf/0/items")
+	require.ErrorContains(t, err, "primitive type")
+}
+
 func TestQueryDecoderInfersEnumOnlyArrayScalarSlots(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {enum: [[1, 2]]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=1&q=2`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":[1,2]}`, string(actual))
+}
+
+func TestQueryDecoderInfersEnumOnlyArrayScalarSlotsPerAnyOfBranch(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [{enum: [[1, 2]]}]}}`)
 	actual, err := decoder.Decode(&url.URL{RawQuery: `q=1&q=2`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"q":[1,2]}`, string(actual))

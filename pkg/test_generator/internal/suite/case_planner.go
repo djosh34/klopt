@@ -4,11 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
-	"pgregory.net/rapid"
 )
 
 // CompileSuite compiles, plans, and links the request schema to Rapid generators.
@@ -54,16 +52,7 @@ func (compiler *Compiler) linkCases(
 	generators := NewRapidGeneratorBuilder(compiler.Domains, compiler.patternOption)
 
 	for index := range cases {
-		var (
-			generator    *rapid.Generator[jsonvalue.Value]
-			generatorErr error
-		)
-		if !generationExpressionEmpty(cases[index].Expression) {
-			generator, generatorErr = generators.expression(cases[index].Expression)
-		} else {
-			generators.targetStringLanguage = cases[index].stringLanguage
-			generator, generatorErr = generators.generator(cases[index].Values, compiler.rootUse)
-		}
+		generator, generatorErr := generators.expression(cases[index].expression)
 
 		var emptyError *stringlanguage.EmptyError
 		if errors.As(generatorErr, &emptyError) {
@@ -228,10 +217,10 @@ func (planner *CasePlanner) planWithoutAnyOf(rootUse *schemaUse) ([]CasePlan, er
 	result := newCaseSet()
 	if rootDomain.Status == DomainProductive {
 		result.add(CasePlan{
-			Name:   caseName("valid aggregate", rootUse.pointer, ""),
-			Expect: ExpectAccepted,
-			Values: rootUse.domain,
-			Source: ConstraintSource{Pointer: rootUse.pointer},
+			Name:       caseName("valid aggregate", rootUse.pointer, ""),
+			Expect:     ExpectAccepted,
+			Source:     ConstraintSource{Pointer: rootUse.pointer},
+			expression: domainGenerationExpression(rootUse.domain, rootUse, nil),
 		})
 	}
 
@@ -266,7 +255,7 @@ func (planner *CasePlanner) planAnyOf(rootUse *schemaUse) ([]CasePlan, error) {
 	result := newCaseSet()
 	result.add(CasePlan{
 		Name: caseName("valid anyOf", rootUse.pointer, "anyOf"), Expect: ExpectAccepted,
-		Expression: valid, Source: ConstraintSource{Pointer: rootUse.pointer, Keyword: "anyOf"},
+		expression: valid, Source: ConstraintSource{Pointer: rootUse.pointer, Keyword: "anyOf"},
 	})
 
 	invalid, err := invalidAnyOfExpression(rootUse)
@@ -276,7 +265,7 @@ func (planner *CasePlanner) planAnyOf(rootUse *schemaUse) ([]CasePlan, error) {
 
 	result.add(CasePlan{
 		Name: caseName("invalid anyOf", rootUse.pointer, "anyOf"), Expect: ExpectRejected,
-		Expression: invalid, Source: ConstraintSource{Pointer: rootUse.pointer, Keyword: "anyOf"},
+		expression: invalid, Source: ConstraintSource{Pointer: rootUse.pointer, Keyword: "anyOf"},
 	})
 
 	legacyPlanner := &CasePlanner{Domains: planner.Domains}
@@ -294,26 +283,34 @@ func (planner *CasePlanner) planAnyOf(rootUse *schemaUse) ([]CasePlan, error) {
 	}
 
 	for _, plannedCase := range legacyCases {
-		if plannedCase.Expect != ExpectRejected || strings.Contains(plannedCase.Source.Pointer, "/anyOf/") {
+		if plannedCase.Expect != ExpectRejected || sourceIsInsideAnyOfBranch(plannedCase.Source, rootUse) {
 			continue
 		}
 
-		failure := generationExpression{term: &generationTerm{
-			domain: plannedCase.Values, use: rootUse,
-			stringLanguages: []*stringLanguageOccurrence{plannedCase.stringLanguage},
-		}}
-
-		isolated, meetErr := meet(failure, requirements)
+		isolated, meetErr := meet(plannedCase.expression, requirements)
 		if meetErr != nil {
 			return nil, meetErr
 		}
 
-		plannedCase.Values = NoDomain
-		plannedCase.Expression = isolated
+		plannedCase.expression = isolated
 		result.add(plannedCase)
 	}
 
 	return result.cases, nil
+}
+
+// sourceIsInsideAnyOfBranch distinguishes composition paths from identically named properties.
+func sourceIsInsideAnyOfBranch(source ConstraintSource, root *schemaUse) bool {
+	for _, group := range anyOfGroups(root) {
+		for _, branch := range group {
+			if source.Pointer == branch.pointer ||
+				len(source.Pointer) > len(branch.pointer) && source.Pointer[:len(branch.pointer)+1] == branch.pointer+"/" {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // constraintPlans creates atomic pass/fail Domains while retaining allOf source provenance.
@@ -1138,10 +1135,9 @@ func (planner *CasePlanner) addPatternFailure(
 			constraint.Source.Pointer,
 			constraint.Source.Keyword,
 		),
-		Expect:         ExpectRejected,
-		Values:         values,
-		Source:         constraint.Source,
-		stringLanguage: &targetCopy,
+		Expect:     ExpectRejected,
+		Source:     constraint.Source,
+		expression: domainGenerationExpression(values, planner.rootUse, &targetCopy),
 	})
 	constraint.Outcome = ObligationPlanned
 	constraint.Reason = ""
@@ -1384,9 +1380,9 @@ func (planner *CasePlanner) addFailureCases(
 				constraint.Source.Pointer,
 				constraint.Source.Keyword,
 			),
-			Expect: ExpectRejected,
-			Values: values,
-			Source: constraint.Source,
+			Expect:     ExpectRejected,
+			Source:     constraint.Source,
+			expression: domainGenerationExpression(values, planner.rootUse, nil),
 		})
 
 		planned = true

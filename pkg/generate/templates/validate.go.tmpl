@@ -20,43 +20,68 @@
 }{{end}}
 
 {{define "stringValidation"}}validation.StringValidation{
-	{{with .MinLength}}MinLength: {{template "countBound" .}},{{end}}
-	{{with .MaxLength}}MaxLength: {{template "countBound" .}},{{end}}
-	{{with .Pattern}}Pattern: {{printf "%q" .}},{{end}}
-	{{with .Format}}Format: {{printf "%q" .}},{{end}}
-	{{if .CompiledPattern}}CompiledPattern: patternvalidator.MustParse(
+{{- $emitted := false}}
+{{- with .MinLength}}
+	MinLength: {{template "countBound" .}},{{- $emitted = true}}{{- end}}
+{{- with .MaxLength}}{{if $emitted}}
+{{end}}
+	MaxLength: {{template "countBound" .}},{{- $emitted = true}}{{- end}}
+{{- with .Pattern}}{{if $emitted}}
+{{end}}
+	Pattern: {{printf "%q" .}},{{- $emitted = true}}{{- end}}
+{{- with .Format}}{{if $emitted}}
+{{end}}
+	Format: {{printf "%q" .}},{{- $emitted = true}}{{- end}}
+{{- if .CompiledPattern}}{{if $emitted}}
+{{end}}
+	CompiledPattern: patternvalidator.MustParse(
 		{{printf "%q" .Pattern}},
 		{{if .CompiledPattern.RejectsNonASCII}}patternvalidator.RejectNonASCII,{{end}}
 		{{if .CompiledPattern.UsesRE2}}patternvalidator.UseRE2,{{end}}
-	),{{end}}
-	{{if .CompiledFormat}}CompiledFormat: validation.MustCompileStringFormat({{printf "%q" .Format}}),{{end}}
+	),{{- $emitted = true}}{{- end}}
+{{- if .CompiledFormat}}{{if $emitted}}
+{{end}}
+	CompiledFormat: validation.MustCompileStringFormat({{printf "%q" .Format}}),{{- end}}
 }{{end}}
 
 {{define "arrayValidation"}}validation.ArrayValidation{
-	{{with .MinItems}}MinItems: {{template "countBound" .}},{{end}}
-	{{with .MaxItems}}MaxItems: {{template "countBound" .}},{{end}}
-	{{with .Items}}Items: {{template "validation" .}},{{end}}
-	{{if .UniqueItems}}UniqueItems: true,{{end}}
+{{- with .MinItems}}
+	MinItems: {{template "countBound" .}},{{- end}}
+{{- with .MaxItems}}
+	MaxItems: {{template "countBound" .}},{{- end}}
+{{- with .Items}}
+	Items: {{template "validation" .}},{{- end}}
+{{- if .UniqueItems}}
+	UniqueItems: true,{{- end}}
 }{{end}}
 
 {{define "objectValidation"}}validation.ObjectValidation{
-	{{with .MinProperties}}MinProperties: {{template "countBound" .}},{{end}}
-	{{with .MaxProperties}}MaxProperties: {{template "countBound" .}},{{end}}
-	{{with .Required}}
+{{- $emitted := false}}
+{{- with .MinProperties}}
+	MinProperties: {{template "countBound" .}},{{- $emitted = true}}{{- end}}
+{{- with .MaxProperties}}
+	MaxProperties: {{template "countBound" .}},{{- $emitted = true}}{{- end}}
+{{- with .Required}}{{if $emitted}}
+{{end}}
 	Required: []string{ {{range .}}{{printf "%q" .}},{{end}} },
-	{{end}}
-	{{with .Properties}}
+	{{- $emitted = true}}{{- end}}
+{{- with .Properties}}{{if $emitted}}
+{{end}}
 	Properties: []validation.PropertyValidation{
 		{{range .}}{
 			Name: {{printf "%q" .Name}},
 			Validation: {{template "validation" .Validation}},
 		},{{end}}
 	},
-	{{end}}
-	{{if .AdditionalPropertiesAllowed}}AdditionalPropertiesAllowed: true,{{end}}
-	{{with .AdditionalPropertiesValidation}}
+	{{- $emitted = true}}{{- end}}
+{{- if .AdditionalPropertiesAllowed}}{{if $emitted}}
+{{end}}
+	AdditionalPropertiesAllowed: true,
+	{{- $emitted = true}}{{- end}}
+{{- with .AdditionalPropertiesValidation}}{{if $emitted}}
+{{end}}
 	AdditionalPropertiesValidation: {{template "validation" .}},
-	{{end}}
+{{- end}}
 }{{end}}
 
 {{define "jsonKind" -}}
@@ -228,7 +253,7 @@ var {{.Name}} = validation.RequestValidation{
 
 // RequestValidations contains every compiled request validation by exact operation ID.
 var RequestValidations = map[string]validation.RequestValidation{
-	{{range .Operations}}
+	{{- range .Operations}}
 	{{printf "%q" .OperationID}}: {{.Name}},
 	{{end}}
 }

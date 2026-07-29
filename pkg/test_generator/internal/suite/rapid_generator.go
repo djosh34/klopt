@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,14 +22,21 @@ const generatedCollectionSlack = 4
 // halfDenominator divides exact bounded intervals without binary floating point.
 const halfDenominator = 2
 
+// decimalBase grows exact terminating decimal denominators.
+const decimalBase = 10
+
+// maximumDecimalDenominator bounds constructive residue search.
+const maximumDecimalDenominator = 1_000_000
+
+// jsonBooleanValueCount is the size of the finite JSON boolean domain.
+const jsonBooleanValueCount = 2
+
 // RapidGeneratorBuilder links canonical Domains to shared constructive Rapid generators.
 type RapidGeneratorBuilder struct {
-	domains               *DomainRegistry
-	patternOption         patternvalidator.Option
-	targetStringLanguage  *stringLanguageOccurrence
-	targetStringLanguages []*stringLanguageOccurrence
-	generators            map[generatorKey]*rapid.Generator[jsonvalue.Value]
-	stringLanguages       map[stringLanguageSetKey][]stringlanguage.Language
+	domains         *DomainRegistry
+	patternOption   patternvalidator.Option
+	generators      map[generatorKey]*rapid.Generator[jsonvalue.Value]
+	stringLanguages map[stringLanguageSetKey][]stringlanguage.Language
 }
 
 // generatorKey identifies one Domain at one exact occurrence.
@@ -107,11 +115,9 @@ func (builder *RapidGeneratorBuilder) term(
 		return nil, errors.New("build Rapid generator: generation term is nil")
 	}
 
-	if term.items == nil && len(term.properties) == 0 && term.additional == nil {
-		builder.targetStringLanguage = nil
-		builder.targetStringLanguages = term.stringLanguages
-
-		return builder.generator(term.domain, term.use)
+	if term.items == nil && len(term.properties) == 0 && term.additional == nil &&
+		len(term.excludedValues) == 0 && len(term.numberFailures) == 0 {
+		return builder.generatorWithStringLanguages(term.domain, term.use, term.stringLanguages)
 	}
 
 	domain, ok := builder.domains.Domain(term.domain)
@@ -123,66 +129,11 @@ func (builder *RapidGeneratorBuilder) term(
 }
 
 // expressionDomainGenerator renders every reachable JSON kind in one term.
-//
-//nolint:cyclop // Each JSON kind contributes one constructive generator.
 func (builder *RapidGeneratorBuilder) expressionDomainGenerator(
 	domain Domain,
 	term *generationTerm,
 ) (*rapid.Generator[jsonvalue.Value], error) {
-	if domain.Enum != nil {
-		return builder.enumGenerator(domain, term.use)
-	}
-
-	var generators []*rapid.Generator[jsonvalue.Value]
-	if domain.Null != KindExcluded {
-		generators = append(generators, rapid.Just(jsonvalue.Null()))
-	}
-
-	if domain.Boolean != KindExcluded {
-		generators = append(generators, rapid.Map(rapid.Bool(), jsonvalue.Bool))
-	}
-
-	if domain.Number.State != KindExcluded {
-		generator, err := numberGenerator(domain.Number)
-		if err != nil {
-			return nil, err
-		}
-
-		generators = append(generators, generator)
-	}
-
-	if domain.String.State != KindExcluded {
-		generator, err := builder.stringGenerator(domain.String, term.use)
-		if err != nil {
-			return nil, err
-		}
-
-		generators = append(generators, generator)
-	}
-
-	if domain.Array.State != KindExcluded {
-		generator, err := builder.expressionArrayGenerator(domain.Array, term)
-		if err != nil {
-			return nil, err
-		}
-
-		generators = append(generators, generator)
-	}
-
-	if domain.Object.State != KindExcluded {
-		generator, err := builder.expressionObjectGenerator(domain.Object, term)
-		if err != nil {
-			return nil, err
-		}
-
-		generators = append(generators, generator)
-	}
-
-	if len(generators) == 0 {
-		return nil, errors.New("generation term has no reachable JSON kind")
-	}
-
-	return rapid.OneOf(generators...), nil
+	return builder.buildDomainGenerator(domain, term)
 }
 
 // expressionArrayGenerator renders an array with an expression-backed item generator.
@@ -191,11 +142,13 @@ func (builder *RapidGeneratorBuilder) expressionArrayGenerator(
 	term *generationTerm,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	if term.items == nil {
-		return builder.arrayGenerator(constraints, term.use)
+		return builder.arrayGenerator(constraints, term.use, term.stringLanguages)
 	}
 
 	itemsExpression, err := meet(
-		generationExpression{term: &generationTerm{domain: constraints.Items, use: term.use.items}},
+		generationExpression{term: &generationTerm{
+			domain: constraints.Items, use: term.use.items, stringLanguages: term.stringLanguages,
+		}},
 		*term.items,
 	)
 	if err != nil {
@@ -220,7 +173,7 @@ func (builder *RapidGeneratorBuilder) expressionObjectGenerator(
 	term *generationTerm,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	if len(term.properties) == 0 && term.additional == nil {
-		return builder.objectGenerator(constraints, term.use)
+		return builder.objectGenerator(constraints, term.use, term.stringLanguages)
 	}
 
 	required := make([]objectPropertyGenerator, 0)
@@ -250,7 +203,9 @@ func (builder *RapidGeneratorBuilder) expressionObjectGenerator(
 
 			generator, err = builder.expression(propertyExpression)
 		} else {
-			generator, err = builder.generator(property.Values, term.use.property(property.Name))
+			generator, err = builder.generatorWithStringLanguages(
+				property.Values, term.use.property(property.Name), term.stringLanguages,
+			)
 		}
 
 		if err != nil {
@@ -287,7 +242,9 @@ func (builder *RapidGeneratorBuilder) expressionObjectGenerator(
 
 		additional, additionalErr = builder.expression(additionalExpression)
 	} else {
-		additional, additionalErr = builder.generator(constraints.Additional.Values, term.use.additional)
+		additional, additionalErr = builder.generatorWithStringLanguages(
+			constraints.Additional.Values, term.use.additional, term.stringLanguages,
+		)
 	}
 
 	minimum, maximum, err := objectPropertyCountRange(
@@ -307,11 +264,20 @@ func (builder *RapidGeneratorBuilder) generator(
 	id DomainID,
 	use *schemaUse,
 ) (*rapid.Generator[jsonvalue.Value], error) {
+	return builder.generatorWithStringLanguages(id, use, nil)
+}
+
+// generatorWithStringLanguages builds one occurrence with explicit signed string requirements.
+func (builder *RapidGeneratorBuilder) generatorWithStringLanguages(
+	id DomainID,
+	use *schemaUse,
+	targets []*stringLanguageOccurrence,
+) (*rapid.Generator[jsonvalue.Value], error) {
 	if builder == nil || builder.domains == nil {
 		return nil, errors.New("build Rapid generator: Domain registry is nil")
 	}
 
-	key := generatorKey{domain: id, use: use, stringLanguageSignature: builder.stringLanguageSignature()}
+	key := generatorKey{domain: id, use: use, stringLanguageSignature: stringLanguageSignature(targets)}
 	if generator, ok := builder.generators[key]; ok {
 		return generator, nil
 	}
@@ -343,7 +309,7 @@ func (builder *RapidGeneratorBuilder) generator(
 		return nil, fmt.Errorf("build Rapid generator: Domain %d is not productive", id)
 	}
 
-	generator, err := builder.domainGenerator(domain, use)
+	generator, err := builder.domainGenerator(domain, use, targets)
 	if err != nil {
 		return nil, fmt.Errorf("build Rapid generator for Domain %d: %w", id, err)
 	}
@@ -354,13 +320,10 @@ func (builder *RapidGeneratorBuilder) generator(
 }
 
 // stringLanguageSignature identifies one signed language conjunction for memoization.
-func (builder *RapidGeneratorBuilder) stringLanguageSignature() string {
-	parts := make([]string, 0, len(builder.targetStringLanguages)+1)
-	if builder.targetStringLanguage != nil {
-		parts = append(parts, strconv.FormatUint(builder.targetStringLanguage.id, 10))
-	}
+func stringLanguageSignature(targets []*stringLanguageOccurrence) string {
+	parts := make([]string, 0, len(targets))
 
-	for _, occurrence := range builder.targetStringLanguages {
+	for _, occurrence := range targets {
 		if occurrence != nil {
 			parts = append(parts, strconv.FormatUint(occurrence.id, 10))
 		}
@@ -373,9 +336,43 @@ func (builder *RapidGeneratorBuilder) stringLanguageSignature() string {
 func (builder *RapidGeneratorBuilder) domainGenerator(
 	domain Domain,
 	use *schemaUse,
+	targets []*stringLanguageOccurrence,
 ) (*rapid.Generator[jsonvalue.Value], error) {
+	return builder.buildDomainGenerator(domain, &generationTerm{use: use, stringLanguages: targets})
+}
+
+// buildDomainGenerator dispatches every JSON kind once for ordinary and expression terms.
+//
+//nolint:cyclop,gocognit // Each JSON kind contributes one constructive generator.
+func (builder *RapidGeneratorBuilder) buildDomainGenerator(
+	domain Domain,
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if len(term.excludedValues) != 0 {
+		values, finite, err := finiteDomainValues(builder.domains, term.domain)
+		if err != nil {
+			return nil, err
+		}
+
+		if finite {
+			values = removeExcludedValues(values, term.excludedValues)
+			if len(values) == 0 {
+				return nil, &stringlanguage.EmptyError{}
+			}
+
+			return rapid.SampledFrom(values), nil
+		}
+	}
+
 	if domain.Enum != nil {
-		return builder.enumGenerator(domain, use)
+		values := removeExcludedValues(domain.Enum.Values, term.excludedValues)
+		if len(values) == 0 {
+			return nil, &stringlanguage.EmptyError{}
+		}
+
+		domain.Enum.Values = values
+
+		return builder.enumGenerator(domain, term.use, term.stringLanguages)
 	}
 
 	var (
@@ -383,34 +380,64 @@ func (builder *RapidGeneratorBuilder) domainGenerator(
 		firstErr   error
 	)
 
-	if domain.Null != KindExcluded {
+	if domain.Null != KindExcluded && !jsonValuesContain(term.excludedValues, jsonvalue.Null()) {
 		generators = append(generators, rapid.Just(jsonvalue.Null()))
 	}
 
 	if domain.Boolean != KindExcluded {
-		generators = append(generators, rapid.Map(rapid.Bool(), jsonvalue.Bool))
+		values := make([]jsonvalue.Value, 0, jsonBooleanValueCount)
+
+		for _, value := range []jsonvalue.Value{jsonvalue.Bool(false), jsonvalue.Bool(true)} {
+			if !jsonValuesContain(term.excludedValues, value) {
+				values = append(values, value)
+			}
+		}
+
+		if len(values) != 0 {
+			generators = append(generators, rapid.SampledFrom(values))
+		}
 	}
 
 	if domain.Number.State != KindExcluded {
-		generator, err := numberGenerator(domain.Number)
+		generator, err := numberGeneratorForTerm(domain.Number, term)
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
 
 	if domain.String.State != KindExcluded {
-		generator, err := builder.stringGenerator(domain.String, use)
+		generator, err := builder.stringGeneratorForTerm(domain.String, term)
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
 
 	if domain.Array.State != KindExcluded {
-		generator, err := builder.arrayGenerator(domain.Array, use)
+		var (
+			generator *rapid.Generator[jsonvalue.Value]
+			err       error
+		)
+		if hasExcludedKind(term.excludedValues, jsonvalue.KindArray) {
+			generator, err = builder.arrayGeneratorExcluding(domain.Array, term)
+		} else if term.items != nil {
+			generator, err = builder.expressionArrayGenerator(domain.Array, term)
+		} else {
+			generator, err = builder.arrayGenerator(domain.Array, term.use, term.stringLanguages)
+		}
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
 
 	if domain.Object.State != KindExcluded {
-		generator, err := builder.objectGenerator(domain.Object, use)
+		var (
+			generator *rapid.Generator[jsonvalue.Value]
+			err       error
+		)
+		if hasExcludedKind(term.excludedValues, jsonvalue.KindObject) {
+			generator, err = builder.objectGeneratorExcluding(domain.Object, term)
+		} else if len(term.properties) != 0 || term.additional != nil {
+			generator, err = builder.expressionObjectGenerator(domain.Object, term)
+		} else {
+			generator, err = builder.objectGenerator(domain.Object, term.use, term.stringLanguages)
+		}
 
 		generators, firstErr = appendConstructiveGenerator(generators, firstErr, generator, err)
 	}
@@ -426,10 +453,758 @@ func (builder *RapidGeneratorBuilder) domainGenerator(
 	return nil, errors.New("productive Domain has no reachable JSON kind")
 }
 
+// objectGeneratorExcluding constructively differs from every reachable excluded object.
+//
+//nolint:cyclop // Required properties are tried independently before the structural seam.
+func (builder *RapidGeneratorBuilder) objectGeneratorExcluding(
+	constraints ObjectConstraints,
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	excluded := structurallyPossibleExcludedObjects(constraints, term.excludedValues)
+
+	clean := cloneGenerationTermWithoutKind(term, jsonvalue.KindObject)
+	if len(excluded) == 0 {
+		return builder.expressionObjectGenerator(constraints, &clean)
+	}
+
+	for _, property := range constraints.Properties {
+		if !property.Required || property.State == PropertyForbidden {
+			continue
+		}
+
+		values, presentInAll := objectPropertyValues(excluded, property.Name)
+		if !presentInAll {
+			continue
+		}
+
+		complement := generationExpression{term: &generationTerm{
+			domain:         AnyJSONDomainID,
+			use:            term.use.property(property.Name),
+			excludedValues: values,
+		}}
+		if existing, ok := clean.properties[property.Name]; ok {
+			var err error
+
+			complement, err = meet(existing, complement)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		candidate := clean
+		candidate.properties = clonePropertyExpressions(clean.properties)
+		candidate.properties[property.Name] = complement
+		generator, err := builder.expressionObjectGenerator(constraints, &candidate)
+
+		var empty *stringlanguage.EmptyError
+
+		if err == nil {
+			return generator, nil
+		}
+
+		if !errors.As(err, &empty) {
+			return nil, err
+		}
+	}
+
+	forced, ok := forceObjectPropertyAbsentFromAll(constraints, excluded)
+	if ok {
+		return builder.expressionObjectGenerator(forced, &clean)
+	}
+
+	return nil, errors.New("cannot construct exact complement of excluded object enum values")
+}
+
+// structurallyPossibleExcludedObjects removes enum objects impossible under outer shape rules.
+//
+//nolint:cyclop // Every object shape rule is an independent rejection condition.
+func structurallyPossibleExcludedObjects(
+	constraints ObjectConstraints,
+	values []jsonvalue.Value,
+) [][]jsonvalue.Member {
+	result := make([][]jsonvalue.Member, 0, len(values))
+	for _, value := range values {
+		if value.Kind != jsonvalue.KindObject ||
+			len(value.Object) < constraints.MinProps ||
+			constraints.MaxProps != nil && len(value.Object) > *constraints.MaxProps {
+			continue
+		}
+
+		members := membersByName(value.Object)
+		possible := true
+
+		for _, property := range constraints.Properties {
+			_, present := members[property.Name]
+			if property.Required && !present || property.State == PropertyForbidden && present {
+				possible = false
+
+				break
+			}
+		}
+
+		if possible {
+			result = append(result, value.Object)
+		}
+	}
+
+	return result
+}
+
+// objectPropertyValues returns one property's values when every object contains it.
+func objectPropertyValues(objects [][]jsonvalue.Member, name string) ([]jsonvalue.Value, bool) {
+	values := make([]jsonvalue.Value, 0, len(objects))
+	for _, object := range objects {
+		value, ok := membersByName(object)[name]
+		if !ok {
+			return nil, false
+		}
+
+		values = append(values, value)
+	}
+
+	return values, true
+}
+
+// forceObjectPropertyAbsentFromAll requires an allowed property absent from every exclusion.
+func forceObjectPropertyAbsentFromAll(
+	constraints ObjectConstraints,
+	excluded [][]jsonvalue.Member,
+) (ObjectConstraints, bool) {
+	required := 0
+
+	for index, property := range constraints.Properties {
+		if property.Required && property.State != PropertyForbidden {
+			required++
+		}
+
+		if property.Required || property.State == PropertyForbidden || objectPropertyAppears(excluded, property.Name) {
+			continue
+		}
+
+		if constraints.MaxProps != nil && required+1 > *constraints.MaxProps {
+			continue
+		}
+
+		forced := constraints
+		forced.Properties = append([]NamedProperty(nil), constraints.Properties...)
+		forced.Properties[index].Required = true
+
+		return forced, true
+	}
+
+	return ObjectConstraints{}, false
+}
+
+// objectPropertyAppears reports whether any excluded object contains name.
+func objectPropertyAppears(objects [][]jsonvalue.Member, name string) bool {
+	for _, object := range objects {
+		if _, ok := membersByName(object)[name]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+// cloneGenerationTermWithoutKind removes exclusions handled by a structured generator.
+func cloneGenerationTermWithoutKind(term *generationTerm, kind jsonvalue.Kind) generationTerm {
+	result := *term
+
+	result.excludedValues = make([]jsonvalue.Value, 0, len(term.excludedValues))
+	for _, value := range term.excludedValues {
+		if value.Kind != kind {
+			result.excludedValues = append(result.excludedValues, value)
+		}
+	}
+
+	result.properties = clonePropertyExpressions(term.properties)
+
+	return result
+}
+
+// clonePropertyExpressions returns an independently mutable property-expression map.
+func clonePropertyExpressions(values map[string]generationExpression) map[string]generationExpression {
+	result := make(map[string]generationExpression, len(values))
+	for name, value := range values {
+		result[name] = value
+	}
+
+	return result
+}
+
+// arrayGeneratorExcluding subtracts excluded arrays by length and tuple value.
+//
+//nolint:cyclop // Length partitioning and empty-expression handling are the exact array complement.
+func (builder *RapidGeneratorBuilder) arrayGeneratorExcluding(
+	constraints ArrayConstraints,
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	itemExpression := generationExpression{term: &generationTerm{
+		domain: constraints.Items, use: term.use.items, stringLanguages: term.stringLanguages,
+	}}
+	if term.items != nil {
+		var err error
+
+		itemExpression, err = meet(itemExpression, *term.items)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if generationExpressionEmpty(itemExpression) && constraints.MinItems > 0 {
+		return nil, &stringlanguage.EmptyError{}
+	}
+
+	excludedByLength := make(map[int][][]jsonvalue.Value)
+	maximumExcluded := constraints.MinItems
+
+	for _, value := range term.excludedValues {
+		if value.Kind != jsonvalue.KindArray {
+			continue
+		}
+
+		excludedByLength[len(value.Array)] = append(excludedByLength[len(value.Array)], value.Array)
+		maximumExcluded = max(maximumExcluded, len(value.Array))
+	}
+
+	maximum := generatedCollectionMaximum(constraints.MinItems, constraints.MaxItems)
+	if constraints.MaxItems == nil {
+		maximum = max(maximum, maximumExcluded+1)
+	}
+
+	generators := make([]*rapid.Generator[jsonvalue.Value], 0, maximum-constraints.MinItems+1)
+	for count := constraints.MinItems; count <= maximum; count++ {
+		generator, err := builder.arrayTupleGenerator(itemExpression, count, excludedByLength[count])
+
+		var empty *stringlanguage.EmptyError
+		if errors.As(err, &empty) {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		generators = append(generators, rapid.Map(generator, jsonvalue.Array))
+	}
+
+	if len(generators) == 0 {
+		return nil, &stringlanguage.EmptyError{}
+	}
+
+	return rapid.OneOf(generators...), nil
+}
+
+// arrayTupleGenerator subtracts finite tuples using recursive head/tail decomposition.
+//
+//nolint:cyclop,gocognit // Head/tail decomposition directly implements finite tuple subtraction.
+func (builder *RapidGeneratorBuilder) arrayTupleGenerator(
+	items generationExpression,
+	count int,
+	excluded [][]jsonvalue.Value,
+) (*rapid.Generator[[]jsonvalue.Value], error) {
+	if count == 0 {
+		if len(excluded) != 0 {
+			return nil, &stringlanguage.EmptyError{}
+		}
+
+		return rapid.Just([]jsonvalue.Value{}), nil
+	}
+
+	itemGenerator, err := builder.expression(items)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(excluded) == 0 {
+		return rapid.SliceOfN(itemGenerator, count, count), nil
+	}
+
+	heads := make([]jsonvalue.Value, 0, len(excluded))
+
+	groups := make([][][]jsonvalue.Value, 0, len(excluded))
+	for _, tuple := range excluded {
+		if len(tuple) != count {
+			continue
+		}
+
+		group := -1
+
+		for index, head := range heads {
+			if head.Equal(tuple[0]) {
+				group = index
+
+				break
+			}
+		}
+
+		if group == -1 {
+			heads = append(heads, tuple[0])
+			groups = append(groups, nil)
+			group = len(groups) - 1
+		}
+
+		groups[group] = append(groups[group], tuple[1:])
+	}
+
+	branches := make([]*rapid.Generator[[]jsonvalue.Value], 0, len(heads)+1)
+
+	outside, err := meet(items, generationExpression{term: &generationTerm{
+		domain: AnyJSONDomainID, use: expressionUse(items), excludedValues: heads,
+	}})
+	if err != nil {
+		return nil, err
+	}
+
+	if !generationExpressionEmpty(outside) {
+		outsideHead, headErr := builder.expression(outside)
+
+		var empty *stringlanguage.EmptyError
+		if headErr == nil {
+			tail := rapid.SliceOfN(itemGenerator, count-1, count-1)
+			branches = append(branches, prependArrayValue(outsideHead, tail))
+		} else if !errors.As(headErr, &empty) {
+			return nil, headErr
+		}
+	}
+
+	for index, head := range heads {
+		equality, meetErr := meet(items, generationExpression{term: &generationTerm{
+			domain: builder.domains.FindOrAddEquivalentDomain(finiteDomain([]jsonvalue.Value{head})),
+			use:    expressionUse(items),
+		}})
+		if meetErr != nil {
+			return nil, meetErr
+		}
+
+		if generationExpressionEmpty(equality) {
+			continue
+		}
+
+		if _, equalityErr := builder.expression(equality); equalityErr != nil {
+			var empty *stringlanguage.EmptyError
+			if errors.As(equalityErr, &empty) {
+				continue
+			}
+
+			return nil, equalityErr
+		}
+
+		tail, tailErr := builder.arrayTupleGenerator(items, count-1, groups[index])
+
+		var empty *stringlanguage.EmptyError
+		if errors.As(tailErr, &empty) {
+			continue
+		}
+
+		if tailErr != nil {
+			return nil, tailErr
+		}
+
+		branches = append(branches, prependArrayValue(rapid.Just(head), tail))
+	}
+
+	if len(branches) == 0 {
+		return nil, &stringlanguage.EmptyError{}
+	}
+
+	return rapid.OneOf(branches...), nil
+}
+
+// expressionUse returns the occurrence owned by an expression's first constructive term.
+func expressionUse(expression generationExpression) *schemaUse {
+	if expression.term != nil {
+		return expression.term.use
+	}
+
+	if expression.choice != nil {
+		for _, branch := range expression.choice.branches {
+			if use := expressionUse(branch); use != nil {
+				return use
+			}
+		}
+	}
+
+	return nil
+}
+
+// prependArrayValue combines one constructive head with a generated tail.
+func prependArrayValue(
+	head *rapid.Generator[jsonvalue.Value],
+	tail *rapid.Generator[[]jsonvalue.Value],
+) *rapid.Generator[[]jsonvalue.Value] {
+	return rapid.Custom(func(t *rapid.T) []jsonvalue.Value {
+		result := []jsonvalue.Value{head.Draw(t, "head")}
+		result = append(result, tail.Draw(t, "tail")...)
+
+		return result
+	})
+}
+
+// removeExcludedValues subtracts exact JSON values from a finite candidate set.
+func removeExcludedValues(values []jsonvalue.Value, excluded []jsonvalue.Value) []jsonvalue.Value {
+	result := make([]jsonvalue.Value, 0, len(values))
+	for _, value := range values {
+		if !jsonValuesContain(excluded, value) {
+			result = append(result, value)
+		}
+	}
+
+	return result
+}
+
+// hasExcludedKind reports whether structured subtraction is needed for kind.
+func hasExcludedKind(values []jsonvalue.Value, kind jsonvalue.Kind) bool {
+	for _, value := range values {
+		if value.Kind == kind {
+			return true
+		}
+	}
+
+	return false
+}
+
+// numberGeneratorForTerm dispatches arithmetic failures and exact value exclusions.
+func numberGeneratorForTerm(
+	constraints NumberConstraints,
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if len(term.numberFailures) != 0 {
+		return numberFailureGenerator(constraints, term.numberFailures)
+	}
+
+	excluded := make([]jsonvalue.Number, 0)
+
+	for _, value := range term.excludedValues {
+		if value.Kind == jsonvalue.KindNumber {
+			excluded = append(excluded, value.Number)
+		}
+	}
+
+	return numberGeneratorExcluding(constraints, excluded)
+}
+
+// numberGeneratorExcluding subtracts exact points by splitting the allowed interval.
+//
+//nolint:cyclop // Ordered interval splitting constructively subtracts every excluded number.
+func numberGeneratorExcluding(
+	constraints NumberConstraints,
+	excluded []jsonvalue.Number,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	if len(excluded) == 0 {
+		return numberGenerator(constraints)
+	}
+
+	slices.SortFunc(excluded, func(left jsonvalue.Number, right jsonvalue.Number) int {
+		return left.Compare(right)
+	})
+
+	segments := make([]*rapid.Generator[jsonvalue.Value], 0, len(excluded)+1)
+
+	minimum := cloneBound(constraints.Minimum)
+	for _, value := range excluded {
+		if fits, err := numberFits(value, constraints); err != nil {
+			return nil, err
+		} else if !fits {
+			continue
+		}
+
+		segment := constraints
+		segment.Minimum = cloneBound(minimum)
+
+		segment.Maximum = &NumberBound{Value: value, Exclusive: true}
+		if productive, err := numberConstraintsAreProductive(segment); err != nil {
+			return nil, err
+		} else if productive {
+			generator, err := numberGenerator(segment)
+			if err != nil {
+				return nil, err
+			}
+
+			segments = append(segments, generator)
+		}
+
+		minimum = &NumberBound{Value: value, Exclusive: true}
+	}
+
+	segment := constraints
+
+	segment.Minimum = cloneBound(minimum)
+	if productive, err := numberConstraintsAreProductive(segment); err != nil {
+		return nil, err
+	} else if productive {
+		generator, err := numberGenerator(segment)
+		if err != nil {
+			return nil, err
+		}
+
+		segments = append(segments, generator)
+	}
+
+	if len(segments) == 0 {
+		return nil, &stringlanguage.EmptyError{}
+	}
+
+	return rapid.OneOf(segments...), nil
+}
+
+// numberFailureGenerator builds numbers violating every requested arithmetic predicate.
+func numberFailureGenerator(
+	constraints NumberConstraints,
+	failures []numberFailure,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	targets := make([]*big.Rat, 0, len(failures))
+	for _, failure := range failures {
+		switch {
+		case failure.integer:
+			targets = append(targets, big.NewRat(1, 1))
+		case failure.multipleOf != nil && failure.multipleOf.Rational != nil:
+			targets = append(targets, new(big.Rat).Set(failure.multipleOf.Rational))
+		default:
+			return nil, errors.New("numeric complement target is not exactly representable")
+		}
+	}
+
+	if constraints.IntegersOnly || constraints.MultipleOf != nil {
+		return latticeNumberFailureGenerator(constraints, targets)
+	}
+
+	return continuousNumberFailureGenerator(constraints, targets)
+}
+
+// latticeNumberFailureGenerator selects residue classes that fail every target divisor.
+//
+//nolint:cyclop // Exact residue construction handles bounded and unbounded numeric lattices.
+func latticeNumberFailureGenerator(
+	constraints NumberConstraints,
+	targets []*big.Rat,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	step, err := latticeStep(constraints)
+	if err != nil {
+		return nil, err
+	}
+
+	periods := make([]*big.Int, 0, len(targets))
+	period := big.NewInt(1)
+
+	for _, target := range targets {
+		ratio := new(big.Rat).Quo(step, target)
+
+		divisor := new(big.Int).Set(ratio.Denom())
+		if divisor.Cmp(big.NewInt(1)) == 0 {
+			return nil, &stringlanguage.EmptyError{}
+		}
+
+		periods = append(periods, divisor)
+
+		period = leastCommonMultipleInt(period, divisor)
+		if !period.IsInt64() || period.Int64() > 10_000 {
+			return nil, errors.New("numeric complement residue period is too large")
+		}
+	}
+
+	minimum, maximum, err := latticeFactorBounds(constraints, step)
+	if err != nil {
+		return nil, err
+	}
+
+	generators := make([]*rapid.Generator[jsonvalue.Value], 0)
+
+	periodValue := period.Int64()
+	for residue := int64(0); residue < periodValue; residue++ {
+		allowed := true
+
+		for _, divisor := range periods {
+			if new(big.Int).Mod(big.NewInt(residue), divisor).Sign() == 0 {
+				allowed = false
+
+				break
+			}
+		}
+
+		if !allowed {
+			continue
+		}
+
+		minimumN := ceilRat(new(big.Rat).SetFrac(
+			new(big.Int).Sub(minimum, big.NewInt(residue)), period,
+		))
+
+		maximumN := floorRat(new(big.Rat).SetFrac(
+			new(big.Int).Sub(maximum, big.NewInt(residue)), period,
+		))
+		if minimumN.Cmp(maximumN) > 0 || !minimumN.IsInt64() || !maximumN.IsInt64() {
+			continue
+		}
+
+		residueCopy := residue
+
+		generators = append(generators, rapid.Custom(func(t *rapid.T) jsonvalue.Value {
+			n := rapid.Int64Range(minimumN.Int64(), maximumN.Int64()).Draw(t, "factor period")
+			factor := new(big.Int).Add(big.NewInt(residueCopy), new(big.Int).Mul(big.NewInt(n), period))
+
+			return mustGeneratedNumber(t, new(big.Rat).Mul(step, new(big.Rat).SetInt(factor)))
+		}))
+	}
+
+	if len(generators) == 0 {
+		return nil, &stringlanguage.EmptyError{}
+	}
+
+	return rapid.OneOf(generators...), nil
+}
+
+// continuousNumberFailureGenerator selects exact decimals outside every target lattice.
+//
+//nolint:cyclop // Decimal denominator construction avoids every requested arithmetic lattice.
+func continuousNumberFailureGenerator(
+	constraints NumberConstraints,
+	targets []*big.Rat,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	period := new(big.Rat).Set(targets[0])
+	for _, target := range targets[1:] {
+		period = rationalLeastCommonMultiple(period, target)
+	}
+
+	denominator := big.NewInt(decimalBase)
+
+	for {
+		works := true
+
+		for _, target := range targets {
+			multiple := new(big.Rat).Quo(period, target)
+			if !multiple.IsInt() || new(big.Int).Mod(multiple.Num(), denominator).Sign() == 0 {
+				works = false
+
+				break
+			}
+		}
+
+		if works {
+			break
+		}
+
+		denominator.Mul(denominator, big.NewInt(decimalBase))
+
+		if denominator.Cmp(big.NewInt(maximumDecimalDenominator)) > 0 {
+			return nil, errors.New("numeric complement offset is too complex")
+		}
+	}
+
+	offset := new(big.Rat).Quo(period, new(big.Rat).SetInt(denominator))
+
+	minimum, maximum := big.NewInt(-math.MaxInt32), big.NewInt(math.MaxInt32)
+	if constraints.Minimum != nil {
+		minimum = ceilRat(new(big.Rat).Quo(
+			new(big.Rat).Sub(constraints.Minimum.Value.Rational, offset), period,
+		))
+		if constraints.Minimum.Exclusive && new(big.Rat).Add(
+			offset, new(big.Rat).Mul(period, new(big.Rat).SetInt(minimum)),
+		).Cmp(constraints.Minimum.Value.Rational) == 0 {
+			minimum.Add(minimum, big.NewInt(1))
+		}
+	}
+
+	if constraints.Maximum != nil {
+		maximum = floorRat(new(big.Rat).Quo(
+			new(big.Rat).Sub(constraints.Maximum.Value.Rational, offset), period,
+		))
+		if constraints.Maximum.Exclusive && new(big.Rat).Add(
+			offset, new(big.Rat).Mul(period, new(big.Rat).SetInt(maximum)),
+		).Cmp(constraints.Maximum.Value.Rational) == 0 {
+			maximum.Sub(maximum, big.NewInt(1))
+		}
+	}
+
+	if minimum.Cmp(maximum) > 0 || !minimum.IsInt64() || !maximum.IsInt64() {
+		return nil, &stringlanguage.EmptyError{}
+	}
+
+	return rapid.Custom(func(t *rapid.T) jsonvalue.Value {
+		factor := rapid.Int64Range(minimum.Int64(), maximum.Int64()).Draw(t, "factor")
+		value := new(big.Rat).Add(offset, new(big.Rat).Mul(period, new(big.Rat).SetInt64(factor)))
+
+		return mustGeneratedNumber(t, value)
+	}), nil
+}
+
+// leastCommonMultipleInt returns the positive integer least common multiple.
+func leastCommonMultipleInt(left *big.Int, right *big.Int) *big.Int {
+	gcd := new(big.Int).GCD(nil, nil, left, right)
+
+	return new(big.Int).Quo(new(big.Int).Mul(left, right), gcd)
+}
+
+// rationalLeastCommonMultiple returns the smallest positive rational multiple of both inputs.
+func rationalLeastCommonMultiple(left *big.Rat, right *big.Rat) *big.Rat {
+	numerator := leastCommonMultipleInt(
+		new(big.Int).Abs(left.Num()), new(big.Int).Abs(right.Num()),
+	)
+	denominator := new(big.Int).GCD(nil, nil, left.Denom(), right.Denom())
+
+	return new(big.Rat).SetFrac(numerator, denominator)
+}
+
+// stringGeneratorForTerm combines exact enum subtraction with signed string languages.
+func (builder *RapidGeneratorBuilder) stringGeneratorForTerm(
+	constraints StringConstraints,
+	term *generationTerm,
+) (*rapid.Generator[jsonvalue.Value], error) {
+	excluded := make([]string, 0)
+
+	for _, value := range term.excludedValues {
+		if value.Kind == jsonvalue.KindString {
+			excluded = append(excluded, value.String)
+		}
+	}
+
+	if len(excluded) == 0 {
+		return builder.stringGenerator(constraints, term.use, term.stringLanguages)
+	}
+
+	parts := make([]string, len(excluded))
+	for index, value := range excluded {
+		parts[index] = regexp.QuoteMeta(value)
+	}
+
+	pattern := "^(?:" + strings.Join(parts, "|") + ")$"
+
+	language, err := stringlanguage.Pattern(pattern, builder.patternOption)
+	if err != nil {
+		return nil, err
+	}
+
+	requirements := []stringlanguage.Requirement{{Language: language, WantMatch: false}}
+	occurrences := occurrenceStringLanguages(term.use, constraints.Patterns)
+
+	languages, err := builder.languages(occurrences, term.use)
+	if err != nil {
+		return nil, err
+	}
+
+	for index, occurrence := range occurrences {
+		requirements = append(requirements, stringlanguage.Requirement{
+			Language: languages[index], WantMatch: wantStringLanguageMatch(term.stringLanguages, occurrence),
+		})
+	}
+
+	set, err := stringlanguage.Compile(requirements, stringlanguage.Length{
+		Min: constraints.MinLength, Max: constraints.MaxLength,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return rapid.Map(rapid.Uint64(), func(seed uint64) jsonvalue.Value {
+		return jsonvalue.String(set.Generate(seed))
+	}), nil
+}
+
 // enumGenerator samples the effective occurrence cases without changing Domain identity.
 func (builder *RapidGeneratorBuilder) enumGenerator(
 	domain Domain,
 	use *schemaUse,
+	targets []*stringLanguageOccurrence,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	values := cloneJSONValues(domain.Enum.Values)
 
@@ -442,7 +1217,7 @@ func (builder *RapidGeneratorBuilder) enumGenerator(
 		return rapid.SampledFrom(values), nil
 	}
 
-	matching, err := builder.matchingStringLanguageEnumValues(domain, use, occurrences, values)
+	matching, err := builder.matchingStringLanguageEnumValues(domain, use, occurrences, values, targets)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +1226,7 @@ func (builder *RapidGeneratorBuilder) enumGenerator(
 		return nil, newStringLanguageConstructionError(
 			occurrences,
 			use,
-			builder.firstTargetStringLanguage(),
+			firstTargetStringLanguage(targets),
 			&stringlanguage.EmptyError{},
 		)
 	}
@@ -465,12 +1240,13 @@ func (builder *RapidGeneratorBuilder) matchingStringLanguageEnumValues(
 	use *schemaUse,
 	occurrences []stringLanguageOccurrence,
 	values []jsonvalue.Value,
+	targets []*stringLanguageOccurrence,
 ) ([]jsonvalue.Value, error) {
 	wantMatches := make([]bool, 0, len(occurrences))
 	for _, occurrence := range occurrences {
 		wantMatches = append(
 			wantMatches,
-			builder.wantStringLanguageMatch(occurrence),
+			wantStringLanguageMatch(targets, occurrence),
 		)
 	}
 
@@ -479,12 +1255,12 @@ func (builder *RapidGeneratorBuilder) matchingStringLanguageEnumValues(
 		Max: domain.String.MaxLength,
 	})
 	if err != nil {
-		return nil, newStringLanguageConstructionError(occurrences, use, builder.firstTargetStringLanguage(), err)
+		return nil, newStringLanguageConstructionError(occurrences, use, firstTargetStringLanguage(targets), err)
 	}
 
 	matching := make([]jsonvalue.Value, 0, len(values))
 	for _, value := range values {
-		if builder.stringLanguageEnumValueMatches(set, value) {
+		if stringLanguageEnumValueMatches(set, value, targets) {
 			matching = append(matching, value)
 		}
 	}
@@ -493,12 +1269,13 @@ func (builder *RapidGeneratorBuilder) matchingStringLanguageEnumValues(
 }
 
 // stringLanguageEnumValueMatches checks one finite candidate with the independent ASCII DFA.
-func (builder *RapidGeneratorBuilder) stringLanguageEnumValueMatches(
+func stringLanguageEnumValueMatches(
 	set *stringlanguage.Set,
 	value jsonvalue.Value,
+	targets []*stringLanguageOccurrence,
 ) bool {
 	if value.Kind != jsonvalue.KindString {
-		return builder.firstTargetStringLanguage() == nil
+		return firstTargetStringLanguage(targets) == nil
 	}
 
 	return set.Matches(value.String)
@@ -1021,10 +1798,11 @@ func mustGeneratedNumber(t *rapid.T, rational *big.Rat) jsonvalue.Value {
 func (builder *RapidGeneratorBuilder) stringGenerator(
 	constraints StringConstraints,
 	use *schemaUse,
+	targets []*stringLanguageOccurrence,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	if len(constraints.Patterns) > 0 || len(constraints.Formats) > 0 ||
 		use != nil && len(use.stringLanguages) > 0 {
-		return builder.stringLanguageStringGenerator(constraints, use)
+		return builder.stringLanguageStringGenerator(constraints, use, targets)
 	}
 
 	maximum := generatedCollectionMaximum(constraints.MinLength, constraints.MaxLength)
@@ -1037,6 +1815,7 @@ func (builder *RapidGeneratorBuilder) stringGenerator(
 func (builder *RapidGeneratorBuilder) stringLanguageStringGenerator(
 	constraints StringConstraints,
 	use *schemaUse,
+	targets []*stringLanguageOccurrence,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	occurrences := occurrenceStringLanguages(use, constraints.Patterns)
 	wantMatches := make([]bool, 0, len(occurrences))
@@ -1044,7 +1823,7 @@ func (builder *RapidGeneratorBuilder) stringLanguageStringGenerator(
 	for _, occurrence := range occurrences {
 		wantMatches = append(
 			wantMatches,
-			builder.wantStringLanguageMatch(occurrence),
+			wantStringLanguageMatch(targets, occurrence),
 		)
 	}
 
@@ -1053,7 +1832,7 @@ func (builder *RapidGeneratorBuilder) stringLanguageStringGenerator(
 		Max: constraints.MaxLength,
 	})
 	if err != nil {
-		return nil, newStringLanguageConstructionError(occurrences, use, builder.firstTargetStringLanguage(), err)
+		return nil, newStringLanguageConstructionError(occurrences, use, firstTargetStringLanguage(targets), err)
 	}
 
 	return rapid.Map(rapid.Uint64(), func(seed uint64) jsonvalue.Value {
@@ -1062,12 +1841,11 @@ func (builder *RapidGeneratorBuilder) stringLanguageStringGenerator(
 }
 
 // wantStringLanguageMatch reports the sign of one language occurrence.
-func (builder *RapidGeneratorBuilder) wantStringLanguageMatch(occurrence stringLanguageOccurrence) bool {
-	if builder.targetStringLanguage != nil && builder.targetStringLanguage.id == occurrence.id {
-		return false
-	}
-
-	for _, target := range builder.targetStringLanguages {
+func wantStringLanguageMatch(
+	targets []*stringLanguageOccurrence,
+	occurrence stringLanguageOccurrence,
+) bool {
+	for _, target := range targets {
 		if target != nil && target.id == occurrence.id {
 			return false
 		}
@@ -1077,12 +1855,8 @@ func (builder *RapidGeneratorBuilder) wantStringLanguageMatch(occurrence stringL
 }
 
 // firstTargetStringLanguage locates diagnostics for a signed conjunction.
-func (builder *RapidGeneratorBuilder) firstTargetStringLanguage() *stringLanguageOccurrence {
-	if builder.targetStringLanguage != nil {
-		return builder.targetStringLanguage
-	}
-
-	for _, target := range builder.targetStringLanguages {
+func firstTargetStringLanguage(targets []*stringLanguageOccurrence) *stringLanguageOccurrence {
+	for _, target := range targets {
 		if target != nil {
 			return target
 		}
@@ -1251,13 +2025,14 @@ func generatedCollectionMaximum(minimum int, configuredMaximum *int) int {
 func (builder *RapidGeneratorBuilder) arrayGenerator(
 	constraints ArrayConstraints,
 	use *schemaUse,
+	targets []*stringLanguageOccurrence,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	var itemsUse *schemaUse
 	if use != nil {
 		itemsUse = use.items
 	}
 
-	items, err := builder.generator(constraints.Items, itemsUse)
+	items, err := builder.generatorWithStringLanguages(constraints.Items, itemsUse, targets)
 	if err != nil {
 		if constraints.MinItems == 0 && constraints.MaxItems != nil && *constraints.MaxItems == 0 {
 			return rapid.Just(jsonvalue.Array(nil)), nil
@@ -1275,10 +2050,12 @@ func (builder *RapidGeneratorBuilder) arrayGenerator(
 func (builder *RapidGeneratorBuilder) objectGenerator(
 	constraints ObjectConstraints,
 	use *schemaUse,
+	targets []*stringLanguageOccurrence,
 ) (*rapid.Generator[jsonvalue.Value], error) {
 	required, optional, err := builder.objectPropertyGenerators(
 		constraints.Properties,
 		use,
+		targets,
 	)
 	if err != nil {
 		return nil, err
@@ -1289,9 +2066,10 @@ func (builder *RapidGeneratorBuilder) objectGenerator(
 		additionalUse = use.additional
 	}
 
-	additional, additionalErr := builder.generator(
+	additional, additionalErr := builder.generatorWithStringLanguages(
 		constraints.Additional.Values,
 		additionalUse,
+		targets,
 	)
 
 	minimum, maximum, err := objectPropertyCountRange(
@@ -1313,6 +2091,7 @@ func (builder *RapidGeneratorBuilder) objectGenerator(
 func (builder *RapidGeneratorBuilder) objectPropertyGenerators(
 	properties []NamedProperty,
 	use *schemaUse,
+	targets []*stringLanguageOccurrence,
 ) ([]objectPropertyGenerator, []objectPropertyGenerator, error) {
 	required := make([]objectPropertyGenerator, 0, len(properties))
 	optional := make([]objectPropertyGenerator, 0, len(properties))
@@ -1330,7 +2109,7 @@ func (builder *RapidGeneratorBuilder) objectPropertyGenerators(
 			}
 		}
 
-		values, err := builder.generator(property.Values, propertyUse)
+		values, err := builder.generatorWithStringLanguages(property.Values, propertyUse, targets)
 		if err != nil && property.Required {
 			return nil, nil, fmt.Errorf("object property %q: %w", property.Name, err)
 		}
