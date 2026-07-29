@@ -766,7 +766,11 @@ func prepareQueryConversions(parameter *queryParameter) error {
 	parameter.conversions = make([]queryConversion, 0, len(alternatives))
 
 	for _, validation := range alternatives {
-		conversion := queryConversion{validation: validation, scalarType: parameter.scalarType}
+		if _, possible := compiledValidationTypeState(validation); !possible {
+			continue
+		}
+
+		conversion := queryConversion{validation: parameter.validation, scalarType: parameter.scalarType}
 
 		switch parameter.wire {
 		case wirePrimitive:

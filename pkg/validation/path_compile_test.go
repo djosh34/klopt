@@ -273,6 +273,42 @@ func TestCompilePathDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *
 	}
 }
 
+func TestPathDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - {allOf: [{type: string}, {type: integer}]}
+              - {type: array, items: {type: string}}
+`)
+	require.NoError(t, err)
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x,y"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
+}
+
+func TestConversionAlternativesDoNotMaterializeIndependentCartesianProduct(t *testing.T) {
+	t.Parallel()
+
+	root := &Validation{ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true}}
+	for index := 0; index < 8; index++ {
+		root.AllOfValidations = append(root.AllOfValidations, &Validation{
+			AnyOfValidations: []*Validation{
+				{KindValidation: KindValidation{Type: "string"}},
+				{KindValidation: KindValidation{Type: "integer"}},
+			},
+			ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true},
+		})
+	}
+
+	require.LessOrEqual(t, len(conversionAlternatives(root)), 16)
+}
+
 func TestPathDecoderAnyOfReportsNoMatchingAlternative(t *testing.T) {
 	t.Parallel()
 

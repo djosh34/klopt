@@ -626,7 +626,14 @@ func convertAnyOfValue(
 		return convert(validation)
 	}
 
-	return convertValidationAlternatives(alternatives, func(_ int, alternative *Validation) (jsontext.Value, error) {
+	acceptance := make([]*Validation, len(alternatives))
+	for index := range acceptance {
+		acceptance[index] = validation
+	}
+
+	return convertValidationAlternatives(acceptance, func(index int, _ *Validation) (jsontext.Value, error) {
+		alternative := alternatives[index]
+
 		return convert(alternative)
 	})
 }

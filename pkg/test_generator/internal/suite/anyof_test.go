@@ -56,6 +56,26 @@ components:
 	}
 }
 
+func TestCompileSuiteKeepsIndependentAnyOfGroupFailuresDisjunctive(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `
+type: number
+allOf:
+  - anyOf: [{minimum: 0}]
+  - anyOf: [{maximum: 0}]
+`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	invalid := anyOfCase(t, compiled.Cases, ExpectRejected)
+	for seed := 0; seed < 100; seed++ {
+		value := invalid.Generator.Example(seed)
+		require.Equal(t, jsonvalue.KindNumber, value.Kind)
+		require.NotZero(t, value.Number.Rational.Sign())
+	}
+}
+
 func TestCompileSuiteBuildsOneFullValidAndExactInvalidAnyOfCase(t *testing.T) {
 	t.Parallel()
 

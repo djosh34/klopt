@@ -318,6 +318,18 @@ func TestQueryDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *testin
 	}
 }
 
+func TestQueryDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+      {allOf: [{type: string}, {type: integer}]},
+      {type: array, items: {type: string}}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x&q=y`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
+}
+
 func TestQueryDecoderInfersEnumOnlyArrayScalarSlots(t *testing.T) {
 	t.Parallel()
 

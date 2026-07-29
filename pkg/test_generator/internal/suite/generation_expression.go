@@ -568,25 +568,19 @@ func invalidAnyOfExpression(use *schemaUse) (generationExpression, error) {
 		return generationExpression{}, err
 	}
 
-	values := []generationExpression{base}
-
-	found := false
-	for _, branchGroup := range anyOfGroups(use) {
-		found = true
-
-		for _, branch := range branchGroup {
-			complement, complementErr := not(branch)
-			if complementErr != nil {
-				return generationExpression{}, complementErr
-			}
-
-			values = append(values, complement)
-		}
-	}
-
-	direct, err := meet(values...)
+	groupFailures, err := anyOfComplementExpressions(use)
 	if err != nil {
 		return generationExpression{}, err
+	}
+
+	direct := make([]generationExpression, 0, len(groupFailures))
+	for _, failure := range groupFailures {
+		isolated, meetErr := meet(base, failure)
+		if meetErr != nil {
+			return generationExpression{}, meetErr
+		}
+
+		direct = append(direct, isolated)
 	}
 
 	nested, err := invalidNestedAnyOfExpressions(use)
@@ -594,11 +588,11 @@ func invalidAnyOfExpression(use *schemaUse) (generationExpression, error) {
 		return generationExpression{}, err
 	}
 
-	if !found {
+	if len(direct) == 0 {
 		return choose(nested...), nil
 	}
 
-	return choose(append([]generationExpression{direct}, nested...)...), nil
+	return choose(append(direct, nested...)...), nil
 }
 
 func generationExpressionForUse(use *schemaUse) (generationExpression, error) {

@@ -418,7 +418,11 @@ func compiledScalarType(validations ...*Validation) (string, error) {
 
 	types := make([]string, 0, len(alternatives))
 	for _, alternative := range alternatives {
-		typeName := compiledValidationType(alternative)
+		typeName, possible := compiledValidationTypeState(alternative)
+		if !possible {
+			continue
+		}
+
 		if typeName == "" {
 			typeName = "string"
 		}
@@ -600,12 +604,24 @@ func collectCompiledAdditionalProperties(validation *Validation, additional *[]*
 }
 
 func compiledValidationType(validations ...*Validation) string {
+	typeName, _ := compiledValidationTypeState(validations...)
+
+	return typeName
+}
+
+func compiledValidationTypeState(validations ...*Validation) (string, bool) {
 	types := make([]string, 0)
 	for _, validation := range validations {
 		collectCompiledValidationTypes(validation, &types)
 	}
 
-	return intersectQuerySchemaTypes(types)
+	if len(types) == 0 {
+		return "", true
+	}
+
+	typeName := intersectQuerySchemaTypes(types)
+
+	return typeName, typeName != ""
 }
 
 func conjunctiveValidation(validations ...*Validation) *Validation {
@@ -633,7 +649,11 @@ func compiledStyleType(validation *Validation) (string, error) {
 	shape := ""
 
 	for _, alternative := range alternatives {
-		typeName := compiledValidationType(alternative)
+		typeName, possible := compiledValidationTypeState(alternative)
+		if !possible {
+			continue
+		}
+
 		if typeName == "" {
 			typeName = "string"
 		}
@@ -681,35 +701,38 @@ func conversionAlternatives(validation *Validation) []*Validation {
 	local := *validation
 	local.AllOfValidations = nil
 	local.AnyOfValidations = nil
-	base := []*Validation{&local}
+	base := &local
+	composedChildren := make([]*Validation, 0)
 
 	for _, child := range validation.AllOfValidations {
-		childAlternatives := conversionAlternatives(child)
+		if containsAnyOf(child) {
+			composedChildren = append(composedChildren, child)
 
-		next := make([]*Validation, 0, len(base)*len(childAlternatives))
-		for _, current := range base {
-			for _, childAlternative := range childAlternatives {
-				next = append(next, conjunctiveValidation(current, childAlternative))
-			}
+			continue
 		}
 
-		base = next
-	}
-
-	if len(validation.AnyOfValidations) == 0 {
-		return base
+		base = conjunctiveValidation(base, child)
 	}
 
 	result := make([]*Validation, 0)
+	appendProfiles := func(composed *Validation) {
+		for _, alternative := range conversionAlternatives(composed) {
+			combined := conjunctiveValidation(base, alternative)
+			combined.SchemaPointer = alternative.SchemaPointer
+			result = append(result, combined)
+		}
+	}
 
 	for _, branch := range validation.AnyOfValidations {
-		for _, branchAlternative := range conversionAlternatives(branch) {
-			for _, current := range base {
-				combined := conjunctiveValidation(current, branchAlternative)
-				combined.SchemaPointer = branchAlternative.SchemaPointer
-				result = append(result, combined)
-			}
-		}
+		appendProfiles(branch)
+	}
+
+	for _, child := range composedChildren {
+		appendProfiles(child)
+	}
+
+	if len(result) == 0 {
+		return []*Validation{base}
 	}
 
 	return result
@@ -955,7 +978,11 @@ func preparePathConversions(parameter *pathParameter) error {
 	shape := pathShape(parameter.wire % pathWireKind(pathShapeCount))
 
 	for _, validation := range alternatives {
-		conversion := pathConversion{validation: validation, scalarType: parameter.scalarType}
+		if _, possible := compiledValidationTypeState(validation); !possible {
+			continue
+		}
+
+		conversion := pathConversion{validation: parameter.validation, scalarType: parameter.scalarType}
 
 		switch shape {
 		case pathShapePrimitive:
