@@ -301,12 +301,39 @@ func (planner *CasePlanner) planAnyOf(rootUse *schemaUse) ([]CasePlan, error) {
 
 // sourceIsInsideAnyOfBranch distinguishes composition paths from identically named properties.
 func sourceIsInsideAnyOfBranch(source ConstraintSource, root *schemaUse) bool {
-	for _, group := range anyOfGroups(root) {
-		for _, branch := range group {
-			if source.Pointer == branch.pointer ||
-				len(source.Pointer) > len(branch.pointer) && source.Pointer[:len(branch.pointer)+1] == branch.pointer+"/" {
-				return true
-			}
+	return sourceIsInsideAnyOfBranchAt(source, root, make(map[*schemaUse]bool))
+}
+
+// sourceIsInsideAnyOfBranchAt walks every occurrence edge without revisiting references.
+func sourceIsInsideAnyOfBranchAt(
+	source ConstraintSource,
+	use *schemaUse,
+	visited map[*schemaUse]bool,
+) bool {
+	if use == nil || visited[use] {
+		return false
+	}
+
+	visited[use] = true
+
+	for _, branch := range use.anyOf {
+		if source.Pointer == branch.pointer ||
+			len(source.Pointer) > len(branch.pointer) && source.Pointer[:len(branch.pointer)+1] == branch.pointer+"/" {
+			return true
+		}
+	}
+
+	children := append([]*schemaUse(nil), use.allOf...)
+	children = append(children, use.anyOf...)
+
+	children = append(children, use.items, use.additional)
+	for _, property := range use.properties {
+		children = append(children, property.use)
+	}
+
+	for _, child := range children {
+		if sourceIsInsideAnyOfBranchAt(source, child, visited) {
+			return true
 		}
 	}
 

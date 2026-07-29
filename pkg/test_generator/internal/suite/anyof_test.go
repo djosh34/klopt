@@ -76,6 +76,35 @@ allOf:
 	}
 }
 
+func TestCompileSuiteSkipsFocusedFailuresInsideNestedAnyOfBranches(t *testing.T) {
+	t.Parallel()
+
+	compiler := NewCompiler(parseSchemaSource(t, `
+type: object
+required: [value]
+properties:
+  value:
+    type: string
+    anyOf:
+      - {pattern: '^a'}
+      - {}
+`, "", "create"))
+	compiled, err := compiler.CompileSuite()
+	require.NoError(t, err)
+
+	propertyUse := compiler.rootUse.property("value")
+	require.NotNil(t, propertyUse)
+	require.NotEmpty(t, propertyUse.anyOf)
+	require.True(t, sourceIsInsideAnyOfBranch(
+		ConstraintSource{Pointer: propertyUse.anyOf[0].pointer, Keyword: "pattern"},
+		compiler.rootUse,
+	))
+
+	for _, plannedCase := range compiled.Cases {
+		require.False(t, plannedCase.Expect == ExpectRejected && plannedCase.Source.Keyword == "pattern")
+	}
+}
+
 func TestCompileSuiteBuildsOneFullValidAndExactInvalidAnyOfCase(t *testing.T) {
 	t.Parallel()
 

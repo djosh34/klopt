@@ -309,6 +309,28 @@ func TestConversionAlternativesDoNotMaterializeIndependentCartesianProduct(t *te
 	require.LessOrEqual(t, len(conversionAlternatives(root)), 16)
 }
 
+func TestPathDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: object
+            allOf:
+              - anyOf:
+                  - {type: object, required: [a], properties: {a: {type: integer}}}
+              - anyOf:
+                  - {type: object, required: [b], properties: {b: {type: integer}}}
+`)
+	require.NoError(t, err)
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/a,1,b,2"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":{"a":1,"b":2}}`, string(actual))
+}
+
 func TestPathDecoderAnyOfReportsNoMatchingAlternative(t *testing.T) {
 	t.Parallel()
 

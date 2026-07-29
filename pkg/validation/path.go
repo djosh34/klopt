@@ -1052,6 +1052,34 @@ func mergePathObjectConversions(parameter *pathParameter) {
 		parameter.propertyByName[name] = len(parameter.properties)
 		parameter.properties = append(parameter.properties, properties[name])
 	}
+
+	for index := range parameter.conversions {
+		completePathConversionProperties(&parameter.conversions[index], properties, parameter)
+	}
+}
+
+func completePathConversionProperties(
+	conversion *pathConversion,
+	properties map[string]pathProperty,
+	parameter *pathParameter,
+) {
+	combined := maps.Clone(properties)
+	for _, property := range conversion.properties {
+		combined[property.name] = property
+	}
+
+	conversion.properties = make([]pathProperty, 0, len(combined))
+
+	conversion.propertyByName = make(map[string]int, len(combined))
+	for _, name := range slices.Sorted(maps.Keys(combined)) {
+		conversion.propertyByName[name] = len(conversion.properties)
+		conversion.properties = append(conversion.properties, combined[name])
+	}
+
+	if conversion.dynamicType == "" {
+		conversion.dynamicType = parameter.dynamicType
+		conversion.dynamicValidation = parameter.dynamicValidation
+	}
 }
 
 //nolint:cyclop,gocognit // The finite wire/shape metadata table is clearest at one invariant boundary.
