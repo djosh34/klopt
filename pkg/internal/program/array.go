@@ -1,16 +1,15 @@
-//nolint:cyclop,gocognit,godoclint,mnd // Array obligations are an explicit, private theory dispatch.
+//nolint:cyclop,godoclint // Array theory translates signed atoms into one small cursor.
 package program
 
-import (
-	"math/big"
+import "github.com/djosh34/klopt/pkg/jsonvalue"
 
-	"github.com/djosh34/klopt/pkg/jsonvalue"
-)
-
-type arrayFaultPlan struct {
-	groups  [][]goal
-	weight  uint64
-	maximum uint64
+type arrayRules struct {
+	cacheKey string
+	minimum  uint64
+	maximum  uint64
+	items    []goal
+	faults   []goal
+	excluded []jsonvalue.Value
 }
 
 func (program *Program) sampleArray(
@@ -20,83 +19,24 @@ func (program *Program) sampleArray(
 	work *decodeWork,
 	depth uint64,
 ) (jsonvalue.Value, bool, error) {
-	minimum := uint64(0)
-	maximum := ^uint64(0)
-	positiveItems := make([]goal, 0)
-	negativeItems := make([]goal, 0)
-
-	for _, current := range goals {
-		item := program.nodes[current.node].atom
-		switch item.kind {
-		case atomArrayMinItems:
-			if current.want {
-				minimum = max(minimum, item.count)
-			} else if item.count == 0 {
-				return jsonvalue.Value{}, false, nil
-			} else {
-				maximum = min(maximum, item.count-1)
-			}
-		case atomArrayMaxItems:
-			if current.want {
-				maximum = min(maximum, item.count)
-			} else if item.count == ^uint64(0) {
-				return jsonvalue.Value{}, false, nil
-			} else {
-				minimum = max(minimum, item.count+1)
-			}
-		case atomArrayItems:
-			childGoal := goal{node: item.child, want: current.want}
-			if current.want {
-				positiveItems = append(positiveItems, childGoal)
-			} else {
-				negativeItems = append(negativeItems, childGoal)
-			}
-		}
+	rules, possible, err := program.arrayRules(goals, excluded)
+	if err != nil || !possible {
+		return jsonvalue.Value{}, possible, err
 	}
 
-	if minimum > maximum {
-		return jsonvalue.Value{}, false, nil
+	groups, possible, err := program.chooseArrayFaultGrouping(rules, reader, work)
+	if err != nil || !possible {
+		return jsonvalue.Value{}, possible, err
 	}
 
-	plans, err := program.productiveArrayPlans(
-		positiveItems, negativeItems, excluded, minimum, maximum, work,
-	)
-	if err != nil {
-		return jsonvalue.Value{}, false, err
+	initial := arrayState{pending: groups, relevant: rules.excluded}
+	if reader == nil {
+		finishPossible, finishErr := program.arrayCanFinish(initial, rules, work)
+
+		return jsonvalue.Array(nil), finishPossible, finishErr
 	}
 
-	if len(plans) == 0 {
-		return jsonvalue.Value{}, false, nil
-	}
-
-	selectedPlan := plans[0]
-	if reader != nil {
-		selectedPlan = plans[weightedArrayPlan(reader.word(), plans)]
-	}
-
-	minimum = max(minimum, uint64(len(selectedPlan.groups)))
-	maximum = min(maximum, selectedPlan.maximum)
-
-	count, possible, err := program.chooseProductiveArrayCount(
-		minimum, maximum, positiveItems, selectedPlan.groups, excluded, reader, work,
-	)
-	if err != nil {
-		return jsonvalue.Value{}, false, err
-	}
-
-	if !possible {
-		return jsonvalue.Value{}, false, nil
-	}
-
-	if count > uint64(int(^uint(0)>>1)) || count+2 > work.limits.MaxOutputBytes {
-		return jsonvalue.Value{}, false, &LimitError{
-			Resource: "array items", Limit: work.limits.MaxOutputBytes, Observed: count + 2,
-		}
-	}
-
-	items, err := program.decodeArrayItems(
-		count, positiveItems, selectedPlan.groups, excluded, reader, work, depth,
-	)
+	items, err := program.walkArray(initial, rules, reader, work, depth)
 	if err != nil {
 		return jsonvalue.Value{}, false, err
 	}
@@ -111,167 +51,128 @@ func (program *Program) sampleArray(
 	return value, matches, nil
 }
 
-func (program *Program) productiveArrayPlans(
-	positive []goal,
-	negative []goal,
+func (program *Program) arrayRules(
+	goals []goal,
 	excluded []jsonvalue.Value,
-	minimum uint64,
-	maximum uint64,
-	work *decodeWork,
-) ([]arrayFaultPlan, error) {
-	if len(negative) == 0 {
-		return program.productiveArrayPlanWithoutFaults(
-			positive, excluded, minimum, maximum, work,
-		)
-	}
+) (arrayRules, bool, error) {
+	rules := arrayRules{maximum: ^uint64(0)}
 
-	plans := []arrayFaultPlan{
-		{groups: [][]goal{appendCopy(negative)}, weight: 8, maximum: maximum},
-	}
-	if len(negative) > 1 {
-		separate := make([][]goal, len(negative))
-		for index, current := range negative {
-			separate[index] = []goal{current}
-		}
-
-		plans = append(plans, arrayFaultPlan{groups: separate, weight: 1, maximum: maximum})
-	}
-
-	productivePlans := make([]arrayFaultPlan, 0, len(plans))
-	for _, plan := range plans {
-		if uint64(len(plan.groups)) > maximum {
-			continue
-		}
-
-		productive := true
-
-		for _, group := range plan.groups {
-			itemGoals := appendCopy(positive, group...)
-
-			possible, err := program.productive(canonicalState(itemGoals), work)
-			if err != nil {
-				return nil, err
-			}
-
-			if !possible {
-				productive = false
-
-				break
-			}
-		}
-
-		if !productive {
-			continue
-		}
-
-		if max(minimum, uint64(len(plan.groups))) < plan.maximum {
-			possible, err := program.productive(canonicalState(positive), work)
-			if err != nil {
-				return nil, err
-			}
-
-			if !possible {
-				plan.maximum = uint64(len(plan.groups))
-			}
-		}
-
-		if max(minimum, uint64(len(plan.groups))) <= plan.maximum {
-			_, possible, err := program.chooseProductiveArrayCount(
-				max(minimum, uint64(len(plan.groups))),
-				plan.maximum,
-				positive,
-				plan.groups,
-				excluded,
-				nil,
-				work,
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			if possible {
-				productivePlans = append(productivePlans, plan)
-			}
-		}
-	}
-
-	return productivePlans, nil
-}
-
-func (program *Program) productiveArrayPlanWithoutFaults(
-	positive []goal,
-	excluded []jsonvalue.Value,
-	minimum uint64,
-	maximum uint64,
-	work *decodeWork,
-) ([]arrayFaultPlan, error) {
-	productive, err := program.productive(canonicalState(positive), work)
+	cacheKey, err := stateKey(canonicalStateWithExclusions(goals, excluded))
 	if err != nil {
-		return nil, err
+		return arrayRules{}, false, err
 	}
 
-	if !productive {
-		if minimum == 0 {
-			return []arrayFaultPlan{{weight: 1, maximum: 0}}, nil
+	rules.cacheKey = cacheKey
+
+	for _, exact := range excluded {
+		if exact.Kind == jsonvalue.KindArray {
+			rules.excluded = append(rules.excluded, exact)
 		}
-
-		return nil, nil
 	}
 
-	plan := arrayFaultPlan{weight: 1, maximum: maximum}
-
-	_, possible, err := program.chooseProductiveArrayCount(
-		minimum, maximum, positive, plan.groups, excluded, nil, work,
-	)
-	if err != nil || !possible {
-		return nil, err
+	for _, current := range goals {
+		item := program.nodes[current.node].atom
+		switch item.kind {
+		case atomArrayMinItems:
+			if current.want {
+				rules.minimum = max(rules.minimum, item.count)
+			} else if item.count == 0 {
+				return arrayRules{}, false, nil
+			} else {
+				rules.maximum = min(rules.maximum, item.count-1)
+			}
+		case atomArrayMaxItems:
+			if current.want {
+				rules.maximum = min(rules.maximum, item.count)
+			} else if item.count == ^uint64(0) {
+				return arrayRules{}, false, nil
+			} else {
+				rules.minimum = max(rules.minimum, item.count+1)
+			}
+		case atomArrayItems:
+			child := goal{node: item.child, want: current.want}
+			if current.want {
+				rules.items = append(rules.items, child)
+			} else {
+				rules.faults = append(rules.faults, child)
+			}
+		}
 	}
 
-	return []arrayFaultPlan{plan}, nil
+	return rules, rules.minimum <= rules.maximum, nil
 }
 
-func chooseCount(
-	minimum uint64,
-	maximum uint64,
+func (program *Program) chooseArrayFaultGrouping(
+	rules arrayRules,
 	reader *tapeReader,
 	work *decodeWork,
-) (uint64, error) {
-	rank, err := readNatural(reader, work)
+) ([][]goal, bool, error) {
+	if len(rules.faults) == 0 {
+		possible, err := program.arrayCanFinish(
+			arrayState{relevant: rules.excluded}, rules, work,
+		)
+
+		return nil, possible, err
+	}
+
+	combined := [][]goal{appendCopy(rules.faults)}
+
+	separate := make([][]goal, len(rules.faults))
+	for index, fault := range rules.faults {
+		separate[index] = []goal{fault}
+	}
+
+	preferSeparate := work.fault.budget > 1
+	if reader != nil && work.fault.style == faultStructural {
+		preferSeparate = true
+	}
+
+	first, second := combined, separate
+	if preferSeparate {
+		first, second = separate, combined
+	}
+
+	possible, err := program.arrayCanFinish(
+		arrayState{pending: first, relevant: rules.excluded}, rules, work,
+	)
 	if err != nil {
-		return 0, err
+		return nil, false, err
 	}
 
-	if maximum != ^uint64(0) {
-		span := new(big.Int).SetUint64(maximum - minimum)
-		span.Add(span, big.NewInt(1))
-		rank.Mod(rank, span)
-
-		return minimum + rank.Uint64(), nil
+	if possible {
+		return first, true, nil
 	}
 
-	if !rank.IsUint64() || rank.Uint64() > ^uint64(0)-minimum {
-		return 0, &LimitError{
-			Resource: "container length", Limit: ^uint64(0), Observed: ^uint64(0),
-		}
+	if sameGoalGrouping(first, second) {
+		return nil, false, nil
 	}
 
-	return minimum + rank.Uint64(), nil
+	possible, err = program.arrayCanFinish(
+		arrayState{pending: second, relevant: rules.excluded}, rules, work,
+	)
+	if err != nil || !possible {
+		return nil, possible, err
+	}
+
+	return second, true, nil
 }
 
-func weightedArrayPlan(word uint64, plans []arrayFaultPlan) int {
-	total := uint64(0)
-	for _, plan := range plans {
-		total += plan.weight
+func sameGoalGrouping(left [][]goal, right [][]goal) bool {
+	if len(left) != len(right) {
+		return false
 	}
 
-	selected := word % total
-	for index, plan := range plans {
-		if selected < plan.weight {
-			return index
+	for index := range left {
+		if len(left[index]) != len(right[index]) {
+			return false
 		}
 
-		selected -= plan.weight
+		for goalIndex := range left[index] {
+			if left[index][goalIndex] != right[index][goalIndex] {
+				return false
+			}
+		}
 	}
 
-	panic("array plan weights must be positive")
+	return true
 }

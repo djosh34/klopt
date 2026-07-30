@@ -17,21 +17,15 @@ func convertParameterValue(
 		return convert(validation)
 	}
 
-	cursor := newParameterCandidateCursor(validation)
-
 	var (
 		firstConversionError error
 		firstValidationError error
+		result               jsontext.Value
 	)
 
-	for {
-		candidate, ok := cursor.next()
-		if !ok {
-			break
-		}
-
+	walkParameterCandidates(validation, func(candidate *Validation) bool {
 		if validationImpossible(candidate) {
-			continue
+			return true
 		}
 
 		value, conversionError, validationError := attemptParameterCandidate(candidate, convert)
@@ -40,7 +34,7 @@ func convertParameterValue(
 				firstConversionError = conversionError
 			}
 
-			continue
+			return true
 		}
 
 		if validationError != nil {
@@ -48,10 +42,16 @@ func convertParameterValue(
 				firstValidationError = validationError
 			}
 
-			continue
+			return true
 		}
 
-		return value, nil
+		result = value
+
+		return false
+	})
+
+	if result != nil {
+		return result, nil
 	}
 
 	return nil, parameterConversionFailure(firstValidationError, firstConversionError)
@@ -87,102 +87,66 @@ func parameterConversionFailure(validationError error, conversionError error) er
 	return errors.New("value does not match anyOf")
 }
 
-// parameterCandidateCursor lazily enumerates depth-first composition choices.
-// It retains only one choice index per currently reachable anyOf occurrence.
-type parameterCandidateCursor struct {
-	root    *Validation
-	choices []int
-	arities []int
-	started bool
-	done    bool
-}
-
-// newParameterCandidateCursor starts before the first source-ordered choice.
-func newParameterCandidateCursor(root *Validation) *parameterCandidateCursor {
-	return &parameterCandidateCursor{root: root}
-}
-
-// next returns the next complete source-ordered composition selection.
-func (cursor *parameterCandidateCursor) next() (*Validation, bool) {
-	if cursor.done {
-		return nil, false
-	}
-
-	if cursor.started && !cursor.advance() {
-		cursor.done = true
-
-		return nil, false
-	}
-
-	cursor.started = true
-	cursor.arities = cursor.arities[:0]
-
-	position := 0
-	candidate := cursor.selectCandidate(cursor.root, &position)
-	cursor.choices = cursor.choices[:position]
-
-	return candidate, true
-}
-
-// advance increments the deepest choice that has a remaining alternative.
-func (cursor *parameterCandidateCursor) advance() bool {
-	for position := len(cursor.arities) - 1; position >= 0; position-- {
-		if cursor.choices[position]+1 >= cursor.arities[position] {
-			continue
-		}
-
-		cursor.choices[position]++
-		cursor.choices = cursor.choices[:position+1]
-
-		return true
-	}
-
-	return false
-}
-
-// selectCandidate builds only the current choice and retains every conjunctive rule.
-func (cursor *parameterCandidateCursor) selectCandidate(
-	validation *Validation,
-	position *int,
-) *Validation {
+// walkParameterCandidates tries source-ordered choices transactionally and retains
+// only the active recursion path. Returning false stops after one accepted conversion.
+func walkParameterCandidates(validation *Validation, visit func(*Validation) bool) bool {
 	local := *validation
 	local.AllOfValidations = nil
 	local.AnyOfValidations = nil
 
-	parts := []*Validation{&local}
-	pointer := local.SchemaPointer
-
 	if len(validation.AnyOfValidations) != 0 {
-		choice := cursor.choice(len(validation.AnyOfValidations), position)
-		selected := cursor.selectCandidate(validation.AnyOfValidations[choice], position)
-		parts = append(parts, selected)
-		pointer = selected.SchemaPointer
-	}
-
-	for _, child := range validation.AllOfValidations {
-		selected := cursor.selectCandidate(child, position)
-
-		parts = append(parts, selected)
-		if containsAnyOf(child) {
-			pointer = selected.SchemaPointer
+		for _, alternative := range validation.AnyOfValidations {
+			keepGoing := walkParameterCandidates(alternative, func(selected *Validation) bool {
+				return walkParameterAllOf(
+					validation,
+					0,
+					[]*Validation{&local, selected},
+					selected.SchemaPointer,
+					visit,
+				)
+			})
+			if !keepGoing {
+				return false
+			}
 		}
+
+		return true
 	}
 
-	candidate := conjunctiveValidation(parts...)
-	candidate.SchemaPointer = pointer
-
-	return candidate
+	return walkParameterAllOf(
+		validation, 0, []*Validation{&local}, local.SchemaPointer, visit,
+	)
 }
 
-// choice consumes one deterministic cursor position.
-func (cursor *parameterCandidateCursor) choice(arity int, position *int) int {
-	if *position == len(cursor.choices) {
-		cursor.choices = append(cursor.choices, 0)
+// walkParameterAllOf visits the active allOf path without materializing sibling combinations.
+func walkParameterAllOf(
+	validation *Validation,
+	index int,
+	parts []*Validation,
+	pointer string,
+	visit func(*Validation) bool,
+) bool {
+	if index == len(validation.AllOfValidations) {
+		candidate := conjunctiveValidation(parts...)
+		candidate.SchemaPointer = pointer
+
+		return visit(candidate)
 	}
 
-	choice := cursor.choices[*position]
-	cursor.arities = append(cursor.arities, arity)
-	(*position)++
+	child := validation.AllOfValidations[index]
 
-	return choice
+	return walkParameterCandidates(child, func(selected *Validation) bool {
+		selectedPointer := pointer
+		if containsAnyOf(child) {
+			selectedPointer = selected.SchemaPointer
+		}
+
+		return walkParameterAllOf(
+			validation,
+			index+1,
+			append(parts, selected),
+			selectedPointer,
+			visit,
+		)
+	})
 }

@@ -40,7 +40,21 @@ type Program struct {
 }
 
 // Compile lowers operation request schemas into one immutable graph.
-func Compile(roots []*validation.Validation) (*Program, error) {
+func Compile(roots []*validation.Validation, configured ...CompileLimits) (*Program, error) {
+	limits := defaultCompileLimits()
+
+	if len(configured) > 1 {
+		return nil, fmt.Errorf("compile accepts at most one limit set")
+	}
+
+	if len(configured) == 1 {
+		limits = configured[0]
+	}
+
+	if err := checkCompileLimits(roots, limits); err != nil {
+		return nil, err
+	}
+
 	lower := graphLowerer{
 		byValidation: make(map[*validation.Validation]nodeID),
 		byAtom:       make(map[string]nodeID),

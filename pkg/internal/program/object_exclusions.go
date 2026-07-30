@@ -1,7 +1,8 @@
-//nolint:cyclop,godoclint // Exact object exclusions are a small forward prefix trie.
+//nolint:cyclop,gocognit,godoclint,mnd // Object emission follows one canonical prefix state.
 package program
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -13,291 +14,20 @@ type exactObjectGroup struct {
 	objects []jsonvalue.Value
 }
 
-type objectValueChoice struct {
-	state     state
-	value     jsonvalue.Value
-	remaining []jsonvalue.Value
-	literal   bool
-}
-
-func (program *Program) objectValuesProductive(
-	names []string,
-	rules *objectRules,
-	excluded []jsonvalue.Value,
-	work *decodeWork,
-) (bool, error) {
-	relevant := exactObjectsWithNames(excluded, names)
-
-	return program.objectSuffixProductive(0, names, rules, relevant, work)
-}
-
-func (program *Program) objectSuffixProductive(
-	index int,
-	names []string,
-	rules *objectRules,
-	relevant []jsonvalue.Value,
-	work *decodeWork,
-) (bool, error) {
-	if index == len(names) {
-		return len(relevant) == 0, nil
-	}
-
-	if err := work.solver(uint64(len(relevant)) + 1); err != nil {
-		return false, err
-	}
-
-	nameGoals, allowed := program.objectNameGoals(names[index], rules.faults[names[index]], rules)
-	if !allowed {
-		return false, nil
-	}
-
-	if len(relevant) == 0 {
-		return program.objectRegularSuffixProductive(index, names, rules, work)
-	}
-
-	exactGroups := groupExactObjectValues(relevant, names[index])
-
-	exactValues := make([]jsonvalue.Value, len(exactGroups))
-	for exactIndex, group := range exactGroups {
-		exactValues[exactIndex] = group.value
-	}
-
-	outside, err := program.productive(
-		canonicalStateWithExclusions(nameGoals, exactValues), work,
-	)
-	if err != nil {
-		return false, err
-	}
-
-	if outside {
-		suffix, suffixErr := program.objectRegularSuffixProductive(index+1, names, rules, work)
-		if suffixErr != nil {
-			return false, suffixErr
-		}
-
-		if suffix {
-			return true, nil
-		}
-	}
-
-	for _, group := range exactGroups {
-		matches, matchErr := program.valueMatchesGoals(nameGoals, group.value)
-		if matchErr != nil {
-			return false, matchErr
-		}
-
-		if !matches {
-			continue
-		}
-
-		possible, possibleErr := program.objectSuffixProductive(
-			index+1, names, rules, group.objects, work,
-		)
-		if possibleErr != nil {
-			return false, possibleErr
-		}
-
-		if possible {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-func (program *Program) objectRegularSuffixProductive(
-	index int,
-	names []string,
-	rules *objectRules,
-	work *decodeWork,
-) (bool, error) {
-	for current := index; current < len(names); current++ {
-		nameGoals, allowed := program.objectNameGoals(
-			names[current], rules.faults[names[current]], rules,
-		)
-		if !allowed {
-			return false, nil
-		}
-
-		possible, err := program.productive(canonicalState(nameGoals), work)
-		if err != nil || !possible {
-			return possible, err
-		}
-	}
-
-	return true, nil
-}
-
-func (program *Program) decodeObjectMembers(
-	names []string,
-	rules *objectRules,
-	excluded []jsonvalue.Value,
-	reader *tapeReader,
-	work *decodeWork,
-	depth uint64,
-) ([]jsonvalue.Member, error) {
-	relevant := exactObjectsWithNames(excluded, names)
-	members := make([]jsonvalue.Member, len(names))
-
-	for index, name := range names {
-		nameGoals, allowed := program.objectNameGoals(name, rules.faults[name], rules)
-		if !allowed {
-			return nil, fmt.Errorf("productive object selected forbidden name %q", name)
-		}
-
-		if len(relevant) == 0 {
-			value, possible, err := program.decodeState(
-				canonicalState(nameGoals), reader, work, depth+1,
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			if !possible {
-				return nil, fmt.Errorf("productive object property %q has no completion", name)
-			}
-
-			members[index] = jsonvalue.Member{Name: name, Value: value}
-
-			continue
-		}
-
-		choices, err := program.objectValueChoices(index, names, nameGoals, rules, relevant, work)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(choices) == 0 {
-			return nil, fmt.Errorf("productive object exclusion has no value choice for %q", name)
-		}
-
-		selected := 0
-		if reader != nil {
-			selected = int(reader.word() % uint64(len(choices)))
-		}
-
-		choice := choices[selected]
-
-		value := choice.value
-		if !choice.literal {
-			var possible bool
-
-			value, possible, err = program.decodeState(choice.state, reader, work, depth+1)
-			if err != nil {
-				return nil, err
-			}
-
-			if !possible {
-				return nil, fmt.Errorf("productive object exclusion cannot finish for %q", name)
-			}
-		}
-
-		members[index] = jsonvalue.Member{Name: name, Value: value}
-		relevant = choice.remaining
-	}
-
-	if len(relevant) != 0 {
-		return nil, fmt.Errorf("object completed as an excluded exact value")
-	}
-
-	return members, nil
-}
-
-func (program *Program) objectValueChoices(
-	index int,
-	names []string,
-	nameGoals []goal,
-	rules *objectRules,
-	relevant []jsonvalue.Value,
-	work *decodeWork,
-) ([]objectValueChoice, error) {
-	exactGroups := groupExactObjectValues(relevant, names[index])
-
-	exactValues := make([]jsonvalue.Value, len(exactGroups))
-	for exactIndex, group := range exactGroups {
-		exactValues[exactIndex] = group.value
-	}
-
-	choices := make([]objectValueChoice, 0, len(exactGroups)+1)
-	outsideState := canonicalStateWithExclusions(nameGoals, exactValues)
-
-	outside, err := program.productive(outsideState, work)
-	if err != nil {
-		return nil, err
-	}
-
-	if outside {
-		suffix, suffixErr := program.objectRegularSuffixProductive(index+1, names, rules, work)
-		if suffixErr != nil {
-			return nil, suffixErr
-		}
-
-		if suffix {
-			choices = append(choices, objectValueChoice{state: outsideState})
-		}
-	}
-
-	for _, group := range exactGroups {
-		matches, matchErr := program.valueMatchesGoals(nameGoals, group.value)
-		if matchErr != nil {
-			return nil, matchErr
-		}
-
-		if !matches {
-			continue
-		}
-
-		possible, possibleErr := program.objectSuffixProductive(
-			index+1, names, rules, group.objects, work,
-		)
-		if possibleErr != nil {
-			return nil, possibleErr
-		}
-
-		if possible {
-			choices = append(choices, objectValueChoice{
-				value: group.value, remaining: group.objects, literal: true,
-			})
-		}
-	}
-
-	return choices, nil
-}
-
-func exactObjectsWithNames(excluded []jsonvalue.Value, names []string) []jsonvalue.Value {
-	result := make([]jsonvalue.Value, 0)
-
-	for _, exact := range excluded {
-		if exact.Kind != jsonvalue.KindObject || len(exact.Object) != len(names) {
-			continue
-		}
-
-		matches := true
-
-		for _, name := range names {
-			if _, present := objectMember(exact.Object, name); !present {
-				matches = false
-
-				break
-			}
-		}
-
-		if matches {
-			result = append(result, exact)
-		}
-	}
-
-	return result
-}
-
-func groupExactObjectValues(exact []jsonvalue.Value, name string) []exactObjectGroup {
+func groupObjectValuesAt(
+	exact []jsonvalue.Value,
+	index uint64,
+	name string,
+) []exactObjectGroup {
 	result := make([]exactObjectGroup, 0)
 
 	for _, object := range exact {
-		value, present := objectMember(object.Object, name)
-		if !present {
+		members := canonicalObjectMembers(object.Object)
+		if uint64(len(members)) <= index || members[index].Name != name {
 			continue
 		}
+
+		value := members[index].Value
 
 		groupIndex := slices.IndexFunc(result, func(group exactObjectGroup) bool {
 			return group.value.Equal(value)
@@ -318,4 +48,186 @@ func groupExactObjectValues(exact []jsonvalue.Value, name string) []exactObjectG
 	})
 
 	return result
+}
+
+func canonicalObjectMembers(source []jsonvalue.Member) []jsonvalue.Member {
+	result := slices.Clone(source)
+	slices.SortFunc(result, func(left jsonvalue.Member, right jsonvalue.Member) int {
+		return compareShortlex(left.Name, right.Name)
+	})
+
+	return result
+}
+
+func (program *Program) walkObject(
+	current objectState,
+	rules *objectRules,
+	reader *tapeReader,
+	work *decodeWork,
+	depth uint64,
+) ([]jsonvalue.Member, error) {
+	members := make([]jsonvalue.Member, 0)
+	outputBytes := uint64(2)
+
+	for {
+		if err := work.step(); err != nil {
+			return nil, err
+		}
+
+		actions, err := program.objectImmediate(current, rules, work)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(actions) == 0 {
+			return nil, fmt.Errorf("productive object state has no immediate action")
+		}
+
+		selected := actions[weightedObjectAction(reader.word(), actions)]
+		if selected.stop {
+			return members, nil
+		}
+
+		if selected.dynamic {
+			selected, err = program.materializeDynamicObjectAction(
+				current, rules, reader, work, selected.name,
+			)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		var value jsonvalue.Value
+		if selected.literal != nil {
+			value = *selected.literal
+		} else {
+			var possible bool
+
+			value, possible, err = program.decodeState(selected.value, reader, work, depth+1)
+			if err != nil {
+				return nil, err
+			}
+
+			if !possible {
+				return nil, fmt.Errorf("productive object property %q has no completion", selected.name)
+			}
+		}
+
+		nameJSON, err := json.Marshal(selected.name)
+		if err != nil {
+			return nil, fmt.Errorf("measure object property name: %w", err)
+		}
+
+		valueJSON, err := value.MarshalJSON()
+		if err != nil {
+			return nil, fmt.Errorf("measure object property value: %w", err)
+		}
+
+		addition := uint64(len(nameJSON) + 1 + len(valueJSON))
+		if len(members) != 0 {
+			addition++
+		}
+
+		observed, ok := checkedAdd(outputBytes, addition)
+		if !ok {
+			return nil, &LimitError{
+				Resource: "output bytes", Limit: work.limits.MaxOutputBytes,
+				Observed: ^uint64(0),
+			}
+		}
+
+		if err := checkLimit("output bytes", work.limits.MaxOutputBytes, observed); err != nil {
+			return nil, err
+		}
+
+		outputBytes = observed
+
+		members = append(members, jsonvalue.Member{Name: selected.name, Value: value})
+		current = selected.next
+	}
+}
+
+func (program *Program) materializeDynamicObjectAction(
+	current objectState,
+	rules *objectRules,
+	reader *tapeReader,
+	work *decodeWork,
+	fallback string,
+) (objectAction, error) {
+	upper := ""
+	if len(current.remainingForced) != 0 {
+		upper = current.remainingForced[0]
+	}
+
+	name, possible, err := program.chooseDynamicObjectName(
+		current.previous, current.hasPrevious, upper, rules, reader, work,
+	)
+	if err != nil {
+		return objectAction{}, err
+	}
+
+	if !possible {
+		name = fallback
+	}
+
+	actions, err := program.objectValueActions(current, name, rules, work)
+	if err != nil {
+		return objectAction{}, err
+	}
+
+	productive := make([]objectAction, 0, len(actions))
+	for _, action := range actions {
+		canFinish, finishErr := program.objectCanFinish(action.next, rules, work)
+		if finishErr != nil {
+			return objectAction{}, finishErr
+		}
+
+		if canFinish {
+			action.weight = 1
+			productive = append(productive, action)
+		}
+	}
+
+	if len(productive) == 0 && name != fallback {
+		actions, err = program.objectValueActions(current, fallback, rules, work)
+		if err != nil {
+			return objectAction{}, err
+		}
+
+		for _, action := range actions {
+			canFinish, finishErr := program.objectCanFinish(action.next, rules, work)
+			if finishErr != nil {
+				return objectAction{}, finishErr
+			}
+
+			if canFinish {
+				action.weight = 1
+				productive = append(productive, action)
+			}
+		}
+	}
+
+	if len(productive) == 0 {
+		return objectAction{}, fmt.Errorf("productive dynamic property has no completion")
+	}
+
+	return productive[reader.word()%uint64(len(productive))], nil
+}
+
+func weightedObjectAction(word uint64, actions []objectAction) int {
+	total := uint64(0)
+	for _, action := range actions {
+		total += action.weight
+	}
+
+	selected := word % total
+	for index, action := range actions {
+		if selected < action.weight {
+			return index
+		}
+
+		selected -= action.weight
+	}
+
+	panic("object action weights must be positive")
 }

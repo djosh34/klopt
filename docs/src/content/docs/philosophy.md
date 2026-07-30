@@ -81,4 +81,4 @@ Validation receives extensive generative testing. A Rapid-based schema generator
 
 Generating JSON with a known schema verdict is hard. The graph exposes only choices that can still finish, then small number, string, array, and object components construct the final value from the active rules. Invalid walks normally introduce one selected fault while preserving valid siblings, with broader failures available less often. The generated fuzz target has no preplanned cases or schema-specific seeds: ordinary `go test` runs its single empty-tape baseline, and Go replays any fuzz inputs it has saved.
 
-OpenAPI details in this documentation follow the [OpenAPI 3.0.3 Schema Object](https://spec.openapis.org/oas/v3.0.3.html#schema-object).
+OpenAPI details in this documentation follow the [OpenAPI 3.0.4 Schema Object](https://spec.openapis.org/oas/v3.0.4.html#schema-object).

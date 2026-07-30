@@ -28,6 +28,15 @@ func materializedRat(number jsonvalue.Number, work *decodeWork) (*big.Rat, error
 		}
 	}
 
+	bytes, err := exactValueBytes(jsonvalue.Value{Kind: jsonvalue.KindNumber, Number: number})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := work.chargeSolver("exact decimal", "exact decimal bytes", 1, bytes); err != nil {
+		return nil, err
+	}
+
 	return new(big.Rat).Set(number.Rational), nil
 }
 

@@ -1,7 +1,22 @@
-//nolint:godoclint // Private charging stays behind the exported typed limit.
+//nolint:godoclint,mnd // Private defaults and charging stay behind typed limits.
 package program
 
 import "fmt"
+
+// CompileLimits bounds immutable graph construction before Program is allocated.
+type CompileLimits struct {
+	MaxNodes        uint64
+	MaxFacts        uint64
+	MaxProgramBytes uint64
+}
+
+func defaultCompileLimits() CompileLimits {
+	return CompileLimits{
+		MaxNodes:        1_000_000,
+		MaxFacts:        1_000_000,
+		MaxProgramBytes: 64 * 1024 * 1024,
+	}
+}
 
 // Limits contains the only runtime resource controls used by Decode.
 type Limits struct {
@@ -47,9 +62,25 @@ type ResourceError struct {
 // Error formats one exhausted solver resource.
 func (resourceError *ResourceError) Error() string {
 	return fmt.Sprintf(
-		"program solver exceeds %s limit: maximum %d, observed %d",
+		"program exceeds %s limit: maximum %d, observed %d",
 		resourceError.Resource,
 		resourceError.Limit,
 		resourceError.Observed,
 	)
+}
+
+func checkedAdd(left uint64, right uint64) (uint64, bool) {
+	if right > ^uint64(0)-left {
+		return ^uint64(0), false
+	}
+
+	return left + right, true
+}
+
+func checkedMul(left uint64, right uint64) (uint64, bool) {
+	if left != 0 && right > ^uint64(0)/left {
+		return ^uint64(0), false
+	}
+
+	return left * right, true
 }

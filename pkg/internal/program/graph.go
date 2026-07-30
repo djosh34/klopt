@@ -2,6 +2,7 @@
 package program
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"slices"
@@ -180,7 +181,9 @@ func (lower *graphLowerer) validation(source *validation.Validation) (nodeID, er
 			source.StringValidation.CompiledPattern,
 		)
 		if err != nil {
-			return 0, fmt.Errorf("schema %s pattern: %w", source.SchemaPointer, err)
+			return 0, fmt.Errorf(
+				"schema %s pattern: %w", source.SchemaPointer, mapStringCompileError(err),
+			)
 		}
 
 		children = append(children, lower.add(node{
@@ -201,7 +204,9 @@ func (lower *graphLowerer) validation(source *validation.Validation) (nodeID, er
 	if source.StringValidation.CompiledFormat != nil {
 		language, err := stringlanguage.Format(source.StringValidation.Format)
 		if err != nil {
-			return 0, fmt.Errorf("schema %s format: %w", source.SchemaPointer, err)
+			return 0, fmt.Errorf(
+				"schema %s format: %w", source.SchemaPointer, mapStringCompileError(err),
+			)
 		}
 
 		children = append(children, lower.add(node{
@@ -362,6 +367,19 @@ func compilePatternLanguage(
 	}
 
 	return stringlanguage.Pattern(source, options...)
+}
+
+func mapStringCompileError(err error) error {
+	var complexity *stringlanguage.ComplexityError
+	if errors.As(err, &complexity) {
+		return &ResourceError{
+			Resource: "compile string " + complexity.Resource,
+			Limit:    complexity.Limit,
+			Observed: complexity.Observed,
+		}
+	}
+
+	return err
 }
 
 func (lower *graphLowerer) add(item node) nodeID {

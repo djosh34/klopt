@@ -97,12 +97,12 @@ func walkString(
 	reader *tapeReader,
 	work *decodeWork,
 ) (string, bool, error) {
-	set, possible, err := compileStringSet(requirements, minimum, maximum)
+	explorer, possible, err := newStringExplorer(requirements, minimum, maximum, work)
 	if err != nil || !possible {
 		return "", possible, err
 	}
 
-	state := set.Start()
+	state := explorer.Start()
 	result := make([]rune, 0)
 	outputBytes := uint64(2)
 
@@ -111,8 +111,14 @@ func walkString(
 			return "", false, err
 		}
 
-		ranges := set.ProductiveRanges(state)
-		accepting := set.Accepting(state)
+		accepting, ranges, choicesErr := explorer.Choices(state, work.stringCharge)
+		if choicesErr != nil {
+			return "", false, choicesErr
+		}
+
+		if !accepting && len(ranges) == 0 {
+			return "", false, nil
+		}
 
 		choice := stringChoice(reader, accepting, len(ranges))
 		if accepting && choice == 0 {
@@ -130,7 +136,15 @@ func walkString(
 		selected := ranges[choice]
 		scalar := rangeScalar(selected, reader)
 
-		outputBytes += uint64(utf8.RuneLen(scalar))
+		observed, ok := checkedAdd(outputBytes, uint64(utf8.RuneLen(scalar)))
+		if !ok {
+			return "", false, &LimitError{
+				Resource: "output bytes", Limit: work.limits.MaxOutputBytes,
+				Observed: ^uint64(0),
+			}
+		}
+
+		outputBytes = observed
 		if err := checkLimit("output bytes", work.limits.MaxOutputBytes, outputBytes); err != nil {
 			return "", false, err
 		}
@@ -140,11 +154,12 @@ func walkString(
 	}
 }
 
-func compileStringSet(
+func newStringExplorer(
 	requirements []stringlanguage.Requirement,
 	minimum uint64,
 	maximum uint64,
-) (*stringlanguage.Set, bool, error) {
+	work *decodeWork,
+) (*stringlanguage.Explorer, bool, error) {
 	maximumInt := int(^uint(0) >> 1)
 	if minimum > uint64(maximumInt) || maximum != ^uint64(0) && maximum > uint64(maximumInt) {
 		return nil, false, &ResourceError{
@@ -157,26 +172,26 @@ func compileStringSet(
 		length.Max = new(int(maximum))
 	}
 
-	set, err := stringlanguage.Compile(requirements, length)
-	if err == nil {
-		return set, true, nil
-	}
-
-	var empty *stringlanguage.EmptyError
-	if errors.As(err, &empty) {
-		return nil, false, nil
-	}
-
-	var complexity *stringlanguage.ComplexityError
-	if errors.As(err, &complexity) {
-		return nil, false, &ResourceError{
-			Resource: "string " + complexity.Resource,
-			Limit:    complexity.Limit,
-			Observed: complexity.Observed,
+	explorer, err := stringlanguage.NewExplorer(requirements, length, work.stringCharge)
+	if err != nil {
+		var empty *stringlanguage.EmptyError
+		if errors.As(err, &empty) {
+			return nil, false, nil
 		}
+
+		var complexity *stringlanguage.ComplexityError
+		if errors.As(err, &complexity) {
+			return nil, false, &ResourceError{
+				Resource: "string " + complexity.Resource,
+				Limit:    complexity.Limit,
+				Observed: complexity.Observed,
+			}
+		}
+
+		return nil, false, fmt.Errorf("create string explorer: %w", err)
 	}
 
-	return nil, false, fmt.Errorf("compile string constraints: %w", err)
+	return explorer, true, nil
 }
 
 func stringChoice(reader *tapeReader, accepting bool, rangeCount int) int {

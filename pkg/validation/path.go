@@ -396,17 +396,13 @@ func compiledScalarType(validations ...*Validation) (string, error) {
 	}
 
 	validation := conjunctiveValidation(validations...)
-	cursor := newParameterCandidateCursor(validation)
 	types := make([]string, 0)
 
-	for {
-		candidate, ok := cursor.next()
-		if !ok {
-			break
-		}
+	var candidateError error
 
+	walkParameterCandidates(validation, func(candidate *Validation) bool {
 		if validationImpossible(candidate) {
-			continue
+			return true
 		}
 
 		typeName := compiledValidationType(candidate)
@@ -415,14 +411,22 @@ func compiledScalarType(validations ...*Validation) (string, error) {
 		}
 
 		if !isScalarType(typeName) {
-			return "", fmt.Errorf(
+			candidateError = fmt.Errorf(
 				"style scalar slot at %s must have a primitive type; unsupported compiled type %q",
 				candidate.SchemaPointer,
 				typeName,
 			)
+
+			return false
 		}
 
 		types = append(types, typeName)
+
+		return true
+	})
+
+	if candidateError != nil {
+		return "", candidateError
 	}
 
 	typeName := intersectQuerySchemaTypes(types)
@@ -523,23 +527,21 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 func compilePathObjectMetadata(
 	validation *Validation,
 ) ([]pathProperty, map[string]int, styleScalarType, error) {
-	cursor := newParameterCandidateCursor(validation)
 	properties := make(map[string]pathProperty)
 	dynamicType := styleScalarType("")
 
-	for {
-		candidate, ok := cursor.next()
-		if !ok {
-			break
-		}
+	var candidateError error
 
+	walkParameterCandidates(validation, func(candidate *Validation) bool {
 		if validationImpossible(candidate) {
-			continue
+			return true
 		}
 
 		candidateProperties, _, err := compiledPathProperties(candidate)
 		if err != nil {
-			return nil, nil, "", err
+			candidateError = err
+
+			return false
 		}
 
 		for _, property := range candidateProperties {
@@ -550,12 +552,20 @@ func compilePathObjectMetadata(
 
 		candidateDynamicType, err := compiledPathScalarType(compiledAdditionalProperties(candidate)...)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("additionalProperties: %w", err)
+			candidateError = fmt.Errorf("additionalProperties: %w", err)
+
+			return false
 		}
 
 		if dynamicType == "" {
 			dynamicType = candidateDynamicType
 		}
+
+		return true
+	})
+
+	if candidateError != nil {
+		return nil, nil, "", candidateError
 	}
 
 	compiled := make([]pathProperty, 0, len(properties))
@@ -976,18 +986,14 @@ func conjunctiveValidation(validations ...*Validation) *Validation {
 
 //nolint:cyclop // Candidate shape, scalar type, and nested-array admission are one style decision.
 func compiledStyleType(validation *Validation) (string, error) {
-	cursor := newParameterCandidateCursor(validation)
 	types := make([]string, 0)
 	shape := ""
 
-	for {
-		candidate, ok := cursor.next()
-		if !ok {
-			break
-		}
+	var candidateError error
 
+	walkParameterCandidates(validation, func(candidate *Validation) bool {
 		if validationImpossible(candidate) {
-			continue
+			return true
 		}
 
 		typeName := compiledValidationType(candidate)
@@ -1001,21 +1007,31 @@ func compiledStyleType(validation *Validation) (string, error) {
 		}
 
 		if shape != "" && candidateShape != shape {
-			return "", fmt.Errorf(
+			candidateError = fmt.Errorf(
 				"schema at %s has unrepresentable anyOf wire shape %q beside %q",
 				candidate.SchemaPointer, candidateShape, shape,
 			)
+
+			return false
 		}
 
 		if candidateShape == "array" {
 			if _, err := compiledArrayScalarType(candidate); err != nil {
-				return "", err
+				candidateError = err
+
+				return false
 			}
 		}
 
 		shape = candidateShape
 
 		types = append(types, typeName)
+
+		return true
+	})
+
+	if candidateError != nil {
+		return "", candidateError
 	}
 
 	if shape == "array" || shape == "object" {

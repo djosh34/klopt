@@ -1,116 +1,143 @@
-//nolint:godoclint,mnd // Private canonical name ranking is independent of object rules.
+//nolint:cyclop,godoclint,mnd // Canonical Unicode ranking is one explicit digit walk.
 package program
 
 import (
 	"math/big"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
 
 const unicodeScalarCount = 0x110000 - 0x800
 
-func chooseFiniteNames(available []string, count int, reader *tapeReader) []string {
-	result := make([]string, 0, count)
-	next := 0
-
-	for remaining := count; remaining > 0; remaining-- {
-		last := len(available) - remaining
-
-		offset := 0
-		if reader != nil {
-			offset = int(reader.word() % uint64(last-next+1))
-		}
-
-		selected := next + offset
-		result = append(result, available[selected])
-		next = selected + 1
+func (program *Program) objectCandidateNames(rules *objectRules) ([]string, bool) {
+	if finite, ok := rules.finiteNames(); ok {
+		return finite, true
 	}
 
-	return result
+	set := make(map[string]struct{})
+
+	for _, current := range rules.goals {
+		item := program.nodes[current.node].atom
+		if item.kind == atomObjectProperty {
+			set[item.name] = struct{}{}
+		}
+	}
+
+	for name := range rules.forced {
+		set[name] = struct{}{}
+	}
+
+	result := sortedObjectNames(set)
+
+	return result, false
 }
 
-func (program *Program) chooseInfiniteNames(
-	count int,
+func (program *Program) chooseDynamicObjectName(
+	previous string,
+	hasPrevious bool,
+	upper string,
 	rules *objectRules,
 	reader *tapeReader,
 	work *decodeWork,
-) ([]string, error) {
-	result := make([]string, 0, count)
-	previous := big.NewInt(-1)
+) (string, bool, error) {
+	lower := new(big.Int)
 
-	for range count {
-		gap, err := readNatural(reader, work)
+	if hasPrevious {
+		rank, err := rankName(previous, work)
 		if err != nil {
-			return nil, err
+			return "", false, err
 		}
 
-		rank := new(big.Int).Add(previous, big.NewInt(1))
-		rank.Add(rank, gap)
+		lower.Add(rank, big.NewInt(1))
+	}
 
-		for {
-			name, unrankErr := unrankName(rank, work)
-			if unrankErr != nil {
-				return nil, unrankErr
-			}
+	var upperRank *big.Int
 
-			_, forced := rules.forced[name]
-			_, absent := rules.absent[name]
+	if upper != "" {
+		var err error
 
-			possible := false
-			if !forced && !absent {
-				possible, err = program.objectNamePossible(name, nil, rules, work)
-				if err != nil {
-					return nil, err
-				}
+		upperRank, err = rankName(upper, work)
+		if err != nil {
+			return "", false, err
+		}
+
+		if lower.Cmp(upperRank) >= 0 {
+			return "", false, nil
+		}
+	}
+
+	offset, err := readNatural(reader, work)
+	if err != nil {
+		return "", false, err
+	}
+
+	if upperRank != nil {
+		span := new(big.Int).Sub(upperRank, lower)
+		offset.Mod(offset, span)
+	}
+
+	rank := new(big.Int).Add(lower, offset)
+	known, _ := program.objectCandidateNames(rules)
+
+	for upperRank == nil || rank.Cmp(upperRank) < 0 {
+		name, unrankErr := unrankName(rank, work)
+		if unrankErr != nil {
+			return "", false, unrankErr
+		}
+
+		_, absent := rules.absent[name]
+
+		_, forced := rules.forced[name]
+		if !absent && !forced && !slices.Contains(known, name) {
+			possible, possibleErr := program.objectNamePossible(name, nil, rules, work)
+			if possibleErr != nil {
+				return "", false, possibleErr
 			}
 
 			if possible {
-				result = append(result, name)
-				previous = new(big.Int).Set(rank)
-
-				break
+				return name, true, nil
 			}
-
-			if err := work.solver(uint64(len(rank.Bytes())) + 1); err != nil {
-				return nil, err
-			}
-
-			rank.Add(rank, big.NewInt(1))
 		}
-	}
 
-	return result, nil
-}
+		rankBytes, ok := checkedAdd(uint64(len(rank.Bytes())), 1)
+		if !ok {
+			return "", false, &ResourceError{
+				Resource: "object name rank bytes", Limit: work.limits.MaxSolverBytes,
+				Observed: ^uint64(0),
+			}
+		}
 
-func (program *Program) nextInfiniteNames(
-	current []string,
-	rules *objectRules,
-	work *decodeWork,
-) ([]string, error) {
-	if len(current) == 0 {
-		return nil, nil
-	}
-
-	result := appendCopy(current)
-
-	rank, err := rankName(result[len(result)-1], work)
-	if err != nil {
-		return nil, err
-	}
-
-	for {
-		if err := work.solver(uint64(len(rank.Bytes())) + 1); err != nil {
-			return nil, err
+		if err := work.solver(rankBytes); err != nil {
+			return "", false, err
 		}
 
 		rank.Add(rank, big.NewInt(1))
+	}
 
-		name, unrankErr := unrankName(rank, work)
-		if unrankErr != nil {
-			return nil, unrankErr
+	return "", false, nil
+}
+
+func (program *Program) objectOptionalCapacity(
+	current objectState,
+	rules *objectRules,
+	work *decodeWork,
+) (uint64, bool, error) {
+	names, finite := program.objectCandidateNames(rules)
+
+	forced := make(map[string]struct{}, len(current.remainingForced))
+	for _, name := range current.remainingForced {
+		forced[name] = struct{}{}
+	}
+
+	count := uint64(0)
+
+	for _, name := range names {
+		if current.hasPrevious && compareShortlex(name, current.previous) <= 0 {
+			continue
 		}
 
-		if _, forced := rules.forced[name]; forced {
+		if _, required := forced[name]; required {
 			continue
 		}
 
@@ -118,19 +145,25 @@ func (program *Program) nextInfiniteNames(
 			continue
 		}
 
-		possible, possibleErr := program.objectNamePossible(name, nil, rules, work)
-		if possibleErr != nil {
-			return nil, possibleErr
+		possible, err := program.objectNamePossible(name, nil, rules, work)
+		if err != nil {
+			return 0, false, err
 		}
 
-		if !possible {
-			continue
+		if possible {
+			count++
 		}
-
-		result[len(result)-1] = name
-
-		return result, nil
 	}
+
+	if finite {
+		return count, false, nil
+	}
+
+	_, dynamic, err := program.chooseDynamicObjectName(
+		current.previous, current.hasPrevious, "", rules, nil, work,
+	)
+
+	return count, dynamic, err
 }
 
 func unrankName(rank *big.Int, work *decodeWork) (string, error) {
@@ -145,14 +178,21 @@ func unrankName(rank *big.Int, work *decodeWork) (string, error) {
 
 		length++
 
-		if err := work.solver(uint64(len(countAtLength.Bytes())) + 8); err != nil {
+		workingBytes, ok := checkedAdd(uint64(len(countAtLength.Bytes())), 8)
+		if !ok {
+			return "", &ResourceError{
+				Resource: "object name bytes", Limit: work.limits.MaxSolverBytes,
+				Observed: ^uint64(0),
+			}
+		}
+
+		if err := work.solver(workingBytes); err != nil {
 			return "", err
 		}
 
 		if uint64(length) > work.limits.MaxOutputBytes {
 			return "", &LimitError{
-				Resource: "property name bytes",
-				Limit:    work.limits.MaxOutputBytes,
+				Resource: "property name bytes", Limit: work.limits.MaxOutputBytes,
 				Observed: uint64(length),
 			}
 		}
@@ -172,11 +212,19 @@ func unrankName(rank *big.Int, work *decodeWork) (string, error) {
 	}
 
 	name := string(digits)
-	if uint64(len(name)+2) > work.limits.MaxOutputBytes {
+
+	nameBytes, ok := checkedAdd(uint64(len(name)), 2)
+	if !ok {
 		return "", &LimitError{
-			Resource: "property name bytes",
-			Limit:    work.limits.MaxOutputBytes,
-			Observed: uint64(len(name) + 2),
+			Resource: "property name bytes", Limit: work.limits.MaxOutputBytes,
+			Observed: ^uint64(0),
+		}
+	}
+
+	if nameBytes > work.limits.MaxOutputBytes {
+		return "", &LimitError{
+			Resource: "property name bytes", Limit: work.limits.MaxOutputBytes,
+			Observed: nameBytes,
 		}
 	}
 
@@ -192,7 +240,15 @@ func rankName(name string, work *decodeWork) (*big.Int, error) {
 		offset.Add(offset, countAtLength)
 		countAtLength.Mul(countAtLength, base)
 
-		if err := work.solver(uint64(len(countAtLength.Bytes())) + 8); err != nil {
+		workingBytes, ok := checkedAdd(uint64(len(countAtLength.Bytes())), 8)
+		if !ok {
+			return nil, &ResourceError{
+				Resource: "object name bytes", Limit: work.limits.MaxSolverBytes,
+				Observed: ^uint64(0),
+			}
+		}
+
+		if err := work.solver(workingBytes); err != nil {
 			return nil, err
 		}
 	}

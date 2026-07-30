@@ -1,4 +1,4 @@
-//nolint:cyclop,gocognit,gocyclo,godoclint,mnd,nestif // Object obligations stay private.
+//nolint:cyclop,gocognit,godoclint // Object theory translates signed atoms into dumb rules.
 package program
 
 import (
@@ -8,12 +8,16 @@ import (
 )
 
 type objectRules struct {
+	cacheKey           string
 	goals              []goal
+	minimum            uint64
+	maximum            uint64
 	absent             map[string]struct{}
 	forced             map[string]struct{}
 	faults             map[string][]goal
 	positiveAdditional []atom
 	negativeAdditional []atom
+	excluded           []jsonvalue.Value
 }
 
 func (program *Program) sampleObject(
@@ -23,11 +27,66 @@ func (program *Program) sampleObject(
 	work *decodeWork,
 	depth uint64,
 ) (jsonvalue.Value, bool, error) {
-	minimum := uint64(0)
-	maximum := ^uint64(0)
+	rules, possible, err := program.compileObjectRules(goals, excluded, reader, work)
+	if err != nil || !possible {
+		return jsonvalue.Value{}, possible, err
+	}
+
+	forced := sortedObjectNames(rules.forced)
+
+	initial := objectState{remainingForced: forced, relevant: rules.excluded}
+	if reader == nil {
+		finishPossible, finishErr := program.objectCanFinish(initial, &rules, work)
+
+		empty, objectErr := jsonvalue.Object(nil)
+		if objectErr != nil {
+			return jsonvalue.Value{}, false, objectErr
+		}
+
+		return empty, finishPossible, finishErr
+	}
+
+	members, err := program.walkObject(initial, &rules, reader, work, depth)
+	if err != nil {
+		return jsonvalue.Value{}, false, err
+	}
+
+	value, err := jsonvalue.Object(members)
+	if err != nil {
+		return jsonvalue.Value{}, false, err
+	}
+
+	matches, err := program.valueAllowed(goals, excluded, value)
+	if err != nil {
+		return jsonvalue.Value{}, false, err
+	}
+
+	return value, matches, nil
+}
+
+func (program *Program) compileObjectRules(
+	goals []goal,
+	excluded []jsonvalue.Value,
+	reader *tapeReader,
+	work *decodeWork,
+) (objectRules, bool, error) {
 	rules := objectRules{
-		goals: goals, absent: make(map[string]struct{}), forced: make(map[string]struct{}),
+		goals: goals, maximum: ^uint64(0),
+		absent: make(map[string]struct{}), forced: make(map[string]struct{}),
 		faults: make(map[string][]goal),
+	}
+
+	cacheKey, err := stateKey(canonicalStateWithExclusions(goals, excluded))
+	if err != nil {
+		return objectRules{}, false, err
+	}
+
+	rules.cacheKey = cacheKey
+
+	for _, exact := range excluded {
+		if exact.Kind == jsonvalue.KindObject {
+			rules.excluded = append(rules.excluded, exact)
+		}
 	}
 
 	for _, current := range goals {
@@ -35,19 +94,19 @@ func (program *Program) sampleObject(
 		switch item.kind {
 		case atomObjectMinProperties:
 			if current.want {
-				minimum = max(minimum, item.count)
+				rules.minimum = max(rules.minimum, item.count)
 			} else if item.count == 0 {
-				return jsonvalue.Value{}, false, nil
+				return objectRules{}, false, nil
 			} else {
-				maximum = min(maximum, item.count-1)
+				rules.maximum = min(rules.maximum, item.count-1)
 			}
 		case atomObjectMaxProperties:
 			if current.want {
-				maximum = min(maximum, item.count)
+				rules.maximum = min(rules.maximum, item.count)
 			} else if item.count == ^uint64(0) {
-				return jsonvalue.Value{}, false, nil
+				return objectRules{}, false, nil
 			} else {
-				minimum = max(minimum, item.count+1)
+				rules.minimum = max(rules.minimum, item.count+1)
 			}
 		case atomObjectRequired:
 			if current.want {
@@ -70,7 +129,7 @@ func (program *Program) sampleObject(
 
 	for name := range rules.forced {
 		if _, forbidden := rules.absent[name]; forbidden {
-			return jsonvalue.Value{}, false, nil
+			return objectRules{}, false, nil
 		}
 	}
 
@@ -79,105 +138,19 @@ func (program *Program) sampleObject(
 		name, faults, possible, err := program.additionalFaultName(
 			failure, &rules, finiteNames, finite, reader, work,
 		)
-		if err != nil {
-			return jsonvalue.Value{}, false, err
-		}
-
-		if !possible {
-			return jsonvalue.Value{}, false, nil
+		if err != nil || !possible {
+			return objectRules{}, possible, err
 		}
 
 		rules.forced[name] = struct{}{}
 		rules.faults[name] = append(rules.faults[name], faults...)
 	}
 
-	forcedNames := sortedObjectNames(rules.forced)
-	for _, name := range forcedNames {
-		possible, err := program.objectNamePossible(name, rules.faults[name], &rules, work)
-		if err != nil {
-			return jsonvalue.Value{}, false, err
-		}
-
-		if !possible {
-			return jsonvalue.Value{}, false, nil
-		}
+	if uint64(len(rules.forced)) > rules.maximum || rules.minimum > rules.maximum {
+		return objectRules{}, false, nil
 	}
 
-	minimum = max(minimum, uint64(len(rules.forced)))
-	if minimum > maximum {
-		return jsonvalue.Value{}, false, nil
-	}
-
-	available := make([]string, 0)
-
-	if finite {
-		for _, name := range finiteNames {
-			if _, present := rules.forced[name]; present {
-				continue
-			}
-
-			if _, absent := rules.absent[name]; absent {
-				continue
-			}
-
-			possible, err := program.objectNamePossible(name, nil, &rules, work)
-			if err != nil {
-				return jsonvalue.Value{}, false, err
-			}
-
-			if possible {
-				available = append(available, name)
-			}
-		}
-
-		maximum = min(maximum, uint64(len(rules.forced)+len(available)))
-		if minimum > maximum {
-			return jsonvalue.Value{}, false, nil
-		}
-	}
-
-	names, possible, err := program.chooseProductiveObjectNames(
-		minimum,
-		maximum,
-		forcedNames,
-		available,
-		finite,
-		&rules,
-		excluded,
-		reader,
-		work,
-	)
-	if err != nil {
-		return jsonvalue.Value{}, false, err
-	}
-
-	if !possible {
-		return jsonvalue.Value{}, false, nil
-	}
-
-	count := uint64(len(names))
-	if count+2 > work.limits.MaxOutputBytes {
-		return jsonvalue.Value{}, false, &LimitError{
-			Resource: "object properties", Limit: work.limits.MaxOutputBytes, Observed: count + 2,
-		}
-	}
-
-	members, err := program.decodeObjectMembers(names, &rules, excluded, reader, work, depth)
-	if err != nil {
-		return jsonvalue.Value{}, false, err
-	}
-
-	value, err := jsonvalue.Object(members)
-	if err != nil {
-		return jsonvalue.Value{}, false, err
-	}
-
-	matches, err := program.valueAllowed(goals, excluded, value)
-	if err != nil {
-		return jsonvalue.Value{}, false, err
-	}
-
-	return value, matches, nil
+	return rules, true, nil
 }
 
 func sortedObjectNames(source map[string]struct{}) []string {

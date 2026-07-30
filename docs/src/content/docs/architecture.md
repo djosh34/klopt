@@ -58,7 +58,7 @@ var createThing = &validation.Validation{
 
 Runtime parsing and generated literals produce the same compiled model. Generated source contains data, not generated validation functions. `Validate` walks that model while retaining raw JSON at every nested value.
 
-For runtime validation, `allOf` stays as separate child validations. Each branch checks the same raw value, matching OpenAPI's rule that its schemas are [validated independently but together](https://spec.openapis.org/oas/v3.0.3.html#composition-and-inheritance-polymorphism).
+For runtime validation, `allOf` stays as separate child validations. Each branch checks the same raw value, matching OpenAPI's rule that its schemas are [validated independently but together](https://spec.openapis.org/oas/v3.0.4.html#composition-and-inheritance-polymorphism).
 
 ## Test generation
 
@@ -67,11 +67,13 @@ The test generator does more than draw arbitrary JSON:
 1. It admits the request schema through the same strict capability gate as validation.
 2. It compiles every request schema in the document into one immutable graph. `AND` nodes preserve schema siblings and `allOf`; `OR` nodes represent `anyOf`; small leaf rules handle strings, numbers, arrays, and objects.
 3. A signed root goal asks that graph for either a valid or an invalid value. The graph is not copied or complemented ahead of time: the requested true or false result is pushed through its nodes while decoding.
-4. A lazy productivity check removes choices that cannot finish. It examines only states reached by the current decode and memoizes equivalent states instead of listing complete assignments or paths.
-5. `Program.Decode` maps arbitrary native Go fuzz bytes to the remaining choices. Local weights favor useful deep and near-invalid paths, but every supported productive choice keeps a positive chance of selection.
+4. A lazy productivity check removes choices that cannot finish. Strings expose `finish` or one Unicode range, arrays expose `stop` or `append`, and objects expose `stop` or one canonical property. Equal remaining states share memoized results; complete strings, lengths, property sets, assignments, and paths are not listed first.
+5. `Program.Decode` maps arbitrary native Go fuzz bytes to the remaining choices. Invalid tapes privately select a fault style and a decreasing-probability failure budget. Local weights favor useful deep and near-invalid paths, but every supported productive choice keeps a positive chance of selection.
 6. The generated fuzz target runs the selected operation's validator and checks its result against the verdict returned with the generated JSON.
 
 There is no precomputed list of cases or schema-specific seed corpus. The generated fuzz target adds only the empty byte slice as its ordinary-test baseline; Go's fuzz engine supplies and saves other byte tapes. Decoding is deterministic and resource-bounded even for empty, short, or exhausted input because missing tape bytes read as zero.
+
+Compilation charges graph nodes, facts, and immutable bytes before building the program. Decoding separately charges graph work, lazy states, working bytes, output bytes, and nesting depth. Exhausted semantic work returns a typed resource error instead of silently deleting an undecided edge.
 
 For the object schema above, a valid walk emits an object with a valid `name`. An invalid walk usually selects one private fault, such as omitting `name`, giving it the wrong JSON kind, or adding a forbidden property, while keeping the rest of the object valid whenever that is possible. Lower-probability choices can exercise broader or coordinated failures.
 

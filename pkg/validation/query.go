@@ -722,37 +722,45 @@ func compileQueryObjectMetadata(
 	validation *Validation,
 	allowPrimitiveArrays bool,
 ) ([]queryProperty, map[string]int, string, error) {
-	cursor := newParameterCandidateCursor(validation)
 	properties := make(map[string]queryProperty)
 	dynamicType := ""
 
-	for {
-		candidate, ok := cursor.next()
-		if !ok {
-			break
-		}
+	var candidateError error
 
+	walkParameterCandidates(validation, func(candidate *Validation) bool {
 		if validationImpossible(candidate) {
-			continue
+			return true
 		}
 
 		candidateProperties, _, err := compileQueryProperties(candidate, allowPrimitiveArrays)
 		if err != nil {
-			return nil, nil, "", err
+			candidateError = err
+
+			return false
 		}
 
 		if mergeErr := mergeQueryProperties(properties, candidateProperties); mergeErr != nil {
-			return nil, nil, "", mergeErr
+			candidateError = mergeErr
+
+			return false
 		}
 
 		candidateDynamicType, err := queryAdditionalPropertiesType(candidate)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("additionalProperties: %w", err)
+			candidateError = fmt.Errorf("additionalProperties: %w", err)
+
+			return false
 		}
 
 		if dynamicType == "" {
 			dynamicType = candidateDynamicType
 		}
+
+		return true
+	})
+
+	if candidateError != nil {
+		return nil, nil, "", candidateError
 	}
 
 	compiled := make([]queryProperty, 0, len(properties))

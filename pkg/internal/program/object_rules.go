@@ -132,7 +132,15 @@ func (program *Program) additionalFaultName(
 			}
 		}
 
-		if err := work.solver(uint64(len(rank.Bytes())) + 1); err != nil {
+		rankBytes, ok := checkedAdd(uint64(len(rank.Bytes())), 1)
+		if !ok {
+			return "", nil, false, &ResourceError{
+				Resource: "object name rank bytes", Limit: work.limits.MaxSolverBytes,
+				Observed: ^uint64(0),
+			}
+		}
+
+		if err := work.solver(rankBytes); err != nil {
 			return "", nil, false, err
 		}
 

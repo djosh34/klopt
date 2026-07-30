@@ -10,6 +10,22 @@ type ScalarRange struct {
 	First rune
 	Last  rune
 	Next  State
+
+	distance uint64
+}
+
+// Matches reports whether one exact language accepts value.
+func (language Language) Matches(value string) bool {
+	if len(language.dfa.states) == 0 {
+		return false
+	}
+
+	state := uint32(0)
+	for _, scalar := range value {
+		state = advanceScalar(&language.dfa, state, scalar)
+	}
+
+	return language.dfa.states[state].accepting
 }
 
 // Start returns the initial state of a compiled language.

@@ -1,9 +1,10 @@
-//nolint:godoclint // Behavior tests use readable names instead of redundant prose comments.
+//nolint:cyclop,godoclint // Behavior tests keep verdict classification in one scenario.
 package program_test
 
 import (
 	"encoding/binary"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/program" //nolint:depguard // External-package tests exercise the public deep seam.
@@ -325,6 +326,123 @@ func TestDecodePropagatesAndOrTruthWithoutEnumeratingAssignments(t *testing.T) {
 	}
 }
 
+func TestDecodeSelectsNearStructuralWrongKindAndMultiFaultsFromTape(t *testing.T) {
+	t.Parallel()
+
+	name := &validation.Validation{
+		KindValidation:   validation.KindValidation{Type: "string"},
+		StringValidation: validation.StringValidation{MinLength: countBound(t, "1")},
+	}
+	age := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "integer"},
+		NumberValidation: validation.NumberValidation{
+			Minimum: numberBound(t, "18", false),
+			Maximum: numberBound(t, "120", false),
+		},
+	}
+	root := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "object"},
+		ObjectValidation: validation.ObjectValidation{
+			Required: []string{"name", "age"},
+			Properties: []validation.PropertyValidation{
+				{Name: "name", Validation: name},
+				{Name: "age", Validation: age},
+			},
+			AdditionalPropertiesAllowed: false,
+		},
+	}
+	compiled, err := program.Compile([]*validation.Validation{root})
+	require.NoError(t, err)
+
+	var nearBoundary, oneMissing, wrongKind, severalFaults bool
+
+	for seed := uint64(0); seed < 1_000; seed++ {
+		sample, decodeErr := compiled.Decode(invalidPseudoTape(seed, 24), generousLimits())
+		if decodeErr != nil {
+			var (
+				limit    *program.LimitError
+				resource *program.ResourceError
+			)
+			if errors.As(decodeErr, &limit) || errors.As(decodeErr, &resource) {
+				continue
+			}
+
+			require.NoError(t, decodeErr)
+		}
+
+		require.Equal(t, program.ExpectInvalid, sample.Expect)
+		requireVerdict(t, root, sample.Value, false)
+
+		if sample.Value.Kind != jsonvalue.KindObject {
+			wrongKind = true
+		} else {
+			nameValue, hasName := testObjectMember(sample.Value, "name")
+			ageValue, hasAge := testObjectMember(sample.Value, "age")
+
+			if hasName != hasAge {
+				oneMissing = true
+			}
+
+			if !hasName && !hasAge {
+				severalFaults = true
+			}
+
+			if hasName && hasAge {
+				nameValid := len(name.Validate(mustMarshalValue(t, nameValue))) == 0
+				ageValid := len(age.Validate(mustMarshalValue(t, ageValue))) == 0
+				nearName := ageValid && nameValue.Kind == jsonvalue.KindString && nameValue.String == ""
+				nearAge := nameValid && ageValue.Kind == jsonvalue.KindNumber &&
+					(ageValue.Number.Lexeme == "17" || ageValue.Number.Lexeme == "121")
+				nearBoundary = nearBoundary || nearName || nearAge
+			}
+		}
+
+		if nearBoundary && oneMissing && wrongKind && severalFaults {
+			break
+		}
+	}
+
+	require.True(t, nearBoundary, "no near numeric boundary fault was reachable")
+	require.True(t, oneMissing, "no one-required-property fault was reachable")
+	require.True(t, wrongKind, "no wrong-kind fault was reachable")
+	require.True(t, severalFaults, "no larger fault budget was reachable")
+}
+
+func TestDecodeFailedAnyOfMakesEveryChildFalse(t *testing.T) {
+	t.Parallel()
+
+	text := &validation.Validation{
+		KindValidation:   validation.KindValidation{Type: "string"},
+		StringValidation: validation.StringValidation{MinLength: countBound(t, "1")},
+	}
+	number := &validation.Validation{
+		KindValidation:   validation.KindValidation{Type: "number"},
+		NumberValidation: validation.NumberValidation{Minimum: numberBound(t, "0", false)},
+	}
+	root := &validation.Validation{AnyOfValidations: []*validation.Validation{text, number}}
+	compiled, err := program.Compile([]*validation.Validation{root})
+	require.NoError(t, err)
+
+	for seed := uint64(0); seed < 16; seed++ {
+		sample, decodeErr := compiled.Decode(invalidPseudoTape(seed, 12), generousLimits())
+		if decodeErr != nil {
+			var (
+				limit    *program.LimitError
+				resource *program.ResourceError
+			)
+			if errors.As(decodeErr, &limit) || errors.As(decodeErr, &resource) {
+				continue
+			}
+
+			require.NoError(t, decodeErr)
+		}
+
+		body := mustMarshalValue(t, sample.Value)
+		require.NotEmpty(t, text.Validate(body))
+		require.NotEmpty(t, number.Validate(body))
+	}
+}
+
 func TestDecodeBuildsArraysIncrementallyAndFaultsOneItem(t *testing.T) {
 	t.Parallel()
 
@@ -388,25 +506,19 @@ func TestDecodeReachesEveryBoundedArrayValue(t *testing.T) {
 
 	reached := make(map[string]bool)
 
-	for count := uint64(0); count <= 2; count++ {
-		combinations := 1 << count
-		for mask := 0; mask < combinations; mask++ {
-			input := []uint64{0, 0, 0, 0, count, 0, 0}
-			for itemIndex := uint64(0); itemIndex < count; itemIndex++ {
-				if mask&(1<<itemIndex) != 0 {
-					input[5+itemIndex] = 1
-				}
-			}
+	for seed := uint64(0); seed < 10_000 && len(reached) < 7; seed++ {
+		sample, decodeErr := compiled.Decode(validPseudoTape(seed, 12), generousLimits())
+		require.NoError(t, decodeErr)
+		requireVerdict(t, root, sample.Value, sample.Expect == program.ExpectValid)
 
-			sample, decodeErr := compiled.Decode(words(input...), generousLimits())
-			require.NoError(t, decodeErr)
-			requireVerdict(t, root, sample.Value, true)
-
-			body, marshalErr := sample.Value.MarshalJSON()
-			require.NoError(t, marshalErr)
-
-			reached[string(body)] = true
+		if sample.Expect != program.ExpectValid {
+			continue
 		}
+
+		body, marshalErr := sample.Value.MarshalJSON()
+		require.NoError(t, marshalErr)
+
+		reached[string(body)] = true
 	}
 
 	require.Equal(t, map[string]bool{
@@ -484,23 +596,16 @@ func TestDecodeReachesEverySmallBoundedObject(t *testing.T) {
 	compiled, err := program.Compile([]*validation.Validation{root})
 	require.NoError(t, err)
 
-	tapes := [][]uint64{
-		{0, 0, 0, 0},
-		{0, 0, 0, 1, 0, 0},
-		{0, 0, 0, 1, 0, 1},
-		{0, 0, 0, 1, 1, 0},
-		{0, 0, 0, 1, 1, 1},
-		{0, 0, 0, 2, 0, 0, 0, 0},
-		{0, 0, 0, 2, 0, 0, 0, 1},
-		{0, 0, 0, 2, 0, 0, 1, 0},
-		{0, 0, 0, 2, 0, 0, 1, 1},
-	}
 	reached := make(map[string]bool)
 
-	for _, tape := range tapes {
-		sample, decodeErr := compiled.Decode(words(tape...), generousLimits())
+	for seed := uint64(0); seed < 20_000 && len(reached) < 9; seed++ {
+		sample, decodeErr := compiled.Decode(validPseudoTape(seed, 16), generousLimits())
 		require.NoError(t, decodeErr)
-		requireVerdict(t, root, sample.Value, true)
+		requireVerdict(t, root, sample.Value, sample.Expect == program.ExpectValid)
+
+		if sample.Expect != program.ExpectValid {
+			continue
+		}
 
 		body, marshalErr := sample.Value.MarshalJSON()
 		require.NoError(t, marshalErr)
@@ -542,7 +647,7 @@ func TestDecodeUnranksUnicodeAdditionalPropertyNames(t *testing.T) {
 		956:    `{"λ":true}`,
 		126465: `{"😀":true}`,
 	} {
-		sample, decodeErr := compiled.Decode(words(0, 0, 0, 1, rank, 0), generousLimits())
+		sample, decodeErr := compiled.Decode(words(0, 0, 0, 8, rank, 0, 0, 0), generousLimits())
 		require.NoError(t, decodeErr)
 		requireVerdict(t, root, sample.Value, true)
 
@@ -594,7 +699,95 @@ func TestDecodeReportsUnknownProductivityAsResourceError(t *testing.T) {
 	require.True(t, errors.As(err, &resource), err)
 }
 
-func TestDecodeChecksObjectOutputLimitBeforeAllocatingNames(t *testing.T) {
+func TestDecodeChargesNormalizationBeforeExpandingAConjunction(t *testing.T) {
+	t.Parallel()
+
+	root := &validation.Validation{}
+	for minimum := range 64 {
+		root.AllOfValidations = append(root.AllOfValidations, &validation.Validation{
+			StringValidation: validation.StringValidation{
+				MinLength: countBound(t, strconv.Itoa(minimum)),
+			},
+		})
+	}
+
+	compiled, err := program.Compile([]*validation.Validation{root})
+	require.NoError(t, err)
+
+	limits := program.Limits{
+		MaxSteps: 10_000, MaxOutputBytes: 1_000, MaxDepth: 16,
+		MaxSolverWork: 10_000, MaxSolverBytes: 128,
+	}
+
+	_, firstErr := compiled.Decode(nil, limits)
+	_, secondErr := compiled.Decode(nil, limits)
+
+	var first, second *program.ResourceError
+	require.ErrorAs(t, firstErr, &first)
+	require.ErrorAs(t, secondErr, &second)
+	require.Equal(t, "normalize goals bytes", first.Resource)
+	require.Equal(t, first, second)
+}
+
+func TestCompileChargesGraphBeforeExceedingItsBudget(t *testing.T) {
+	t.Parallel()
+
+	root := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "string"},
+		StringValidation: validation.StringValidation{
+			MinLength: countBound(t, "1"),
+		},
+	}
+
+	_, err := program.Compile([]*validation.Validation{root}, program.CompileLimits{
+		MaxNodes: 1, MaxFacts: 100, MaxProgramBytes: 100_000,
+	})
+
+	var resource *program.ResourceError
+	require.ErrorAs(t, err, &resource)
+	require.Equal(t, "compile nodes", resource.Resource)
+}
+
+func TestCompileChargesExactValuesBeforeCopyingProgramData(t *testing.T) {
+	t.Parallel()
+
+	root := &validation.Validation{EnumValidation: validation.EnumValidation{
+		ExactValues: []jsonvalue.Value{jsonvalue.String("a deliberately nontrivial value")},
+	}}
+
+	_, err := program.Compile([]*validation.Validation{root}, program.CompileLimits{
+		MaxNodes: 100, MaxFacts: 100, MaxProgramBytes: 220,
+	})
+
+	var resource *program.ResourceError
+	require.ErrorAs(t, err, &resource)
+	require.Equal(t, "compile bytes", resource.Resource)
+}
+
+func TestDecodeChargesLazyStringProductivityToRuntimeBudget(t *testing.T) {
+	t.Parallel()
+
+	root := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "string"},
+		StringValidation: validation.StringValidation{
+			Pattern:         "^a+$",
+			CompiledPattern: mustPattern(t, "^a+$"),
+		},
+	}
+	compiled, err := program.Compile([]*validation.Validation{root})
+	require.NoError(t, err)
+
+	_, err = compiled.Decode(nil, program.Limits{
+		MaxSteps: 100, MaxOutputBytes: 100, MaxDepth: 4,
+		MaxSolverWork: 10, MaxSolverBytes: 1_000,
+	})
+
+	var resource *program.ResourceError
+	require.ErrorAs(t, err, &resource)
+	require.Contains(t, resource.Resource, "string")
+}
+
+func TestDecodeDoesNotMaterializeAnUnchosenObjectName(t *testing.T) {
 	t.Parallel()
 
 	root := &validation.Validation{
@@ -606,14 +799,12 @@ func TestDecodeChecksObjectOutputLimitBeforeAllocatingNames(t *testing.T) {
 	compiled, err := program.Compile([]*validation.Validation{root})
 	require.NoError(t, err)
 
-	_, err = compiled.Decode(words(0, 0, 0, uint64(1)<<62), program.Limits{
+	sample, err := compiled.Decode(words(0, 0, 0, uint64(1)<<62), program.Limits{
 		MaxSteps: 100, MaxOutputBytes: 100, MaxDepth: 4,
 		MaxSolverWork: 100, MaxSolverBytes: 1_000,
 	})
-
-	var limit *program.LimitError
-	require.ErrorAs(t, err, &limit)
-	require.Equal(t, "object properties", limit.Resource)
+	require.NoError(t, err)
+	require.Empty(t, sample.Value.Object)
 }
 
 func TestCompileAndDecodeStayLinearAcrossIndependentAnyOfChoices(t *testing.T) {
@@ -673,19 +864,14 @@ func TestDecodeReachesEverySmallIndependentAnyOfCombination(t *testing.T) {
 
 	reached := make(map[string]bool)
 
-	for mask := 0; mask < 8; mask++ {
-		input := []uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-
-		for property := 0; property < 3; property++ {
-			if mask&(1<<property) != 0 {
-				input[4+property*2] = 4
-			}
-		}
-
-		sample, decodeErr := compiled.Decode(words(input...), generousLimits())
+	for seed := uint64(0); seed < 20_000 && len(reached) < 8; seed++ {
+		sample, decodeErr := compiled.Decode(validPseudoTape(seed, 20), generousLimits())
 		require.NoError(t, decodeErr)
-		require.Equal(t, program.ExpectValid, sample.Expect)
-		requireVerdict(t, root, sample.Value, true)
+		requireVerdict(t, root, sample.Value, sample.Expect == program.ExpectValid)
+
+		if sample.Expect != program.ExpectValid {
+			continue
+		}
 
 		body, marshalErr := sample.Value.MarshalJSON()
 		require.NoError(t, marshalErr)
@@ -773,6 +959,58 @@ func words(values ...uint64) []byte {
 	}
 
 	return result
+}
+
+func pseudoTape(seed uint64, count int) []byte {
+	result := make([]byte, count*8)
+	state := seed
+
+	for index := range count {
+		state += 0x9e3779b97f4a7c15
+		value := state
+		value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9
+		value = (value ^ (value >> 27)) * 0x94d049bb133111eb
+		value ^= value >> 31
+		binary.LittleEndian.PutUint64(result[index*8:], value)
+	}
+
+	return result
+}
+
+func validPseudoTape(seed uint64, count int) []byte {
+	result := pseudoTape(seed, count)
+	clear(result[:min(len(result), 16)])
+
+	return result
+}
+
+func invalidPseudoTape(seed uint64, count int) []byte {
+	result := pseudoTape(seed, count)
+	if len(result) >= 16 {
+		clear(result[:16])
+		result[8] = 1
+	}
+
+	return result
+}
+
+func testObjectMember(object jsonvalue.Value, name string) (jsonvalue.Value, bool) {
+	for _, member := range object.Object {
+		if member.Name == name {
+			return member.Value, true
+		}
+	}
+
+	return jsonvalue.Value{}, false
+}
+
+func mustMarshalValue(t *testing.T, value jsonvalue.Value) []byte {
+	t.Helper()
+
+	encoded, err := value.MarshalJSON()
+	require.NoError(t, err)
+
+	return encoded
 }
 
 func requireVerdict(t *testing.T, root *validation.Validation, value jsonvalue.Value, want bool) {

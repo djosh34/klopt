@@ -2,12 +2,10 @@
 package program
 
 import (
-	"errors"
 	"fmt"
 	"slices"
 	"unicode/utf8"
 
-	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Predicate parity uses the shared automata.
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
@@ -112,19 +110,7 @@ func (program *Program) atomMatches(item atom, value jsonvalue.Value) (bool, err
 			return true, nil
 		}
 
-		set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-			Language: item.language, WantMatch: true,
-		}}, stringlanguage.Length{})
-		if err != nil {
-			var empty *stringlanguage.EmptyError
-			if errors.As(err, &empty) {
-				return false, nil
-			}
-
-			return false, fmt.Errorf("compile string atom: %w", err)
-		}
-
-		return set.Matches(value.String), nil
+		return item.language.Matches(value.String), nil
 	case atomArrayMinItems:
 		return value.Kind != jsonvalue.KindArray || uint64(len(value.Array)) >= item.count, nil
 	case atomArrayMaxItems:

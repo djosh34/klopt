@@ -1,267 +1,438 @@
-//nolint:cyclop,godoclint // Shape selection lazily skips only exhausted exact object shapes.
+//nolint:cyclop,godoclint,mnd // Object expansion exposes stop or one canonical property.
 package program
 
 import (
+	"encoding/binary"
 	"fmt"
 	"slices"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
 )
 
-const objectContainerBytes = 2
+type objectState struct {
+	count           uint64
+	previous        string
+	hasPrevious     bool
+	remainingForced []string
+	relevant        []jsonvalue.Value
+}
 
-func (program *Program) chooseProductiveObjectNames(
-	minimum uint64,
-	maximum uint64,
-	forced []string,
-	available []string,
-	finite bool,
+type objectAction struct {
+	stop    bool
+	dynamic bool
+	name    string
+	value   state
+	literal *jsonvalue.Value
+	next    objectState
+	weight  uint64
+}
+
+func (program *Program) objectCanFinish(
+	current objectState,
 	rules *objectRules,
-	excluded []jsonvalue.Value,
-	reader *tapeReader,
 	work *decodeWork,
-) ([]string, bool, error) {
-	count, err := chooseCount(minimum, maximum, reader, work)
-	if err != nil {
-		return nil, false, err
+) (bool, error) {
+	if program.objectCanStop(current, rules) {
+		return true, nil
 	}
 
-	seenShapes := make(map[string]struct{})
-	exhaustedCounts := make(map[uint64]struct{})
-	maximumShapes := exactKindCount(excluded, jsonvalue.KindObject) + 1
+	if current.count >= rules.maximum {
+		return false, nil
+	}
 
-	var names []string
-	for len(seenShapes) < maximumShapes {
-		if names == nil {
-			names, err = program.selectObjectNames(
-				count, forced, available, finite, rules, reader, work,
-			)
-			if err != nil {
-				return nil, false, err
-			}
+	if len(current.relevant) == 0 {
+		return program.objectRegularCompletion(current, rules, work)
+	}
+
+	key, err := objectStateKey(current, rules, work)
+	if err != nil {
+		return false, err
+	}
+
+	if work.objectKnown[key] {
+		return work.objectProductive[key], nil
+	}
+
+	actions, err := program.objectAddCandidates(current, rules, work)
+	if err != nil {
+		return false, err
+	}
+
+	return memoizedAnyProductive(
+		key,
+		work.objectKnown,
+		work.objectProductive,
+		actions,
+		func(action objectAction) (bool, error) {
+			return program.objectCanFinish(action.next, rules, work)
+		},
+	)
+}
+
+func (program *Program) objectCanStop(current objectState, rules *objectRules) bool {
+	if current.count < rules.minimum || current.count > rules.maximum ||
+		len(current.remainingForced) != 0 {
+		return false
+	}
+
+	for _, exact := range current.relevant {
+		if uint64(len(exact.Object)) == current.count {
+			return false
 		}
+	}
 
-		key := objectShapeKey(names)
-		if _, seen := seenShapes[key]; seen {
-			exhaustedCounts[count] = struct{}{}
-			names = nil
+	return true
+}
 
-			count, err = nextObjectCount(count, minimum, maximum, exhaustedCounts)
-			if err != nil {
-				return nil, false, err
-			}
+func (program *Program) objectRegularCompletion(
+	current objectState,
+	rules *objectRules,
+	work *decodeWork,
+) (bool, error) {
+	forcedCount := uint64(len(current.remainingForced))
 
-			if count == ^uint64(0) {
-				return nil, false, nil
-			}
+	minimumEnd, ok := checkedAdd(current.count, forcedCount)
+	if !ok {
+		return false, nil
+	}
 
-			continue
+	minimumEnd = max(minimumEnd, rules.minimum)
+	if minimumEnd > rules.maximum {
+		return false, nil
+	}
+
+	for _, name := range current.remainingForced {
+		possible, err := program.objectNamePossible(name, rules.faults[name], rules, work)
+		if err != nil || !possible {
+			return possible, err
 		}
+	}
 
-		seenShapes[key] = struct{}{}
+	extraNeeded := minimumEnd - current.count - forcedCount
+	if extraNeeded == 0 {
+		return true, nil
+	}
 
-		possible, possibleErr := program.objectValuesProductive(names, rules, excluded, work)
+	optional, infinite, err := program.objectOptionalCapacity(current, rules, work)
+	if err != nil {
+		return false, err
+	}
+
+	return infinite || optional >= extraNeeded, nil
+}
+
+func (program *Program) objectImmediate(
+	current objectState,
+	rules *objectRules,
+	work *decodeWork,
+) ([]objectAction, error) {
+	actions := make([]objectAction, 0)
+	if program.objectCanStop(current, rules) {
+		actions = append(actions, objectAction{stop: true, weight: 8})
+	}
+
+	if current.count >= rules.maximum {
+		return actions, nil
+	}
+
+	additions, err := program.objectAddCandidates(current, rules, work)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, action := range additions {
+		possible, possibleErr := program.objectCanFinish(action.next, rules, work)
 		if possibleErr != nil {
-			return nil, false, possibleErr
+			return nil, possibleErr
 		}
 
 		if possible {
-			return names, true, nil
+			actions = append(actions, action)
 		}
+	}
 
-		next, nextErr := program.nextObjectNames(names, forced, available, finite, rules, work)
-		if nextErr != nil {
-			return nil, false, nextErr
-		}
+	return actions, nil
+}
 
-		if next != nil {
-			names = next
+func (program *Program) objectAddCandidates(
+	current objectState,
+	rules *objectRules,
+	work *decodeWork,
+) ([]objectAction, error) {
+	names, err := program.objectImmediateNames(current, rules, work)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]objectAction, 0)
+
+	for _, name := range names {
+		if name.dynamic {
+			valueActions, valueErr := program.objectValueActions(
+				current, name.name, rules, work,
+			)
+			if valueErr != nil {
+				return nil, valueErr
+			}
+
+			productive := false
+
+			for _, action := range valueActions {
+				possible, possibleErr := program.objectCanFinish(action.next, rules, work)
+				if possibleErr != nil {
+					return nil, possibleErr
+				}
+
+				if possible {
+					productive = true
+
+					break
+				}
+			}
+
+			if productive {
+				result = append(result, objectAction{
+					dynamic: true, name: name.name, weight: name.weight,
+				})
+			}
 
 			continue
 		}
 
-		exhaustedCounts[count] = struct{}{}
-		names = nil
-
-		count, err = nextObjectCount(count, minimum, maximum, exhaustedCounts)
-		if err != nil {
-			return nil, false, err
+		valueActions, valueErr := program.objectValueActions(current, name.name, rules, work)
+		if valueErr != nil {
+			return nil, valueErr
 		}
 
-		if count == ^uint64(0) {
-			return nil, false, nil
+		for _, action := range valueActions {
+			action.weight = name.weight
+			result = append(result, action)
 		}
 	}
-
-	return nil, false, nil
-}
-
-func (program *Program) selectObjectNames(
-	count uint64,
-	forced []string,
-	available []string,
-	finite bool,
-	rules *objectRules,
-	reader *tapeReader,
-	work *decodeWork,
-) ([]string, error) {
-	if count > work.limits.MaxOutputBytes ||
-		work.limits.MaxOutputBytes-count < objectContainerBytes {
-		observed := count
-		if count <= ^uint64(0)-objectContainerBytes {
-			observed += objectContainerBytes
-		}
-
-		return nil, &LimitError{
-			Resource: "object properties", Limit: work.limits.MaxOutputBytes, Observed: observed,
-		}
-	}
-
-	if count > uint64(int(^uint(0)>>1)) {
-		return nil, &LimitError{
-			Resource: "object properties", Limit: uint64(int(^uint(0) >> 1)), Observed: count,
-		}
-	}
-
-	optionalCount := int(count) - len(forced)
-	if optionalCount < 0 {
-		return nil, fmt.Errorf("object count is smaller than its forced name set")
-	}
-
-	names := appendCopy(forced)
-	if finite {
-		names = append(names, chooseFiniteNames(available, optionalCount, reader)...)
-	} else {
-		selected, err := program.chooseInfiniteNames(optionalCount, rules, reader, work)
-		if err != nil {
-			return nil, err
-		}
-
-		names = append(names, selected...)
-	}
-
-	slices.SortFunc(names, compareShortlex)
-
-	return names, nil
-}
-
-func (program *Program) nextObjectNames(
-	names []string,
-	forced []string,
-	available []string,
-	finite bool,
-	rules *objectRules,
-	work *decodeWork,
-) ([]string, error) {
-	optional := make([]string, 0, len(names)-len(forced))
-	for _, name := range names {
-		if _, required := rules.forced[name]; !required {
-			optional = append(optional, name)
-		}
-	}
-
-	if len(optional) == 0 {
-		return nil, nil
-	}
-
-	var next []string
-	if finite {
-		next = nextFiniteNames(optional, available)
-	} else {
-		var err error
-
-		next, err = program.nextInfiniteNames(optional, rules, work)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if next == nil {
-		return nil, nil
-	}
-
-	result := appendCopy(forced)
-	result = append(result, next...)
-	slices.SortFunc(result, compareShortlex)
 
 	return result, nil
 }
 
-func nextFiniteNames(current []string, available []string) []string {
-	indices := make([]int, len(current))
-	for index, name := range current {
-		position, ok := slices.BinarySearch(available, name)
-		if !ok {
-			return nil
-		}
+type objectNameChoice struct {
+	name    string
+	weight  uint64
+	dynamic bool
+}
 
-		indices[index] = position
+func (program *Program) objectImmediateNames(
+	current objectState,
+	rules *objectRules,
+	work *decodeWork,
+) ([]objectNameChoice, error) {
+	upper := ""
+	if len(current.remainingForced) != 0 {
+		upper = current.remainingForced[0]
 	}
 
-	for index := len(indices) - 1; index >= 0; index-- {
-		maximum := len(available) - len(indices) + index
-		if indices[index] >= maximum {
+	known, finite := program.objectCandidateNames(rules)
+
+	result := make([]objectNameChoice, 0, len(known))
+	for _, name := range known {
+		if current.hasPrevious && compareShortlex(name, current.previous) <= 0 {
 			continue
 		}
 
-		indices[index]++
-		for suffix := index + 1; suffix < len(indices); suffix++ {
-			indices[suffix] = indices[suffix-1] + 1
+		if upper != "" && compareShortlex(name, upper) > 0 {
+			continue
 		}
 
-		result := make([]string, len(indices))
-		for resultIndex, availableIndex := range indices {
-			result[resultIndex] = available[availableIndex]
+		if _, absent := rules.absent[name]; absent {
+			continue
 		}
 
-		return result
+		possible, err := program.objectNamePossible(name, rules.faults[name], rules, work)
+		if err != nil {
+			return nil, err
+		}
+
+		if !possible {
+			continue
+		}
+
+		weight := uint64(2)
+		if upper == name {
+			weight = 8
+		}
+
+		result = append(result, objectNameChoice{name: name, weight: weight})
 	}
 
-	if len(indices) == 0 || len(indices) > len(available) {
-		return nil
+	if !finite {
+		name, possible, err := program.chooseDynamicObjectName(
+			current.previous, current.hasPrevious, upper, rules, nil, work,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if possible {
+			result = append(result, objectNameChoice{name: name, weight: 2, dynamic: true})
+		}
 	}
 
-	result := make([]string, len(indices))
-	copy(result, available[:len(indices)])
+	slices.SortStableFunc(result, func(left objectNameChoice, right objectNameChoice) int {
+		return compareShortlex(left.name, right.name)
+	})
 
-	return result
+	return result, nil
 }
 
-func nextObjectCount(
-	current uint64,
-	minimum uint64,
-	maximum uint64,
-	exhausted map[uint64]struct{},
-) (uint64, error) {
-	candidate := current
-	for range len(exhausted) + 1 {
-		if maximum == ^uint64(0) {
-			if candidate == ^uint64(0) {
-				return 0, &LimitError{
-					Resource: "object properties", Limit: ^uint64(0), Observed: ^uint64(0),
-				}
+func (program *Program) objectValueActions(
+	current objectState,
+	name string,
+	rules *objectRules,
+	work *decodeWork,
+) ([]objectAction, error) {
+	goals, allowed := program.objectNameGoals(name, rules.faults[name], rules)
+	if !allowed {
+		return nil, nil
+	}
+
+	groups := groupObjectValuesAt(current.relevant, current.count, name)
+
+	exactValues := make([]jsonvalue.Value, len(groups))
+	for index, group := range groups {
+		exactValues[index] = group.value
+	}
+
+	nextCount, ok := checkedAdd(current.count, 1)
+	if !ok {
+		return nil, &LimitError{
+			Resource: "object properties", Limit: ^uint64(0), Observed: ^uint64(0),
+		}
+	}
+
+	next := objectState{
+		count: nextCount, previous: name, hasPrevious: true,
+		remainingForced: removeForcedObjectName(current.remainingForced, name),
+	}
+
+	result := make([]objectAction, 0, len(groups))
+	outside := canonicalStateWithExclusions(goals, exactValues)
+
+	possible, err := program.productive(outside, work)
+	if err != nil {
+		return nil, err
+	}
+
+	if possible {
+		result = append(result, objectAction{name: name, value: outside, next: next})
+	}
+
+	for _, group := range groups {
+		matches, matchErr := program.valueMatchesGoals(goals, group.value)
+		if matchErr != nil {
+			return nil, matchErr
+		}
+
+		if !matches {
+			continue
+		}
+
+		value := group.value
+		exactNext := next
+		exactNext.relevant = group.objects
+		result = append(result, objectAction{
+			name: name, literal: &value, next: exactNext,
+		})
+	}
+
+	return result, nil
+}
+
+func removeForcedObjectName(forced []string, name string) []string {
+	if len(forced) != 0 && forced[0] == name {
+		return forced[1:]
+	}
+
+	return forced
+}
+
+func objectStateKey(current objectState, rules *objectRules, work *decodeWork) (string, error) {
+	estimated, ok := checkedAdd(32, uint64(len(rules.cacheKey)))
+	if !ok {
+		return "", &ResourceError{
+			Resource: "object state bytes", Limit: work.limits.MaxSolverBytes,
+			Observed: ^uint64(0),
+		}
+	}
+
+	estimated, ok = checkedAdd(estimated, uint64(len(current.previous)))
+	if !ok {
+		return "", &ResourceError{
+			Resource: "object state bytes", Limit: work.limits.MaxSolverBytes,
+			Observed: ^uint64(0),
+		}
+	}
+
+	for _, name := range current.remainingForced {
+		nameBytes, nameOK := checkedAdd(uint64(len(name)), 8)
+		if !nameOK {
+			return "", &ResourceError{
+				Resource: "object state bytes", Limit: work.limits.MaxSolverBytes,
+				Observed: ^uint64(0),
 			}
-
-			candidate++
-		} else if candidate == maximum {
-			candidate = minimum
-		} else {
-			candidate++
 		}
 
-		if _, alreadyExhausted := exhausted[candidate]; !alreadyExhausted {
-			return candidate, nil
+		amount, ok := checkedAdd(estimated, nameBytes)
+		if !ok {
+			return "", &ResourceError{
+				Resource: "object state bytes", Limit: work.limits.MaxSolverBytes,
+				Observed: ^uint64(0),
+			}
 		}
+
+		estimated = amount
 	}
 
-	return ^uint64(0), nil
-}
+	for _, exact := range current.relevant {
+		size, err := exactValueBytes(exact)
+		if err != nil {
+			return "", err
+		}
 
-func objectShapeKey(names []string) string {
-	encoded := appendUint64(nil, uint64(len(names)))
-	for _, name := range names {
+		amount, ok := checkedAdd(estimated, size)
+		if !ok {
+			return "", &ResourceError{
+				Resource: "object state bytes", Limit: work.limits.MaxSolverBytes,
+				Observed: ^uint64(0),
+			}
+		}
+
+		estimated = amount
+	}
+
+	if err := work.chargeSolver("object states", "object state bytes", 1, estimated); err != nil {
+		return "", err
+	}
+
+	encoded := appendBytes(nil, []byte(rules.cacheKey))
+	encoded = binary.AppendUvarint(encoded, current.count)
+
+	encoded = appendBytes(encoded, []byte(current.previous))
+	if current.hasPrevious {
+		encoded = append(encoded, 1)
+	} else {
+		encoded = append(encoded, 0)
+	}
+
+	for _, name := range current.remainingForced {
 		encoded = appendBytes(encoded, []byte(name))
 	}
 
-	return string(encoded)
+	for _, exact := range current.relevant {
+		raw, err := exact.MarshalJSON()
+		if err != nil {
+			return "", fmt.Errorf("encode object state: %w", err)
+		}
+
+		encoded = appendBytes(encoded, raw)
+	}
+
+	return string(encoded), nil
 }

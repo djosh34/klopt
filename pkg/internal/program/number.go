@@ -114,20 +114,12 @@ func (program *Program) sampleNumber(
 	}
 
 	if hasNegativeFormat {
-		candidates, err := program.directFormatFaults(goals, excluded)
-		if err != nil {
-			return jsonvalue.Number{}, false, err
+		candidate, possible, err := program.sampleFormatFault(goals, excluded, reader)
+		if err != nil || possible {
+			return candidate, possible, err
 		}
 
-		if len(candidates) != 0 {
-			if reader == nil {
-				return candidates[0], true, nil
-			}
-
-			if reader.word()%4 == 0 {
-				return candidates[reader.word()%uint64(len(candidates))], true, nil
-			}
-		}
+		return jsonvalue.Number{}, false, nil
 	}
 
 	var (
@@ -158,7 +150,14 @@ func (program *Program) sampleNumber(
 			}
 		}
 
-		scale := scaleRank.Uint64() + minimumScale
+		scale, ok := checkedAdd(scaleRank.Uint64(), minimumScale)
+		if !ok {
+			return jsonvalue.Number{}, false, &ResourceError{
+				Resource: "decimal scale", Limit: work.limits.MaxSolverBytes,
+				Observed: ^uint64(0),
+			}
+		}
+
 		if scale > work.limits.MaxSolverBytes || scale > uint64(int(^uint(0)>>1)) {
 			return jsonvalue.Number{}, false, &ResourceError{
 				Resource: "decimal scale", Limit: work.limits.MaxSolverBytes, Observed: scale,

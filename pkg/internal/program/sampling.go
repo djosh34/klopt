@@ -195,27 +195,38 @@ func restrictToKind(allowed *[6]bool, selected jsonvalue.Kind) {
 	}
 }
 
-func weightedIndex(word uint64, edges []productiveEdge) int {
+func weightedIndex(word uint64, edges []productiveEdge) (int, error) {
 	total := uint64(0)
+
 	for _, edge := range edges {
-		total += edge.weight
+		var ok bool
+
+		total, ok = checkedAdd(total, edge.weight)
+		if !ok {
+			return 0, &ResourceError{
+				Resource: "sampling weight", Limit: ^uint64(0), Observed: ^uint64(0),
+			}
+		}
+	}
+
+	if total == 0 {
+		return 0, fmt.Errorf("productive edges have no sampling weight")
 	}
 
 	selected := word % total
 	for index, edge := range edges {
 		if selected < edge.weight {
-			return index
+			return index, nil
 		}
 
 		selected -= edge.weight
 	}
 
-	panic("weighted index exceeded positive edge weights")
+	return 0, fmt.Errorf("sampling weight exceeds productive edges")
 }
 
 func appendCopy[T any](source []T, values ...T) []T {
-	result := make([]T, len(source), len(source)+len(values))
-	copy(result, source)
+	result := append([]T(nil), source...)
 
 	return append(result, values...)
 }

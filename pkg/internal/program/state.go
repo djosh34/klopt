@@ -1,4 +1,4 @@
-//nolint:cyclop,gocognit,godoclint // Signed AND/OR normalization is one private state machine.
+//nolint:cyclop,gocognit,godoclint,mnd // Signed normalization and keys are explicit state machines.
 package program
 
 import (
@@ -25,7 +25,19 @@ type branch struct {
 	goal goal
 }
 
-func (program *Program) normalize(input state) (state, *branch, bool) {
+func (program *Program) normalize(
+	input state,
+	work *decodeWork,
+) (state, *branch, bool, error) {
+	inputBytes, err := stateKeyBytes(input)
+	if err != nil {
+		return state{}, nil, false, err
+	}
+
+	if err := work.chargeSolver("normalize work", "normalize bytes", 1, inputBytes); err != nil {
+		return state{}, nil, false, err
+	}
+
 	pending := slices.Clone(input.goals)
 	atoms := make([]goal, 0, len(pending))
 	excluded := slices.Clone(input.excluded)
@@ -39,6 +51,10 @@ func (program *Program) normalize(input state) (state, *branch, bool) {
 		switch item.kind {
 		case nodeAtom:
 			if item.atom.kind == atomEnum && !current.want {
+				if err := work.chargeExactValues("normalize enum bytes", item.atom.values); err != nil {
+					return state{}, nil, false, err
+				}
+
 				excluded = append(excluded, item.atom.values...)
 
 				continue
@@ -47,6 +63,10 @@ func (program *Program) normalize(input state) (state, *branch, bool) {
 			atoms = append(atoms, current)
 		case nodeAnd:
 			if current.want {
+				if err := work.chargeGoals("normalize goals", len(item.children)); err != nil {
+					return state{}, nil, false, err
+				}
+
 				for _, child := range item.children {
 					pending = append(pending, goal{node: child, want: true})
 				}
@@ -55,10 +75,14 @@ func (program *Program) normalize(input state) (state, *branch, bool) {
 			}
 
 			if len(item.children) == 0 {
-				return state{}, nil, false
+				return state{}, nil, false, nil
 			}
 
 			if len(item.children) == 1 {
+				if err := work.chargeGoals("normalize goals", 1); err != nil {
+					return state{}, nil, false, err
+				}
+
 				pending = append(pending, goal{node: item.children[0], want: false})
 
 				continue
@@ -66,9 +90,13 @@ func (program *Program) normalize(input state) (state, *branch, bool) {
 
 			base := canonicalStateWithExclusions(append(atoms, pending...), excluded)
 
-			return state{}, &branch{base: base, goal: current}, true
+			return state{}, &branch{base: base, goal: current}, true, nil
 		case nodeOr:
 			if !current.want {
+				if err := work.chargeGoals("normalize goals", len(item.children)); err != nil {
+					return state{}, nil, false, err
+				}
+
 				for _, child := range item.children {
 					pending = append(pending, goal{node: child, want: false})
 				}
@@ -77,10 +105,14 @@ func (program *Program) normalize(input state) (state, *branch, bool) {
 			}
 
 			if len(item.children) == 0 {
-				return state{}, nil, false
+				return state{}, nil, false, nil
 			}
 
 			if len(item.children) == 1 {
+				if err := work.chargeGoals("normalize goals", 1); err != nil {
+					return state{}, nil, false, err
+				}
+
 				pending = append(pending, goal{node: item.children[0], want: true})
 
 				continue
@@ -88,7 +120,7 @@ func (program *Program) normalize(input state) (state, *branch, bool) {
 
 			base := canonicalStateWithExclusions(append(atoms, pending...), excluded)
 
-			return state{}, &branch{base: base, goal: current}, true
+			return state{}, &branch{base: base, goal: current}, true, nil
 		}
 	}
 
@@ -96,11 +128,11 @@ func (program *Program) normalize(input state) (state, *branch, bool) {
 	for index := 1; index < len(terminal.goals); index++ {
 		if terminal.goals[index-1].node == terminal.goals[index].node &&
 			terminal.goals[index-1].want != terminal.goals[index].want {
-			return state{}, nil, false
+			return state{}, nil, false, nil
 		}
 	}
 
-	return terminal, nil, true
+	return terminal, nil, true, nil
 }
 
 func canonicalState(goals []goal) state {
@@ -161,6 +193,45 @@ func stateKey(value state) (string, error) {
 	return string(encoded), nil
 }
 
+func stateKeyBytes(value state) (uint64, error) {
+	goalBytes, ok := checkedMul(uint64(len(value.goals)), 5)
+	if !ok {
+		return 0, &ResourceError{
+			Resource: "state key bytes", Limit: ^uint64(0), Observed: ^uint64(0),
+		}
+	}
+
+	result, ok := checkedAdd(16, goalBytes)
+	if !ok {
+		return 0, &ResourceError{
+			Resource: "state key bytes", Limit: ^uint64(0), Observed: ^uint64(0),
+		}
+	}
+
+	for _, excluded := range value.excluded {
+		size, err := exactValueBytes(excluded)
+		if err != nil {
+			return 0, err
+		}
+
+		framed, framedOK := checkedAdd(size, 8)
+		if !framedOK {
+			return 0, &ResourceError{
+				Resource: "state key bytes", Limit: ^uint64(0), Observed: ^uint64(0),
+			}
+		}
+
+		result, ok = checkedAdd(result, framed)
+		if !ok {
+			return 0, &ResourceError{
+				Resource: "state key bytes", Limit: ^uint64(0), Observed: ^uint64(0),
+			}
+		}
+	}
+
+	return result, nil
+}
+
 func compareExactValues(left jsonvalue.Value, right jsonvalue.Value) int {
 	if left.Kind != right.Kind {
 		return int(left.Kind) - int(right.Kind)
@@ -214,4 +285,35 @@ func compareExactObjects(left []jsonvalue.Member, right []jsonvalue.Member) int 
 	}
 
 	return len(left) - len(right)
+}
+
+func memoizedAnyProductive[T any](
+	key string,
+	known map[string]bool,
+	results map[string]bool,
+	candidates []T,
+	test func(T) (bool, error),
+) (bool, error) {
+	if known[key] {
+		return results[key], nil
+	}
+
+	for _, candidate := range candidates {
+		possible, err := test(candidate)
+		if err != nil {
+			return false, err
+		}
+
+		if possible {
+			known[key] = true
+			results[key] = true
+
+			return true, nil
+		}
+	}
+
+	known[key] = true
+	results[key] = false
+
+	return false, nil
 }
