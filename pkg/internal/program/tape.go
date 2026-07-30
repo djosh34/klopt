@@ -33,12 +33,19 @@ func (reader *tapeReader) word() uint64 {
 	return binary.LittleEndian.Uint64(padded[:])
 }
 
-func (reader *tapeReader) natural(charge func() error) (*big.Int, error) {
+func (reader *tapeReader) natural(
+	chargeStep func() error,
+	chargeBytes func(uint64) error,
+) (*big.Int, error) {
 	result := new(big.Int)
 	shift := uint(0)
 
 	for {
-		if err := charge(); err != nil {
+		if err := chargeStep(); err != nil {
+			return nil, err
+		}
+
+		if err := chargeBytes(decisionWordBytes); err != nil {
 			return nil, err
 		}
 

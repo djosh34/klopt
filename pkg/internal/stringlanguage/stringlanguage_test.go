@@ -2,15 +2,11 @@
 package stringlanguage_test
 
 import (
-	"encoding/binary"
 	"errors"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
-	"github.com/djosh34/klopt/pkg/internal/program"        //nolint:depguard // Public test of the confirmed lowering seam.
 	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Public-seam test of the required shared module.
-	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 )
@@ -183,95 +179,6 @@ func TestCombineIntersectsAndComplementsCompiledSetsExactly(t *testing.T) {
 
 	var empty *stringlanguage.EmptyError
 	require.ErrorAs(t, err, &empty)
-}
-
-func TestAppendToDecodesCanonicalUnicodeScalars(t *testing.T) {
-	t.Parallel()
-
-	set, err := stringlanguage.Compile(nil, stringlanguage.Length{Min: 1, Max: new(1)})
-	require.NoError(t, err)
-
-	var builder program.Builder
-
-	root, err := set.AppendTo(&builder)
-	require.NoError(t, err)
-	sealed, err := builder.Seal(root, builder.UniformSampling())
-	require.NoError(t, err)
-
-	limits := program.Limits{MaxSteps: 10, MaxOutputBytes: 10, MaxDepth: 1}
-	tests := []struct {
-		rank uint64
-		want string
-	}{
-		{rank: 0, want: "\x00"},
-		{rank: 0x80, want: "\u0080"},
-		{rank: 0xf800, want: "𐀀"},
-	}
-
-	for _, test := range tests {
-		tape := make([]byte, 8)
-		binary.LittleEndian.PutUint64(tape, test.rank)
-		value, decodeErr := sealed.Decode(tape, limits)
-		require.NoError(t, decodeErr)
-		require.True(t, value.Equal(jsonvalue.String(test.want)), "rank %#x: got %q", test.rank, value.String)
-	}
-}
-
-func TestAppendToUsesMinimumScalarCompletionAndSupportsLongStrings(t *testing.T) {
-	t.Parallel()
-
-	ascii, err := stringlanguage.Pattern(`^[\x00-\x7f]$`)
-	require.NoError(t, err)
-	complement, err := stringlanguage.Compile(
-		[]stringlanguage.Requirement{{Language: ascii, WantMatch: false}},
-		stringlanguage.Length{Min: 1, Max: new(1)},
-	)
-	require.NoError(t, err)
-
-	minimum := decodeSet(t, complement, nil, program.Limits{
-		MaxSteps: 2, MaxOutputBytes: 4, MaxDepth: 1,
-	})
-	require.True(t, minimum.Equal(jsonvalue.String("\u0080")))
-
-	long, err := stringlanguage.Compile(nil, stringlanguage.Length{Min: 300, Max: new(300)})
-	require.NoError(t, err)
-	value := decodeSet(t, long, nil, program.Limits{
-		MaxSteps: 301, MaxOutputBytes: 2000, MaxDepth: 1,
-	})
-	require.Equal(t, 300, utf8.RuneCountInString(value.String))
-	require.True(t, long.Matches(value.String))
-}
-
-func TestAppendToPreservesFormatLanguage(t *testing.T) {
-	t.Parallel()
-
-	language, err := stringlanguage.Format("uuid")
-	require.NoError(t, err)
-	set, err := stringlanguage.Compile(
-		[]stringlanguage.Requirement{{Language: language, WantMatch: true}},
-		stringlanguage.Length{},
-	)
-	require.NoError(t, err)
-
-	value := decodeSet(t, set, nil, program.Limits{
-		MaxSteps: 100, MaxOutputBytes: 100, MaxDepth: 1,
-	})
-	require.True(t, set.Matches(value.String))
-}
-
-func decodeSet(t *testing.T, set *stringlanguage.Set, tape []byte, limits program.Limits) jsonvalue.Value {
-	t.Helper()
-
-	var builder program.Builder
-
-	root, err := set.AppendTo(&builder)
-	require.NoError(t, err)
-	sealed, err := builder.Seal(root, builder.UniformSampling())
-	require.NoError(t, err)
-	value, err := sealed.Decode(tape, limits)
-	require.NoError(t, err)
-
-	return value
 }
 
 func TestPatternMatchesExistingValidatorSemantics(t *testing.T) {

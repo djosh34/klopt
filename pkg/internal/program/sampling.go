@@ -1,48 +1,221 @@
+//nolint:cyclop,godoclint,mnd // Kind selection explicitly mirrors JSON's six kinds.
 package program
 
-import "fmt"
+import (
+	"fmt"
 
-// SemanticSampling derives one deterministic positive table from certified graph facts.
-// It cannot add, remove, or redirect a transition.
-//
-//nolint:cyclop,mnd // The closed action vocabulary maps directly to small static weights.
-func (builder *Builder) SemanticSampling(root NodeID) (SamplingTable, error) {
-	if err := builder.validateNode(root); err != nil {
-		return SamplingTable{}, fmt.Errorf("compile sampling: %w", err)
+	"github.com/djosh34/klopt/pkg/jsonvalue"
+)
+
+func (program *Program) sampleAtoms(
+	goals []goal,
+	excluded []jsonvalue.Value,
+	reader *tapeReader,
+	work *decodeWork,
+	depth uint64,
+) (jsonvalue.Value, bool, error) {
+	if candidates, restricted := program.enumCandidates(goals); restricted {
+		return program.sampleEnum(goals, excluded, candidates, reader)
 	}
 
-	costs := builder.completionCosts()
-	if costs[root] == unreachableCost {
-		return SamplingTable{}, fmt.Errorf("compile sampling: root node %d is not productive", root)
-	}
+	allowed := program.allowedKindsForGoals(goals)
 
-	weights := make([]uint32, len(builder.transitions))
-	for identifier, item := range builder.transitions {
-		cost := builder.transitionCost(item, costs)
-		if cost == unreachableCost {
-			return SamplingTable{}, fmt.Errorf("compile sampling: transition %d is not productive", identifier)
+	kinds := make([]jsonvalue.Kind, 0, len(allowed))
+	for kind, enabled := range allowed {
+		if !enabled {
+			continue
 		}
 
-		weight := uint32(1)
+		_, possible, err := program.sampleKind(
+			goals, excluded, jsonvalue.Kind(kind), nil, work, depth,
+		)
+		if err != nil {
+			return jsonvalue.Value{}, false, err
+		}
 
+		if possible {
+			kinds = append(kinds, jsonvalue.Kind(kind))
+		}
+	}
+
+	if len(kinds) == 0 {
+		return jsonvalue.Value{}, false, nil
+	}
+
+	selected := 0
+	if reader != nil {
+		selected = int(reader.word() % uint64(len(kinds)))
+	}
+
+	return program.sampleKind(goals, excluded, kinds[selected], reader, work, depth)
+}
+
+func (program *Program) sampleEnum(
+	goals []goal,
+	excluded []jsonvalue.Value,
+	candidates []jsonvalue.Value,
+	reader *tapeReader,
+) (jsonvalue.Value, bool, error) {
+	matching := make([]jsonvalue.Value, 0, len(candidates))
+	for _, candidate := range candidates {
+		matches, err := program.valueAllowed(goals, excluded, candidate)
+		if err != nil {
+			return jsonvalue.Value{}, false, err
+		}
+
+		if matches {
+			matching = append(matching, candidate)
+		}
+	}
+
+	if len(matching) == 0 {
+		return jsonvalue.Value{}, false, nil
+	}
+
+	selected := 0
+	if reader != nil {
+		selected = int(reader.word() % uint64(len(matching)))
+	}
+
+	return matching[selected], true, nil
+}
+
+func (program *Program) allowedKindsForGoals(goals []goal) [6]bool {
+	allowed := [6]bool{true, true, true, true, true, true}
+
+	for _, current := range goals {
+		item := program.nodes[current.node].atom
 		switch item.kind {
-		case transitionBeginArray, transitionBeginObject, transitionBeginString,
-			transitionArraySequence:
-			weight++
-		case transitionInteger:
-			weight += 2
-		case transitionExactValue:
-			if item.value.Kind == 0 || item.value.Kind >= 4 {
-				weight++
+		case atomKinds:
+			for kind := range allowed {
+				if item.integer && jsonvalue.Kind(kind) == jsonvalue.KindNumber {
+					continue
+				}
+
+				allowed[kind] = allowed[kind] && item.allowed[kind] == current.want
 			}
+		case atomNumberMinimum, atomNumberMaximum, atomNumberMultipleOf, atomNumberFormat:
+			restrictWhenFalse(&allowed, current, jsonvalue.KindNumber)
+		case atomStringMinLength, atomStringMaxLength, atomStringLanguage:
+			restrictWhenFalse(&allowed, current, jsonvalue.KindString)
+		case atomArrayMinItems, atomArrayMaxItems, atomArrayItems:
+			restrictWhenFalse(&allowed, current, jsonvalue.KindArray)
+		case atomObjectMinProperties, atomObjectMaxProperties,
+			atomObjectRequired, atomObjectProperty, atomObjectAdditional:
+			restrictWhenFalse(&allowed, current, jsonvalue.KindObject)
 		}
-
-		if cost > 1 {
-			weight += uint32(min(cost-1, 3))
-		}
-
-		weights[identifier] = weight
 	}
 
-	return SamplingTable{Weights: weights}, nil
+	return allowed
+}
+
+func restrictWhenFalse(allowed *[6]bool, current goal, kind jsonvalue.Kind) {
+	if !current.want {
+		restrictToKind(allowed, kind)
+	}
+}
+
+func (program *Program) sampleKind(
+	goals []goal,
+	excluded []jsonvalue.Value,
+	kind jsonvalue.Kind,
+	reader *tapeReader,
+	work *decodeWork,
+	depth uint64,
+) (jsonvalue.Value, bool, error) {
+	switch kind {
+	case jsonvalue.KindNull:
+		value := jsonvalue.Null()
+		matches, err := program.valueAllowed(goals, excluded, value)
+
+		return value, matches, err
+	case jsonvalue.KindBoolean:
+		return program.sampleBoolean(goals, excluded, reader)
+	case jsonvalue.KindNumber:
+		number, possible, err := program.sampleNumber(goals, excluded, reader, work)
+
+		return jsonvalue.Value{Kind: jsonvalue.KindNumber, Number: number}, possible, err
+	case jsonvalue.KindString:
+		return program.sampleString(goals, excluded, reader, work)
+	case jsonvalue.KindArray:
+		return program.sampleArray(goals, excluded, reader, work, depth)
+	case jsonvalue.KindObject:
+		return program.sampleObject(goals, excluded, reader, work, depth)
+	default:
+		return jsonvalue.Value{}, false, fmt.Errorf("unknown JSON kind")
+	}
+}
+
+func (program *Program) sampleBoolean(
+	goals []goal,
+	excluded []jsonvalue.Value,
+	reader *tapeReader,
+) (jsonvalue.Value, bool, error) {
+	candidates := make([]jsonvalue.Value, 0, 2)
+
+	for _, boolean := range []bool{false, true} {
+		candidate := jsonvalue.Bool(boolean)
+
+		matches, err := program.valueAllowed(goals, excluded, candidate)
+		if err != nil {
+			return jsonvalue.Value{}, false, err
+		}
+
+		if matches {
+			candidates = append(candidates, candidate)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return jsonvalue.Value{}, false, nil
+	}
+
+	selected := 0
+	if reader != nil {
+		selected = int(reader.word() % uint64(len(candidates)))
+	}
+
+	return candidates[selected], true, nil
+}
+
+func (program *Program) enumCandidates(goals []goal) ([]jsonvalue.Value, bool) {
+	for _, current := range goals {
+		item := program.nodes[current.node].atom
+		if item.kind == atomEnum && current.want {
+			return item.values, true
+		}
+	}
+
+	return nil, false
+}
+
+func restrictToKind(allowed *[6]bool, selected jsonvalue.Kind) {
+	for kind := range allowed {
+		allowed[kind] = jsonvalue.Kind(kind) == selected && allowed[kind]
+	}
+}
+
+func weightedIndex(word uint64, edges []productiveEdge) int {
+	total := uint64(0)
+	for _, edge := range edges {
+		total += edge.weight
+	}
+
+	selected := word % total
+	for index, edge := range edges {
+		if selected < edge.weight {
+			return index
+		}
+
+		selected -= edge.weight
+	}
+
+	panic("weighted index exceeded positive edge weights")
+}
+
+func appendCopy[T any](source []T, values ...T) []T {
+	result := make([]T, len(source), len(source)+len(values))
+	copy(result, source)
+
+	return append(result, values...)
 }

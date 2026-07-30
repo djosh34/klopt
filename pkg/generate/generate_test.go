@@ -78,7 +78,13 @@ paths:
 			require.NoError(t, err)
 			require.Len(t, files, 2)
 			require.NotEmpty(t, files["validate.go"])
-			require.NotEmpty(t, files["validate_test.go"])
+
+			testSource := string(files["validate_test.go"])
+			require.NotEmpty(t, testSource)
+			require.Contains(t, testSource, "func FuzzValidations(f *testing.F)")
+			require.Equal(t, 1, strings.Count(testSource, "f.Add([]byte{})"))
+			require.NotContains(t, testSource, "TestValidations")
+			require.NotContains(t, testSource, "rapid.")
 		})
 	}
 }
@@ -119,7 +125,7 @@ paths: {}
 	})
 }
 
-// TestGenerateInMemoryLeavesSuiteConstructionToGoTest verifies generation does not preflight generated tests.
+// TestGenerateInMemoryLeavesSuiteConstructionToGoTest verifies fuzz setup owns generation admission.
 func TestGenerateInMemoryLeavesSuiteConstructionToGoTest(t *testing.T) {
 	t.Parallel()
 
@@ -145,7 +151,7 @@ paths:
 	}
 
 	command := exec.CommandContext(
-		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "^TestValidations$",
+		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "^FuzzValidations$",
 	)
 	command.Dir = repo
 	result, err := command.CombinedOutput()
@@ -895,7 +901,7 @@ paths:
 		"test",
 		"./pkg/"+filepath.Base(output),
 		"-run",
-		"^TestValidations$",
+		"^FuzzValidations$",
 	)
 	command.Dir = repo
 	result, err := command.CombinedOutput()
@@ -1065,7 +1071,7 @@ func TestPatternSettings(t *testing.T) {
 
 			command := exec.CommandContext(
 				t.Context(), "go", "test", "./pkg/"+filepath.Base(output),
-				"-run", "^(TestPatternSettings|TestValidations)$",
+				"-run", "^(TestPatternSettings|FuzzValidations)$",
 			)
 			command.Dir = repo
 			result, err := command.CombinedOutput()

@@ -77,8 +77,8 @@ This is intentional. Clear rejection is safer than accepting a document with par
 
 ## Generative testing
 
-Validation receives extensive generative testing. A Rapid-based schema generator builds supported OpenAPI documents and mutated invalid copies. Request-body tests use native Go fuzzing over deterministic byte tapes: each tape is decoded by a sealed program whose case carries an explicit accepted or rejected verdict.
+Validation receives extensive generative testing. A Rapid-based schema generator builds supported OpenAPI documents and mutated invalid copies. Request-body tests use native Go fuzzing over deterministic byte tapes: each tape selects an operation, a valid or invalid root goal, and one lazy walk through the document's signed constraint graph.
 
-Generating JSON that has a known relationship to a complex schema is hard. Canonical accepted sets and focused case obligations keep that relationship explicit, and every canonical seed is also exercised by ordinary tests against the same runtime validator used by applications.
+Generating JSON with a known schema verdict is hard. The graph exposes only choices that can still finish, then small number, string, array, and object components construct the final value from the active rules. Invalid walks normally introduce one selected fault while preserving valid siblings, with broader failures available less often. The generated fuzz target has no preplanned cases or schema-specific seeds: ordinary `go test` runs its single empty-tape baseline, and Go replays any fuzz inputs it has saved.
 
 OpenAPI details in this documentation follow the [OpenAPI 3.0.3 Schema Object](https://spec.openapis.org/oas/v3.0.3.html#schema-object).

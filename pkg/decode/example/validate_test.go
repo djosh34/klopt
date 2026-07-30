@@ -17,24 +17,34 @@ func validateBody(operationID string, data []byte) error {
 	return errors.Join(RequestValidations[operationID].Body.Validate(data)...)
 }
 
-// TestValidations checks every generated request-body validation seed.
-func TestValidations(t *testing.T) {
-	t.Parallel()
-
-	testgenerator.CheckJSONRequestBodies(
-		t,
-		openAPI,
-		validateBody,
-		validation.PatternOptions(),
-	)
-}
-
-// FuzzValidations mutates deterministic byte tapes over every compiled CasePlan.
+// FuzzValidations lets native Go fuzzing steer one document-wide graph program.
 func FuzzValidations(f *testing.F) {
-	testgenerator.FuzzJSONRequestBodies(
-		f,
+	compiled, err := testgenerator.Compile(
 		openAPI,
-		validateBody,
 		validation.PatternOptions(),
 	)
+	if err != nil {
+		f.Fatal(err)
+	}
+	defer compiled.Close()
+
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, input []byte) {
+		if compiled.Empty() {
+			return
+		}
+
+		sample, err := compiled.Decode(input)
+		if err != nil {
+			if testgenerator.ResourceLimited(err) {
+				return
+			}
+
+			t.Fatal(err)
+		}
+
+		if err := compiled.Check(sample, validateBody); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

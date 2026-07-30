@@ -8,6 +8,8 @@ type Limits struct {
 	MaxSteps       uint64
 	MaxOutputBytes uint64
 	MaxDepth       uint64
+	MaxSolverWork  uint64
+	MaxSolverBytes uint64
 }
 
 // LimitError reports transactional runtime resource exhaustion.
@@ -33,4 +35,21 @@ func checkLimit(resource string, maximum uint64, observed uint64) error {
 	}
 
 	return &LimitError{Resource: resource, Limit: maximum, Observed: observed}
+}
+
+// ResourceError reports exact solver work that exceeded its configured budget.
+type ResourceError struct {
+	Resource string
+	Limit    uint64
+	Observed uint64
+}
+
+// Error formats one exhausted solver resource.
+func (resourceError *ResourceError) Error() string {
+	return fmt.Sprintf(
+		"program solver exceeds %s limit: maximum %d, observed %d",
+		resourceError.Resource,
+		resourceError.Limit,
+		resourceError.Observed,
+	)
 }

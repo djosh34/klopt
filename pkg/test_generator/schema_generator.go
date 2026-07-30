@@ -1,11 +1,8 @@
-//nolint:cyclop,godoclint,mnd // Private recursive choices and mutation IDs are clearer inline.
+//nolint:cyclop,godoclint,mnd // Private recursive schema choices are clearer inline.
 package testgenerator
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"sort"
 
 	"pgregory.net/rapid"
 )
@@ -21,15 +18,6 @@ type generatedSchemaObject map[string]any
 
 type generatedNumber string
 
-func (number generatedNumber) MarshalJSON() ([]byte, error) {
-	raw := []byte(number)
-	if !json.Valid(append(append([]byte{'['}, raw...), ']')) {
-		return nil, fmt.Errorf("generated number %q is not valid JSON", number)
-	}
-
-	return raw, nil
-}
-
 // GenerateSchemas draws one valid OpenAPI document followed by independently
 // mutated invalid copies. It must be called from a Rapid property.
 func GenerateSchemas(t *rapid.T) []GeneratedSchema {
@@ -37,7 +25,11 @@ func GenerateSchemas(t *rapid.T) []GeneratedSchema {
 
 	root := generatedInlineSchema().Draw(t, "request schema")
 	document := generatedOpenAPIDocument(root)
-	validJSON := marshalGeneratedDocument(t, document)
+
+	validJSON, err := marshalGeneratedDocument(document)
+	if err != nil {
+		t.Fatalf("marshal valid generated OpenAPI document: %v", err)
+	}
 
 	mutationIDs := rapid.SliceOfN(
 		rapid.IntRange(0, generatedMutationCount-1),
@@ -58,8 +50,13 @@ func GenerateSchemas(t *rapid.T) []GeneratedSchema {
 			t.Fatalf("apply invalid schema mutation %d: %v", index, err)
 		}
 
+		invalidJSON, err := marshalGeneratedDocument(mutated)
+		if err != nil {
+			t.Fatalf("marshal invalid generated OpenAPI document %d: %v", index, err)
+		}
+
 		generated = append(generated, GeneratedSchema{
-			OpenAPIJSON: marshalGeneratedDocument(t, mutated),
+			OpenAPIJSON: invalidJSON,
 			Valid:       false,
 		})
 	}
@@ -98,6 +95,8 @@ func generatedSchema() *rapid.Generator[generatedSchemaObject] {
 		generatedObjectSchema(),
 		generatedAllOfSchema(),
 		generatedAllOfSchema(),
+		generatedAnyOfSchema(),
+		generatedAnyOfSchema(),
 	)
 }
 
@@ -110,6 +109,9 @@ func generatedInlineSchema() *rapid.Generator[generatedSchemaObject] {
 		generatedAllOfSchema(),
 		generatedAllOfSchema(),
 		generatedAllOfSchema(),
+		generatedAnyOfSchema(),
+		generatedAnyOfSchema(),
+		generatedAnyOfSchema(),
 	)
 }
 
@@ -266,6 +268,7 @@ func generatedReferenceSchema() *rapid.Generator[generatedSchemaObject] {
 		"#/components/schemas/Container/properties/~0",
 		"#/components/schemas/Container/properties/~1",
 		"#/components/schemas/Container/properties/%CE%BB",
+		"#/components/schemas/Choice",
 	}), func(reference string) generatedSchemaObject {
 		return generatedSchemaObject{
 			"$ref":        reference,
@@ -363,340 +366,12 @@ func generatedAllOfSchema() *rapid.Generator[generatedSchemaObject] {
 	})
 }
 
-func generatedOpenAPIDocument(schema generatedSchemaObject) map[string]any {
-	return map[string]any{
-		"openapi": "3.0.3",
-		"info":    map[string]any{"title": "generated", "version": "1"},
-		"paths": map[string]any{
-			"/things": map[string]any{
-				"post": map[string]any{
-					"operationId": "checkThing",
-					"requestBody": map[string]any{
-						"required": true,
-						"content": map[string]any{
-							"application/json": map[string]any{"schema": schema},
-						},
-					},
-					"responses": map[string]any{"204": map[string]any{"description": "done"}},
-				},
-			},
-		},
-		"components": map[string]any{
-			"schemas": map[string]any{
-				"Leaf":  generatedSchemaObject{"type": "integer"},
-				"Lower": generatedSchemaObject{"type": "integer", "minimum": generatedNumber("-100")},
-				"Upper": generatedSchemaObject{"type": "integer", "maximum": generatedNumber("100")},
-				"Meet": generatedSchemaObject{"allOf": []any{
-					generatedSchemaObject{"$ref": "#/components/schemas/Lower"},
-					generatedSchemaObject{"$ref": "#/components/schemas/Upper"},
-				}},
-				"Chain": generatedSchemaObject{"$ref": "#/components/schemas/Meet"},
-				"Container": generatedSchemaObject{
-					"type": "object",
-					"properties": map[string]any{
-						"":  generatedSchemaObject{"type": "boolean"},
-						"~": generatedSchemaObject{"type": "string"},
-						"/": generatedSchemaObject{"type": "number"},
-						"λ": generatedSchemaObject{"$ref": "#/components/schemas/Chain"},
-					},
-				},
-			},
-		},
-	}
-}
+func generatedAnyOfSchema() *rapid.Generator[generatedSchemaObject] {
+	return rapid.Custom(func(t *rapid.T) generatedSchemaObject {
+		children := rapid.SliceOfN(rapid.Deferred(generatedSchema), 2, 3).Draw(t, "anyOf children")
+		schema := generatedLeafSchema().Draw(t, "anyOf siblings")
+		schema["anyOf"] = children
 
-func marshalGeneratedDocument(t *rapid.T, document map[string]any) []byte {
-	t.Helper()
-
-	var encoded bytes.Buffer
-	if err := encodeGeneratedValue(&encoded, document); err != nil {
-		t.Fatalf("marshal generated OpenAPI document: %v", err)
-	}
-
-	return encoded.Bytes()
-}
-
-func encodeGeneratedValue(encoded *bytes.Buffer, value any) error {
-	switch typed := value.(type) {
-	case generatedNumber:
-		raw, err := typed.MarshalJSON()
-		if err != nil {
-			return err
-		}
-
-		_, err = encoded.Write(raw)
-
-		return err
-	case map[string]any:
-		return encodeGeneratedMap(encoded, typed)
-	case generatedSchemaObject:
-		members := make(map[string]any, len(typed))
-		for key, child := range typed {
-			members[key] = child
-		}
-
-		return encodeGeneratedMap(encoded, members)
-	case []any:
-		return encodeGeneratedSlice(encoded, typed)
-	case []generatedSchemaObject:
-		values := make([]any, len(typed))
-		for index, child := range typed {
-			values[index] = child
-		}
-
-		return encodeGeneratedSlice(encoded, values)
-	default:
-		raw, err := json.Marshal(typed)
-		if err != nil {
-			return err
-		}
-
-		_, err = encoded.Write(raw)
-
-		return err
-	}
-}
-
-func encodeGeneratedMap(encoded *bytes.Buffer, members map[string]any) error {
-	keys := make([]string, 0, len(members))
-	for key := range members {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	if err := encoded.WriteByte('{'); err != nil {
-		return err
-	}
-
-	for index, key := range keys {
-		if index != 0 {
-			if err := encoded.WriteByte(','); err != nil {
-				return err
-			}
-		}
-
-		keyJSON, err := json.Marshal(key)
-		if err != nil {
-			return err
-		}
-
-		if _, err := encoded.Write(keyJSON); err != nil {
-			return err
-		}
-
-		if err := encoded.WriteByte(':'); err != nil {
-			return err
-		}
-
-		if err := encodeGeneratedValue(encoded, members[key]); err != nil {
-			return err
-		}
-	}
-
-	if err := encoded.WriteByte('}'); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func encodeGeneratedSlice(encoded *bytes.Buffer, values []any) error {
-	if err := encoded.WriteByte('['); err != nil {
-		return err
-	}
-
-	for index, value := range values {
-		if index != 0 {
-			if err := encoded.WriteByte(','); err != nil {
-				return err
-			}
-		}
-
-		if err := encodeGeneratedValue(encoded, value); err != nil {
-			return err
-		}
-	}
-
-	if err := encoded.WriteByte(']'); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func cloneGeneratedValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		clone := make(map[string]any, len(typed))
-		for key, child := range typed {
-			clone[key] = cloneGeneratedValue(child)
-		}
-
-		return clone
-	case generatedSchemaObject:
-		clone := make(generatedSchemaObject, len(typed))
-		for key, child := range typed {
-			clone[key] = cloneGeneratedValue(child)
-		}
-
-		return clone
-	case []any:
-		clone := make([]any, len(typed))
-		for index, child := range typed {
-			clone[index] = cloneGeneratedValue(child)
-		}
-
-		return clone
-	case []generatedSchemaObject:
-		clone := make([]generatedSchemaObject, len(typed))
-		for index, child := range typed {
-			clonedChild, ok := cloneGeneratedValue(child).(generatedSchemaObject)
-			if !ok {
-				panic("clone generated schema: child is not a schema object")
-			}
-
-			clone[index] = clonedChild
-		}
-
-		return clone
-	case []string:
-		return append([]string(nil), typed...)
-	default:
-		return typed
-	}
-}
-
-const generatedMutationCount = 12
-
-func mutateGeneratedDocument(document map[string]any, mutationID int) error {
-	schema, err := generatedRequestSchema(document)
-	if err != nil {
-		return err
-	}
-
-	switch mutationID {
-	case 0:
-		schema["oneOf"] = []any{generatedSchemaObject{}}
-	case 1:
-		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{
-			"$ref": "#/components/schemas/Missing",
-		})
-	case 2:
-		schemas, schemasErr := generatedComponentSchemas(document)
-		if schemasErr != nil {
-			return schemasErr
-		}
-
-		schemas["Cycle"] = generatedSchemaObject{"$ref": "#/components/schemas/Cycle"}
-		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{
-			"$ref": "#/components/schemas/Cycle",
-		})
-	case 3:
-		schemas, schemasErr := generatedComponentSchemas(document)
-		if schemasErr != nil {
-			return schemasErr
-		}
-
-		schemas["CycleA"] = generatedSchemaObject{"$ref": "#/components/schemas/CycleB"}
-		schemas["CycleB"] = generatedSchemaObject{"$ref": "#/components/schemas/CycleA"}
-		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{
-			"$ref": "#/components/schemas/CycleA",
-		})
-	case 4:
-		schema["minLength"] = "zero"
-	case 5:
-		schema["nullable"] = nil
-	case 6:
-		schema["minItems"] = -1
-	case 7:
-		schema["allOf"] = []any{}
-	case 8:
-		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{"$ref": "#not-a-pointer"})
-	case 9:
-		schema["required"] = "property"
-	case 10:
-		schema["allOf"] = appendGeneratedAllOf(schema, generatedSchemaObject{"$ref": "#/info"})
-	case 11:
-		schema["maxLength"] = nil
-	default:
-		return fmt.Errorf("unknown mutation %d", mutationID)
-	}
-
-	return nil
-}
-
-func appendGeneratedAllOf(schema generatedSchemaObject, child generatedSchemaObject) []any {
-	children, ok := schema["allOf"].([]generatedSchemaObject)
-	if ok {
-		result := make([]any, 0, len(children)+1)
-		for _, existing := range children {
-			result = append(result, existing)
-		}
-
-		return append(result, child)
-	}
-
-	if children, ok := schema["allOf"].([]any); ok {
-		return append(append([]any(nil), children...), child)
-	}
-
-	return []any{child}
-}
-
-func generatedRequestSchema(document map[string]any) (generatedSchemaObject, error) {
-	paths, ok := document["paths"].(map[string]any)
-	if !ok {
-		return nil, errorsForGeneratedPath("paths")
-	}
-
-	path, ok := paths["/things"].(map[string]any)
-	if !ok {
-		return nil, errorsForGeneratedPath("paths./things")
-	}
-
-	post, ok := path["post"].(map[string]any)
-	if !ok {
-		return nil, errorsForGeneratedPath("paths./things.post")
-	}
-
-	requestBody, ok := post["requestBody"].(map[string]any)
-	if !ok {
-		return nil, errorsForGeneratedPath("paths./things.post.requestBody")
-	}
-
-	content, ok := requestBody["content"].(map[string]any)
-	if !ok {
-		return nil, errorsForGeneratedPath("paths./things.post.requestBody.content")
-	}
-
-	mediaType, ok := content["application/json"].(map[string]any)
-	if !ok {
-		return nil, errorsForGeneratedPath("paths./things.post.requestBody.content.application/json")
-	}
-
-	schema, ok := mediaType["schema"].(generatedSchemaObject)
-	if !ok {
-		return nil, errorsForGeneratedPath("paths./things.post.requestBody.content.application/json.schema")
-	}
-
-	return schema, nil
-}
-
-func generatedComponentSchemas(document map[string]any) (map[string]any, error) {
-	components, ok := document["components"].(map[string]any)
-	if !ok {
-		return nil, errorsForGeneratedPath("components")
-	}
-
-	schemas, ok := components["schemas"].(map[string]any)
-	if !ok {
-		return nil, errorsForGeneratedPath("components.schemas")
-	}
-
-	return schemas, nil
-}
-
-func errorsForGeneratedPath(path string) error {
-	return fmt.Errorf("generated document path %s has the wrong shape", path)
+		return schema
+	})
 }

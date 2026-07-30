@@ -1,4 +1,4 @@
-//nolint:cyclop,gocognit,godoclint // Recursive inspection helpers mirror recursive Schema Objects.
+//nolint:cyclop,gocognit,gocyclo,godoclint // Recursive inspection mirrors recursive Schema Objects.
 package testgenerator
 
 import (
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/djosh34/klopt/pkg/validation"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -29,7 +30,9 @@ func TestGeneratedSchemasExerciseRequiredShapes(t *testing.T) {
 	t.Parallel()
 
 	seen := make(map[string]bool)
-	counters := generatedCoverageCounters{refPositions: make(map[string]int)}
+	counters := generatedCoverageCounters{
+		refPositions: make(map[string]int), anyOfPositions: make(map[string]int),
+	}
 
 	for seed := 0; seed < 2000; seed++ {
 		generated := rapid.Custom(func(t *rapid.T) []GeneratedSchema {
@@ -43,13 +46,19 @@ func TestGeneratedSchemasExerciseRequiredShapes(t *testing.T) {
 	for _, feature := range []string{
 		"typeless", "nullable", "nullable-object-false", "nullable-object-true",
 		"number", "exact-number", "enum", "pattern", "format",
-		"array", "object", "additional-schema", "allOf", "nested-allOf", "ref", "escaped-ref", "unicode-ref",
+		"array", "object", "additional-schema", "allOf", "nested-allOf",
+		"anyOf", "nested-anyOf", "anyOf-sibling", "ref-anyOf-target",
+		"ref", "escaped-ref", "unicode-ref",
 	} {
 		require.Truef(t, seen[feature], "feature %s was not generated", feature)
 	}
 
-	for _, position := range []string{"items", "property", "additionalProperties", "allOf"} {
+	for _, position := range []string{"items", "property", "additionalProperties", "allOf", "anyOf"} {
 		require.Positivef(t, counters.refPositions[position], "ref position %s", position)
+	}
+
+	for _, position := range []string{"root", "items", "property", "anyOf"} {
+		require.Positivef(t, counters.anyOfPositions[position], "anyOf position %s", position)
 	}
 
 	require.Positive(t, counters.keywordPairs)
@@ -67,6 +76,35 @@ func TestGeneratedSchemasExerciseRequiredShapes(t *testing.T) {
 	)
 }
 
+func TestGeneratedValidSchemasExerciseTheDocumentProgram(t *testing.T) {
+	t.Parallel()
+
+	for seed := 0; seed < 24; seed++ {
+		generated := rapid.Custom(func(t *rapid.T) []GeneratedSchema {
+			return GenerateSchemas(t)
+		}).Example(seed)[0]
+
+		compiled, err := Compile(generated.OpenAPIJSON)
+		require.NoErrorf(t, err, "schema seed %d", seed)
+		validations, err := validation.Parse(generated.OpenAPIJSON)
+		require.NoError(t, err)
+
+		for tapeByte := byte(0); tapeByte < 8; tapeByte++ {
+			sample, decodeErr := compiled.Decode([]byte{tapeByte})
+			if ResourceLimited(decodeErr) {
+				continue
+			}
+
+			require.NoErrorf(t, decodeErr, "schema seed %d tape %d", seed, tapeByte)
+			require.NoErrorf(t, compiled.Check(sample, func(operationID string, body []byte) error {
+				return errors.Join(validations[operationID].Body.Validate(body)...)
+			}), "schema seed %d tape %d: %s", seed, tapeByte, generated.OpenAPIJSON)
+		}
+
+		compiled.Close()
+	}
+}
+
 type generatedCoverageCounters struct {
 	legal          int
 	invalid        int
@@ -75,6 +113,7 @@ type generatedCoverageCounters struct {
 	keywordPairs   int
 	keywordTriples int
 	refPositions   map[string]int
+	anyOfPositions map[string]int
 }
 
 func collectGeneratedCoverage(
@@ -148,6 +187,10 @@ func collectSchemaCoverage(
 		seen["unicode-ref"] = true
 	}
 
+	if reference, ok := object["$ref"].(string); ok && strings.HasSuffix(reference, "/Choice") {
+		seen["ref-anyOf-target"] = true
+	}
+
 	if _, ok := object["$ref"].(string); ok {
 		counters.refPositions[position]++
 	}
@@ -186,6 +229,40 @@ func collectSchemaCoverage(
 			collectSchemaCoverage(child, seen, counters, depth+1, allOfDepth+1, "allOf")
 		}
 	}
+
+	if children, ok := object["anyOf"].([]any); ok {
+		seen["anyOf"] = true
+		counters.anyOfPositions[position]++
+
+		if len(object) > 1 {
+			seen["anyOf-sibling"] = true
+		}
+
+		if anyOfDepth(object) > 1 {
+			seen["nested-anyOf"] = true
+		}
+
+		for _, child := range children {
+			collectSchemaCoverage(child, seen, counters, depth+1, allOfDepth, "anyOf")
+		}
+	}
+}
+
+func anyOfDepth(value any) int {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return 0
+	}
+
+	depth := 0
+	if children, ok := object["anyOf"].([]any); ok {
+		depth = 1
+		for _, child := range children {
+			depth = max(depth, 1+anyOfDepth(child))
+		}
+	}
+
+	return depth
 }
 
 func generatedRequestSchemaFromJSON(document map[string]any) (map[string]any, error) {

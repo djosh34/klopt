@@ -65,12 +65,15 @@ For runtime validation, `allOf` stays as separate child validations. Each branch
 The test generator does more than draw arbitrary JSON:
 
 1. It admits the request schema through the same strict capability gate as validation.
-2. It lowers the schema once into an occurrence tree and canonical accepted sets built from union, intersection, and complement.
-3. It plans aggregate-valid, boundary, and focused-invalid cases with explicit expected validator verdicts.
-4. It compiles each non-empty case into an immutable, certified `Program`.
-5. Native Go fuzzing mutates byte tapes. `Program.Decode` deterministically constructs JSON, and the runner checks the validator result against the case verdict.
+2. It compiles every request schema in the document into one immutable graph. `AND` nodes preserve schema siblings and `allOf`; `OR` nodes represent `anyOf`; small leaf rules handle strings, numbers, arrays, and objects.
+3. A signed root goal asks that graph for either a valid or an invalid value. The graph is not copied or complemented ahead of time: the requested true or false result is pushed through its nodes while decoding.
+4. A lazy productivity check removes choices that cannot finish. It examines only states reached by the current decode and memoizes equivalent states instead of listing complete assignments or paths.
+5. `Program.Decode` maps arbitrary native Go fuzz bytes to the remaining choices. Local weights favor useful deep and near-invalid paths, but every supported productive choice keeps a positive chance of selection.
+6. The generated fuzz target runs the selected operation's validator and checks its result against the verdict returned with the generated JSON.
 
-Every case includes canonical replay seeds, and ordinary tests execute all of them. Native fuzzing provides variation around those seeds while the sealed program keeps decoding deterministic and resource-bounded. For the object schema above, planned cases cover valid objects, a missing required `name`, a wrong type for `name`, and an unknown property.
+There is no precomputed list of cases or schema-specific seed corpus. The generated fuzz target adds only the empty byte slice as its ordinary-test baseline; Go's fuzz engine supplies and saves other byte tapes. Decoding is deterministic and resource-bounded even for empty, short, or exhausted input because missing tape bytes read as zero.
+
+For the object schema above, a valid walk emits an object with a valid `name`. An invalid walk usually selects one private fault, such as omitting `name`, giving it the wrong JSON kind, or adding a forbidden property, while keeping the rest of the object valid whenever that is possible. Lower-probability choices can exercise broader or coordinated failures.
 
 Schema parsing is fuzzed independently. That separate OpenAPI-schema generator still uses Rapid to build supported documents and independently mutated invalid copies; request-body program execution has no Rapid dependency.
 
@@ -90,10 +93,10 @@ At the `allOf` level there is no ready-made value to draw. Choosing from either 
 
 The generator handles it step by step:
 
-1. Compile the first branch as integers greater than or equal to `4`.
-2. Compile the second branch as all JSON kinds, with numbers no greater than `10` and restricted to multiples of `3`.
-3. Intersect both accepted sets. The numeric result is integers from `4` through `10` that are multiples of `3`.
-4. Compile the aggregate valid case from that merged set. It can emit `6` or `9`.
-5. Build isolated rejected cases from the same context. For example, `3` fails only the minimum, `12` fails only the maximum, and values such as `4` or `10` fail only `multipleOf`.
+1. Compile the schema and both `allOf` branches under one `AND` node.
+2. For a valid root goal, push `true` to every child of that node.
+3. The number leaf receives all active number rules together and emits a value satisfying them. Here it can emit `6` or `9`.
+4. For an invalid root goal, first try choices that push `false` to one child and `true` to its siblings. This can produce focused failures such as `3`, `12`, `4`, or `10`.
+5. Keep only choices that the lazy productivity check proves can finish. Broader and multi-rule failures remain available at lower positive weights.
 
-The merge happens before program compilation. This keeps every accepted output inside all branches, while rejected cases target a specific rule without accidentally dropping unrelated siblings.
+No complete cross-product is built. The signed rules meet only in the graph state reached by the current tape, and the primitive leaf resolves that small set of rules when it emits the value.

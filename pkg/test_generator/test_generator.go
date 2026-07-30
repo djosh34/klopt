@@ -1,160 +1,177 @@
-// Package testgenerator generates structured JSON request bodies and checks a validator.
+// Package testgenerator compiles OpenAPI request bodies into deterministic native-fuzz samples.
 //
-//nolint:godoclint,mnd // Private native-fuzz adapter constants stay local to this deep module.
+//nolint:godoclint,mnd // Fixed budgets and private wiring stay behind Generator.
 package testgenerator
 
 import (
-	"encoding/binary"
 	"errors"
-	"maps"
-	"slices"
-	"testing"
+	"fmt"
 
-	"github.com/djosh34/klopt/pkg/internal/oas"
-	"github.com/djosh34/klopt/pkg/internal/program" //nolint:depguard // Runner executes final sealed CasePlans only.
+	"github.com/djosh34/klopt/pkg/internal/program" //nolint:depguard // Public adapter owns the private program seam.
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/test_generator/internal/suite"
+	"github.com/djosh34/klopt/pkg/validation"
 )
 
-const selectorBytes = 8
-
-var fuzzLimits = program.Limits{
+var decodeLimits = program.Limits{
 	MaxSteps:       100_000,
 	MaxOutputBytes: 1_000_000,
 	MaxDepth:       64,
+	MaxSolverWork:  100_000,
+	MaxSolverBytes: 16_000_000,
 }
 
-type executableCase struct {
-	operationID string
-	plan        suite.CasePlan
+// Validator checks one operation's generated request body.
+type Validator func(operationID string, body []byte) error
+
+// Sample is one decoded request body and its expected validation result.
+type Sample struct {
+	OperationID string
+	Body        []byte
+	ExpectValid bool
 }
 
-// CheckJSONRequestBodies runs every canonical structured request-body seed.
-func CheckJSONRequestBodies(
-	t *testing.T,
-	openAPIYAML []byte,
-	validate func(operationID string, body []byte) error,
-	patternOption patternvalidator.Option,
-) {
-	t.Helper()
-
-	plans := compileCases(t, openAPIYAML, validate, patternOption)
-	for _, planned := range plans {
-		t.Run(planned.operationID+"/"+planned.plan.Name, func(t *testing.T) {
-			t.Parallel()
-
-			for _, seed := range planned.plan.Seeds {
-				checkCase(t, planned, seed, validate)
-			}
-		})
-	}
+// Generator is one compiled OpenAPI document.
+type Generator struct {
+	compiled *suite.CompiledSuite
+	runtime  map[string]validation.RequestValidation
+	kin      *kinValidator
+	lib      *libValidator
 }
 
-// FuzzJSONRequestBodies registers every CasePlan seed and runs one native Go fuzz callback.
-func FuzzJSONRequestBodies(
-	f *testing.F,
-	openAPIYAML []byte,
-	validate func(operationID string, body []byte) error,
-	patternOption patternvalidator.Option,
-) {
-	f.Helper()
-
-	plans := compileCases(f, openAPIYAML, validate, patternOption)
-	for index, planned := range plans {
-		for _, seed := range planned.plan.Seeds {
-			input := make([]byte, selectorBytes+len(seed))
-			binary.LittleEndian.PutUint64(input, uint64(index))
-			copy(input[selectorBytes:], seed)
-			f.Add(input)
-		}
-	}
-
-	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(plans) == 0 {
-			return
-		}
-
-		var selector [selectorBytes]byte
-		copy(selector[:], input)
-		index := binary.LittleEndian.Uint64(selector[:]) % uint64(len(plans))
-
-		var tape []byte
-		if len(input) > selectorBytes {
-			tape = input[selectorBytes:]
-		}
-
-		checkCase(t, plans[index], tape, validate)
-	})
-}
-
-func compileCases(
-	tb testing.TB,
-	openAPIYAML []byte,
-	validate func(operationID string, body []byte) error,
-	patternOption patternvalidator.Option,
-) []executableCase {
-	tb.Helper()
-
-	if validate == nil {
-		tb.Fatal("validator is nil")
-	}
-
-	if patternOption == nil {
-		tb.Fatal("pattern option is nil")
-	}
-
-	sources, err := oas.Parse(openAPIYAML)
+// Compile admits one OpenAPI document and creates one immutable graph program.
+func Compile(
+	document []byte,
+	patternOptions ...patternvalidator.Option,
+) (*Generator, error) {
+	compiled, err := suite.CompileSuite(document, patternOptions...)
 	if err != nil {
-		tb.Fatal(err)
+		return nil, err
 	}
 
-	result := make([]executableCase, 0)
-
-	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
-		compiled, compileErr := suite.CompileSuite(sources[operationID], suite.CompilerOptions{
-			PatternOption: patternOption,
-		})
-		if compileErr != nil {
-			tb.Fatalf("compile operation %q: %v", operationID, compileErr)
-		}
-
-		for _, plan := range compiled.Cases {
-			result = append(result, executableCase{operationID: operationID, plan: plan})
-		}
+	runtime, err := validation.Parse(document, patternOptions...)
+	if err != nil {
+		return nil, err
 	}
 
-	return result
+	kin, err := newKinValidator(document)
+	if err != nil {
+		return nil, err
+	}
+
+	lib, err := newLibValidator(document)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Generator{compiled: compiled, runtime: runtime, kin: kin, lib: lib}, nil
 }
 
-func checkCase(
-	t *testing.T,
-	planned executableCase,
-	tape []byte,
-	validate func(operationID string, body []byte) error,
-) {
-	t.Helper()
+// Empty reports whether the document has any JSON request body to generate.
+func (generator *Generator) Empty() bool {
+	return generator == nil || len(generator.compiled.Operations) == 0
+}
 
-	value, err := planned.plan.Program.Decode(tape, fuzzLimits)
+// Decode maps arbitrary native fuzz bytes directly to one request body.
+func (generator *Generator) Decode(input []byte) (Sample, error) {
+	if generator == nil {
+		return Sample{}, errors.New("decode with nil request generator")
+	}
+
+	if generator.Empty() {
+		return Sample{}, errors.New("decode document with no JSON request bodies")
+	}
+
+	decoded, err := generator.compiled.Program.Decode(input, decodeLimits)
 	if err != nil {
-		var limit *program.LimitError
-		if errors.As(err, &limit) {
-			return
+		return Sample{}, err
+	}
+
+	if int(decoded.Operation) >= len(generator.compiled.Operations) {
+		return Sample{}, fmt.Errorf("decoded unknown operation %d", decoded.Operation)
+	}
+
+	body, err := decoded.Value.MarshalJSON()
+	if err != nil {
+		return Sample{}, fmt.Errorf("marshal decoded request body: %w", err)
+	}
+
+	return Sample{
+		OperationID: generator.compiled.Operations[decoded.Operation].ID,
+		Body:        append([]byte(nil), body...),
+		ExpectValid: decoded.Expect == program.ExpectValid,
+	}, nil
+}
+
+// Check compares the expected result independently with runtime and generated validators.
+func (generator *Generator) Check(sample Sample, generated Validator) error {
+	if generator == nil {
+		return errors.New("check with nil request generator")
+	}
+
+	if generated == nil {
+		return errors.New("generated validator is nil")
+	}
+
+	runtimeValidation, ok := generator.runtime[sample.OperationID]
+	if !ok || runtimeValidation.Body == nil {
+		return fmt.Errorf("operation %q has no runtime request-body validation", sample.OperationID)
+	}
+
+	var mismatches []error
+
+	runtimeAccepted := len(runtimeValidation.Body.Validate(sample.Body)) == 0
+	if runtimeAccepted != sample.ExpectValid {
+		mismatches = append(mismatches, fmt.Errorf(
+			"runtime validator for %q returned valid=%t, want %t for %s",
+			sample.OperationID,
+			runtimeAccepted,
+			sample.ExpectValid,
+			sample.Body,
+		))
+	}
+
+	generatedErr := generated(sample.OperationID, sample.Body)
+
+	generatedAccepted := generatedErr == nil
+	if generatedAccepted != sample.ExpectValid {
+		message := fmt.Sprintf(
+			"generated validator for %q returned valid=%t, want %t for %s",
+			sample.OperationID, generatedAccepted, sample.ExpectValid, sample.Body,
+		)
+		if generatedErr == nil {
+			mismatches = append(mismatches, errors.New(message))
+		} else {
+			mismatches = append(mismatches, fmt.Errorf("%s: %w", message, generatedErr))
 		}
-
-		t.Fatalf("%s/%s decode tape %x: %v", planned.operationID, planned.plan.Name, tape, err)
 	}
 
-	body, err := value.MarshalJSON()
-	if err != nil {
-		t.Fatalf("%s/%s marshal: %v", planned.operationID, planned.plan.Name, err)
+	if err := externalMismatch("kin-openapi", generator.kin, sample); err != nil {
+		mismatches = append(mismatches, err)
 	}
 
-	validationErr := validate(planned.operationID, body)
-	if planned.plan.Expect == suite.ExpectAccepted && validationErr != nil {
-		t.Fatalf("%s/%s rejected valid body %s: %v", planned.operationID, planned.plan.Name, body, validationErr)
+	if err := externalMismatch("libopenapi", generator.lib, sample); err != nil {
+		mismatches = append(mismatches, err)
 	}
 
-	if planned.plan.Expect == suite.ExpectRejected && validationErr == nil {
-		t.Fatalf("%s/%s accepted invalid body %s", planned.operationID, planned.plan.Name, body)
+	return errors.Join(mismatches...)
+}
+
+// Close releases resources held by independent differential validators.
+func (generator *Generator) Close() {
+	if generator == nil {
+		return
 	}
+
+	generator.lib.close()
+}
+
+// ResourceLimited reports whether Decode stopped at an explicit runtime or solver budget.
+func ResourceLimited(err error) bool {
+	var (
+		limit    *program.LimitError
+		resource *program.ResourceError
+	)
+
+	return errors.As(err, &limit) || errors.As(err, &resource)
 }

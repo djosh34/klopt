@@ -28,6 +28,7 @@ var semanticVersionPattern = regexp.MustCompile(
 // Source retains one parsed document and one acquired operation's request inputs.
 type Source struct {
 	Document            json.RawMessage
+	Method              string
 	PathTemplate        string
 	RequestSchema       LocatedSchema
 	RequestBodyRequired bool
@@ -385,6 +386,8 @@ func (source Source) collectRequests(
 			if err != nil {
 				return nil, err
 			}
+
+			operationSource.Method = operation.Method
 
 			if first, duplicate := locations[operationID]; duplicate {
 				return nil, fmt.Errorf(
