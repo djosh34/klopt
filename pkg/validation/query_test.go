@@ -121,494 +121,10 @@ func TestQueryDecoderUnknownScalarSlotsUseStrings(t *testing.T) {
 	}
 }
 
-func TestQueryDecoderAnyOfUsesFirstCompleteSchemaStyleConversion(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name     string
-		schema   string
-		expected string
-	}{
-		{name: "integer first", schema: `{anyOf: [{type: integer}, {type: string}]}`, expected: `{"q":7}`},
-		{name: "string first", schema: `{anyOf: [{type: string}, {type: integer}]}`, expected: `{"q":"7"}`},
-		{
-			name:     "later branch after validation failure",
-			schema:   `{anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}`,
-			expected: `{"q":"7"}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder := parseQueryDecoder(t, `{name: q, in: query, schema: `+test.schema+`}`)
-			actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestQueryDecoderAnyOfPrefersFirstCompleteValidationError(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
-      {type: boolean},
-      {type: integer, minimum: 10}
-    ]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
-	require.Nil(t, actual)
-	require.ErrorContains(t, err, "/anyOf/1")
-	require.ErrorContains(t, err, "minimum")
-}
-
-func TestQueryDecoderAnyOfKeepsParentAndAllOfConstraintsActive(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {allOf: [
-      {enum: ['7']},
-      {anyOf: [{type: integer}, {type: string, pattern: '^7$'}]}
-    ]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":"7"}`, string(actual))
-}
-
-func TestQueryDecoderAnyOfUsesReferencedAlternatives(t *testing.T) {
-	t.Parallel()
-
-	requests, err := validation.Parse([]byte(`openapi: 3.0.3
-paths:
-  /query:
-    get:
-      operationId: query
-      parameters:
-        - name: q
-          in: query
-          schema:
-            anyOf:
-              - {$ref: '#/components/schemas/LargeInteger'}
-              - {$ref: '#/components/schemas/Seven'}
-components:
-  schemas:
-    LargeInteger: {type: integer, minimum: 10}
-    Seven: {type: string, pattern: '^7$'}
-`))
-	require.NoError(t, err)
-
-	actual, err := requests["query"].Query.Decode(&url.URL{RawQuery: `q=7`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":"7"}`, string(actual))
-}
-
-func TestQueryDecoderAnyOfHasNoAlternativeCountCap(t *testing.T) {
-	t.Parallel()
-
-	const booleanAlternatives = 300
-
-	schema := `{anyOf: [` + strings.Repeat(`{type: boolean},`, booleanAlternatives) +
-		`{type: integer, minimum: 10}]}`
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: `+schema+`}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
-	require.Nil(t, actual)
-	require.ErrorContains(t, err, "/anyOf/300")
-	require.ErrorContains(t, err, "minimum")
-}
-
-func TestQueryDecoderAnyOfConversionMustSatisfySelectedBranch(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name      string
-		parameter string
-		expected  string
-	}{
-		{
-			name:      "root",
-			parameter: `{name: q, in: query, schema: {anyOf: [{type: boolean, enum: [false]}, {}]}}`,
-			expected:  `{"q":"true"}`,
-		},
-		{
-			name:      "array item",
-			parameter: `{name: q, in: query, explode: false, schema: {type: array, items: {anyOf: [{type: boolean, enum: [false]}, {}]}}}`,
-			expected:  `{"q":["true"]}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder := parseQueryDecoder(t, test.parameter)
-			actual, err := decoder.Decode(&url.URL{RawQuery: `q=true`})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestQueryDecoderAnyOfKeepsJSONContentKind(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `name: q
-      in: query
-      content:
-        application/json:
-          schema: {anyOf: [{type: string}, {type: integer}]}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":7}`, string(actual))
-}
-
-func TestQueryDecoderAnyOfConvertsNestedSchemaStyleValues(t *testing.T) {
-	t.Parallel()
-
-	choice := `{anyOf: [{type: integer}, {type: string}]}`
-	for _, test := range []struct {
-		name      string
-		parameter string
-		rawQuery  string
-		expected  string
-	}{
-		{
-			name: "array items", parameter: `{name: q, in: query, explode: false, schema: {type: array, items: ` + choice + `}}`,
-			rawQuery: `q=7,x`, expected: `{"q":[7,"x"]}`,
-		},
-		{
-			name: "declared property", parameter: `{name: q, in: query, explode: false, schema: {type: object, additionalProperties: false, properties: {value: ` + choice + `}}}`,
-			rawQuery: `q=value,7`, expected: `{"q":{"value":7}}`,
-		},
-		{
-			name: "additional property", parameter: `{name: q, in: query, explode: false, schema: {type: object, additionalProperties: ` + choice + `}}`,
-			rawQuery: `q=value,7`, expected: `{"q":{"value":7}}`,
-		},
-		{
-			name: "deep object primitive array", parameter: `{name: q, in: query, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {value: {type: array, items: ` + choice + `}}}}`,
-			rawQuery: `q%5Bvalue%5D=7&q%5Bvalue%5D=x`, expected: `{"q":{"value":[7,"x"]}}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder := parseQueryDecoder(t, test.parameter)
-			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestQueryDecoderAnyOfConvertsRootObjectsPerBranch(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name     string
-		schema   string
-		rawQuery string
-		expected string
-	}{
-		{
-			name: "branch-only declared integer property",
-			schema: `{anyOf: [
-              {type: object, required: [count], additionalProperties: false, properties: {count: {type: integer}}},
-              {type: object, required: [label], additionalProperties: false, properties: {label: {type: string}}}
-            ]}`,
-			rawQuery: `q=count,7`, expected: `{"q":{"count":7}}`,
-		},
-		{
-			name: "later declared-property branch",
-			schema: `{anyOf: [
-              {type: object, required: [count], additionalProperties: false, properties: {count: {type: integer}}},
-              {type: object, required: [label], additionalProperties: false, properties: {label: {type: string}}}
-            ]}`,
-			rawQuery: `q=label,x`, expected: `{"q":{"label":"x"}}`,
-		},
-		{
-			name: "ordered additional property conversion",
-			schema: `{anyOf: [
-              {type: object, additionalProperties: {type: integer}},
-              {type: object, additionalProperties: {type: string}}
-            ]}`,
-			rawQuery: `q=value,7`, expected: `{"q":{"value":7}}`,
-		},
-		{
-			name: "reversed additional property conversion",
-			schema: `{anyOf: [
-              {type: object, additionalProperties: {type: string}},
-              {type: object, additionalProperties: {type: integer}}
-            ]}`,
-			rawQuery: `q=value,7`, expected: `{"q":{"value":"7"}}`,
-		},
-		{
-			name: "later additional property overrides another branch declaration",
-			schema: `{anyOf: [
-              {type: object, properties: {a: {type: string, pattern: '^x$'}}, additionalProperties: false},
-              {type: object, additionalProperties: {type: integer}}
-            ]}`,
-			rawQuery: `q=a,7`, expected: `{"q":{"a":7}}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: `+test.schema+`}`)
-			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestQueryDecoderAnyOfExplodedObjectClaimsOnlyBranchProperties(t *testing.T) {
-	t.Parallel()
-
-	requests, err := validation.Parse([]byte(`openapi: 3.0.3
-paths:
-  /query:
-    get:
-      operationId: query
-      parameters:
-        - name: choice
-          in: query
-          style: form
-          explode: true
-          schema:
-            anyOf:
-              - {type: object, additionalProperties: false, properties: {a: {type: integer}}}
-              - {type: object, additionalProperties: false, properties: {b: {type: integer}}}
-        - name: other
-          in: query
-          style: form
-          explode: true
-          schema: {type: object, additionalProperties: {type: integer}}
-`))
-	require.NoError(t, err)
-
-	actual, err := requests["query"].Query.Decode(&url.URL{RawQuery: `a=1&extra=2`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"choice":{"a":1},"other":{"extra":2}}`, string(actual))
-}
-
-func TestQueryDecoderAnyOfPreservesNestedChoiceOrderAndShape(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name      string
-		parameter string
-		rawQuery  string
-		expected  string
-	}{
-		{
-			name:      "anyOf inside allOf",
-			parameter: `{name: q, in: query, schema: {allOf: [{anyOf: [{type: integer}, {type: string}]}]}}`,
-			rawQuery:  `q=7`, expected: `{"q":7}`,
-		},
-		{
-			name:      "nested anyOf",
-			parameter: `{name: q, in: query, schema: {anyOf: [{anyOf: [{type: integer}, {type: string}]}, {type: boolean}]}}`,
-			rawQuery:  `q=7`, expected: `{"q":7}`,
-		},
-		{
-			name:      "array alternatives retain array wire shape",
-			parameter: `{name: q, in: query, explode: false, schema: {anyOf: [{type: array, items: {type: integer}}, {type: array, items: {type: string}}]}}`,
-			rawQuery:  `q=7,8`, expected: `{"q":[7,8]}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder := parseQueryDecoder(t, test.parameter)
-			actual, err := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestQueryDecoderRejectsAnyOfWithUnrepresentableWireShapes(t *testing.T) {
-	t.Parallel()
-
-	_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: {anyOf: [{type: array, items: {}}, {type: object}]}}`))
-	require.ErrorContains(t, err, "/anyOf/1")
-	require.ErrorContains(t, err, "wire shape")
-}
-
-func TestQueryDecoderRejectsAnyOfWithUnrepresentableNestedSlots(t *testing.T) {
-	t.Parallel()
-
-	_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: {anyOf: [{type: array, items: {type: object}}]}}`))
-	require.ErrorContains(t, err, "/anyOf/0/items")
-	require.ErrorContains(t, err, "primitive type")
-}
-
-func TestQueryDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *testing.T) {
-	t.Parallel()
-
-	for _, parameter := range []string{
-		`- {name: q, in: query, schema: {type: array, items: {anyOf: [{type: object}, {type: string}]}}}`,
-		`- {name: q, in: query, explode: false, schema: {type: object, properties: {value: {anyOf: [{type: object}, {type: string}]}}}}`,
-		`- {name: q, in: query, explode: false, schema: {type: object, additionalProperties: {anyOf: [{type: object}, {type: string}]}}}`,
-	} {
-		t.Run(parameter, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := validation.Parse(querySpec(parameter))
-			require.Error(t, err)
-			require.ErrorContains(t, err, "anyOf")
-		})
-	}
-}
-
-func TestQueryDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
-      {allOf: [{type: string}, {type: integer}]},
-      {type: array, items: {type: string}}
-    ]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x&q=y`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
-}
-
-func TestQueryDecoderSkipsAnyOfWireShapesWithImpossibleBounds(t *testing.T) {
-	t.Parallel()
-
-	for _, impossible := range []string{
-		`{type: object, minProperties: 1, maxProperties: 0}`,
-		`{type: object, allOf: [{minProperties: 1}, {maxProperties: 0}]}`,
-	} {
-		t.Run(impossible, func(t *testing.T) {
-			t.Parallel()
-
-			decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [`+
-				impossible+`, {type: string}]}}`)
-			actual, err := decoder.Decode(&url.URL{RawQuery: `q=x`})
-			require.NoError(t, err)
-			require.JSONEq(t, `{"q":"x"}`, string(actual))
-		})
-	}
-}
-
-func TestQueryDecoderInfersWireShapeFromConjunctiveAnyOf(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {allOf: [
-      {anyOf: [{type: array, items: {type: string}}, {type: string}]},
-      {anyOf: [{type: array, items: {type: string}}, {type: object}]}
-    ]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x&q=y`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
-}
-
-func TestQueryDecoderSkipsAlternativesMadeImpossibleByConjunctiveBounds(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {allOf: [
-      {anyOf: [{type: object, minProperties: 1}, {type: string}]},
-      {maxProperties: 0}
-    ]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":"x"}`, string(actual))
-}
-
-func TestQueryDecoderSkipsIntegerAnyOfAlternativeWithoutAnInteger(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
-      {type: integer, minimum: 0.1, maximum: 0.9},
-      {type: array, items: {type: string}}
-    ]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x&q=y`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
-}
-
-func TestQueryDecoderSkipsEnumAlternativesWhoseMembersViolateBounds(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
-      {type: object, enum: [{}], minProperties: 1},
-      {type: string}
-    ]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":"x"}`, string(actual))
-}
-
-func TestQueryDecoderInfersPropertiesFromAnyOfObjectEnums(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: {
-      type: object,
-      anyOf: [{enum: [{count: 2}]}]
-    }}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=count,2`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":{"count":2}}`, string(actual))
-}
-
-func TestQueryDecoderSkipsAlternativesWithoutAnAllowedMultiple(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
-      {type: integer, minimum: 1, maximum: 1, multipleOf: 2},
-      {type: array, items: {type: string}}
-    ]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=x&q=y`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
-}
-
-func TestQueryDecoderCombinesConjunctiveAnyOfObjectAlternatives(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: {
-      type: object,
-      allOf: [
-        {anyOf: [{type: object, required: [a], properties: {a: {type: integer}}}]},
-        {anyOf: [{type: object, required: [b], properties: {b: {type: integer}}}]}
-      ]
-    }}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=a,1,b,2`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":{"a":1,"b":2}}`, string(actual))
-}
-
-func TestQueryDecoderTriesConjunctiveObjectAlternativesTransactionally(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: {
-      type: object,
-      allOf: [
-        {anyOf: [
-          {type: object, required: [a], properties: {a: {type: integer}}},
-          {type: object, required: [a], properties: {a: {type: string}}}
-        ]},
-        {anyOf: [
-          {type: object, required: [b], properties: {b: {type: boolean}}},
-          {type: object, required: [b], properties: {b: {type: number}}}
-        ]}
-      ]
-    }}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=a,x,b,7`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":{"a":"x","b":7}}`, string(actual))
-}
-
 func TestQueryDecoderInfersEnumOnlyArrayScalarSlots(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {enum: [[1, 2]]}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `q=1&q=2`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"q":[1,2]}`, string(actual))
-}
-
-func TestQueryDecoderInfersEnumOnlyArrayScalarSlotsPerAnyOfBranch(t *testing.T) {
-	t.Parallel()
-
-	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [{enum: [[1, 2]]}]}}`)
 	actual, err := decoder.Decode(&url.URL{RawQuery: `q=1&q=2`})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"q":[1,2]}`, string(actual))
@@ -1723,6 +1239,98 @@ func FuzzQueryDecoder(f *testing.F) {
 
 		require.True(t, json.Valid(first))
 	})
+}
+
+func TestQueryDecoderAnyOfUsesFirstWorkingBranchInSourceOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		expected string
+	}{
+		{name: "integer first", schema: `{anyOf: [{type: integer}, {type: string}]}`, expected: `{"q":7}`},
+		{name: "string first", schema: `{anyOf: [{type: string}, {type: integer}]}`, expected: `{"q":"7"}`},
+		{
+			name:     "later branch after validation failure",
+			schema:   `{anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}`,
+			expected: `{"q":"7"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := parseQueryDecoder(t, `{name: q, in: query, schema: `+test.schema+`}`)
+			actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderAnyOfKeepsParentAndAllOfConstraintsActive(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {
+      enum: ['7'],
+      allOf: [{minLength: 1}],
+      anyOf: [{type: integer}, {type: string, pattern: '^7$'}]
+    }}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"7"}`, string(actual))
+}
+
+func TestQueryDecoderAnyOfReturnsDeterministicAllFailError(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+      {type: boolean},
+      {type: integer, minimum: 10}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+	require.Nil(t, actual)
+	require.ErrorContains(t, err, "/anyOf/1")
+	require.ErrorContains(t, err, "minimum")
+}
+
+func TestQueryDecoderConvertsNestedAnyOfItemsAndProperties(t *testing.T) {
+	t.Parallel()
+
+	choice := `{anyOf: [{type: integer}, {type: string}]}`
+	for _, test := range []struct {
+		name      string
+		parameter string
+		rawQuery  string
+		expected  string
+	}{
+		{
+			name: "array items", parameter: `{name: q, in: query, explode: false, schema: {type: array, items: ` + choice + `}}`,
+			rawQuery: `q=7,x`, expected: `{"q":[7,"x"]}`,
+		},
+		{
+			name: "object property", parameter: `{name: q, in: query, explode: false, schema: {type: object, additionalProperties: false, properties: {value: ` + choice + `}}}`,
+			rawQuery: `q=value,7`, expected: `{"q":{"value":7}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			actual, err := parseQueryDecoder(t, test.parameter).Decode(&url.URL{RawQuery: test.rawQuery})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestQueryDecoderRejectsAnyOfNestedUnderAllOfAtSourcePointer(t *testing.T) {
+	t.Parallel()
+
+	_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: {allOf: [
+          {anyOf: [{type: integer}, {type: string}]}
+        ]}}`))
+	require.ErrorContains(t, err, "/allOf/0/anyOf")
+	require.ErrorContains(t, err, "unsupported anyOf nested under allOf")
 }
 
 func parseQueryDecoder(t testing.TB, parameter string) *validation.QueryDecoder {

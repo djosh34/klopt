@@ -106,507 +106,6 @@ func TestCompilePathDecoderSupportsSchemaLessJSONContent(t *testing.T) {
 	require.JSONEq(t, `{"id":null}`, string(actual))
 }
 
-func TestPathDecoderAnyOfUsesFirstCompleteSchemaStyleConversion(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name     string
-		schema   string
-		expected string
-	}{
-		{name: "integer first", schema: `{anyOf: [{type: integer}, {type: string}]}`, expected: `{"id":7}`},
-		{name: "string first", schema: `{anyOf: [{type: string}, {type: integer}]}`, expected: `{"id":"7"}`},
-		{
-			name:     "later branch after validation failure",
-			schema:   `{anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}`,
-			expected: `{"id":"7"}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: `+test.schema+`}
-`)
-			require.NoError(t, err)
-
-			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestPathDecoderAnyOfPrefersFirstCompleteValidationError(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            anyOf:
-              - {type: boolean}
-              - {type: integer, minimum: 10}
-`)
-	require.NoError(t, err)
-
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
-	require.Nil(t, actual)
-	require.ErrorContains(t, err, "/anyOf/1")
-	require.ErrorContains(t, err, "minimum")
-}
-
-func TestPathDecoderAnyOfConversionMustSatisfySelectedBranch(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name     string
-		schema   string
-		expected string
-	}{
-		{
-			name:     "root",
-			schema:   `{anyOf: [{type: boolean, enum: [false]}, {enum: [true, 'true']}]}`,
-			expected: `{"id":"true"}`,
-		},
-		{
-			name:     "array item",
-			schema:   `{type: array, items: {anyOf: [{type: boolean, enum: [false]}, {}]}}`,
-			expected: `{"id":["true"]}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: `+test.schema+`}
-`)
-			require.NoError(t, err)
-
-			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/true"})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestPathDecoderAnyOfConvertsNestedSchemaStyleValues(t *testing.T) {
-	t.Parallel()
-
-	choice := `{anyOf: [{type: integer}, {type: string}]}`
-	for _, test := range []struct {
-		name      string
-		parameter string
-		path      string
-		expected  string
-	}{
-		{
-			name: "array items", parameter: `{name: id, in: path, required: true, schema: {type: array, items: ` + choice + `}}`,
-			path: "/items/7,x", expected: `{"id":[7,"x"]}`,
-		},
-		{
-			name: "declared property", parameter: `{name: id, in: path, required: true, explode: true, schema: {type: object, additionalProperties: false, properties: {value: ` + choice + `}}}`,
-			path: "/items/value=7", expected: `{"id":{"value":7}}`,
-		},
-		{
-			name: "additional property", parameter: `{name: id, in: path, required: true, explode: true, schema: {type: object, additionalProperties: ` + choice + `}}`,
-			path: "/items/value=7", expected: `{"id":{"value":7}}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder, err := compilePathDecoderForTest(t, "\n      parameters:\n        - "+test.parameter+"\n")
-			require.NoError(t, err)
-			actual, err := decoder.DecodePathParams(&url.URL{Path: test.path})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestPathDecoderAnyOfConvertsRootObjectsPerBranch(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name     string
-		schema   string
-		path     string
-		expected string
-	}{
-		{
-			name: "branch-only declared integer property",
-			schema: `{anyOf: [
-              {type: object, required: [count], additionalProperties: false, properties: {count: {type: integer}}},
-              {type: object, required: [label], additionalProperties: false, properties: {label: {type: string}}}
-            ]}`,
-			path: "/items/count,7", expected: `{"id":{"count":7}}`,
-		},
-		{
-			name: "later declared-property branch",
-			schema: `{anyOf: [
-              {type: object, required: [count], additionalProperties: false, properties: {count: {type: integer}}},
-              {type: object, required: [label], additionalProperties: false, properties: {label: {type: string}}}
-            ]}`,
-			path: "/items/label,x", expected: `{"id":{"label":"x"}}`,
-		},
-		{
-			name: "ordered additional property conversion",
-			schema: `{anyOf: [
-              {type: object, additionalProperties: {type: integer}},
-              {type: object, additionalProperties: {type: string}}
-            ]}`,
-			path: "/items/value,7", expected: `{"id":{"value":7}}`,
-		},
-		{
-			name: "reversed additional property conversion",
-			schema: `{anyOf: [
-              {type: object, additionalProperties: {type: string}},
-              {type: object, additionalProperties: {type: integer}}
-            ]}`,
-			path: "/items/value,7", expected: `{"id":{"value":"7"}}`,
-		},
-		{
-			name: "later additional property overrides another branch declaration",
-			schema: `{anyOf: [
-              {type: object, properties: {a: {type: string, pattern: '^x$'}}, additionalProperties: false},
-              {type: object, additionalProperties: {type: integer}}
-            ]}`,
-			path: "/items/a,7", expected: `{"id":{"a":7}}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: `+test.schema+`}
-`)
-			require.NoError(t, err)
-			actual, err := decoder.DecodePathParams(&url.URL{Path: test.path})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
-func TestPathDecoderAnyOfInfersEnumOnlyArrayItems(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: {anyOf: [{enum: [[1, 2]]}]}}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/1,2"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":[1,2]}`, string(actual))
-}
-
-func TestCompilePathDecoderRejectsAnyOfWithUnrepresentableNestedSlots(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: {anyOf: [{type: array, items: {type: object}}]}}
-`)
-	require.Nil(t, decoder)
-	require.ErrorContains(t, err, "/anyOf/0/items")
-	require.ErrorContains(t, err, "primitive type")
-}
-
-func TestCompilePathDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *testing.T) {
-	t.Parallel()
-
-	for _, schema := range []string{
-		`{type: array, items: {anyOf: [{type: object}, {type: string}]}}`,
-		`{type: object, properties: {value: {anyOf: [{type: object}, {type: string}]}}}`,
-		`{type: object, additionalProperties: {anyOf: [{type: object}, {type: string}]}}`,
-	} {
-		t.Run(schema, func(t *testing.T) {
-			t.Parallel()
-
-			decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: `+schema+`}
-`)
-			require.Nil(t, decoder)
-			require.Error(t, err)
-			require.ErrorContains(t, err, "anyOf")
-		})
-	}
-}
-
-func TestCompilePathDecoderRejectsUnsupportedSlotInsideRootAnyOf(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            anyOf:
-              - type: object
-                properties:
-                  value: {type: object}
-              - type: object
-                properties:
-                  value: {type: string}
-`)
-	require.Nil(t, decoder)
-	require.ErrorContains(t, err, "/anyOf/0/properties/value")
-	require.ErrorContains(t, err, `unsupported compiled type "object"`)
-}
-
-func TestPathDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            anyOf:
-              - {allOf: [{type: string}, {type: integer}]}
-              - {type: array, items: {type: string}}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x,y"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
-}
-
-func TestPathDecoderSkipsAnyOfWireShapesWithImpossibleBounds(t *testing.T) {
-	t.Parallel()
-
-	for _, impossible := range []string{
-		`{type: object, minProperties: 1, maxProperties: 0}`,
-		`{type: object, allOf: [{minProperties: 1}, {maxProperties: 0}]}`,
-	} {
-		t.Run(impossible, func(t *testing.T) {
-			t.Parallel()
-
-			decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            anyOf:
-              - `+impossible+`
-              - {type: string}
-`)
-			require.NoError(t, err)
-			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x"})
-			require.NoError(t, err)
-			require.JSONEq(t, `{"id":"x"}`, string(actual))
-		})
-	}
-}
-
-func TestPathDecoderInfersWireShapeFromConjunctiveAnyOf(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            allOf:
-              - anyOf:
-                  - {type: array, items: {type: string}}
-                  - {type: string}
-              - anyOf:
-                  - {type: array, items: {type: string}}
-                  - {type: object}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x,y"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
-}
-
-func TestPathDecoderSkipsAlternativesMadeImpossibleByConjunctiveBounds(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            allOf:
-              - anyOf:
-                  - {type: object, minProperties: 1}
-                  - {type: string}
-              - {maxProperties: 0}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":"x"}`, string(actual))
-}
-
-func TestPathDecoderSkipsIntegerAnyOfAlternativeWithoutAnInteger(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            anyOf:
-              - {type: integer, minimum: 0.1, maximum: 0.9}
-              - {type: array, items: {type: string}}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x,y"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
-}
-
-func TestPathDecoderSkipsEnumAlternativesWhoseMembersViolateBounds(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            anyOf:
-              - {type: object, enum: [{}], minProperties: 1}
-              - {type: string}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":"x"}`, string(actual))
-}
-
-func TestPathDecoderSkipsAlternativesWithoutAnAllowedMultiple(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            anyOf:
-              - {type: integer, minimum: 1, maximum: 1, multipleOf: 2}
-              - {type: array, items: {type: string}}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/x,y"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
-}
-
-func TestPathDecoderCombinesConjunctiveAnyOfObjectAlternatives(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: object
-            allOf:
-              - anyOf:
-                  - {type: object, required: [a], properties: {a: {type: integer}}}
-              - anyOf:
-                  - {type: object, required: [b], properties: {b: {type: integer}}}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/a,1,b,2"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":{"a":1,"b":2}}`, string(actual))
-}
-
-func TestPathDecoderTriesConjunctiveObjectAlternativesTransactionally(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: object
-            allOf:
-              - anyOf:
-                  - {type: object, required: [a], properties: {a: {type: integer}}}
-                  - {type: object, required: [a], properties: {a: {type: string}}}
-              - anyOf:
-                  - {type: object, required: [b], properties: {b: {type: boolean}}}
-                  - {type: object, required: [b], properties: {b: {type: number}}}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/a,x,b,7"})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":{"a":"x","b":7}}`, string(actual))
-}
-
-func TestPathDecoderAnyOfReportsNoMatchingAlternative(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: {anyOf: [{type: integer, minimum: 10}, {type: boolean}]}}
-`)
-	require.NoError(t, err)
-	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
-	require.Nil(t, actual)
-	require.Error(t, err)
-}
-
-func TestPathDecoderAnyOfPreservesNestedChoiceOrderAndShape(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name     string
-		schema   string
-		path     string
-		expected string
-	}{
-		{
-			name: "anyOf inside allOf", schema: `{allOf: [{anyOf: [{type: integer}, {type: string}]}]}`,
-			path: "/items/7", expected: `{"id":7}`,
-		},
-		{
-			name: "nested anyOf", schema: `{anyOf: [{anyOf: [{type: integer}, {type: string}]}, {type: boolean}]}`,
-			path: "/items/7", expected: `{"id":7}`,
-		},
-		{
-			name: "array alternatives", schema: `{anyOf: [{type: array, items: {type: integer}}, {type: array, items: {type: string}}]}`,
-			path: "/items/7,8", expected: `{"id":[7,8]}`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: `+test.schema+`}
-`)
-			require.NoError(t, err)
-			actual, err := decoder.DecodePathParams(&url.URL{Path: test.path})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
-		})
-	}
-}
-
 func TestCompilePathDecoderLeavesJSONContentNullToValidation(t *testing.T) {
 	t.Parallel()
 
@@ -853,6 +352,118 @@ func TestCompilePathDecoderMapsEverySchemaStyleAndShapeWire(t *testing.T) {
 			require.Equal(t, test.explode, decoder.Definition().Parameters[0].Explode)
 		})
 	}
+}
+
+func TestPathDecoderAnyOfUsesFirstWorkingBranchInSourceOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		expected string
+	}{
+		{name: "integer first", schema: `{anyOf: [{type: integer}, {type: string}]}`, expected: `{"id":7}`},
+		{name: "string first", schema: `{anyOf: [{type: string}, {type: integer}]}`, expected: `{"id":"7"}`},
+		{
+			name:     "later branch after validation failure",
+			schema:   `{anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}`,
+			expected: `{"id":"7"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: `+test.schema+`}
+`)
+			require.NoError(t, err)
+
+			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestPathDecoderAnyOfKeepsParentAndAllOfConstraintsActive(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            enum: ['7']
+            allOf: [{minLength: 1}]
+            anyOf: [{type: integer}, {type: string, pattern: '^7$'}]
+`)
+	require.NoError(t, err)
+
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"7"}`, string(actual))
+}
+
+func TestPathDecoderAnyOfReturnsDeterministicAllFailError(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: {anyOf: [{type: boolean}, {type: integer, minimum: 10}]}}
+`)
+	require.NoError(t, err)
+
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
+	require.Nil(t, actual)
+	require.ErrorContains(t, err, "/anyOf/1")
+	require.ErrorContains(t, err, "minimum")
+}
+
+func TestPathDecoderConvertsNestedAnyOfItemsAndProperties(t *testing.T) {
+	t.Parallel()
+
+	choice := `{anyOf: [{type: integer}, {type: string}]}`
+	for _, test := range []struct {
+		name      string
+		parameter string
+		path      string
+		expected  string
+	}{
+		{
+			name: "array items", parameter: `{name: id, in: path, required: true, schema: {type: array, items: ` + choice + `}}`,
+			path: "/items/7,x", expected: `{"id":[7,"x"]}`,
+		},
+		{
+			name: "object property", parameter: `{name: id, in: path, required: true, explode: true, schema: {type: object, additionalProperties: false, properties: {value: ` + choice + `}}}`,
+			path: "/items/value=7", expected: `{"id":{"value":7}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, "\n      parameters:\n        - "+test.parameter+"\n")
+			require.NoError(t, err)
+			actual, err := decoder.DecodePathParams(&url.URL{Path: test.path})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestPathDecoderRejectsAnyOfNestedUnderAllOfAtSourcePointer(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: {allOf: [
+            {anyOf: [{type: integer}, {type: string}]}
+          ]}}
+`)
+	require.Nil(t, decoder)
+	require.ErrorContains(t, err, "/allOf/0/anyOf")
+	require.ErrorContains(t, err, "unsupported anyOf nested under allOf")
 }
 
 func compilePathDecoderForTest(t *testing.T, operationFields string) (*PathDecoder, error) {

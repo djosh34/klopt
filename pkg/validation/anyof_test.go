@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseAndValidateAnyOf(t *testing.T) {
+func TestParseAndValidateAnyOfWithActiveSiblings(t *testing.T) {
 	t.Parallel()
 
 	validation := mustParseSchema(t, `{
@@ -28,30 +28,12 @@ func TestParseAndValidateAnyOf(t *testing.T) {
 	}
 }
 
-func TestValidateAnyOfReturnsOnlyParentCompositionFailure(t *testing.T) {
-	t.Parallel()
-
-	validation := mustParseSchema(t, `{
-		"anyOf":[
-			{"type":"object","required":["kind"]},
-			{"type":"array","items":{},"minItems":2}
-		]
-	}`, "")
-
-	errs := validation.Validate(json.RawMessage(`false`))
-	require.Len(t, errs, 1)
-	require.Contains(t, errors.Join(errs...).Error(), "instance #")
-	require.Contains(t, errors.Join(errs...).Error(), "keyword anyOf")
-}
-
 func TestAnyOfWorksRecursivelyAndThroughReferences(t *testing.T) {
 	t.Parallel()
 
 	validation := mustParseSchema(t, `{
 		"type":"object",
-		"properties":{
-			"items":{"type":"array","items":{"$ref":"#/components/schemas/Choice"}}
-		},
+		"properties":{"items":{"type":"array","items":{"$ref":"#/components/schemas/Choice"}}},
 		"additionalProperties":{"$ref":"#/components/schemas/Choice"}
 	}`, `,"components":{"schemas":{"Choice":{"anyOf":[{"type":"integer"},{"type":"string"}]}}}`)
 
@@ -85,14 +67,5 @@ func TestParseRejectsMalformedAnyOfAtExactPointer(t *testing.T) {
 			_, err := Parse(openAPISpec(test.schema, "", false))
 			require.ErrorContains(t, err, test.want)
 		})
-	}
-}
-
-func TestParseStillRejectsOneOfAndNot(t *testing.T) {
-	t.Parallel()
-
-	for _, schema := range []string{`{"oneOf":[{}]}`, `{"not":{}}`} {
-		_, err := Parse(openAPISpec(schema, "", false))
-		require.ErrorContains(t, err, "unsupported keyword")
 	}
 }

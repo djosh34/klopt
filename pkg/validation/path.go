@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"math/big"
 	"mime"
 	"regexp"
 	"slices"
@@ -224,11 +223,15 @@ func compileSchemaPathMetadata(
 	case "object":
 		parameter.wire = styleOffset + pathWireKind(pathShapeObject)
 
-		parameter.properties, parameter.propertyByName, parameter.dynamicType, err = compilePathObjectMetadata(validation)
+		parameter.properties, parameter.propertyByName, err = compiledPathProperties(validation)
 		if err != nil {
 			return pathParameter{}, fmt.Errorf("path parameter %q object properties: %w", name, err)
 		}
 
+		parameter.dynamicType, err = compiledPathScalarType(compiledAdditionalProperties(validation)...)
+		if err != nil {
+			return pathParameter{}, fmt.Errorf("path parameter %q additionalProperties: %w", name, err)
+		}
 	default:
 		parameter.wire = styleOffset + pathWireKind(pathShapePrimitive)
 
@@ -338,7 +341,7 @@ func pathJSONMediaType(
 	return mediaTypeName, rawMediaType, nil
 }
 
-//nolint:cyclop // The recursive walk checks every compositional and child schema edge.
+//nolint:cyclop // Every recursive schema-child position must reject binary format.
 func rejectPathBinary(validation *Validation) error {
 	if validation.StringValidation.Format == "binary" {
 		return fmt.Errorf(
@@ -382,59 +385,25 @@ func rejectPathBinary(validation *Validation) error {
 }
 
 func compiledPathScalarType(validations ...*Validation) (styleScalarType, error) {
-	typeName, err := compiledScalarType(validations...)
+	validation := conjunctiveValidation(validations...)
+	if validation == nil {
+		return "string", nil
+	}
+
+	typeName, err := compiledStyleType(validation)
 	if err != nil {
 		return "", err
 	}
 
+	if !isScalarType(typeName) {
+		return "", fmt.Errorf(
+			"style scalar slot at %s must have a primitive type; unsupported compiled type %q",
+			validation.SchemaPointer,
+			typeName,
+		)
+	}
+
 	return styleScalarType(typeName), nil
-}
-
-func compiledScalarType(validations ...*Validation) (string, error) {
-	if len(validations) == 0 {
-		return "string", nil
-	}
-
-	validation := conjunctiveValidation(validations...)
-	types := make([]string, 0)
-
-	var candidateError error
-
-	walkParameterCandidates(validation, func(candidate *Validation) bool {
-		if validationImpossible(candidate) {
-			return true
-		}
-
-		typeName := compiledValidationType(candidate)
-		if typeName == "" {
-			typeName = "string"
-		}
-
-		if !isScalarType(typeName) {
-			candidateError = fmt.Errorf(
-				"style scalar slot at %s must have a primitive type; unsupported compiled type %q",
-				candidate.SchemaPointer,
-				typeName,
-			)
-
-			return false
-		}
-
-		types = append(types, typeName)
-
-		return true
-	})
-
-	if candidateError != nil {
-		return "", candidateError
-	}
-
-	typeName := intersectQuerySchemaTypes(types)
-	if typeName == "" {
-		return "string", nil
-	}
-
-	return typeName, nil
 }
 
 func compiledArrayScalarType(validation *Validation) (styleScalarType, error) {
@@ -524,69 +493,12 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 	return properties, propertyByName, nil
 }
 
-func compilePathObjectMetadata(
-	validation *Validation,
-) ([]pathProperty, map[string]int, styleScalarType, error) {
-	properties := make(map[string]pathProperty)
-	dynamicType := styleScalarType("")
-
-	var candidateError error
-
-	walkParameterCandidates(validation, func(candidate *Validation) bool {
-		if validationImpossible(candidate) {
-			return true
-		}
-
-		candidateProperties, _, err := compiledPathProperties(candidate)
-		if err != nil {
-			candidateError = err
-
-			return false
-		}
-
-		for _, property := range candidateProperties {
-			if _, found := properties[property.name]; !found {
-				properties[property.name] = property
-			}
-		}
-
-		candidateDynamicType, err := compiledPathScalarType(compiledAdditionalProperties(candidate)...)
-		if err != nil {
-			candidateError = fmt.Errorf("additionalProperties: %w", err)
-
-			return false
-		}
-
-		if dynamicType == "" {
-			dynamicType = candidateDynamicType
-		}
-
-		return true
-	})
-
-	if candidateError != nil {
-		return nil, nil, "", candidateError
-	}
-
-	compiled := make([]pathProperty, 0, len(properties))
-
-	byName := make(map[string]int, len(properties))
-	for _, name := range slices.Sorted(maps.Keys(properties)) {
-		byName[name] = len(compiled)
-		compiled = append(compiled, properties[name])
-	}
-
-	return compiled, byName, dynamicType, nil
-}
-
 func compiledPathPropertyScalarType(
 	validations []*Validation,
 	enumValues []jsonvalue.Value,
 ) (styleScalarType, error) {
-	for _, validation := range validations {
-		if containsAnyOf(validation) {
-			return compiledPathScalarType(validations...)
-		}
+	if len(validations) == 1 && len(validations[0].AnyOfValidations) != 0 {
+		return compiledPathScalarType(validations...)
 	}
 
 	types := make([]string, 0)
@@ -600,16 +512,7 @@ func compiledPathPropertyScalarType(
 
 	typeName := intersectQuerySchemaTypes(types)
 	if !isScalarType(typeName) {
-		pointer := "#"
-		if len(validations) != 0 {
-			pointer = validations[0].SchemaPointer
-		}
-
-		return "", fmt.Errorf(
-			"style scalar slot at %s has unsupported compiled type %q",
-			pointer,
-			typeName,
-		)
+		return "", fmt.Errorf("style scalar slot has unsupported compiled type %q", typeName)
 	}
 
 	return styleScalarType(typeName), nil
@@ -659,409 +562,93 @@ func collectCompiledAdditionalProperties(validation *Validation, additional *[]*
 }
 
 func compiledValidationType(validations ...*Validation) string {
-	typeName, _ := compiledValidationTypeState(validations...)
-
-	return typeName
-}
-
-func compiledValidationTypeState(validations ...*Validation) (string, bool) {
 	types := make([]string, 0)
 	for _, validation := range validations {
 		collectCompiledValidationTypes(validation, &types)
 	}
 
-	if len(types) == 0 {
-		return "", true
-	}
-
-	typeName := intersectQuerySchemaTypes(types)
-
-	return typeName, typeName != ""
+	return intersectQuerySchemaTypes(types)
 }
 
-func validationImpossible(validation *Validation) bool {
-	if validation == nil {
-		return false
-	}
-
-	typeName, possible := compiledValidationTypeState(validation)
-	if !possible {
-		return true
-	}
-
-	if validationCompositionImpossible(validation) {
-		return true
-	}
-
-	if validationEnumImpossible(validation) {
-		return true
-	}
-
-	return validationBoundsImpossible(validation, typeName)
-}
-
-func validationEnumImpossible(validation *Validation) bool {
-	enumSets := make([][]json.RawMessage, 0)
-	collectValidationEnumSets(validation, &enumSets)
-
-	for _, values := range enumSets {
-		reachable := false
-
-		for _, value := range values {
-			if len(validateRaw(validation, value, "#")) == 0 {
-				reachable = true
-
-				break
-			}
-		}
-
-		if !reachable {
-			return true
-		}
-	}
-
-	return false
-}
-
-func collectValidationEnumSets(validation *Validation, enumSets *[][]json.RawMessage) {
-	if len(validation.EnumValidation.Values) != 0 {
-		*enumSets = append(*enumSets, validation.EnumValidation.Values)
-	}
-
-	for _, child := range validation.AllOfValidations {
-		collectValidationEnumSets(child, enumSets)
-	}
-}
-
-func validationCompositionImpossible(validation *Validation) bool {
-	for _, child := range validation.AllOfValidations {
-		if validationImpossible(child) {
-			return true
-		}
-	}
-
-	if len(validation.AnyOfValidations) != 0 {
-		allImpossible := true
-
-		for _, branch := range validation.AnyOfValidations {
-			if !validationImpossible(branch) {
-				allImpossible = false
-
-				break
-			}
-		}
-
-		if allImpossible {
-			return true
-		}
-	}
-
-	return false
-}
-
-func validationBoundsImpossible(validation *Validation, typeName string) bool {
-	switch typeName {
-	case "number", "integer":
-		return validationNumberBoundsImpossible(validation, typeName)
-	case "string":
-		return validationCountBoundsImpossible(validation, func(current *Validation) (*CountBound, *CountBound) {
-			return current.StringValidation.MinLength, current.StringValidation.MaxLength
-		})
-	case "array":
-		return validationCountBoundsImpossible(validation, func(current *Validation) (*CountBound, *CountBound) {
-			return current.ArrayValidation.MinItems, current.ArrayValidation.MaxItems
-		})
-	case "object":
-		return validationCountBoundsImpossible(validation, func(current *Validation) (*CountBound, *CountBound) {
-			return current.ObjectValidation.MinProperties, current.ObjectValidation.MaxProperties
-		})
-	default:
-		return false
-	}
-}
-
-func validationNumberBoundsImpossible(validation *Validation, typeName string) bool {
-	minimums := make([]*NumberBound, 0)
-	maximums := make([]*NumberBound, 0)
-	multiples := make([]*jsonvalue.Number, 0)
-	collectValidationNumberBounds(validation, &minimums, &maximums, &multiples)
-
-	for _, minimum := range minimums {
-		for _, maximum := range maximums {
-			comparison := minimum.ExactValue.Compare(maximum.ExactValue)
-			if comparison > 0 || comparison == 0 && (minimum.Exclusive || maximum.Exclusive) {
-				return true
-			}
-		}
-	}
-
-	step := combinedNumberStep(multiples, typeName == "integer")
-
-	return step != nil && numberLatticeBoundsImpossible(minimums, maximums, step)
-}
-
-func combinedNumberStep(multiples []*jsonvalue.Number, integersOnly bool) *big.Rat {
-	if len(multiples) == 0 {
-		if integersOnly {
-			return new(big.Rat).SetInt64(1)
-		}
-
-		return nil
-	}
-
-	numerator := big.NewInt(1)
-
-	var denominator *big.Int
-
-	for _, multiple := range multiples {
-		if multiple.Rational == nil {
-			return nil
-		}
-
-		valueNumerator := new(big.Int).Abs(multiple.Rational.Num())
-		gcd := new(big.Int).GCD(nil, nil, numerator, valueNumerator)
-		numerator.Mul(new(big.Int).Quo(numerator, gcd), valueNumerator)
-
-		valueDenominator := multiple.Rational.Denom()
-		if denominator == nil {
-			denominator = new(big.Int).Set(valueDenominator)
-		} else {
-			denominator.GCD(nil, nil, denominator, valueDenominator)
-		}
-	}
-
-	step := new(big.Rat).SetFrac(numerator, denominator)
-	if integersOnly {
-		step.SetInt(new(big.Int).Abs(step.Num()))
-	}
-
-	return step
-}
-
-func numberLatticeBoundsImpossible(
-	minimums []*NumberBound,
-	maximums []*NumberBound,
-	step *big.Rat,
-) bool {
-	minimum := strongestMinimum(minimums)
-
-	maximum := strongestMaximum(maximums)
-	if minimum == nil || maximum == nil ||
-		minimum.ExactValue.Rational == nil || maximum.ExactValue.Rational == nil {
-		return false
-	}
-
-	minimumIndex := new(big.Rat).Quo(minimum.ExactValue.Rational, step)
-
-	lower := floorRational(minimumIndex)
-	if minimum.Exclusive || !minimumIndex.IsInt() {
-		lower.Add(lower, big.NewInt(1))
-	}
-
-	maximumIndex := new(big.Rat).Quo(maximum.ExactValue.Rational, step)
-
-	upper := floorRational(maximumIndex)
-	if maximum.Exclusive && maximumIndex.IsInt() {
-		upper.Sub(upper, big.NewInt(1))
-	}
-
-	return lower.Cmp(upper) > 0
-}
-
-func strongestMinimum(bounds []*NumberBound) *NumberBound {
-	var result *NumberBound
-	for _, bound := range bounds {
-		if result == nil || bound.ExactValue.Compare(result.ExactValue) > 0 ||
-			bound.ExactValue.Compare(result.ExactValue) == 0 && bound.Exclusive && !result.Exclusive {
-			result = bound
-		}
-	}
-
-	return result
-}
-
-func strongestMaximum(bounds []*NumberBound) *NumberBound {
-	var result *NumberBound
-	for _, bound := range bounds {
-		if result == nil || bound.ExactValue.Compare(result.ExactValue) < 0 ||
-			bound.ExactValue.Compare(result.ExactValue) == 0 && bound.Exclusive && !result.Exclusive {
-			result = bound
-		}
-	}
-
-	return result
-}
-
-func floorRational(value *big.Rat) *big.Int {
-	quotient := new(big.Int)
-	remainder := new(big.Int)
-	quotient.QuoRem(value.Num(), value.Denom(), remainder)
-
-	if value.Sign() < 0 && remainder.Sign() != 0 {
-		quotient.Sub(quotient, big.NewInt(1))
-	}
-
-	return quotient
-}
-
-func collectValidationNumberBounds(
-	validation *Validation,
-	minimums *[]*NumberBound,
-	maximums *[]*NumberBound,
-	multiples *[]*jsonvalue.Number,
-) {
-	if validation.NumberValidation.Minimum != nil {
-		*minimums = append(*minimums, validation.NumberValidation.Minimum)
-	}
-
-	if validation.NumberValidation.Maximum != nil {
-		*maximums = append(*maximums, validation.NumberValidation.Maximum)
-	}
-
-	if validation.NumberValidation.ExactMultipleOf != nil {
-		*multiples = append(*multiples, validation.NumberValidation.ExactMultipleOf)
-	}
-
-	for _, child := range validation.AllOfValidations {
-		collectValidationNumberBounds(child, minimums, maximums, multiples)
-	}
-}
-
-func validationCountBoundsImpossible(
-	validation *Validation,
-	bounds func(*Validation) (*CountBound, *CountBound),
-) bool {
-	minimums := make([]*CountBound, 0)
-	maximums := make([]*CountBound, 0)
-	collectValidationCountBounds(validation, bounds, &minimums, &maximums)
-
-	for _, minimum := range minimums {
-		for _, maximum := range maximums {
-			if minimum.ExactValue.Compare(maximum.ExactValue) > 0 {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func collectValidationCountBounds(
-	validation *Validation,
-	bounds func(*Validation) (*CountBound, *CountBound),
-	minimums *[]*CountBound,
-	maximums *[]*CountBound,
-) {
-	minimum, maximum := bounds(validation)
-	if minimum != nil {
-		*minimums = append(*minimums, minimum)
-	}
-
-	if maximum != nil {
-		*maximums = append(*maximums, maximum)
-	}
-
-	for _, child := range validation.AllOfValidations {
-		collectValidationCountBounds(child, bounds, minimums, maximums)
-	}
-}
-
-func conjunctiveValidation(validations ...*Validation) *Validation {
-	if len(validations) == 0 {
-		return nil
-	}
-
-	if len(validations) == 1 {
-		return validations[0]
-	}
-
-	// The wrapper is only a conjunction carrier: children enforce object policy.
-	// Its pointer is borrowed from the first child solely for wrapper diagnostics.
-	return &Validation{
-		SchemaPointer:    validations[0].SchemaPointer,
-		AllOfValidations: append([]*Validation(nil), validations...),
-		ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true},
-	}
-}
-
-//nolint:cyclop // Candidate shape, scalar type, and nested-array admission are one style decision.
+// compiledStyleType selects the one OpenAPI style wire shape shared by direct alternatives.
+//
+//nolint:cyclop // Primitive, array, and object wire shapes have distinct compatibility rules.
 func compiledStyleType(validation *Validation) (string, error) {
-	types := make([]string, 0)
-	shape := ""
-
-	var candidateError error
-
-	walkParameterCandidates(validation, func(candidate *Validation) bool {
-		if validationImpossible(candidate) {
-			return true
+	for _, child := range validation.AllOfValidations {
+		if pointer := styleAnyOfPointer(child); pointer != "" {
+			return "", fmt.Errorf("schema at %s has unsupported anyOf nested under allOf", pointer)
 		}
+	}
 
-		typeName := compiledValidationType(candidate)
+	typeName := compiledValidationType(validation)
+	shape := styleShape(typeName)
+
+	if len(validation.AnyOfValidations) == 0 {
 		if typeName == "" {
-			typeName = "string"
+			return "string", nil
 		}
 
-		candidateShape := "primitive"
-		if typeName == "array" || typeName == "object" {
-			candidateShape = typeName
+		return typeName, nil
+	}
+
+	primitiveTypes := make([]string, 0, len(validation.AnyOfValidations))
+	for _, child := range validation.AnyOfValidations {
+		candidate := anyOfCandidate(validation, child)
+
+		candidateType := compiledValidationType(candidate)
+		if candidateType == "" {
+			candidateType = "string"
 		}
 
+		candidateShape := styleShape(candidateType)
 		if shape != "" && candidateShape != shape {
-			candidateError = fmt.Errorf(
-				"schema at %s has unrepresentable anyOf wire shape %q beside %q",
-				candidate.SchemaPointer, candidateShape, shape,
+			return "", fmt.Errorf(
+				"schema at %s has anyOf wire shape %q beside %q",
+				child.SchemaPointer, candidateShape, shape,
 			)
-
-			return false
-		}
-
-		if candidateShape == "array" {
-			if _, err := compiledArrayScalarType(candidate); err != nil {
-				candidateError = err
-
-				return false
-			}
 		}
 
 		shape = candidateShape
-
-		types = append(types, typeName)
-
-		return true
-	})
-
-	if candidateError != nil {
-		return "", candidateError
+		if shape == "primitive" {
+			primitiveTypes = append(primitiveTypes, candidateType)
+		}
 	}
 
 	if shape == "array" || shape == "object" {
 		return shape, nil
 	}
 
-	typeName := intersectQuerySchemaTypes(types)
-	if typeName == "" {
+	if typeName = intersectQuerySchemaTypes(primitiveTypes); typeName == "" {
 		return "string", nil
 	}
 
 	return typeName, nil
 }
 
-func containsAnyOf(validation *Validation) bool {
-	if validation == nil {
-		return false
-	}
-
+func styleAnyOfPointer(validation *Validation) string {
 	if len(validation.AnyOfValidations) != 0 {
-		return true
+		return validation.SchemaPointer + "/anyOf"
 	}
 
 	for _, child := range validation.AllOfValidations {
-		if containsAnyOf(child) {
-			return true
+		if pointer := styleAnyOfPointer(child); pointer != "" {
+			return pointer
 		}
 	}
 
-	return false
+	return ""
+}
+
+func styleShape(typeName string) string {
+	if typeName == "array" || typeName == "object" {
+		return typeName
+	}
+
+	if typeName == "" {
+		return ""
+	}
+
+	return "primitive"
 }
 
 func collectCompiledValidationTypes(validation *Validation, types *[]string) {
@@ -1256,7 +843,8 @@ func attachPathValueValidations(parameter *pathParameter) {
 	collectCompiledObjectProperties(parameter.validation, byName)
 
 	for index := range parameter.properties {
-		parameter.properties[index].validation = conjunctiveValidation(byName[parameter.properties[index].name]...)
+		property := &parameter.properties[index]
+		property.validation = conjunctiveValidation(byName[property.name]...)
 	}
 }
 

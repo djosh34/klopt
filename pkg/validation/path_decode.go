@@ -84,7 +84,7 @@ func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, err
 		case pathWireSimpleObject:
 			return jsontext.Value(`{}`), nil
 		case pathWireSimplePrimitive:
-			if parameter.scalarType == "string" {
+			if parameter.scalarType == "string" && len(parameter.validation.AnyOfValidations) == 0 {
 				return jsontext.Value(`""`), nil
 			}
 		}
@@ -102,7 +102,7 @@ func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, err
 	if raw == ";"+url.PathEscape(parameter.name) {
 		switch parameter.wire {
 		case pathWireMatrixPrimitive:
-			if parameter.scalarType == "string" {
+			if parameter.scalarType == "string" && len(parameter.validation.AnyOfValidations) == 0 {
 				return jsontext.Value(`""`), nil
 			}
 		case pathWireMatrixArray:
@@ -274,7 +274,7 @@ func convertPathParameterValue(
 	parameter *pathParameter,
 	convert func(*pathParameter) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	if parameter.validation == nil || !containsAnyOf(parameter.validation) {
+	if parameter.validation == nil || len(parameter.validation.AnyOfValidations) == 0 {
 		return convert(parameter)
 	}
 
@@ -294,9 +294,8 @@ func pathParameterForValidation(
 ) (pathParameter, error) {
 	candidate := *parameter
 	candidate.validation = validation
-	shape := pathShape(parameter.wire % pathWireKind(pathShapeCount))
 
-	switch shape {
+	switch pathShape(parameter.wire % pathWireKind(pathShapeCount)) {
 	case pathShapePrimitive:
 		typeName, err := compiledPathScalarType(validation)
 		if err != nil {
@@ -311,7 +310,6 @@ func pathParameterForValidation(
 		}
 
 		candidate.scalarType = typeName
-		candidate.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
 	case pathShapeObject:
 		properties, byName, err := compiledPathProperties(validation)
 		if err != nil {
@@ -325,9 +323,9 @@ func pathParameterForValidation(
 		if err != nil {
 			return pathParameter{}, fmt.Errorf("additionalProperties: %w", err)
 		}
-
-		candidate.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
 	}
+
+	attachPathValueValidations(&candidate)
 
 	return candidate, nil
 }
@@ -539,21 +537,20 @@ func encodePathScalarWithValidation(
 	validation *Validation,
 	value string,
 ) (jsontext.Value, error) {
-	if validation == nil {
+	if validation == nil || len(validation.AnyOfValidations) == 0 {
 		return encodePathScalar(typeName, value)
 	}
 
 	return convertParameterValue(validation, func(candidate *Validation) (jsontext.Value, error) {
-		candidateType := string(typeName)
+		candidateType := typeName
 
-		if containsAnyOf(validation) {
-			compiledType := compiledValidationType(candidate)
-			if compiledType != "" {
-				candidateType = compiledType
+		if candidate != nil {
+			if compiledType := compiledValidationType(candidate); compiledType != "" {
+				candidateType = styleScalarType(compiledType)
 			}
 		}
 
-		return encodePathScalar(styleScalarType(candidateType), value)
+		return encodePathScalar(candidateType, value)
 	})
 }
 

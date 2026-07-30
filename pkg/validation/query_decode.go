@@ -349,6 +349,7 @@ func (parameter *queryParameter) writeNamedObject(encoder *jsontext.Encoder, occ
 		typeName := parameter.dynamicType
 
 		valueValidation := parameter.dynamicValidation
+
 		if ok {
 			typeName = parameter.properties[propertyIndex].scalarType
 			valueValidation = parameter.properties[propertyIndex].validation
@@ -408,8 +409,7 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 			}
 
 			if err := writeConvertedScalar(
-				encoder, valueValidation, property.scalarType,
-				occurrence.decodedValue, parameter.allowEmpty,
+				encoder, valueValidation, property.scalarType, occurrence.decodedValue, parameter.allowEmpty,
 			); err != nil {
 				return fmt.Errorf("property %q: %w", property.name, err)
 			}
@@ -533,17 +533,16 @@ func writeConvertedScalar(
 	value string,
 	allowEmpty bool,
 ) error {
-	if validation == nil {
+	if validation == nil || len(validation.AnyOfValidations) == 0 {
 		return writeScalar(encoder, fallbackType, value, allowEmpty)
 	}
 
 	converted, err := convertParameterValue(validation, func(candidate *Validation) (jsontext.Value, error) {
 		typeName := fallbackType
 
-		if containsAnyOf(validation) {
-			candidateType := compiledValidationType(candidate)
-			if candidateType != "" {
-				typeName = candidateType
+		if candidate != nil {
+			if compiledType := compiledValidationType(candidate); compiledType != "" {
+				typeName = compiledType
 			}
 		}
 
@@ -562,9 +561,6 @@ func writeConvertedArray(
 	values []string,
 ) error {
 	converted, err := convertQueryParameterValue(parameter, func(candidate *queryParameter) (jsontext.Value, error) {
-		items := candidate.itemValidation
-		typeName := candidate.scalarType
-
 		var output bytes.Buffer
 
 		arrayEncoder := jsontext.NewEncoder(&output)
@@ -573,7 +569,9 @@ func writeConvertedArray(
 		}
 
 		for _, value := range values {
-			if err := writeConvertedScalar(arrayEncoder, items, typeName, value, parameter.allowEmpty); err != nil {
+			if err := writeConvertedScalar(
+				arrayEncoder, candidate.itemValidation, candidate.scalarType, value, parameter.allowEmpty,
+			); err != nil {
 				return nil, err
 			}
 		}
@@ -595,7 +593,7 @@ func convertQueryParameterValue(
 	parameter *queryParameter,
 	convert func(*queryParameter) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	if parameter.validation == nil || !containsAnyOf(parameter.validation) {
+	if parameter.validation == nil || len(parameter.validation.AnyOfValidations) == 0 {
 		return convert(parameter)
 	}
 
@@ -628,7 +626,6 @@ func queryParameterForValidation(
 		}
 
 		candidate.scalarType = string(typeName)
-		candidate.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
 	case wireFormObjectNamed, wireFormObjectExploded, wireDelimitedObject, wireDeepObject:
 		properties, byName, err := compileQueryProperties(validation, parameter.wire == wireDeepObject)
 		if err != nil {
@@ -642,9 +639,9 @@ func queryParameterForValidation(
 		if err != nil {
 			return queryParameter{}, fmt.Errorf("additionalProperties: %w", err)
 		}
-
-		candidate.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
 	}
+
+	attachQueryValueValidations(&candidate)
 
 	return candidate, nil
 }

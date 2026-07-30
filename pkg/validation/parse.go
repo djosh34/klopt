@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
@@ -53,17 +52,11 @@ func Parse(
 		}
 
 		if len(source.RequestSchema.Raw) != 0 {
-			admitted, err := admitRequestSchemaWithCompiler(
-				source,
-				source.RequestSchema,
-				UseRuntimeValidation,
-				&compiler,
-			)
+			root, err := compiler.compile(source.RequestSchema)
 			if err != nil {
 				return nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
 			}
 
-			root := admitted.Validation
 			root.BodyRequired = source.RequestBodyRequired
 			requestValidation.Body = root
 		}
@@ -1035,32 +1028,10 @@ func (compiler *schemaCompiler) compileAllOf(
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 ) error {
-	raw, ok := members["allOf"]
-	if !ok {
-		return nil
-	}
+	children, err := compiler.compileSchemaArray(schema, members, "allOf")
+	validation.AllOfValidations = children
 
-	var children []json.RawMessage
-	if err := json.Unmarshal(raw, &children); err != nil || len(children) == 0 {
-		return keywordError(schema.Pointer, "allOf", errors.New("must be a non-empty array"))
-	}
-
-	validation.AllOfValidations = make([]*Validation, 0, len(children))
-	for index := range children {
-		child, err := compiler.source.Child(schema, "allOf", fmt.Sprintf("%d", index))
-		if err != nil {
-			return keywordError(schema.Pointer, "allOf", err)
-		}
-
-		parsed, err := compiler.compile(child)
-		if err != nil {
-			return err
-		}
-
-		validation.AllOfValidations = append(validation.AllOfValidations, parsed)
-	}
-
-	return nil
+	return err
 }
 
 // compileAnyOf preserves alternative source order without flattening.
@@ -1069,32 +1040,44 @@ func (compiler *schemaCompiler) compileAnyOf(
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 ) error {
-	raw, ok := members["anyOf"]
+	children, err := compiler.compileSchemaArray(schema, members, "anyOf")
+	validation.AnyOfValidations = children
+
+	return err
+}
+
+// compileSchemaArray compiles one non-empty array of Schema Objects in source order.
+func (compiler *schemaCompiler) compileSchemaArray(
+	schema oas.LocatedSchema,
+	members map[string]json.RawMessage,
+	keyword string,
+) ([]*Validation, error) {
+	raw, ok := members[keyword]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
-	var children []json.RawMessage
-	if err := json.Unmarshal(raw, &children); err != nil || len(children) == 0 {
-		return keywordError(schema.Pointer, "anyOf", errors.New("must be a non-empty array"))
+	var rawChildren []json.RawMessage
+	if err := json.Unmarshal(raw, &rawChildren); err != nil || len(rawChildren) == 0 {
+		return nil, keywordError(schema.Pointer, keyword, errors.New("must be a non-empty array"))
 	}
 
-	validation.AnyOfValidations = make([]*Validation, 0, len(children))
-	for index := range children {
-		child, err := compiler.source.Child(schema, "anyOf", strconv.Itoa(index))
+	children := make([]*Validation, 0, len(rawChildren))
+	for index := range rawChildren {
+		child, err := compiler.source.Child(schema, keyword, fmt.Sprintf("%d", index))
 		if err != nil {
-			return keywordError(schema.Pointer, "anyOf", err)
+			return nil, keywordError(schema.Pointer, keyword, err)
 		}
 
 		parsed, err := compiler.compile(child)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		validation.AnyOfValidations = append(validation.AnyOfValidations, parsed)
+		children = append(children, parsed)
 	}
 
-	return nil
+	return children, nil
 }
 
 // decodeOptionalNumber decodes an absent-or-exact-number keyword.

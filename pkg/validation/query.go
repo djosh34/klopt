@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
-	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/go-json-experiment/json/jsontext"
 )
 
@@ -501,7 +500,7 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, unsupportedQueryStyle(name, style, explode, directType)
 		}
 	case "object":
-		parameter.properties, parameter.propertyByName, parameter.dynamicType, err = compileQueryObjectMetadata(
+		parameter.properties, parameter.propertyByName, err = compileQueryProperties(
 			parameter.validation,
 			style == "deepObject",
 		)
@@ -531,6 +530,10 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, unsupportedQueryStyle(name, style, explode, directType)
 		}
 
+		parameter.dynamicType, err = queryAdditionalPropertiesType(parameter.validation)
+		if err != nil {
+			return queryParameter{}, fmt.Errorf("parameter %q additionalProperties: %w", name, err)
+		}
 	default:
 		return queryParameter{}, fmt.Errorf("parameter %q has unsupported direct type %q", name, directType)
 	}
@@ -569,7 +572,12 @@ func compileQueryParameterSchema(
 }
 
 func compiledQueryScalarType(validations ...*Validation) (string, error) {
-	return compiledScalarType(validations...)
+	typeName, err := compiledPathScalarType(validations...)
+	if err != nil {
+		return "", err
+	}
+
+	return string(typeName), nil
 }
 
 func queryAdditionalPropertiesType(validation *Validation) (string, error) {
@@ -582,9 +590,22 @@ func queryAdditionalPropertiesType(validation *Validation) (string, error) {
 		return "string", nil
 	}
 
-	typeName, err := compiledQueryScalarType(additional...)
-	if err != nil {
-		return "", fmt.Errorf("style-based dynamic properties cannot have satisfiable type: %w", err)
+	if len(additional) == 1 && len(additional[0].AnyOfValidations) != 0 {
+		typeName, err := compiledQueryScalarType(additional...)
+		if err != nil {
+			return "", fmt.Errorf("style-based dynamic properties: %w", err)
+		}
+
+		return typeName, nil
+	}
+
+	typeName := compiledValidationType(additional...)
+	if typeName == "" {
+		return "string", nil
+	}
+
+	if !isScalarType(typeName) {
+		return "", fmt.Errorf("style-based dynamic properties cannot have satisfiable type %q", typeName)
 	}
 
 	return typeName, nil
@@ -648,15 +669,6 @@ func compileQueryProperties(
 	compiledByName := make(map[string][]*Validation)
 	collectCompiledObjectProperties(validation, compiledByName)
 
-	enumValuesByName := make(map[string][]jsonvalue.Value)
-	collectEnumObjectProperties(validation, enumValuesByName)
-
-	for name := range enumValuesByName {
-		if _, declared := compiledByName[name]; !declared {
-			compiledByName[name] = nil
-		}
-	}
-
 	properties := make([]queryProperty, 0, len(compiledByName))
 
 	byName := make(map[string]int, len(compiledByName))
@@ -669,28 +681,21 @@ func compileQueryProperties(
 		}
 
 		propertyValidations := compiledByName[name]
+		propertyValidation := conjunctiveValidation(propertyValidations...)
 
-		typeName := ""
+		typeName := "string"
 
-		if len(propertyValidations) != 0 {
+		if propertyValidation != nil {
 			var err error
 
-			typeName, err = compiledStyleType(conjunctiveValidation(propertyValidations...))
+			typeName, err = compiledStyleType(propertyValidation)
 			if err != nil {
 				return nil, nil, fmt.Errorf("style-based object property %q: %w", name, err)
 			}
 		}
 
-		if len(propertyValidations) == 0 ||
-			compiledValidationType(conjunctiveValidation(propertyValidations...)) == "" {
-			if enumType := homogeneousEnumType(enumValuesByName[name]); enumType != "" {
-				typeName = enumType
-			}
-		}
-
 		property := queryProperty{
-			name: name, scalarType: typeName,
-			validation: conjunctiveValidation(propertyValidations...),
+			name: name, scalarType: typeName, validation: propertyValidation,
 		}
 		if typeName == "array" && allowPrimitiveArrays {
 			items := make([]*Validation, 0)
@@ -718,80 +723,6 @@ func compileQueryProperties(
 	return properties, byName, nil
 }
 
-func compileQueryObjectMetadata(
-	validation *Validation,
-	allowPrimitiveArrays bool,
-) ([]queryProperty, map[string]int, string, error) {
-	properties := make(map[string]queryProperty)
-	dynamicType := ""
-
-	var candidateError error
-
-	walkParameterCandidates(validation, func(candidate *Validation) bool {
-		if validationImpossible(candidate) {
-			return true
-		}
-
-		candidateProperties, _, err := compileQueryProperties(candidate, allowPrimitiveArrays)
-		if err != nil {
-			candidateError = err
-
-			return false
-		}
-
-		if mergeErr := mergeQueryProperties(properties, candidateProperties); mergeErr != nil {
-			candidateError = mergeErr
-
-			return false
-		}
-
-		candidateDynamicType, err := queryAdditionalPropertiesType(candidate)
-		if err != nil {
-			candidateError = fmt.Errorf("additionalProperties: %w", err)
-
-			return false
-		}
-
-		if dynamicType == "" {
-			dynamicType = candidateDynamicType
-		}
-
-		return true
-	})
-
-	if candidateError != nil {
-		return nil, nil, "", candidateError
-	}
-
-	compiled := make([]queryProperty, 0, len(properties))
-
-	byName := make(map[string]int, len(properties))
-	for _, name := range slices.Sorted(maps.Keys(properties)) {
-		byName[name] = len(compiled)
-		compiled = append(compiled, properties[name])
-	}
-
-	return compiled, byName, dynamicType, nil
-}
-
-func mergeQueryProperties(properties map[string]queryProperty, candidates []queryProperty) error {
-	for _, property := range candidates {
-		existing, found := properties[property.name]
-		if found && existing.array != property.array {
-			return fmt.Errorf(
-				"style-based object property %q has incompatible anyOf wire shapes",
-				property.name,
-			)
-		}
-
-		if !found {
-			properties[property.name] = property
-		}
-	}
-
-	return nil
-}
-
 func attachQueryValueValidations(parameter *queryParameter) {
 	if parameter == nil || parameter.validation == nil {
 		return
@@ -807,14 +738,16 @@ func attachQueryValueValidations(parameter *queryParameter) {
 		property := &parameter.properties[index]
 
 		property.validation = conjunctiveValidation(byName[property.name]...)
-		if property.array {
-			var items []*Validation
-			for _, validation := range byName[property.name] {
-				collectCompiledArrayItems(validation, &items)
-			}
-
-			property.itemValidation = conjunctiveValidation(items...)
+		if !property.array {
+			continue
 		}
+
+		var items []*Validation
+		for _, validation := range byName[property.name] {
+			collectCompiledArrayItems(validation, &items)
+		}
+
+		property.itemValidation = conjunctiveValidation(items...)
 	}
 }
 

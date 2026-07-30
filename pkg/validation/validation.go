@@ -34,7 +34,6 @@ type Validation struct {
 	ObjectValidation ObjectValidation
 
 	AllOfValidations []*Validation
-	// AnyOfValidations are ordered alternative Schema Object graphs.
 	AnyOfValidations []*Validation
 }
 
