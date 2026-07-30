@@ -35,8 +35,6 @@ type Sample struct {
 type Generator struct {
 	compiled *suite.CompiledSuite
 	runtime  map[string]validation.RequestValidation
-	kin      *kinValidator
-	lib      *libValidator
 }
 
 // Compile admits one OpenAPI document and creates one immutable graph program.
@@ -54,17 +52,7 @@ func Compile(
 		return nil, err
 	}
 
-	kin, err := newKinValidator(document)
-	if err != nil {
-		return nil, err
-	}
-
-	lib, err := newLibValidator(document)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Generator{compiled: compiled, runtime: runtime, kin: kin, lib: lib}, nil
+	return &Generator{compiled: compiled, runtime: runtime}, nil
 }
 
 // Empty reports whether the document has any JSON request body to generate.
@@ -146,14 +134,6 @@ func (generator *Generator) Check(sample Sample, generated Validator) error {
 		}
 	}
 
-	if err := externalMismatch("kin-openapi", generator.kin, sample); err != nil {
-		mismatches = append(mismatches, err)
-	}
-
-	if err := externalMismatch("libopenapi", generator.lib, sample); err != nil {
-		mismatches = append(mismatches, err)
-	}
-
 	return errors.Join(mismatches...)
 }
 
@@ -163,7 +143,6 @@ func (generator *Generator) Close() {
 		return
 	}
 
-	generator.lib.close()
 }
 
 // ResourceLimited reports whether Decode stopped at an explicit runtime or solver budget.
