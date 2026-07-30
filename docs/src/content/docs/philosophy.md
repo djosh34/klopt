@@ -77,8 +77,8 @@ This is intentional. Clear rejection is safer than accepting a document with par
 
 ## Generative testing
 
-Validation receives extensive [Rapid](https://pkg.go.dev/pgregory.net/rapid) property testing. The tests generate supported OpenAPI schemas, mutate copies into invalid schemas, and generate valid and invalid JSON around individual constraints.
+Validation receives extensive generative testing. A Rapid-based schema generator builds supported OpenAPI documents and mutated invalid copies. Request-body tests use native Go fuzzing over deterministic byte tapes: each tape is decoded by a sealed program whose case carries an explicit accepted or rejected verdict.
 
-Generating JSON that has a known relationship to a complex schema is hard. That part is not perfect and remains active work. The architecture is designed to make every improvement test the same runtime validator used by applications.
+Generating JSON that has a known relationship to a complex schema is hard. Canonical accepted sets and focused case obligations keep that relationship explicit, and every canonical seed is also exercised by ordinary tests against the same runtime validator used by applications.
 
 OpenAPI details in this documentation follow the [OpenAPI 3.0.3 Schema Object](https://spec.openapis.org/oas/v3.0.3.html#schema-object).

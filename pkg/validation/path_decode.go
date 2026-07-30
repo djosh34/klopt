@@ -153,7 +153,7 @@ func (parameter *pathParameter) decodePathPrimitive(raw string) (jsontext.Value,
 		return nil, err
 	}
 
-	return convertPathAlternatives(parameter, func(candidate pathConversion) (jsontext.Value, error) {
+	return convertPathParameterValue(parameter, func(candidate *pathParameter) (jsontext.Value, error) {
 		return encodePathScalar(candidate.scalarType, decoded)
 	})
 }
@@ -195,7 +195,7 @@ func (parameter *pathParameter) decodePathArray(raw string) (jsontext.Value, err
 		return nil, fmt.Errorf("unknown compiled array wire %d", parameter.wire)
 	}
 
-	return convertPathAlternatives(parameter, func(candidate pathConversion) (jsontext.Value, error) {
+	return convertPathParameterValue(parameter, func(candidate *pathParameter) (jsontext.Value, error) {
 		return encodePathArray(candidate.scalarType, candidate.itemValidation, rawValues)
 	})
 }
@@ -265,58 +265,71 @@ func (parameter *pathParameter) decodePathObject(raw string) (jsontext.Value, er
 		return nil, fmt.Errorf("unknown compiled object wire %d", parameter.wire)
 	}
 
-	return convertPathAlternatives(parameter, func(conversion pathConversion) (jsontext.Value, error) {
-		candidate := *parameter
-		candidate.validation = conversion.validation
-		candidate.dynamicType = conversion.dynamicType
-		candidate.dynamicValidation = conversion.dynamicValidation
-		candidate.properties = conversion.properties
-		candidate.propertyByName = conversion.propertyByName
-
+	return convertPathParameterValue(parameter, func(candidate *pathParameter) (jsontext.Value, error) {
 		return candidate.encodePathObjectValue(rawPairs)
 	})
 }
 
-func convertPathAlternatives(
+func convertPathParameterValue(
 	parameter *pathParameter,
-	convert func(pathConversion) (jsontext.Value, error),
+	convert func(*pathParameter) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	if !containsAnyOf(parameter.validation) {
-		if len(parameter.conversions) != 1 {
-			return nil, errors.New("path conversion metadata is missing")
-		}
-
-		return convert(parameter.conversions[0])
+	if parameter.validation == nil || !containsAnyOf(parameter.validation) {
+		return convert(parameter)
 	}
 
-	var firstErr error
-
-	for _, candidate := range parameter.conversions {
-		value, err := convert(candidate)
+	return convertParameterValue(parameter.validation, func(validation *Validation) (jsontext.Value, error) {
+		candidate, err := pathParameterForValidation(parameter, validation)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-
-			continue
+			return nil, err
 		}
 
-		if errs := validateRaw(candidate.validation, json.RawMessage(value), "#"); len(errs) != 0 {
-			if firstErr == nil {
-				firstErr = errors.Join(errs...)
-			}
+		return convert(&candidate)
+	})
+}
 
-			continue
+func pathParameterForValidation(
+	parameter *pathParameter,
+	validation *Validation,
+) (pathParameter, error) {
+	candidate := *parameter
+	candidate.validation = validation
+	shape := pathShape(parameter.wire % pathWireKind(pathShapeCount))
+
+	switch shape {
+	case pathShapePrimitive:
+		typeName, err := compiledPathScalarType(validation)
+		if err != nil {
+			return pathParameter{}, err
 		}
 
-		return value, nil
+		candidate.scalarType = typeName
+	case pathShapeArray:
+		typeName, err := compiledArrayScalarType(validation)
+		if err != nil {
+			return pathParameter{}, err
+		}
+
+		candidate.scalarType = typeName
+		candidate.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
+	case pathShapeObject:
+		properties, byName, err := compiledPathProperties(validation)
+		if err != nil {
+			return pathParameter{}, err
+		}
+
+		candidate.properties = properties
+		candidate.propertyByName = byName
+
+		candidate.dynamicType, err = compiledPathScalarType(compiledAdditionalProperties(validation)...)
+		if err != nil {
+			return pathParameter{}, fmt.Errorf("additionalProperties: %w", err)
+		}
+
+		candidate.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
 	}
 
-	if firstErr != nil {
-		return nil, firstErr
-	}
-
-	return nil, errors.New("value does not match anyOf")
+	return candidate, nil
 }
 
 func (parameter *pathParameter) pathStyleBody(raw string) (string, error) {
@@ -530,7 +543,7 @@ func encodePathScalarWithValidation(
 		return encodePathScalar(typeName, value)
 	}
 
-	return convertAnyOfValue(validation, func(candidate *Validation) (jsontext.Value, error) {
+	return convertParameterValue(validation, func(candidate *Validation) (jsontext.Value, error) {
 		candidateType := string(typeName)
 
 		if containsAnyOf(validation) {

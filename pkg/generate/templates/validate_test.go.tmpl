@@ -13,16 +13,32 @@ import (
 // openAPI is the source document used to compile the generated request validations.
 var openAPI = []byte({{.OpenAPI}})
 
-// TestValidations checks every generated request-body validation.
+// validateBody adapts the generated validation map to the request-body runner.
+func validateBody(operationID string, data []byte) error {
+	return errors.Join(RequestValidations[operationID].Body.Validate(data)...)
+}
+
+// TestValidations checks every generated request-body validation seed.
 func TestValidations(t *testing.T) {
 	t.Parallel()
 
 	testgenerator.CheckJSONRequestBodies(
 		t,
 		openAPI,
-		func(operationID string, data []byte) error {
-			return errors.Join(RequestValidations[operationID].Body.Validate(data)...)
-		},
+		validateBody,
+		validation.PatternOptions(
+			{{if .Pattern.RejectNonASCII}}patternvalidator.RejectNonASCII,{{end}}
+			{{if .Pattern.UseRE2}}patternvalidator.UseRE2,{{end}}
+		),
+	)
+}
+
+// FuzzValidations mutates deterministic byte tapes over every compiled CasePlan.
+func FuzzValidations(f *testing.F) {
+	testgenerator.FuzzJSONRequestBodies(
+		f,
+		openAPI,
+		validateBody,
 		validation.PatternOptions(
 			{{if .Pattern.RejectNonASCII}}patternvalidator.RejectNonASCII,{{end}}
 			{{if .Pattern.UseRE2}}patternvalidator.UseRE2,{{end}}

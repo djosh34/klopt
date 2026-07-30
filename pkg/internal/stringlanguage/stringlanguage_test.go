@@ -2,97 +2,99 @@
 package stringlanguage_test
 
 import (
+	"encoding/binary"
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/djosh34/klopt/pkg/internal/program"        //nolint:depguard // Public test of the confirmed lowering seam.
 	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Public-seam test of the required shared module.
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompileGeneratesDeterministicSignedPatternValues(t *testing.T) {
+func TestLengthCountsUnicodeCodePoints(t *testing.T) {
 	t.Parallel()
 
-	startsWithA, err := stringlanguage.Pattern("^A")
-	require.NoError(t, err)
-	endsWithZ, err := stringlanguage.Pattern("Z$")
+	set, err := stringlanguage.Compile(nil, stringlanguage.Length{Min: 1, Max: new(1)})
 	require.NoError(t, err)
 
-	set, err := stringlanguage.Compile(
-		[]stringlanguage.Requirement{
-			{Language: startsWithA, WantMatch: true},
-			{Language: endsWithZ, WantMatch: true},
-		},
-		stringlanguage.Length{Min: 2, Max: new(4)},
-	)
-	require.NoError(t, err)
+	for _, value := range []string{"a", "é", "界", "😀"} {
+		require.True(t, set.Matches(value), "%q", value)
+	}
 
-	value := set.Generate(42)
-	require.Equal(t, value, set.Generate(42))
-	require.GreaterOrEqual(t, len(value), 2)
-	require.LessOrEqual(t, len(value), 4)
-	require.True(t, set.Matches(value))
+	for _, value := range []string{"", "a😀", string([]byte{0xff})} {
+		require.False(t, set.Matches(value), "%q", value)
+	}
 }
 
-func TestGeneratedValuesSatisfySignedPatternsAndByteLengths(t *testing.T) {
+func TestPatternMatchesUnicodeWithECMAScriptUTF16Progress(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		patterns []struct {
-			source    string
-			wantMatch bool
+		pattern string
+		value   string
+		want    bool
+	}{
+		{pattern: "^é$", value: "é", want: true},
+		{pattern: "^😀$", value: "😀", want: true},
+		{pattern: "^.$", value: "😀", want: false},
+		{pattern: "^..$", value: "😀", want: true},
+		{pattern: `^\s$`, value: "\u2028", want: true},
+		{pattern: `^\S$`, value: "界", want: true},
+	}
+
+	for _, test := range tests {
+		language, err := stringlanguage.Pattern(test.pattern)
+		require.NoError(t, err)
+
+		set, err := stringlanguage.Compile(
+			[]stringlanguage.Requirement{{Language: language, WantMatch: true}},
+			stringlanguage.Length{Max: new(1)},
+		)
+		if test.want {
+			require.NoError(t, err)
+			require.True(t, set.Matches(test.value), "pattern %q", test.pattern)
+		} else if err == nil {
+			require.False(t, set.Matches(test.value), "pattern %q", test.pattern)
+		} else {
+			var emptyError *stringlanguage.EmptyError
+			require.ErrorAs(t, err, &emptyError)
 		}
-		length  stringlanguage.Length
-		options []patternvalidator.Option
+	}
+}
+
+func TestUnicodePatternEdgeCasesMatchECMAScriptAndRawGoSemantics(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pattern string
+		option  patternvalidator.Option
+		values  map[string]bool
 	}{
 		{
-			name: "unanchored patterns match at different positions",
-			patterns: []struct {
-				source    string
-				wantMatch bool
-			}{
-				{source: "^A", wantMatch: true},
-				{source: "Z$", wantMatch: true},
-			},
-			length: stringlanguage.Length{Min: 3, Max: new(6)},
+			name:    "astral quantifier applies to the trailing UTF-16 code unit",
+			pattern: "^😀+$",
+			values:  map[string]bool{"😀": true, "😀😀": false},
 		},
 		{
-			name: "isolated first failure",
-			patterns: []struct {
-				source    string
-				wantMatch bool
-			}{
-				{source: "^[A-Z]+$", wantMatch: false},
-				{source: "^A", wantMatch: true},
-			},
-			length: stringlanguage.Length{Min: 2, Max: new(4)},
+			name:    "astral class contains its two UTF-16 code units",
+			pattern: "^[😀][😀]$",
+			values:  map[string]bool{"😀": true, "😀😀": false},
 		},
 		{
-			name: "positive and negative leading lookahead",
-			patterns: []struct {
-				source    string
-				wantMatch bool
-			}{
-				{source: "^(?=a)(?!ab)a", wantMatch: true},
-			},
-			length: stringlanguage.Length{Min: 2, Max: new(3)},
+			name:    "ECMAScript dot excludes line separator",
+			pattern: "^.$",
+			values:  map[string]bool{"\u2028": false, "界": true},
 		},
 		{
-			name: "raw Go multiline anchors",
-			patterns: []struct {
-				source    string
-				wantMatch bool
-			}{
-				{source: `(?m)^a$`, wantMatch: true},
-			},
-			length:  stringlanguage.Length{Min: 2, Max: new(4)},
-			options: []patternvalidator.Option{patternvalidator.UseRE2},
-		},
-		{
-			name:   "length only",
-			length: stringlanguage.Length{Min: 3, Max: new(3)},
+			name:    "raw Go dot advances by scalar",
+			pattern: "^.$",
+			option:  patternvalidator.UseRE2,
+			values:  map[string]bool{"😀": true},
 		},
 	}
 
@@ -100,38 +102,176 @@ func TestGeneratedValuesSatisfySignedPatternsAndByteLengths(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			requirements := make([]stringlanguage.Requirement, 0, len(test.patterns))
-			for _, pattern := range test.patterns {
-				language, err := stringlanguage.Pattern(pattern.source, test.options...)
-				require.NoError(t, err)
-
-				requirements = append(requirements, stringlanguage.Requirement{
-					Language: language, WantMatch: pattern.wantMatch,
-				})
+			options := []patternvalidator.Option(nil)
+			if test.option != nil {
+				options = append(options, test.option)
 			}
 
-			set, err := stringlanguage.Compile(requirements, test.length)
+			language, err := stringlanguage.Pattern(test.pattern, options...)
 			require.NoError(t, err)
 
-			values := make(map[string]struct{})
-
-			for seed := range uint64(100) {
-				value := set.Generate(seed)
-				require.True(t, set.Matches(value), "%q", value)
-				require.GreaterOrEqual(t, len(value), test.length.Min, "%q", value)
-
-				if test.length.Max != nil {
-					require.LessOrEqual(t, len(value), *test.length.Max, "%q", value)
-				}
-
-				values[value] = struct{}{}
+			set, err := stringlanguage.Compile(
+				[]stringlanguage.Requirement{{Language: language, WantMatch: true}},
+				stringlanguage.Length{Max: new(3)},
+			)
+			if err != nil {
+				var emptyError *stringlanguage.EmptyError
+				require.ErrorAs(t, err, &emptyError)
 			}
 
-			if test.length.Max == nil || *test.length.Max > test.length.Min {
-				require.Greater(t, len(values), 1)
+			for value, want := range test.values {
+				got := set != nil && set.Matches(value)
+				require.Equal(t, want, got, "pattern %q value %q", test.pattern, value)
 			}
 		})
 	}
+}
+
+func TestSignedPatternComplementIncludesAllUnicodeScalars(t *testing.T) {
+	t.Parallel()
+
+	ascii, err := stringlanguage.Pattern(`^[\x00-\x7f]$`)
+	require.NoError(t, err)
+	set, err := stringlanguage.Compile(
+		[]stringlanguage.Requirement{{Language: ascii, WantMatch: false}},
+		stringlanguage.Length{Min: 1, Max: new(1)},
+	)
+	require.NoError(t, err)
+
+	for _, value := range []string{"\u0080", "é", "界", "😀"} {
+		require.True(t, set.Matches(value), "%q", value)
+	}
+
+	for _, value := range []string{"a", "\x7f"} {
+		require.False(t, set.Matches(value), "%q", value)
+	}
+}
+
+func TestCombineIntersectsAndComplementsCompiledSetsExactly(t *testing.T) {
+	t.Parallel()
+
+	startsWithA, err := stringlanguage.Pattern(`^a`)
+	require.NoError(t, err)
+	first, err := stringlanguage.Compile(
+		[]stringlanguage.Requirement{{Language: startsWithA, WantMatch: true}},
+		stringlanguage.Length{Min: 1},
+	)
+	require.NoError(t, err)
+
+	exactlyAB, err := stringlanguage.Pattern(`^ab$`)
+	require.NoError(t, err)
+	second, err := stringlanguage.Compile(
+		[]stringlanguage.Requirement{{Language: exactlyAB, WantMatch: true}},
+		stringlanguage.Length{},
+	)
+	require.NoError(t, err)
+
+	combined, err := stringlanguage.Combine([]stringlanguage.SetRequirement{
+		{Set: first, WantMatch: true},
+		{Set: second, WantMatch: false},
+	})
+	require.NoError(t, err)
+	require.True(t, combined.Matches("a"))
+	require.True(t, combined.Matches("ac"))
+	require.False(t, combined.Matches("ab"))
+	require.False(t, combined.Matches("x"))
+
+	_, err = stringlanguage.Combine([]stringlanguage.SetRequirement{
+		{Set: second, WantMatch: true},
+		{Set: second, WantMatch: false},
+	})
+
+	var empty *stringlanguage.EmptyError
+	require.ErrorAs(t, err, &empty)
+}
+
+func TestAppendToDecodesCanonicalUnicodeScalars(t *testing.T) {
+	t.Parallel()
+
+	set, err := stringlanguage.Compile(nil, stringlanguage.Length{Min: 1, Max: new(1)})
+	require.NoError(t, err)
+
+	var builder program.Builder
+
+	root, err := set.AppendTo(&builder)
+	require.NoError(t, err)
+	sealed, err := builder.Seal(root, builder.UniformSampling())
+	require.NoError(t, err)
+
+	limits := program.Limits{MaxSteps: 10, MaxOutputBytes: 10, MaxDepth: 1}
+	tests := []struct {
+		rank uint64
+		want string
+	}{
+		{rank: 0, want: "\x00"},
+		{rank: 0x80, want: "\u0080"},
+		{rank: 0xf800, want: "𐀀"},
+	}
+
+	for _, test := range tests {
+		tape := make([]byte, 8)
+		binary.LittleEndian.PutUint64(tape, test.rank)
+		value, decodeErr := sealed.Decode(tape, limits)
+		require.NoError(t, decodeErr)
+		require.True(t, value.Equal(jsonvalue.String(test.want)), "rank %#x: got %q", test.rank, value.String)
+	}
+}
+
+func TestAppendToUsesMinimumScalarCompletionAndSupportsLongStrings(t *testing.T) {
+	t.Parallel()
+
+	ascii, err := stringlanguage.Pattern(`^[\x00-\x7f]$`)
+	require.NoError(t, err)
+	complement, err := stringlanguage.Compile(
+		[]stringlanguage.Requirement{{Language: ascii, WantMatch: false}},
+		stringlanguage.Length{Min: 1, Max: new(1)},
+	)
+	require.NoError(t, err)
+
+	minimum := decodeSet(t, complement, nil, program.Limits{
+		MaxSteps: 2, MaxOutputBytes: 4, MaxDepth: 1,
+	})
+	require.True(t, minimum.Equal(jsonvalue.String("\u0080")))
+
+	long, err := stringlanguage.Compile(nil, stringlanguage.Length{Min: 300, Max: new(300)})
+	require.NoError(t, err)
+	value := decodeSet(t, long, nil, program.Limits{
+		MaxSteps: 301, MaxOutputBytes: 2000, MaxDepth: 1,
+	})
+	require.Equal(t, 300, utf8.RuneCountInString(value.String))
+	require.True(t, long.Matches(value.String))
+}
+
+func TestAppendToPreservesFormatLanguage(t *testing.T) {
+	t.Parallel()
+
+	language, err := stringlanguage.Format("uuid")
+	require.NoError(t, err)
+	set, err := stringlanguage.Compile(
+		[]stringlanguage.Requirement{{Language: language, WantMatch: true}},
+		stringlanguage.Length{},
+	)
+	require.NoError(t, err)
+
+	value := decodeSet(t, set, nil, program.Limits{
+		MaxSteps: 100, MaxOutputBytes: 100, MaxDepth: 1,
+	})
+	require.True(t, set.Matches(value.String))
+}
+
+func decodeSet(t *testing.T, set *stringlanguage.Set, tape []byte, limits program.Limits) jsonvalue.Value {
+	t.Helper()
+
+	var builder program.Builder
+
+	root, err := set.AppendTo(&builder)
+	require.NoError(t, err)
+	sealed, err := builder.Seal(root, builder.UniformSampling())
+	require.NoError(t, err)
+	value, err := sealed.Decode(tape, limits)
+	require.NoError(t, err)
+
+	return value
 }
 
 func TestPatternMatchesExistingValidatorSemantics(t *testing.T) {
@@ -220,25 +360,6 @@ func TestCompileReportsTypedEmptyAndComplexityErrors(t *testing.T) {
 	require.Equal(t, uint64(17), complexityError.Observed)
 }
 
-func TestCompileRejectsLanguagesWhoseShortestValueExceedsTheOutputLimit(t *testing.T) {
-	t.Parallel()
-
-	language, err := stringlanguage.Pattern("^a{257}$")
-	require.NoError(t, err)
-
-	set, err := stringlanguage.Compile(
-		[]stringlanguage.Requirement{{Language: language, WantMatch: true}},
-		stringlanguage.Length{},
-	)
-	require.Nil(t, set)
-
-	var complexityError *stringlanguage.ComplexityError
-	require.ErrorAs(t, err, &complexityError)
-	require.Equal(t, "generated bytes", complexityError.Resource)
-	require.Equal(t, uint64(256), complexityError.Limit)
-	require.Equal(t, uint64(257), complexityError.Observed)
-}
-
 func TestLengthBoundsAreExactAndInvalidBoundsAreTyped(t *testing.T) {
 	t.Parallel()
 
@@ -289,7 +410,7 @@ func TestPatternOptionsAndErrorsUsePublicTypes(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported string format")
 }
 
-func TestNonASCIIValuesAreOutsidePatternLanguages(t *testing.T) {
+func TestPatternComplementIncludesNonMatchingUnicode(t *testing.T) {
 	t.Parallel()
 
 	language, err := stringlanguage.Pattern("é")
@@ -300,10 +421,7 @@ func TestNonASCIIValuesAreOutsidePatternLanguages(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.False(t, set.Matches("é"))
-
-	for seed := range uint64(50) {
-		require.NotContains(t, set.Generate(seed), "é")
-	}
+	require.True(t, set.Matches("a"))
 }
 
 func forEachString(alphabet []byte, maximumLength int, visit func(string)) {

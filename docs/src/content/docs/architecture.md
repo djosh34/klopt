@@ -64,14 +64,15 @@ For runtime validation, `allOf` stays as separate child validations. Each branch
 
 The test generator does more than draw arbitrary JSON:
 
-1. It compiles a schema into a constructive **Domain**: reachable JSON kinds plus exact constraints for numbers, strings, arrays, objects, and enums.
-2. It plans focused **cases** from that domain: an aggregate valid case, useful valid partitions such as boundaries, and rejected cases that fail one constraint while satisfying the others when possible.
-3. It attaches a Rapid generator to each case. The generator recursively draws random JSON values from that case's domain.
-4. Each case runs as a Rapid property. The value is marshalled as exact JSON and passed to the validator callback. The planned accepted or rejected result is checked against that callback.
+1. It admits the request schema through the same strict capability gate as validation.
+2. It lowers the schema once into an occurrence tree and canonical accepted sets built from union, intersection, and complement.
+3. It plans aggregate-valid, boundary, and focused-invalid cases with explicit expected validator verdicts.
+4. It compiles each non-empty case into an immutable, certified `Program`.
+5. Native Go fuzzing mutates byte tapes. `Program.Decode` deterministically constructs JSON, and the runner checks the validator result against the case verdict.
 
-The cases provide coverage intent; Rapid provides variation and shrinking inside each case. For the object schema above, planned cases cover valid objects, a missing required `name`, a wrong type for `name`, and an unknown property. Each property can produce many concrete JSON bodies rather than one fixed fixture.
+Every case includes canonical replay seeds, and ordinary tests execute all of them. Native fuzzing provides variation around those seeds while the sealed program keeps decoding deterministic and resource-bounded. For the object schema above, planned cases cover valid objects, a missing required `name`, a wrong type for `name`, and an unknown property.
 
-Schema parsing is fuzzed too. A separate Rapid generator builds supported OpenAPI documents, then makes independently mutated invalid copies. This tests both successful compilation and precise rejection of malformed schemas.
+Schema parsing is fuzzed independently. That separate OpenAPI-schema generator still uses Rapid to build supported documents and independently mutated invalid copies; request-body program execution has no Rapid dependency.
 
 ### Why `allOf` must merge before generating
 
@@ -91,8 +92,8 @@ The generator handles it step by step:
 
 1. Compile the first branch as integers greater than or equal to `4`.
 2. Compile the second branch as all JSON kinds, with numbers no greater than `10` and restricted to multiples of `3`.
-3. Intersect both domains. The numeric result is integers from `4` through `10` that are multiples of `3`.
-4. Build the aggregate valid generator from that merged domain. It can draw `6` or `9`.
+3. Intersect both accepted sets. The numeric result is integers from `4` through `10` that are multiples of `3`.
+4. Compile the aggregate valid case from that merged set. It can emit `6` or `9`.
 5. Build isolated rejected cases from the same context. For example, `3` fails only the minimum, `12` fails only the maximum, and values such as `4` or `10` fail only `multipleOf`.
 
-The merge happens before Rapid generation. This is what lets random values remain meaningful: every accepted draw satisfies all branches, while rejected draws target a specific rule without accidentally failing unrelated siblings.
+The merge happens before program compilation. This keeps every accepted output inside all branches, while rejected cases target a specific rule without accidentally dropping unrelated siblings.

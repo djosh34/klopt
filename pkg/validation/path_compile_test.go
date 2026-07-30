@@ -138,6 +138,27 @@ func TestPathDecoderAnyOfUsesFirstCompleteSchemaStyleConversion(t *testing.T) {
 	}
 }
 
+func TestPathDecoderAnyOfPrefersFirstCompleteValidationError(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - {type: boolean}
+              - {type: integer, minimum: 10}
+`)
+	require.NoError(t, err)
+
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
+	require.Nil(t, actual)
+	require.ErrorContains(t, err, "/anyOf/1")
+	require.ErrorContains(t, err, "minimum")
+}
+
 func TestPathDecoderAnyOfConversionMustSatisfySelectedBranch(t *testing.T) {
 	t.Parallel()
 
@@ -320,6 +341,28 @@ func TestCompilePathDecoderRejectsNestedAnyOfWithUnrepresentableAlternatives(t *
 	}
 }
 
+func TestCompilePathDecoderRejectsUnsupportedSlotInsideRootAnyOf(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - type: object
+                properties:
+                  value: {type: object}
+              - type: object
+                properties:
+                  value: {type: string}
+`)
+	require.Nil(t, decoder)
+	require.ErrorContains(t, err, "/anyOf/0/properties/value")
+	require.ErrorContains(t, err, `unsupported compiled type "object"`)
+}
+
 func TestPathDecoderSkipsImpossibleAnyOfWireShapes(t *testing.T) {
 	t.Parallel()
 
@@ -367,7 +410,7 @@ func TestPathDecoderSkipsAnyOfWireShapesWithImpossibleBounds(t *testing.T) {
 	}
 }
 
-func TestPathDecoderInfersWireShapeFromSatisfiableConjunctiveAnyOfProfiles(t *testing.T) {
+func TestPathDecoderInfersWireShapeFromConjunctiveAnyOf(t *testing.T) {
 	t.Parallel()
 
 	decoder, err := compilePathDecoderForTest(t, `
@@ -390,7 +433,7 @@ func TestPathDecoderInfersWireShapeFromSatisfiableConjunctiveAnyOfProfiles(t *te
 	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
 }
 
-func TestPathDecoderSkipsProfilesMadeImpossibleByConjunctiveBounds(t *testing.T) {
+func TestPathDecoderSkipsAlternativesMadeImpossibleByConjunctiveBounds(t *testing.T) {
 	t.Parallel()
 
 	decoder, err := compilePathDecoderForTest(t, `
@@ -411,7 +454,7 @@ func TestPathDecoderSkipsProfilesMadeImpossibleByConjunctiveBounds(t *testing.T)
 	require.JSONEq(t, `{"id":"x"}`, string(actual))
 }
 
-func TestPathDecoderSkipsIntegerAnyOfProfilesWithoutAnInteger(t *testing.T) {
+func TestPathDecoderSkipsIntegerAnyOfAlternativeWithoutAnInteger(t *testing.T) {
 	t.Parallel()
 
 	decoder, err := compilePathDecoderForTest(t, `
@@ -430,7 +473,7 @@ func TestPathDecoderSkipsIntegerAnyOfProfilesWithoutAnInteger(t *testing.T) {
 	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
 }
 
-func TestPathDecoderSkipsEnumProfilesWhoseMembersViolateBounds(t *testing.T) {
+func TestPathDecoderSkipsEnumAlternativesWhoseMembersViolateBounds(t *testing.T) {
 	t.Parallel()
 
 	decoder, err := compilePathDecoderForTest(t, `
@@ -449,7 +492,7 @@ func TestPathDecoderSkipsEnumProfilesWhoseMembersViolateBounds(t *testing.T) {
 	require.JSONEq(t, `{"id":"x"}`, string(actual))
 }
 
-func TestPathDecoderSkipsProfilesWithoutAnAllowedMultiple(t *testing.T) {
+func TestPathDecoderSkipsAlternativesWithoutAnAllowedMultiple(t *testing.T) {
 	t.Parallel()
 
 	decoder, err := compilePathDecoderForTest(t, `
@@ -468,51 +511,7 @@ func TestPathDecoderSkipsProfilesWithoutAnAllowedMultiple(t *testing.T) {
 	require.JSONEq(t, `{"id":["x","y"]}`, string(actual))
 }
 
-func TestPreparePathConversionsBoundsIndependentChoiceProfiles(t *testing.T) {
-	t.Parallel()
-
-	root := &Validation{
-		KindValidation:   KindValidation{Type: "object"},
-		ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true},
-	}
-
-	for index := range 8 {
-		name := fmt.Sprintf("value%d", index)
-		root.AllOfValidations = append(root.AllOfValidations, &Validation{
-			AnyOfValidations: []*Validation{
-				{
-					KindValidation: KindValidation{Type: "object"},
-					ObjectValidation: ObjectValidation{
-						AdditionalPropertiesAllowed: true,
-						Properties: []PropertyValidation{{
-							Name: name, Validation: &Validation{KindValidation: KindValidation{Type: "string"}},
-						}},
-					},
-				},
-				{
-					KindValidation: KindValidation{Type: "object"},
-					ObjectValidation: ObjectValidation{
-						AdditionalPropertiesAllowed: true,
-						Properties: []PropertyValidation{{
-							Name: name, Validation: &Validation{KindValidation: KindValidation{Type: "integer"}},
-						}},
-					},
-				},
-			},
-			ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true},
-		})
-	}
-
-	parameter := pathParameter{wire: pathWireSimpleObject, validation: root}
-	require.NoError(t, preparePathConversions(&parameter))
-	require.Len(t, parameter.conversions, 256)
-
-	root.AllOfValidations = append(root.AllOfValidations, root.AllOfValidations[0])
-	parameter = pathParameter{wire: pathWireSimpleObject, validation: root}
-	require.ErrorContains(t, preparePathConversions(&parameter), "at most 256")
-}
-
-func TestPathDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
+func TestPathDecoderCombinesConjunctiveAnyOfObjectAlternatives(t *testing.T) {
 	t.Parallel()
 
 	decoder, err := compilePathDecoderForTest(t, `
@@ -534,7 +533,7 @@ func TestPathDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.
 	require.JSONEq(t, `{"id":{"a":1,"b":2}}`, string(actual))
 }
 
-func TestPathDecoderFormsCartesianConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
+func TestPathDecoderTriesConjunctiveObjectAlternativesTransactionally(t *testing.T) {
 	t.Parallel()
 
 	decoder, err := compilePathDecoderForTest(t, `

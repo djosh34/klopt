@@ -410,6 +410,17 @@ paths:
       operationId: enumArray
       parameters:
         - {name: value, in: path, required: true, schema: {enum: [[1, 2]]}}
+  /anyof/{id}:
+    get:
+      operationId: anyOfParameters
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}
+        - name: q
+          in: query
+          schema: {anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}
   /enum-object/{value}:
     get:
       operationId: enumObject
@@ -478,6 +489,28 @@ func TestGeneratedRequestValidation(t *testing.T) {
 				runtimeErr,
 			)
 		}
+	}
+
+	generatedAnyOf := RequestValidations["anyOfParameters"]
+	runtimeAnyOf := runtimeRequests["anyOfParameters"]
+	generatedPath, generatedPathErr := generatedAnyOf.Path.DecodePathParams(&url.URL{Path: "/anyof/7"})
+	runtimePath, runtimePathErr := runtimeAnyOf.Path.DecodePathParams(&url.URL{Path: "/anyof/7"})
+	generatedQuery, generatedQueryErr := generatedAnyOf.Query.Decode(&url.URL{RawQuery: "q=7"})
+	runtimeQuery, runtimeQueryErr := runtimeAnyOf.Query.Decode(&url.URL{RawQuery: "q=7"})
+	if generatedPathErr != nil || runtimePathErr != nil || generatedQueryErr != nil || runtimeQueryErr != nil ||
+		string(generatedPath) != "{\"id\":\"7\"}" || string(runtimePath) != string(generatedPath) ||
+		string(generatedQuery) != "{\"q\":\"7\"}" || string(runtimeQuery) != string(generatedQuery) {
+		t.Fatalf(
+			"anyOf parity: generated path (%s, %v), runtime path (%s, %v), generated query (%s, %v), runtime query (%s, %v)",
+			generatedPath,
+			generatedPathErr,
+			runtimePath,
+			runtimePathErr,
+			generatedQuery,
+			generatedQueryErr,
+			runtimeQuery,
+			runtimeQueryErr,
+		)
 	}
 
 	for operationID, test := range map[string]struct {

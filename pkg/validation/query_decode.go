@@ -241,7 +241,7 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 			return errors.New("duplicate scalar occurrence")
 		}
 
-		value, err := convertQueryAlternatives(parameter, func(candidate queryConversion) (jsontext.Value, error) {
+		value, err := convertQueryParameterValue(parameter, func(candidate *queryParameter) (jsontext.Value, error) {
 			return encodeQueryScalar(candidate.scalarType, occurrences[0].decodedValue, parameter.allowEmpty)
 		})
 		if err != nil {
@@ -294,18 +294,11 @@ func (parameter *queryParameter) writeConvertedObject(
 	encoder *jsontext.Encoder,
 	write func(*queryParameter, *jsontext.Encoder) error,
 ) error {
-	value, err := convertQueryAlternatives(parameter, func(conversion queryConversion) (jsontext.Value, error) {
-		candidate := *parameter
-		candidate.validation = conversion.validation
-		candidate.dynamicType = conversion.dynamicType
-		candidate.dynamicValidation = conversion.dynamicValidation
-		candidate.properties = conversion.properties
-		candidate.propertyByName = conversion.propertyByName
-
+	value, err := convertQueryParameterValue(parameter, func(candidate *queryParameter) (jsontext.Value, error) {
 		var output bytes.Buffer
 
 		candidateEncoder := jsontext.NewEncoder(&output)
-		if err := write(&candidate, candidateEncoder); err != nil {
+		if err := write(candidate, candidateEncoder); err != nil {
 			return nil, err
 		}
 
@@ -544,7 +537,7 @@ func writeConvertedScalar(
 		return writeScalar(encoder, fallbackType, value, allowEmpty)
 	}
 
-	converted, err := convertAnyOfValue(validation, func(candidate *Validation) (jsontext.Value, error) {
+	converted, err := convertParameterValue(validation, func(candidate *Validation) (jsontext.Value, error) {
 		typeName := fallbackType
 
 		if containsAnyOf(validation) {
@@ -568,7 +561,7 @@ func writeConvertedArray(
 	parameter *queryParameter,
 	values []string,
 ) error {
-	converted, err := convertQueryAlternatives(parameter, func(candidate queryConversion) (jsontext.Value, error) {
+	converted, err := convertQueryParameterValue(parameter, func(candidate *queryParameter) (jsontext.Value, error) {
 		items := candidate.itemValidation
 		typeName := candidate.scalarType
 
@@ -598,95 +591,60 @@ func writeConvertedArray(
 	return encoder.WriteValue(converted)
 }
 
-func convertQueryAlternatives(
+func convertQueryParameterValue(
 	parameter *queryParameter,
-	convert func(queryConversion) (jsontext.Value, error),
+	convert func(*queryParameter) (jsontext.Value, error),
 ) (jsontext.Value, error) {
-	if !containsAnyOf(parameter.validation) {
-		if len(parameter.conversions) != 1 {
-			return nil, errors.New("query conversion metadata is missing")
-		}
-
-		return convert(parameter.conversions[0])
+	if parameter.validation == nil || !containsAnyOf(parameter.validation) {
+		return convert(parameter)
 	}
 
-	var firstErr error
-
-	for _, candidate := range parameter.conversions {
-		value, err := convert(candidate)
+	return convertParameterValue(parameter.validation, func(validation *Validation) (jsontext.Value, error) {
+		candidate, err := queryParameterForValidation(parameter, validation)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-
-			continue
+			return nil, err
 		}
 
-		if errs := validateRaw(candidate.validation, json.RawMessage(value), "#"); len(errs) != 0 {
-			if firstErr == nil {
-				firstErr = errors.Join(errs...)
-			}
-
-			continue
-		}
-
-		return value, nil
-	}
-
-	if firstErr != nil {
-		return nil, firstErr
-	}
-
-	return nil, errors.New("value does not match anyOf")
+		return convert(&candidate)
+	})
 }
 
-// convertAnyOfValue tries ordered branch conversion and acceptance.
-func convertAnyOfValue(
+func queryParameterForValidation(
+	parameter *queryParameter,
 	validation *Validation,
-	convert func(*Validation) (jsontext.Value, error),
-) (jsontext.Value, error) {
-	if !containsAnyOf(validation) {
-		return convert(validation)
-	}
+) (queryParameter, error) {
+	candidate := *parameter
+	candidate.validation = validation
 
-	return convertValidationProfiles(validation, convert)
-}
-
-func convertValidationProfiles(
-	validation *Validation,
-	convert func(*Validation) (jsontext.Value, error),
-) (jsontext.Value, error) {
-	profiles, err := boundedConversionProfiles(validation)
-	if err != nil {
-		return nil, err
-	}
-
-	var firstErr error
-
-	for _, profile := range profiles {
-		value, err := convert(profile)
+	switch parameter.wire {
+	case wirePrimitive:
+		if typeName := compiledValidationType(validation); typeName != "" {
+			candidate.scalarType = typeName
+		}
+	case wireFormArrayRepeated, wireDelimitedArray:
+		typeName, err := compiledArrayScalarType(validation)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-
-			continue
+			return queryParameter{}, err
 		}
 
-		if errs := validateRaw(profile, json.RawMessage(value), "#"); len(errs) != 0 {
-			if firstErr == nil {
-				firstErr = errors.Join(errs...)
-			}
-
-			continue
+		candidate.scalarType = string(typeName)
+		candidate.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
+	case wireFormObjectNamed, wireFormObjectExploded, wireDelimitedObject, wireDeepObject:
+		properties, byName, err := compileQueryProperties(validation, parameter.wire == wireDeepObject)
+		if err != nil {
+			return queryParameter{}, err
 		}
 
-		return value, nil
+		candidate.properties = properties
+		candidate.propertyByName = byName
+
+		candidate.dynamicType, err = queryAdditionalPropertiesType(validation)
+		if err != nil {
+			return queryParameter{}, fmt.Errorf("additionalProperties: %w", err)
+		}
+
+		candidate.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
 	}
 
-	if firstErr != nil {
-		return nil, firstErr
-	}
-
-	return nil, errors.New("value does not match anyOf")
+	return candidate, nil
 }

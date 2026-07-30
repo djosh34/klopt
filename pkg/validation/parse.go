@@ -53,11 +53,17 @@ func Parse(
 		}
 
 		if len(source.RequestSchema.Raw) != 0 {
-			root, err := compiler.compile(source.RequestSchema)
+			admitted, err := admitRequestSchemaWithCompiler(
+				source,
+				source.RequestSchema,
+				UseRuntimeValidation,
+				&compiler,
+			)
 			if err != nil {
 				return nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
 			}
 
+			root := admitted.Validation
 			root.BodyRequired = source.RequestBodyRequired
 			requestValidation.Body = root
 		}

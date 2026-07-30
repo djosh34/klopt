@@ -52,17 +52,6 @@ type queryParameter struct {
 	dynamicValidation *Validation
 	properties        []queryProperty
 	propertyByName    map[string]int
-	conversions       []queryConversion
-}
-
-type queryConversion struct {
-	validation        *Validation
-	scalarType        string
-	itemValidation    *Validation
-	dynamicType       string
-	dynamicValidation *Validation
-	properties        []queryProperty
-	propertyByName    map[string]int
 }
 
 type queryProperty struct {
@@ -162,11 +151,7 @@ func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDeco
 			parameter.propertyByName[property.Name] = propertyIndex
 		}
 
-		attachQueryConversionValidations(&parameter)
-
-		if err := prepareQueryConversions(&parameter); err != nil {
-			return nil, fmt.Errorf("generated query parameter %q: %w", compiled.Name, err)
-		}
+		attachQueryValueValidations(&parameter)
 
 		parameters[index] = parameter
 	}
@@ -516,7 +501,7 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, unsupportedQueryStyle(name, style, explode, directType)
 		}
 	case "object":
-		parameter.properties, parameter.propertyByName, err = compileQueryProperties(
+		parameter.properties, parameter.propertyByName, parameter.dynamicType, err = compileQueryObjectMetadata(
 			parameter.validation,
 			style == "deepObject",
 		)
@@ -546,20 +531,11 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, unsupportedQueryStyle(name, style, explode, directType)
 		}
 
-		parameter.dynamicType, err = queryAdditionalPropertiesType(parameter.validation)
-		if err != nil {
-			return queryParameter{}, fmt.Errorf("parameter %q additionalProperties: %w", name, err)
-		}
-
 	default:
 		return queryParameter{}, fmt.Errorf("parameter %q has unsupported direct type %q", name, directType)
 	}
 
-	attachQueryConversionValidations(&parameter)
-
-	if err := prepareQueryConversions(&parameter); err != nil {
-		return queryParameter{}, fmt.Errorf("parameter %q: %w", name, err)
-	}
+	attachQueryValueValidations(&parameter)
 
 	return parameter, nil
 }
@@ -742,7 +718,73 @@ func compileQueryProperties(
 	return properties, byName, nil
 }
 
-func attachQueryConversionValidations(parameter *queryParameter) {
+func compileQueryObjectMetadata(
+	validation *Validation,
+	allowPrimitiveArrays bool,
+) ([]queryProperty, map[string]int, string, error) {
+	cursor := newParameterCandidateCursor(validation)
+	properties := make(map[string]queryProperty)
+	dynamicType := ""
+
+	for {
+		candidate, ok := cursor.next()
+		if !ok {
+			break
+		}
+
+		if validationImpossible(candidate) {
+			continue
+		}
+
+		candidateProperties, _, err := compileQueryProperties(candidate, allowPrimitiveArrays)
+		if err != nil {
+			return nil, nil, "", err
+		}
+
+		if mergeErr := mergeQueryProperties(properties, candidateProperties); mergeErr != nil {
+			return nil, nil, "", mergeErr
+		}
+
+		candidateDynamicType, err := queryAdditionalPropertiesType(candidate)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("additionalProperties: %w", err)
+		}
+
+		if dynamicType == "" {
+			dynamicType = candidateDynamicType
+		}
+	}
+
+	compiled := make([]queryProperty, 0, len(properties))
+
+	byName := make(map[string]int, len(properties))
+	for _, name := range slices.Sorted(maps.Keys(properties)) {
+		byName[name] = len(compiled)
+		compiled = append(compiled, properties[name])
+	}
+
+	return compiled, byName, dynamicType, nil
+}
+
+func mergeQueryProperties(properties map[string]queryProperty, candidates []queryProperty) error {
+	for _, property := range candidates {
+		existing, found := properties[property.name]
+		if found && existing.array != property.array {
+			return fmt.Errorf(
+				"style-based object property %q has incompatible anyOf wire shapes",
+				property.name,
+			)
+		}
+
+		if !found {
+			properties[property.name] = property
+		}
+	}
+
+	return nil
+}
+
+func attachQueryValueValidations(parameter *queryParameter) {
 	if parameter == nil || parameter.validation == nil {
 		return
 	}
@@ -766,128 +808,6 @@ func attachQueryConversionValidations(parameter *queryParameter) {
 			property.itemValidation = conjunctiveValidation(items...)
 		}
 	}
-}
-
-//nolint:cyclop // Each AnyOf candidate has separate primitive, array, and object metadata.
-func prepareQueryConversions(parameter *queryParameter) error {
-	if parameter == nil || parameter.validation == nil || parameter.wire == wireJSONContent {
-		return nil
-	}
-
-	if err := validateConversionProfileBounds(parameter.validation); err != nil {
-		return err
-	}
-
-	alternatives, err := boundedConversionProfiles(parameter.validation)
-	if err != nil {
-		return err
-	}
-
-	if !containsAnyOf(parameter.validation) {
-		parameter.conversions = []queryConversion{{
-			validation: parameter.validation, scalarType: parameter.scalarType,
-			itemValidation: parameter.itemValidation, dynamicType: parameter.dynamicType,
-			dynamicValidation: parameter.dynamicValidation, properties: parameter.properties,
-			propertyByName: parameter.propertyByName,
-		}}
-
-		return nil
-	}
-
-	parameter.conversions = make([]queryConversion, 0, len(alternatives))
-
-	for _, validation := range alternatives {
-		if validationImpossible(validation) {
-			continue
-		}
-
-		conversion, err := queryConversionForValidation(parameter, validation)
-		if err != nil {
-			return err
-		}
-
-		parameter.conversions = append(parameter.conversions, conversion)
-	}
-
-	if parameter.wire == wireFormObjectNamed || parameter.wire == wireFormObjectExploded ||
-		parameter.wire == wireDelimitedObject || parameter.wire == wireDeepObject {
-		return mergeQueryObjectConversions(parameter)
-	}
-
-	return nil
-}
-
-func queryConversionForValidation(
-	parameter *queryParameter,
-	validation *Validation,
-) (queryConversion, error) {
-	conversion := queryConversion{validation: validation, scalarType: parameter.scalarType}
-
-	switch parameter.wire {
-	case wirePrimitive:
-		if typeName := compiledValidationType(validation); typeName != "" {
-			conversion.scalarType = typeName
-		}
-	case wireFormArrayRepeated, wireDelimitedArray:
-		typeName, err := compiledArrayScalarType(validation)
-		if err != nil {
-			return queryConversion{}, err
-		}
-
-		conversion.scalarType = string(typeName)
-		conversion.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
-	case wireFormObjectNamed, wireFormObjectExploded, wireDelimitedObject, wireDeepObject:
-		properties, byName, err := compileQueryProperties(validation, parameter.wire == wireDeepObject)
-		if err != nil {
-			return queryConversion{}, err
-		}
-
-		conversion.properties = properties
-		conversion.propertyByName = byName
-
-		conversion.dynamicType, err = queryAdditionalPropertiesType(validation)
-		if err != nil {
-			return queryConversion{}, fmt.Errorf("additionalProperties: %w", err)
-		}
-
-		conversion.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
-	}
-
-	return conversion, nil
-}
-
-func mergeQueryObjectConversions(parameter *queryParameter) error {
-	properties := make(map[string]queryProperty)
-	parameter.dynamicType = ""
-	parameter.dynamicValidation = nil
-
-	for _, conversion := range parameter.conversions {
-		if parameter.dynamicType == "" && conversion.dynamicType != "" {
-			parameter.dynamicType = conversion.dynamicType
-			parameter.dynamicValidation = conversion.dynamicValidation
-		}
-
-		for _, property := range conversion.properties {
-			existing, ok := properties[property.name]
-			if ok && existing.array != property.array {
-				return fmt.Errorf("style-based object property %q has incompatible anyOf wire shapes", property.name)
-			}
-
-			if !ok {
-				properties[property.name] = property
-			}
-		}
-	}
-
-	parameter.properties = make([]queryProperty, 0, len(properties))
-
-	parameter.propertyByName = make(map[string]int, len(properties))
-	for _, name := range slices.Sorted(maps.Keys(properties)) {
-		parameter.propertyByName[name] = len(parameter.properties)
-		parameter.properties = append(parameter.properties, properties[name])
-	}
-
-	return nil
 }
 
 func locatedRawChild(parent oas.LocatedSchema, raw json.RawMessage, tokens ...string) oas.LocatedSchema {

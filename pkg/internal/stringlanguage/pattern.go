@@ -1,4 +1,4 @@
-// Package stringlanguage compiles, intersects, matches, and generates exact ASCII string languages.
+// Package stringlanguage compiles, intersects, matches, and lowers exact Unicode string languages.
 //
 //nolint:godoclint // Private construction vocabulary is documented at the public seam.
 package stringlanguage
@@ -6,12 +6,9 @@ package stringlanguage
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	regexpsyntax "regexp/syntax"
 	"sync"
-	"unicode/utf8"
 
-	"github.com/djosh34/klopt/pkg/internal/patternsyntax"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
@@ -23,16 +20,14 @@ const (
 	maximumNFAStates             = 32_768
 	maximumNFAEdges              = 65_536
 	maximumDFAStates             = 8_192
-	maximumDFATransitions        = maximumDFAStates * asciiAlphabetSize
+	maximumDFATransitions        = 1_048_576
 	maximumProductStates         = 131_072
-	maximumProductTransitions    = maximumProductStates * asciiAlphabetSize
+	maximumProductTransitions    = 16_777_216
 	maximumGraphBytes            = 32 * 1024 * 1024
 	maximumCertificationWork     = 8 * 1024 * 1024
-	maximumGeneratedBytes        = 256
-	maximumExtraLength           = 64
 )
 
-const asciiAlphabetSize = 128
+const maximumASCII = 0x7f
 
 // Language is an immutable exact string language backed by a private DFA.
 type Language struct {
@@ -45,7 +40,7 @@ type Requirement struct {
 	WantMatch bool
 }
 
-// Length is measured in bytes. A nil Max means unbounded.
+// Length is measured in Unicode code points. A nil Max means unbounded.
 type Length struct {
 	Min int
 	Max *int
@@ -78,7 +73,6 @@ type constructionLimits struct {
 	productTransitions    uint64
 	graphBytes            uint64
 	certificationWork     uint64
-	generatedBytes        uint64
 }
 
 func defaultLimits() constructionLimits {
@@ -94,7 +88,6 @@ func defaultLimits() constructionLimits {
 		productTransitions:    maximumProductTransitions,
 		graphBytes:            maximumGraphBytes,
 		certificationWork:     maximumCertificationWork,
-		generatedBytes:        maximumGeneratedBytes,
 	}
 }
 
@@ -217,15 +210,6 @@ func (set *Set) Matches(value string) bool {
 	return set != nil && set.product.matches(value)
 }
 
-// Generate deterministically constructs an accepted value from seed.
-func (set *Set) Generate(seed uint64) string {
-	if set == nil {
-		panic("stringlanguage: generate from nil set")
-	}
-
-	return set.product.generate(seed)
-}
-
 func validateLength(length Length) error {
 	if length.Min < 0 {
 		return &CompileError{
@@ -248,144 +232,6 @@ func validateLength(length Length) error {
 	return nil
 }
 
-//nolint:cyclop // Common policy and the two deliberately separate dialect paths stay explicit.
-func compilePattern(
-	source string,
-	settings *patternvalidator.PatternValidation,
-	work *budget,
-) (*dfa, error) {
-	if len(source) > patternsyntax.MaximumSourceBytes {
-		return nil, limitError(
-			"input", "source bytes", patternsyntax.MaximumSourceBytes, uint64(len(source)),
-		)
-	}
-
-	if !utf8.ValidString(source) {
-		return nil, errors.New("source is not valid UTF-8")
-	}
-
-	if settings.RejectsNonASCII() && firstNonASCII(source) >= 0 {
-		return nil, errors.New("non-ASCII pattern is rejected by policy")
-	}
-
-	if err := work.add(
-		&work.cumulativeSourceBytes,
-		uint64(len(source)),
-		work.limits.cumulativeSourceBytes,
-		"input",
-		"cumulative source bytes",
-	); err != nil {
-		return nil, err
-	}
-
-	if settings.UsesRE2() {
-		if _, err := regexp.Compile(source); err != nil {
-			return nil, fmt.Errorf("raw Go regexp syntax: %w", err)
-		}
-
-		expression, err := regexpsyntax.Parse(source, regexpsyntax.Perl)
-		if err != nil {
-			return nil, fmt.Errorf("parse accepted raw Go regexp: %w", err)
-		}
-
-		if err := work.add(
-			&work.cumulativeASTNodes,
-			rawNodeCount(expression),
-			work.limits.cumulativeASTNodes,
-			"parse",
-			"cumulative AST nodes",
-		); err != nil {
-			return nil, err
-		}
-
-		if err := validateRawCapabilities(expression); err != nil {
-			return nil, err
-		}
-
-		return compileRawPattern(expression, work)
-	}
-
-	tree, err := patternsyntax.Parse(source)
-	if err != nil {
-		return nil, err
-	}
-
-	if settings.RejectsNonASCII() && hasNonASCIIExpression(tree) {
-		return nil, errors.New("non-ASCII pattern value is rejected by policy")
-	}
-
-	if err := work.add(
-		&work.cumulativeASTNodes,
-		uint64(len(tree.Nodes)),
-		work.limits.cumulativeASTNodes,
-		"parse",
-		"cumulative AST nodes",
-	); err != nil {
-		return nil, err
-	}
-
-	return compileESPattern(tree, work)
-}
-
-func rawNodeCount(expression *regexpsyntax.Regexp) uint64 {
-	count := uint64(0)
-	stack := []*regexpsyntax.Regexp{expression}
-
-	for len(stack) > 0 {
-		last := len(stack) - 1
-		node := stack[last]
-		stack = stack[:last]
-
-		if count == ^uint64(0) {
-			return count
-		}
-
-		count++
-
-		stack = append(stack, node.Sub...)
-	}
-
-	return count
-}
-
-func validateRawCapabilities(expression *regexpsyntax.Regexp) error {
-	if expression.Flags&regexpsyntax.FoldCase != 0 {
-		return errors.New("raw Go regexp generator does not support case-folding flags")
-	}
-
-	switch expression.Op {
-	case regexpsyntax.OpNoMatch,
-		regexpsyntax.OpEmptyMatch,
-		regexpsyntax.OpLiteral,
-		regexpsyntax.OpCharClass,
-		regexpsyntax.OpAnyCharNotNL,
-		regexpsyntax.OpAnyChar,
-		regexpsyntax.OpBeginLine,
-		regexpsyntax.OpEndLine,
-		regexpsyntax.OpBeginText,
-		regexpsyntax.OpEndText,
-		regexpsyntax.OpWordBoundary,
-		regexpsyntax.OpNoWordBoundary,
-		regexpsyntax.OpCapture,
-		regexpsyntax.OpStar,
-		regexpsyntax.OpPlus,
-		regexpsyntax.OpQuest,
-		regexpsyntax.OpRepeat,
-		regexpsyntax.OpConcat,
-		regexpsyntax.OpAlternate:
-	default:
-		return fmt.Errorf("raw Go regexp generator does not support %s", expression.Op)
-	}
-
-	for _, child := range expression.Sub {
-		if err := validateRawCapabilities(child); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (work *budget) add(
 	counter *uint64,
 	amount uint64,
@@ -398,35 +244,4 @@ func (work *budget) add(
 
 func limitError(phase string, limit string, maximum uint64, observed uint64) *ComplexityError {
 	return &ComplexityError{Phase: phase, Resource: limit, Limit: maximum, Observed: observed}
-}
-
-func firstNonASCII(value string) int {
-	for index := range len(value) {
-		if value[index] >= utf8.RuneSelf {
-			return index
-		}
-	}
-
-	return -1
-}
-
-func hasNonASCIIExpression(tree *patternsyntax.Tree) bool {
-	for _, node := range tree.Nodes {
-		if node.Kind == patternsyntax.KindLiteral && node.Value >= asciiAlphabetSize {
-			return true
-		}
-
-		if node.Kind != patternsyntax.KindClass {
-			continue
-		}
-
-		for _, item := range node.ClassItems {
-			if item.Kind == patternsyntax.ClassItemRange &&
-				(item.Low >= asciiAlphabetSize || item.High >= asciiAlphabetSize) {
-				return true
-			}
-		}
-	}
-
-	return false
 }

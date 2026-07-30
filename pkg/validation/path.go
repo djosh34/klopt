@@ -34,8 +34,6 @@ const (
 	pathWireJSONContent
 )
 
-const maximumConversionProfiles = 256
-
 const (
 	pathShapePrimitive pathShape = iota
 	pathShapeArray
@@ -53,17 +51,6 @@ type pathParameter struct {
 	scalarType        styleScalarType
 	dynamicType       styleScalarType
 	itemValidation    *Validation
-	dynamicValidation *Validation
-	properties        []pathProperty
-	propertyByName    map[string]int
-	conversions       []pathConversion
-}
-
-type pathConversion struct {
-	validation        *Validation
-	scalarType        styleScalarType
-	itemValidation    *Validation
-	dynamicType       styleScalarType
 	dynamicValidation *Validation
 	properties        []pathProperty
 	propertyByName    map[string]int
@@ -237,14 +224,9 @@ func compileSchemaPathMetadata(
 	case "object":
 		parameter.wire = styleOffset + pathWireKind(pathShapeObject)
 
-		parameter.properties, parameter.propertyByName, err = compiledPathProperties(validation)
+		parameter.properties, parameter.propertyByName, parameter.dynamicType, err = compilePathObjectMetadata(validation)
 		if err != nil {
 			return pathParameter{}, fmt.Errorf("path parameter %q object properties: %w", name, err)
-		}
-
-		parameter.dynamicType, err = compiledPathScalarType(compiledAdditionalProperties(validation)...)
-		if err != nil {
-			return pathParameter{}, fmt.Errorf("path parameter %q additionalProperties: %w", name, err)
 		}
 
 	default:
@@ -256,11 +238,7 @@ func compileSchemaPathMetadata(
 		}
 	}
 
-	attachPathConversionValidations(&parameter)
-
-	if err := preparePathConversions(&parameter); err != nil {
-		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, err)
-	}
+	attachPathValueValidations(&parameter)
 
 	return parameter, nil
 }
@@ -417,14 +395,21 @@ func compiledScalarType(validations ...*Validation) (string, error) {
 		return "string", nil
 	}
 
-	profiles, err := boundedConversionProfiles(conjunctiveValidation(validations...))
-	if err != nil {
-		return "", err
-	}
+	validation := conjunctiveValidation(validations...)
+	cursor := newParameterCandidateCursor(validation)
+	types := make([]string, 0)
 
-	types := make([]string, 0, len(profiles))
-	for _, profile := range profiles {
-		typeName := compiledValidationType(profile)
+	for {
+		candidate, ok := cursor.next()
+		if !ok {
+			break
+		}
+
+		if validationImpossible(candidate) {
+			continue
+		}
+
+		typeName := compiledValidationType(candidate)
 		if typeName == "" {
 			typeName = "string"
 		}
@@ -432,7 +417,7 @@ func compiledScalarType(validations ...*Validation) (string, error) {
 		if !isScalarType(typeName) {
 			return "", fmt.Errorf(
 				"style scalar slot at %s must have a primitive type; unsupported compiled type %q",
-				profile.SchemaPointer,
+				candidate.SchemaPointer,
 				typeName,
 			)
 		}
@@ -535,6 +520,55 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 	return properties, propertyByName, nil
 }
 
+func compilePathObjectMetadata(
+	validation *Validation,
+) ([]pathProperty, map[string]int, styleScalarType, error) {
+	cursor := newParameterCandidateCursor(validation)
+	properties := make(map[string]pathProperty)
+	dynamicType := styleScalarType("")
+
+	for {
+		candidate, ok := cursor.next()
+		if !ok {
+			break
+		}
+
+		if validationImpossible(candidate) {
+			continue
+		}
+
+		candidateProperties, _, err := compiledPathProperties(candidate)
+		if err != nil {
+			return nil, nil, "", err
+		}
+
+		for _, property := range candidateProperties {
+			if _, found := properties[property.name]; !found {
+				properties[property.name] = property
+			}
+		}
+
+		candidateDynamicType, err := compiledPathScalarType(compiledAdditionalProperties(candidate)...)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("additionalProperties: %w", err)
+		}
+
+		if dynamicType == "" {
+			dynamicType = candidateDynamicType
+		}
+	}
+
+	compiled := make([]pathProperty, 0, len(properties))
+
+	byName := make(map[string]int, len(properties))
+	for _, name := range slices.Sorted(maps.Keys(properties)) {
+		byName[name] = len(compiled)
+		compiled = append(compiled, properties[name])
+	}
+
+	return compiled, byName, dynamicType, nil
+}
+
 func compiledPathPropertyScalarType(
 	validations []*Validation,
 	enumValues []jsonvalue.Value,
@@ -556,7 +590,16 @@ func compiledPathPropertyScalarType(
 
 	typeName := intersectQuerySchemaTypes(types)
 	if !isScalarType(typeName) {
-		return "", fmt.Errorf("style scalar slot has unsupported compiled type %q", typeName)
+		pointer := "#"
+		if len(validations) != 0 {
+			pointer = validations[0].SchemaPointer
+		}
+
+		return "", fmt.Errorf(
+			"style scalar slot at %s has unsupported compiled type %q",
+			pointer,
+			typeName,
+		)
 	}
 
 	return styleScalarType(typeName), nil
@@ -931,18 +974,23 @@ func conjunctiveValidation(validations ...*Validation) *Validation {
 	}
 }
 
-//nolint:cyclop // OpenAPI style types require ordered inference across all AnyOf candidates.
+//nolint:cyclop // Candidate shape, scalar type, and nested-array admission are one style decision.
 func compiledStyleType(validation *Validation) (string, error) {
-	profiles, err := boundedConversionProfiles(validation)
-	if err != nil {
-		return "", err
-	}
-
-	types := make([]string, 0, len(profiles))
+	cursor := newParameterCandidateCursor(validation)
+	types := make([]string, 0)
 	shape := ""
 
-	for _, profile := range profiles {
-		typeName := compiledValidationType(profile)
+	for {
+		candidate, ok := cursor.next()
+		if !ok {
+			break
+		}
+
+		if validationImpossible(candidate) {
+			continue
+		}
+
+		typeName := compiledValidationType(candidate)
 		if typeName == "" {
 			typeName = "string"
 		}
@@ -955,12 +1003,12 @@ func compiledStyleType(validation *Validation) (string, error) {
 		if shape != "" && candidateShape != shape {
 			return "", fmt.Errorf(
 				"schema at %s has unrepresentable anyOf wire shape %q beside %q",
-				profile.SchemaPointer, candidateShape, shape,
+				candidate.SchemaPointer, candidateShape, shape,
 			)
 		}
 
 		if candidateShape == "array" {
-			if _, err := compiledArrayScalarType(profile); err != nil {
+			if _, err := compiledArrayScalarType(candidate); err != nil {
 				return "", err
 			}
 		}
@@ -980,145 +1028,6 @@ func compiledStyleType(validation *Validation) (string, error) {
 	}
 
 	return typeName, nil
-}
-
-func boundedConversionProfiles(validation *Validation) ([]*Validation, error) {
-	if validation == nil || !containsAnyOf(validation) {
-		return []*Validation{validation}, nil
-	}
-
-	profiles := make([]*Validation, 0)
-	visited := 0
-	tooMany := false
-
-	visitConversionAlternatives(validation, func(profile *Validation) bool {
-		visited++
-		if visited > maximumConversionProfiles {
-			tooMany = true
-
-			return false
-		}
-
-		if !validationImpossible(profile) {
-			profiles = append(profiles, profile)
-		}
-
-		return true
-	})
-
-	if tooMany {
-		return nil, fmt.Errorf(
-			"schema at %s supports at most %d conjunctive anyOf conversion profiles",
-			validation.SchemaPointer,
-			maximumConversionProfiles,
-		)
-	}
-
-	return profiles, nil
-}
-
-func validateConversionProfileBounds(validation *Validation) error {
-	return validateConversionProfileBoundsAt(validation, make(map[*Validation]struct{}))
-}
-
-func validateConversionProfileBoundsAt(
-	validation *Validation,
-	seen map[*Validation]struct{},
-) error {
-	if validation == nil {
-		return nil
-	}
-
-	if _, visited := seen[validation]; visited {
-		return nil
-	}
-
-	seen[validation] = struct{}{}
-
-	if _, err := boundedConversionProfiles(validation); err != nil {
-		return err
-	}
-
-	children := make([]*Validation, 0, 1+len(validation.ObjectValidation.Properties)+
-		len(validation.AllOfValidations)+len(validation.AnyOfValidations))
-
-	children = append(children, validation.ArrayValidation.Items)
-	for _, property := range validation.ObjectValidation.Properties {
-		children = append(children, property.Validation)
-	}
-
-	children = append(children, validation.ObjectValidation.AdditionalPropertiesValidation)
-	children = append(children, validation.AllOfValidations...)
-	children = append(children, validation.AnyOfValidations...)
-
-	for _, child := range children {
-		if err := validateConversionProfileBoundsAt(child, seen); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func visitConversionAlternatives(validation *Validation, visit func(*Validation) bool) bool {
-	if validation == nil || !containsAnyOf(validation) {
-		return visit(validation)
-	}
-
-	local := *validation
-	local.AllOfValidations = nil
-	local.AnyOfValidations = nil
-
-	return visitLocalConversionChoices(validation, &local, func(profile *Validation) bool {
-		return visitConjunctiveConversionChildren(validation.AllOfValidations, 0, profile, visit)
-	})
-}
-
-func visitLocalConversionChoices(
-	validation *Validation,
-	local *Validation,
-	visit func(*Validation) bool,
-) bool {
-	if len(validation.AnyOfValidations) == 0 {
-		return visit(local)
-	}
-
-	for _, branch := range validation.AnyOfValidations {
-		if !visitConversionAlternatives(branch, func(alternative *Validation) bool {
-			combined := conjunctiveValidation(local, alternative)
-			combined.SchemaPointer = alternative.SchemaPointer
-
-			return visit(combined)
-		}) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func visitConjunctiveConversionChildren(
-	children []*Validation,
-	index int,
-	profile *Validation,
-	visit func(*Validation) bool,
-) bool {
-	if index == len(children) {
-		return visit(profile)
-	}
-
-	child := children[index]
-
-	return visitConversionAlternatives(child, func(childProfile *Validation) bool {
-		combined := conjunctiveValidation(profile, childProfile)
-		if containsAnyOf(child) {
-			combined.SchemaPointer = childProfile.SchemaPointer
-		} else {
-			combined.SchemaPointer = profile.SchemaPointer
-		}
-
-		return visitConjunctiveConversionChildren(children, index+1, combined, visit)
-	})
 }
 
 func containsAnyOf(validation *Validation) bool {
@@ -1310,20 +1219,16 @@ func pathParameterFromGenerated(compiled PathParameterDefinition) (pathParameter
 		parameter.propertyByName[property.Name] = index
 	}
 
-	attachPathConversionValidations(&parameter)
+	attachPathValueValidations(&parameter)
 
 	if err := validatePathParameterMetadata(parameter); err != nil {
-		return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
-	}
-
-	if err := preparePathConversions(&parameter); err != nil {
 		return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
 	}
 
 	return parameter, nil
 }
 
-func attachPathConversionValidations(parameter *pathParameter) {
+func attachPathValueValidations(parameter *pathParameter) {
 	if parameter == nil || parameter.validation == nil {
 		return
 	}
@@ -1336,125 +1241,6 @@ func attachPathConversionValidations(parameter *pathParameter) {
 
 	for index := range parameter.properties {
 		parameter.properties[index].validation = conjunctiveValidation(byName[parameter.properties[index].name]...)
-	}
-}
-
-//nolint:cyclop // Bounded profile preparation dispatches the three path wire shapes.
-func preparePathConversions(parameter *pathParameter) error {
-	if parameter == nil || parameter.validation == nil || parameter.wire == pathWireJSONContent {
-		return nil
-	}
-
-	if err := validateConversionProfileBounds(parameter.validation); err != nil {
-		return err
-	}
-
-	alternatives, err := boundedConversionProfiles(parameter.validation)
-	if err != nil {
-		return err
-	}
-
-	if !containsAnyOf(parameter.validation) {
-		parameter.conversions = []pathConversion{{
-			validation: parameter.validation, scalarType: parameter.scalarType,
-			itemValidation: parameter.itemValidation, dynamicType: parameter.dynamicType,
-			dynamicValidation: parameter.dynamicValidation, properties: parameter.properties,
-			propertyByName: parameter.propertyByName,
-		}}
-
-		return nil
-	}
-
-	parameter.conversions = make([]pathConversion, 0, len(alternatives))
-	shape := pathShape(parameter.wire % pathWireKind(pathShapeCount))
-
-	for _, validation := range alternatives {
-		if validationImpossible(validation) {
-			continue
-		}
-
-		conversion, err := pathConversionForValidation(parameter, validation)
-		if err != nil {
-			return err
-		}
-
-		parameter.conversions = append(parameter.conversions, conversion)
-	}
-
-	if shape == pathShapeObject {
-		mergePathObjectConversions(parameter)
-	}
-
-	return nil
-}
-
-func pathConversionForValidation(
-	parameter *pathParameter,
-	validation *Validation,
-) (pathConversion, error) {
-	conversion := pathConversion{validation: validation, scalarType: parameter.scalarType}
-	shape := pathShape(parameter.wire % pathWireKind(pathShapeCount))
-
-	switch shape {
-	case pathShapePrimitive:
-		typeName, err := compiledPathScalarType(validation)
-		if err != nil {
-			return pathConversion{}, err
-		}
-
-		conversion.scalarType = typeName
-	case pathShapeArray:
-		typeName, err := compiledArrayScalarType(validation)
-		if err != nil {
-			return pathConversion{}, err
-		}
-
-		conversion.scalarType = typeName
-		conversion.itemValidation = conjunctiveValidation(compiledArrayItems(validation)...)
-	case pathShapeObject:
-		properties, byName, err := compiledPathProperties(validation)
-		if err != nil {
-			return pathConversion{}, err
-		}
-
-		conversion.properties = properties
-		conversion.propertyByName = byName
-
-		conversion.dynamicType, err = compiledPathScalarType(compiledAdditionalProperties(validation)...)
-		if err != nil {
-			return pathConversion{}, fmt.Errorf("additionalProperties: %w", err)
-		}
-
-		conversion.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(validation)...)
-	}
-
-	return conversion, nil
-}
-
-func mergePathObjectConversions(parameter *pathParameter) {
-	properties := make(map[string]pathProperty)
-	parameter.dynamicType = ""
-	parameter.dynamicValidation = nil
-
-	for _, conversion := range parameter.conversions {
-		if parameter.dynamicType == "" && conversion.dynamicType != "" {
-			parameter.dynamicType = conversion.dynamicType
-			parameter.dynamicValidation = conversion.dynamicValidation
-		}
-
-		for _, property := range conversion.properties {
-			if _, ok := properties[property.name]; !ok {
-				properties[property.name] = property
-			}
-		}
-	}
-
-	parameter.properties = make([]pathProperty, 0, len(properties))
-
-	parameter.propertyByName = make(map[string]int, len(properties))
-	for _, name := range slices.Sorted(maps.Keys(properties)) {
-		parameter.propertyByName[name] = len(parameter.properties)
-		parameter.properties = append(parameter.properties, properties[name])
 	}
 }
 

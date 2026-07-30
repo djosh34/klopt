@@ -148,6 +148,73 @@ func TestQueryDecoderAnyOfUsesFirstCompleteSchemaStyleConversion(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderAnyOfPrefersFirstCompleteValidationError(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+      {type: boolean},
+      {type: integer, minimum: 10}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+	require.Nil(t, actual)
+	require.ErrorContains(t, err, "/anyOf/1")
+	require.ErrorContains(t, err, "minimum")
+}
+
+func TestQueryDecoderAnyOfKeepsParentAndAllOfConstraintsActive(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {allOf: [
+      {enum: ['7']},
+      {anyOf: [{type: integer}, {type: string, pattern: '^7$'}]}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"7"}`, string(actual))
+}
+
+func TestQueryDecoderAnyOfUsesReferencedAlternatives(t *testing.T) {
+	t.Parallel()
+
+	requests, err := validation.Parse([]byte(`openapi: 3.0.3
+paths:
+  /query:
+    get:
+      operationId: query
+      parameters:
+        - name: q
+          in: query
+          schema:
+            anyOf:
+              - {$ref: '#/components/schemas/LargeInteger'}
+              - {$ref: '#/components/schemas/Seven'}
+components:
+  schemas:
+    LargeInteger: {type: integer, minimum: 10}
+    Seven: {type: string, pattern: '^7$'}
+`))
+	require.NoError(t, err)
+
+	actual, err := requests["query"].Query.Decode(&url.URL{RawQuery: `q=7`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"7"}`, string(actual))
+}
+
+func TestQueryDecoderAnyOfHasNoAlternativeCountCap(t *testing.T) {
+	t.Parallel()
+
+	const booleanAlternatives = 300
+
+	schema := `{anyOf: [` + strings.Repeat(`{type: boolean},`, booleanAlternatives) +
+		`{type: integer, minimum: 10}]}`
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: `+schema+`}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+	require.Nil(t, actual)
+	require.ErrorContains(t, err, "/anyOf/300")
+	require.ErrorContains(t, err, "minimum")
+}
+
 func TestQueryDecoderAnyOfConversionMustSatisfySelectedBranch(t *testing.T) {
 	t.Parallel()
 
@@ -290,6 +357,36 @@ func TestQueryDecoderAnyOfConvertsRootObjectsPerBranch(t *testing.T) {
 	}
 }
 
+func TestQueryDecoderAnyOfExplodedObjectClaimsOnlyBranchProperties(t *testing.T) {
+	t.Parallel()
+
+	requests, err := validation.Parse([]byte(`openapi: 3.0.3
+paths:
+  /query:
+    get:
+      operationId: query
+      parameters:
+        - name: choice
+          in: query
+          style: form
+          explode: true
+          schema:
+            anyOf:
+              - {type: object, additionalProperties: false, properties: {a: {type: integer}}}
+              - {type: object, additionalProperties: false, properties: {b: {type: integer}}}
+        - name: other
+          in: query
+          style: form
+          explode: true
+          schema: {type: object, additionalProperties: {type: integer}}
+`))
+	require.NoError(t, err)
+
+	actual, err := requests["query"].Query.Decode(&url.URL{RawQuery: `a=1&extra=2`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"choice":{"a":1},"other":{"extra":2}}`, string(actual))
+}
+
 func TestQueryDecoderAnyOfPreservesNestedChoiceOrderAndShape(t *testing.T) {
 	t.Parallel()
 
@@ -391,7 +488,7 @@ func TestQueryDecoderSkipsAnyOfWireShapesWithImpossibleBounds(t *testing.T) {
 	}
 }
 
-func TestQueryDecoderInfersWireShapeFromSatisfiableConjunctiveAnyOfProfiles(t *testing.T) {
+func TestQueryDecoderInfersWireShapeFromConjunctiveAnyOf(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {allOf: [
@@ -403,7 +500,7 @@ func TestQueryDecoderInfersWireShapeFromSatisfiableConjunctiveAnyOfProfiles(t *t
 	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
 }
 
-func TestQueryDecoderSkipsProfilesMadeImpossibleByConjunctiveBounds(t *testing.T) {
+func TestQueryDecoderSkipsAlternativesMadeImpossibleByConjunctiveBounds(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {allOf: [
@@ -415,7 +512,7 @@ func TestQueryDecoderSkipsProfilesMadeImpossibleByConjunctiveBounds(t *testing.T
 	require.JSONEq(t, `{"q":"x"}`, string(actual))
 }
 
-func TestQueryDecoderSkipsIntegerAnyOfProfilesWithoutAnInteger(t *testing.T) {
+func TestQueryDecoderSkipsIntegerAnyOfAlternativeWithoutAnInteger(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
@@ -427,7 +524,7 @@ func TestQueryDecoderSkipsIntegerAnyOfProfilesWithoutAnInteger(t *testing.T) {
 	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
 }
 
-func TestQueryDecoderSkipsEnumProfilesWhoseMembersViolateBounds(t *testing.T) {
+func TestQueryDecoderSkipsEnumAlternativesWhoseMembersViolateBounds(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
@@ -451,7 +548,7 @@ func TestQueryDecoderInfersPropertiesFromAnyOfObjectEnums(t *testing.T) {
 	require.JSONEq(t, `{"q":{"count":2}}`, string(actual))
 }
 
-func TestQueryDecoderSkipsProfilesWithoutAnAllowedMultiple(t *testing.T) {
+func TestQueryDecoderSkipsAlternativesWithoutAnAllowedMultiple(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
@@ -463,32 +560,7 @@ func TestQueryDecoderSkipsProfilesWithoutAnAllowedMultiple(t *testing.T) {
 	require.JSONEq(t, `{"q":["x","y"]}`, string(actual))
 }
 
-func TestParseRejectsExcessiveConjunctiveAnyOfConversionProfiles(t *testing.T) {
-	t.Parallel()
-
-	var groups strings.Builder
-	for range 9 {
-		_, writeErr := groups.WriteString("              - anyOf: [{type: string}, {type: integer}]\n")
-		require.NoError(t, writeErr)
-	}
-
-	document := fmt.Sprintf(`openapi: 3.0.3
-paths:
-  /items:
-    get:
-      operationId: items
-      parameters:
-        - name: q
-          in: query
-          schema:
-            allOf:
-%s`, groups.String())
-
-	_, err := validation.Parse([]byte(document))
-	require.ErrorContains(t, err, "at most 256 conjunctive anyOf conversion profiles")
-}
-
-func TestQueryDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
+func TestQueryDecoderCombinesConjunctiveAnyOfObjectAlternatives(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: {
@@ -503,7 +575,7 @@ func TestQueryDecoderCombinesConjunctiveAnyOfObjectConversionProfiles(t *testing
 	require.JSONEq(t, `{"q":{"a":1,"b":2}}`, string(actual))
 }
 
-func TestQueryDecoderFormsCartesianConjunctiveAnyOfObjectConversionProfiles(t *testing.T) {
+func TestQueryDecoderTriesConjunctiveObjectAlternativesTransactionally(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: q, in: query, explode: false, schema: {
