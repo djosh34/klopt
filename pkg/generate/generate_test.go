@@ -203,7 +203,6 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 		"                  nullable: true",
 		"                  minItems: 1",
 		"                  maxItems: 3",
-		"                  uniqueItems: true",
 		"                  items: {type: integer, minimum: 1, maximum: 5, multipleOf: 1}",
 		"                enum:",
 		"                  enum:",
@@ -255,7 +254,7 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 		"EnumValidation:", "Values:", "ExactValues:", "ExactValue:", "NumberValidation:", "Minimum:",
 		"Maximum:", "Exclusive:", "MultipleOf:", "ExactMultipleOf:", "StringValidation:",
 		"MinLength:", "MaxLength:", "Pattern:", "Format:", "CompiledPattern:",
-		"ArrayValidation:", "MinItems:", "MaxItems:", "Items:", "UniqueItems:",
+		"ArrayValidation:", "MinItems:", "MaxItems:", "Items:",
 		"ObjectValidation:", "MinProperties:", "MaxProperties:", "Required:", "Properties:", "Name:", "Validation:",
 		"AdditionalPropertiesAllowed:", "AdditionalPropertiesValidation:", "AllOfValidations:", "AnyOfValidations:",
 	} {

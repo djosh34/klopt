@@ -1,8 +1,7 @@
-// Package suite adapts one admitted OpenAPI document to one graph program.
+// Package suite adapts one OpenAPI document to one graph program.
 package suite
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 
@@ -25,12 +24,13 @@ type CompiledSuite struct {
 	Operations []OperationInfo
 }
 
-// CompileSuite admits and lowers every JSON request body in one document.
+// CompileSuite parses and lowers every JSON request body in one document.
 func CompileSuite(
 	document []byte,
 	patternOptions ...patternvalidator.Option,
 ) (*CompiledSuite, error) {
-	if _, err := validation.Parse(document, patternOptions...); err != nil {
+	requestValidations, err := validation.Parse(document, patternOptions...)
+	if err != nil {
 		return nil, err
 	}
 
@@ -44,21 +44,13 @@ func CompileSuite(
 	operations := make([]OperationInfo, 0, len(sources))
 	for _, operationID := range slices.Sorted(maps.Keys(sources)) {
 		source := sources[operationID]
-		if len(source.RequestSchema.Raw) == 0 {
+
+		body := requestValidations[operationID].Body
+		if body == nil {
 			continue
 		}
 
-		admitted, admissionErr := validation.AdmitRequestSchema(
-			source,
-			source.RequestSchema,
-			validation.UseRequestGeneration,
-			patternOptions...,
-		)
-		if admissionErr != nil {
-			return nil, fmt.Errorf("compile operationId %q: %w", operationID, admissionErr)
-		}
-
-		roots = append(roots, admitted.Validation)
+		roots = append(roots, body)
 		operations = append(operations, OperationInfo{
 			ID: operationID, Method: source.Method, Path: source.PathTemplate,
 		})

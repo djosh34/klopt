@@ -49,7 +49,6 @@ func TestValidationSupportedKeywordsAtRootNestedAndAllOf(t *testing.T) {
 		{name: "minItems", schema: `{"minItems":1}`, valid: `[0]`, invalid: `[]`, keyword: "minItems"},
 		{name: "maxItems", schema: `{"maxItems":1}`, valid: `[0]`, invalid: `[0,1]`, keyword: "maxItems"},
 		{name: "items", schema: `{"items":{"type":"integer"}}`, valid: `[1]`, invalid: `[1.5]`, keyword: "type"},
-		{name: "uniqueItems", schema: `{"uniqueItems":true}`, valid: `[1,2]`, invalid: `[1,1.0]`, keyword: "uniqueItems"},
 		{name: "minProperties", schema: `{"minProperties":1}`, valid: `{"a":1}`, invalid: `{}`, keyword: "minProperties"},
 		{
 			name: "maxProperties", schema: `{"maxProperties":1}`,
@@ -693,8 +692,8 @@ func TestValidationExactNumbers(t *testing.T) {
 	require.NotEmpty(t, integer.Validate(json.RawMessage(`1e-100001`)))
 }
 
-// TestValidationNestedUniqueItemsAndAllOf covers finite nesting and composition behavior directly.
-func TestValidationNestedUniqueItemsAndAllOf(t *testing.T) {
+// TestValidationNestedAndAllOf covers finite nesting and composition behavior directly.
+func TestValidationNestedAndAllOf(t *testing.T) {
 	t.Parallel()
 
 	components := `,"components":{"schemas":{"Node":{"type":"object","required":["value"],"properties":{
@@ -707,13 +706,27 @@ func TestValidationNestedUniqueItemsAndAllOf(t *testing.T) {
 	errs := nested.Validate(json.RawMessage(`{"value":1,"child":{"value":2.5}}`))
 	require.Contains(t, errors.Join(errs...).Error(), "instance #/child/value")
 
-	unique := mustParseSchema(t, `{"type":"array","items":{},"uniqueItems":true}`, "")
-	require.NotEmpty(t, unique.Validate(json.RawMessage(`[{"a":1},{"a":1.0}]`)))
-
 	allOf := mustParseSchema(t, `{"allOf":[{"minimum":1},{"maximum":2}]}`, "")
 	require.Empty(t, allOf.Validate(json.RawMessage(`1.5`)))
 	errs = allOf.Validate(json.RawMessage(`3`))
 	require.Contains(t, errors.Join(errs...).Error(), "/allOf/1")
+}
+
+// TestParseRejectsUniqueItemsAtItsSourcePointer covers every authored value shape.
+func TestParseRejectsUniqueItemsAtItsSourcePointer(t *testing.T) {
+	t.Parallel()
+
+	want := `compile operationId "checkThing": compile schema at ` +
+		`#/paths/~1things/post/requestBody/content/application~1json/schema/uniqueItems: unsupported keyword`
+
+	for _, value := range []string{"true", "false", "null", `"yes"`, "1", `{}`} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Parse(openAPISpec(`{"uniqueItems":`+value+`}`, "", false))
+			require.EqualError(t, err, want)
+		})
+	}
 }
 
 // TestParseRejectsUnsupportedAndMalformedReachableSchemas covers every parse-time rejection.

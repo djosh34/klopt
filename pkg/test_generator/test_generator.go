@@ -142,7 +142,6 @@ func (generator *Generator) Close() {
 	if generator == nil {
 		return
 	}
-
 }
 
 // ResourceLimited reports whether Decode stopped at an explicit runtime or solver budget.

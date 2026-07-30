@@ -94,10 +94,9 @@ type StringValidation struct {
 
 // ArrayValidation holds array-specific constraints.
 type ArrayValidation struct {
-	MinItems    *CountBound
-	MaxItems    *CountBound
-	Items       *Validation
-	UniqueItems bool
+	MinItems *CountBound
+	MaxItems *CountBound
+	Items    *Validation
 }
 
 // PropertyValidation pairs one lexical object property name with its schema.

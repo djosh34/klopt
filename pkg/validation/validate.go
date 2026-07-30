@@ -404,9 +404,7 @@ func (stringValidation StringValidation) validate(
 	return errs
 }
 
-// validate applies array bounds, child schemas, and semantic uniqueness.
-//
-//nolint:cyclop // Array keywords collect independent failures in fixed order.
+// validate applies array bounds and child schemas.
 func (array ArrayValidation) validate(validation *Validation, value instance, pointer string) []error {
 	if value.kind != jsonvalue.KindArray {
 		return nil
@@ -430,36 +428,6 @@ func (array ArrayValidation) validate(validation *Validation, value instance, po
 			errs = append(errs, validateRaw(
 				array.Items, child, appendInstancePointer(pointer, fmt.Sprintf("%d", index)),
 			)...)
-		}
-	}
-
-	if array.UniqueItems {
-		parsed := make([]jsonvalue.Value, 0, len(value.array))
-		for index, child := range value.array {
-			candidate, err := jsonvalue.Parse(child)
-			if err != nil {
-				errs = append(errs, newValidationError(
-					validation,
-					appendInstancePointer(pointer, fmt.Sprintf("%d", index)), "uniqueItems", err.Error(),
-				))
-
-				continue
-			}
-
-			for previous, existing := range parsed {
-				if existing.Equal(candidate) {
-					errs = append(errs, newValidationError(
-						validation,
-						appendInstancePointer(pointer, fmt.Sprintf("%d", index)),
-						"uniqueItems",
-						fmt.Sprintf("item duplicates index %d", previous),
-					))
-
-					break
-				}
-			}
-
-			parsed = append(parsed, candidate)
 		}
 	}
 

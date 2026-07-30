@@ -304,7 +304,7 @@ func schemaMembers(schema oas.LocatedSchema) (map[string]json.RawMessage, error)
 
 // rejectUnsupportedKeywords rejects behavior outside the runtime validator contract.
 func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessage) error {
-	for _, keyword := range []string{"oneOf", "not"} {
+	for _, keyword := range []string{"oneOf", "not", "uniqueItems"} {
 		if _, ok := members[keyword]; ok {
 			return fmt.Errorf("compile schema at %s/%s: unsupported keyword", pointer, keyword)
 		}
@@ -314,7 +314,7 @@ func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessag
 		"$ref": {}, "type": {}, "nullable": {}, "enum": {},
 		"minimum": {}, "maximum": {}, "exclusiveMinimum": {}, "exclusiveMaximum": {}, "multipleOf": {},
 		"minLength": {}, "maxLength": {}, "pattern": {}, "format": {},
-		"minItems": {}, "maxItems": {}, "items": {}, "uniqueItems": {},
+		"minItems": {}, "maxItems": {}, "items": {},
 		"minProperties": {}, "maxProperties": {}, "required": {}, "properties": {}, "additionalProperties": {},
 		"allOf": {}, "anyOf": {}, "title": {}, "description": {}, "default": {}, "example": {}, "deprecated": {},
 		"readOnly": {}, "writeOnly": {}, "discriminator": {}, "xml": {}, "externalDocs": {},
@@ -833,7 +833,7 @@ func MustCompileStringFormat(format string) *stringlanguage.Set {
 	return compiled
 }
 
-// compileArray compiles array bounds, uniqueness, and item recursion.
+// compileArray compiles array bounds and item recursion.
 func (compiler *schemaCompiler) compileArray(
 	validation *Validation,
 	schema oas.LocatedSchema,
@@ -856,15 +856,6 @@ func (compiler *schemaCompiler) compileArray(
 		if _, ok := members["items"]; !ok {
 			return keywordError(schema.Pointer, "items", errors.New("must be present when type is array"))
 		}
-	}
-
-	if raw, ok := members["uniqueItems"]; ok {
-		unique, err := decodeBoolean(raw, "uniqueItems")
-		if err != nil {
-			return keywordError(schema.Pointer, "uniqueItems", err)
-		}
-
-		validation.ArrayValidation.UniqueItems = unique
 	}
 
 	if _, ok := members["items"]; ok {

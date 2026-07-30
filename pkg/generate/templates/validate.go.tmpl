@@ -51,8 +51,6 @@
 	MaxItems: {{template "countBound" .}},{{- end}}
 {{- with .Items}}
 	Items: {{template "validation" .}},{{- end}}
-{{- if .UniqueItems}}
-	UniqueItems: true,{{- end}}
 }{{end}}
 
 {{define "objectValidation"}}validation.ObjectValidation{
@@ -152,7 +150,7 @@
 	StringValidation: {{template "stringValidation" .StringValidation}},
 	{{end}}
 
-	{{if or .ArrayValidation.MinItems .ArrayValidation.MaxItems .ArrayValidation.Items .ArrayValidation.UniqueItems}}
+	{{if or .ArrayValidation.MinItems .ArrayValidation.MaxItems .ArrayValidation.Items}}
 	ArrayValidation: {{template "arrayValidation" .ArrayValidation}},
 	{{end}}
 
