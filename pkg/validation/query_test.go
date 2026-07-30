@@ -1294,43 +1294,26 @@ func TestQueryDecoderAnyOfReturnsDeterministicAllFailError(t *testing.T) {
 	require.ErrorContains(t, err, "minimum")
 }
 
-func TestQueryDecoderConvertsNestedAnyOfItemsAndProperties(t *testing.T) {
+func TestQueryDecoderRejectsUnsupportedStyleAnyOfAtSourcePointer(t *testing.T) {
 	t.Parallel()
 
-	choice := `{anyOf: [{type: integer}, {type: string}]}`
 	for _, test := range []struct {
-		name      string
-		parameter string
-		rawQuery  string
-		expected  string
+		name   string
+		schema string
+		want   string
 	}{
-		{
-			name: "array items", parameter: `{name: q, in: query, explode: false, schema: {type: array, items: ` + choice + `}}`,
-			rawQuery: `q=7,x`, expected: `{"q":[7,"x"]}`,
-		},
-		{
-			name: "object property", parameter: `{name: q, in: query, explode: false, schema: {type: object, additionalProperties: false, properties: {value: ` + choice + `}}}`,
-			rawQuery: `q=value,7`, expected: `{"q":{"value":7}}`,
-		},
+		{name: "nested under allOf", schema: `{allOf: [{anyOf: [{type: integer}, {type: string}]}]}`, want: "/allOf/0/anyOf"},
+		{name: "nested array item", schema: `{type: array, items: {anyOf: [{type: integer}, {type: string}]}}`, want: "/items/anyOf"},
+		{name: "direct array", schema: `{anyOf: [{type: array, items: {type: string}}, {type: string}]}`, want: "/anyOf/0"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			actual, err := parseQueryDecoder(t, test.parameter).Decode(&url.URL{RawQuery: test.rawQuery})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
+			_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: ` + test.schema + `}`))
+			require.ErrorContains(t, err, test.want)
+			require.ErrorContains(t, err, "unsupported")
 		})
 	}
-}
-
-func TestQueryDecoderRejectsAnyOfNestedUnderAllOfAtSourcePointer(t *testing.T) {
-	t.Parallel()
-
-	_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: {allOf: [
-          {anyOf: [{type: integer}, {type: string}]}
-        ]}}`))
-	require.ErrorContains(t, err, "/allOf/0/anyOf")
-	require.ErrorContains(t, err, "unsupported anyOf nested under allOf")
 }
 
 func parseQueryDecoder(t testing.TB, parameter string) *validation.QueryDecoder {

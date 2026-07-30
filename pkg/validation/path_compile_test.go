@@ -421,49 +421,30 @@ func TestPathDecoderAnyOfReturnsDeterministicAllFailError(t *testing.T) {
 	require.ErrorContains(t, err, "minimum")
 }
 
-func TestPathDecoderConvertsNestedAnyOfItemsAndProperties(t *testing.T) {
+func TestPathDecoderRejectsUnsupportedStyleAnyOfAtSourcePointer(t *testing.T) {
 	t.Parallel()
 
-	choice := `{anyOf: [{type: integer}, {type: string}]}`
 	for _, test := range []struct {
-		name      string
-		parameter string
-		path      string
-		expected  string
+		name   string
+		schema string
+		want   string
 	}{
-		{
-			name: "array items", parameter: `{name: id, in: path, required: true, schema: {type: array, items: ` + choice + `}}`,
-			path: "/items/7,x", expected: `{"id":[7,"x"]}`,
-		},
-		{
-			name: "object property", parameter: `{name: id, in: path, required: true, explode: true, schema: {type: object, additionalProperties: false, properties: {value: ` + choice + `}}}`,
-			path: "/items/value=7", expected: `{"id":{"value":7}}`,
-		},
+		{name: "nested under allOf", schema: `{allOf: [{anyOf: [{type: integer}, {type: string}]}]}`, want: "/allOf/0/anyOf"},
+		{name: "nested property", schema: `{type: object, properties: {value: {anyOf: [{type: integer}, {type: string}]}}}`, want: "/properties/value/anyOf"},
+		{name: "direct object", schema: `{anyOf: [{type: object}, {type: string}]}`, want: "/anyOf/0"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			decoder, err := compilePathDecoderForTest(t, "\n      parameters:\n        - "+test.parameter+"\n")
-			require.NoError(t, err)
-			actual, err := decoder.DecodePathParams(&url.URL{Path: test.path})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(actual))
+			decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: `+test.schema+`}
+`)
+			require.Nil(t, decoder)
+			require.ErrorContains(t, err, test.want)
+			require.ErrorContains(t, err, "unsupported")
 		})
 	}
-}
-
-func TestPathDecoderRejectsAnyOfNestedUnderAllOfAtSourcePointer(t *testing.T) {
-	t.Parallel()
-
-	decoder, err := compilePathDecoderForTest(t, `
-      parameters:
-        - {name: id, in: path, required: true, schema: {allOf: [
-            {anyOf: [{type: integer}, {type: string}]}
-          ]}}
-`)
-	require.Nil(t, decoder)
-	require.ErrorContains(t, err, "/allOf/0/anyOf")
-	require.ErrorContains(t, err, "unsupported anyOf nested under allOf")
 }
 
 func compilePathDecoderForTest(t *testing.T, operationFields string) (*PathDecoder, error) {

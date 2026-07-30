@@ -77,6 +77,10 @@ func (decoder *PathDecoder) decodePathParams(input *url.URL) (json.RawMessage, e
 
 //nolint:cyclop // The complete-capture empty policy and finite wire-shape dispatch are one codec boundary.
 func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, error) {
+	if len(parameter.anyOf) != 0 {
+		return parameter.decodeAnyOfPathValue(raw)
+	}
+
 	if raw == "" {
 		switch parameter.wire {
 		case pathWireSimpleArray:
@@ -84,7 +88,7 @@ func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, err
 		case pathWireSimpleObject:
 			return jsontext.Value(`{}`), nil
 		case pathWireSimplePrimitive:
-			if parameter.scalarType == "string" && len(parameter.validation.AnyOfValidations) == 0 {
+			if parameter.scalarType == "string" {
 				return jsontext.Value(`""`), nil
 			}
 		}
@@ -102,7 +106,7 @@ func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, err
 	if raw == ";"+url.PathEscape(parameter.name) {
 		switch parameter.wire {
 		case pathWireMatrixPrimitive:
-			if parameter.scalarType == "string" && len(parameter.validation.AnyOfValidations) == 0 {
+			if parameter.scalarType == "string" {
 				return jsontext.Value(`""`), nil
 			}
 		case pathWireMatrixArray:
@@ -126,6 +130,28 @@ func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, err
 	default:
 		return nil, fmt.Errorf("unknown compiled path wire %d", parameter.wire)
 	}
+}
+
+func (parameter *pathParameter) decodeAnyOfPathValue(raw string) (jsontext.Value, error) {
+	var lastErr error
+
+	for index := range parameter.anyOf {
+		candidate := &parameter.anyOf[index]
+
+		value, err := candidate.decodePathValue(raw)
+		if err == nil {
+			errs := candidate.validation.Validate(json.RawMessage(value))
+			if len(errs) == 0 {
+				return value, nil
+			}
+
+			err = errors.Join(errs...)
+		}
+
+		lastErr = err
+	}
+
+	return nil, lastErr
 }
 
 func (parameter *pathParameter) decodeJSONPathValue(raw string) (jsontext.Value, error) {
@@ -153,9 +179,7 @@ func (parameter *pathParameter) decodePathPrimitive(raw string) (jsontext.Value,
 		return nil, err
 	}
 
-	return convertPathParameterValue(parameter, func(candidate *pathParameter) (jsontext.Value, error) {
-		return encodePathScalar(candidate.scalarType, decoded)
-	})
+	return encodePathScalar(parameter.scalarType, decoded)
 }
 
 func (parameter *pathParameter) decodePathArray(raw string) (jsontext.Value, error) {
@@ -195,9 +219,7 @@ func (parameter *pathParameter) decodePathArray(raw string) (jsontext.Value, err
 		return nil, fmt.Errorf("unknown compiled array wire %d", parameter.wire)
 	}
 
-	return convertPathParameterValue(parameter, func(candidate *pathParameter) (jsontext.Value, error) {
-		return encodePathArray(candidate.scalarType, candidate.itemValidation, rawValues)
-	})
+	return encodePathArray(parameter.scalarType, rawValues)
 }
 
 //nolint:cyclop,nestif // The six object style/explode grammars form one finite dispatch.
@@ -265,69 +287,7 @@ func (parameter *pathParameter) decodePathObject(raw string) (jsontext.Value, er
 		return nil, fmt.Errorf("unknown compiled object wire %d", parameter.wire)
 	}
 
-	return convertPathParameterValue(parameter, func(candidate *pathParameter) (jsontext.Value, error) {
-		return candidate.encodePathObjectValue(rawPairs)
-	})
-}
-
-func convertPathParameterValue(
-	parameter *pathParameter,
-	convert func(*pathParameter) (jsontext.Value, error),
-) (jsontext.Value, error) {
-	if parameter.validation == nil || len(parameter.validation.AnyOfValidations) == 0 {
-		return convert(parameter)
-	}
-
-	return convertParameterValue(parameter.validation, func(validation *Validation) (jsontext.Value, error) {
-		candidate, err := pathParameterForValidation(parameter, validation)
-		if err != nil {
-			return nil, err
-		}
-
-		return convert(&candidate)
-	})
-}
-
-func pathParameterForValidation(
-	parameter *pathParameter,
-	validation *Validation,
-) (pathParameter, error) {
-	candidate := *parameter
-	candidate.validation = validation
-
-	switch pathShape(parameter.wire % pathWireKind(pathShapeCount)) {
-	case pathShapePrimitive:
-		typeName, err := compiledPathScalarType(validation)
-		if err != nil {
-			return pathParameter{}, err
-		}
-
-		candidate.scalarType = typeName
-	case pathShapeArray:
-		typeName, err := compiledArrayScalarType(validation)
-		if err != nil {
-			return pathParameter{}, err
-		}
-
-		candidate.scalarType = typeName
-	case pathShapeObject:
-		properties, byName, err := compiledPathProperties(validation)
-		if err != nil {
-			return pathParameter{}, err
-		}
-
-		candidate.properties = properties
-		candidate.propertyByName = byName
-
-		candidate.dynamicType, err = compiledPathScalarType(compiledAdditionalProperties(validation)...)
-		if err != nil {
-			return pathParameter{}, fmt.Errorf("additionalProperties: %w", err)
-		}
-	}
-
-	attachPathValueValidations(&candidate)
-
-	return candidate, nil
+	return parameter.encodePathObjectValue(rawPairs)
 }
 
 func (parameter *pathParameter) pathStyleBody(raw string) (string, error) {
@@ -411,11 +371,7 @@ func splitExplodedPathObject(raw string, separator string) ([][2]string, error) 
 	return pairs, nil
 }
 
-func encodePathArray(
-	typeName styleScalarType,
-	validation *Validation,
-	rawValues []string,
-) (jsontext.Value, error) {
+func encodePathArray(typeName styleScalarType, rawValues []string) (jsontext.Value, error) {
 	var output bytes.Buffer
 
 	encoder := jsontext.NewEncoder(&output)
@@ -429,7 +385,7 @@ func encodePathArray(
 			return nil, err
 		}
 
-		value, err := encodePathScalarWithValidation(typeName, validation, decoded)
+		value, err := encodePathScalar(typeName, decoded)
 		if err != nil {
 			return nil, err
 		}
@@ -478,16 +434,13 @@ func (parameter *pathParameter) encodePathObjectValue(rawPairs [][2]string) (jso
 		}
 
 		typeName := parameter.dynamicType
-
-		valueValidation := parameter.dynamicValidation
 		if propertyIndex, declared := parameter.propertyByName[name]; declared {
 			typeName = parameter.properties[propertyIndex].scalarType
-			valueValidation = parameter.properties[propertyIndex].validation
 		} else if typeName == "" {
 			typeName = "string"
 		}
 
-		encoded, err := encodePathScalarWithValidation(typeName, valueValidation, value)
+		encoded, err := encodePathScalar(typeName, value)
 		if err != nil {
 			return nil, fmt.Errorf("property %q: %w", name, err)
 		}
@@ -530,28 +483,6 @@ func encodePathScalar(typeName styleScalarType, value string) (jsontext.Value, e
 	}
 
 	return append(jsontext.Value(nil), bytes.TrimSpace(output.Bytes())...), nil
-}
-
-func encodePathScalarWithValidation(
-	typeName styleScalarType,
-	validation *Validation,
-	value string,
-) (jsontext.Value, error) {
-	if validation == nil || len(validation.AnyOfValidations) == 0 {
-		return encodePathScalar(typeName, value)
-	}
-
-	return convertParameterValue(validation, func(candidate *Validation) (jsontext.Value, error) {
-		candidateType := typeName
-
-		if candidate != nil {
-			if compiledType := compiledValidationType(candidate); compiledType != "" {
-				candidateType = styleScalarType(compiledType)
-			}
-		}
-
-		return encodePathScalar(candidateType, value)
-	})
 }
 
 func encodePathObject(parameters []pathParameter, values []jsontext.Value) (json.RawMessage, error) {

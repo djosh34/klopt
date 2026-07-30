@@ -43,22 +43,20 @@ const (
 type styleScalarType string
 
 type pathParameter struct {
-	name              string
-	wire              pathWireKind
-	explode           bool
-	validation        *Validation
-	scalarType        styleScalarType
-	dynamicType       styleScalarType
-	itemValidation    *Validation
-	dynamicValidation *Validation
-	properties        []pathProperty
-	propertyByName    map[string]int
+	name           string
+	wire           pathWireKind
+	explode        bool
+	validation     *Validation
+	scalarType     styleScalarType
+	dynamicType    styleScalarType
+	properties     []pathProperty
+	propertyByName map[string]int
+	anyOf          []pathParameter
 }
 
 type pathProperty struct {
 	name       string
 	scalarType styleScalarType
-	validation *Validation
 }
 
 func compilePathDecoder(
@@ -151,12 +149,47 @@ func compileSchemaPathParameter(
 		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, binaryErr)
 	}
 
+	if len(validation.AnyOfValidations) == 0 {
+		if pointer := styleParameterAnyOfPointer(validation); pointer != "" {
+			return pathParameter{}, fmt.Errorf(
+				"path parameter %q schema at %s has unsupported nested anyOf in style serialization",
+				name,
+				pointer,
+			)
+		}
+	}
+
 	styleOffset, explode, err := compilePathStyle(name, members)
 	if err != nil {
 		return pathParameter{}, err
 	}
 
+	if len(validation.AnyOfValidations) != 0 {
+		return compileAnyOfPathParameter(name, styleOffset, explode, validation)
+	}
+
 	return compileSchemaPathMetadata(name, styleOffset, explode, validation)
+}
+
+func compileAnyOfPathParameter(
+	name string,
+	styleOffset pathWireKind,
+	explode bool,
+	validation *Validation,
+) (pathParameter, error) {
+	parameter := pathParameter{
+		name: name, wire: styleOffset + pathWireKind(pathShapePrimitive), explode: explode, validation: validation,
+	}
+
+	candidates, err := compilePathAnyOfCandidates(parameter)
+	if err != nil {
+		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, err)
+	}
+
+	parameter.scalarType = candidates[0].scalarType
+	parameter.anyOf = candidates
+
+	return parameter, nil
 }
 
 func compilePathStyle(
@@ -207,12 +240,7 @@ func compileSchemaPathMetadata(
 
 	var err error
 
-	typeName, err := compiledStyleType(validation)
-	if err != nil {
-		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, err)
-	}
-
-	switch typeName {
+	switch typeName := compiledValidationType(validation); typeName {
 	case "array":
 		parameter.wire = styleOffset + pathWireKind(pathShapeArray)
 
@@ -240,8 +268,6 @@ func compileSchemaPathMetadata(
 			return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, err)
 		}
 	}
-
-	attachPathValueValidations(&parameter)
 
 	return parameter, nil
 }
@@ -385,22 +411,13 @@ func rejectPathBinary(validation *Validation) error {
 }
 
 func compiledPathScalarType(validations ...*Validation) (styleScalarType, error) {
-	validation := conjunctiveValidation(validations...)
-	if validation == nil {
-		return "string", nil
-	}
-
-	typeName, err := compiledStyleType(validation)
-	if err != nil {
-		return "", err
+	typeName := compiledValidationType(validations...)
+	if typeName == "" {
+		typeName = "string"
 	}
 
 	if !isScalarType(typeName) {
-		return "", fmt.Errorf(
-			"style scalar slot at %s must have a primitive type; unsupported compiled type %q",
-			validation.SchemaPointer,
-			typeName,
-		)
+		return "", fmt.Errorf("style scalar slot must have a primitive type; unsupported compiled type %q", typeName)
 	}
 
 	return styleScalarType(typeName), nil
@@ -485,9 +502,7 @@ func compiledPathProperties(validation *Validation) ([]pathProperty, map[string]
 		}
 
 		propertyByName[name] = len(properties)
-		properties = append(properties, pathProperty{
-			name: name, scalarType: typeName, validation: conjunctiveValidation(byName[name]...),
-		})
+		properties = append(properties, pathProperty{name: name, scalarType: typeName})
 	}
 
 	return properties, propertyByName, nil
@@ -497,10 +512,6 @@ func compiledPathPropertyScalarType(
 	validations []*Validation,
 	enumValues []jsonvalue.Value,
 ) (styleScalarType, error) {
-	if len(validations) == 1 && len(validations[0].AnyOfValidations) != 0 {
-		return compiledPathScalarType(validations...)
-	}
-
 	types := make([]string, 0)
 	for _, validation := range validations {
 		collectCompiledValidationTypes(validation, &types)
@@ -570,85 +581,108 @@ func compiledValidationType(validations ...*Validation) string {
 	return intersectQuerySchemaTypes(types)
 }
 
-// compiledStyleType selects the one OpenAPI style wire shape shared by direct alternatives.
-//
-//nolint:cyclop // Primitive, array, and object wire shapes have distinct compatibility rules.
-func compiledStyleType(validation *Validation) (string, error) {
-	for _, child := range validation.AllOfValidations {
-		if pointer := styleAnyOfPointer(child); pointer != "" {
-			return "", fmt.Errorf("schema at %s has unsupported anyOf nested under allOf", pointer)
-		}
+func compilePathAnyOfCandidates(parameter pathParameter) ([]pathParameter, error) {
+	if pathShape(parameter.wire%pathWireKind(pathShapeCount)) != pathShapePrimitive {
+		return nil, fmt.Errorf(
+			"schema at %s/anyOf has unsupported non-primitive parameter wire",
+			parameter.validation.SchemaPointer,
+		)
 	}
 
-	typeName := compiledValidationType(validation)
-	shape := styleShape(typeName)
-
-	if len(validation.AnyOfValidations) == 0 {
-		if typeName == "" {
-			return "string", nil
-		}
-
-		return typeName, nil
+	compiled, err := compilePrimitiveAnyOf(parameter.validation)
+	if err != nil {
+		return nil, err
 	}
 
-	primitiveTypes := make([]string, 0, len(validation.AnyOfValidations))
-	for _, child := range validation.AnyOfValidations {
-		candidate := anyOfCandidate(validation, child)
+	candidates := make([]pathParameter, 0, len(compiled))
+	for _, compiledCandidate := range compiled {
+		candidate := parameter
+		candidate.validation = compiledCandidate.validation
+		candidate.scalarType = styleScalarType(compiledCandidate.scalarType)
+		candidate.anyOf = nil
+		candidates = append(candidates, candidate)
+	}
 
-		candidateType := compiledValidationType(candidate)
-		if candidateType == "" {
-			candidateType = "string"
+	return candidates, nil
+}
+
+type primitiveAnyOfCandidate struct {
+	validation *Validation
+	scalarType string
+}
+
+func compilePrimitiveAnyOf(validation *Validation) ([]primitiveAnyOfCandidate, error) {
+	parent := *validation
+	children := parent.AnyOfValidations
+	parent.AnyOfValidations = nil
+
+	if pointer := styleParameterAnyOfPointer(&parent); pointer != "" {
+		return nil, fmt.Errorf("schema at %s has unsupported nested anyOf", pointer)
+	}
+
+	parentTypes := make([]string, 0)
+	collectCompiledValidationTypes(&parent, &parentTypes)
+
+	candidates := make([]primitiveAnyOfCandidate, 0, len(children))
+	for _, child := range children {
+		if pointer := styleParameterAnyOfPointer(child); pointer != "" {
+			return nil, fmt.Errorf("schema at %s has unsupported nested anyOf", pointer)
 		}
 
-		candidateShape := styleShape(candidateType)
-		if shape != "" && candidateShape != shape {
-			return "", fmt.Errorf(
-				"schema at %s has anyOf wire shape %q beside %q",
-				child.SchemaPointer, candidateShape, shape,
+		types := make([]string, 0)
+		collectCompiledValidationTypes(child, &types)
+
+		if len(types) == 0 {
+			types = parentTypes
+		}
+
+		typeName := intersectQuerySchemaTypes(types)
+		if !isScalarType(typeName) {
+			return nil, fmt.Errorf(
+				"schema at %s has unsupported anyOf parameter wire type %q; only direct primitive alternatives are supported",
+				child.SchemaPointer,
+				typeName,
 			)
 		}
 
-		shape = candidateShape
-		if shape == "primitive" {
-			primitiveTypes = append(primitiveTypes, candidateType)
-		}
+		branch := parent
+		branch.AllOfValidations = append(append([]*Validation(nil), parent.AllOfValidations...), child)
+		candidates = append(candidates, primitiveAnyOfCandidate{validation: &branch, scalarType: typeName})
 	}
 
-	if shape == "array" || shape == "object" {
-		return shape, nil
-	}
-
-	if typeName = intersectQuerySchemaTypes(primitiveTypes); typeName == "" {
-		return "string", nil
-	}
-
-	return typeName, nil
+	return candidates, nil
 }
 
-func styleAnyOfPointer(validation *Validation) string {
+func styleParameterAnyOfPointer(validation *Validation) string {
 	if len(validation.AnyOfValidations) != 0 {
 		return validation.SchemaPointer + "/anyOf"
 	}
 
+	if validation.ArrayValidation.Items != nil {
+		if pointer := styleParameterAnyOfPointer(validation.ArrayValidation.Items); pointer != "" {
+			return pointer
+		}
+	}
+
+	for _, property := range validation.ObjectValidation.Properties {
+		if pointer := styleParameterAnyOfPointer(property.Validation); pointer != "" {
+			return pointer
+		}
+	}
+
+	if validation.ObjectValidation.AdditionalPropertiesValidation != nil {
+		if pointer := styleParameterAnyOfPointer(validation.ObjectValidation.AdditionalPropertiesValidation); pointer != "" {
+			return pointer
+		}
+	}
+
 	for _, child := range validation.AllOfValidations {
-		if pointer := styleAnyOfPointer(child); pointer != "" {
+		if pointer := styleParameterAnyOfPointer(child); pointer != "" {
 			return pointer
 		}
 	}
 
 	return ""
-}
-
-func styleShape(typeName string) string {
-	if typeName == "array" || typeName == "object" {
-		return typeName
-	}
-
-	if typeName == "" {
-		return ""
-	}
-
-	return "primitive"
 }
 
 func collectCompiledValidationTypes(validation *Validation, types *[]string) {
@@ -822,30 +856,20 @@ func pathParameterFromGenerated(compiled PathParameterDefinition) (pathParameter
 		parameter.propertyByName[property.Name] = index
 	}
 
-	attachPathValueValidations(&parameter)
+	if len(parameter.validation.AnyOfValidations) != 0 {
+		candidates, err := compilePathAnyOfCandidates(parameter)
+		if err != nil {
+			return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
+		}
+
+		parameter.anyOf = candidates
+	}
 
 	if err := validatePathParameterMetadata(parameter); err != nil {
 		return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
 	}
 
 	return parameter, nil
-}
-
-func attachPathValueValidations(parameter *pathParameter) {
-	if parameter == nil || parameter.validation == nil {
-		return
-	}
-
-	parameter.itemValidation = conjunctiveValidation(compiledArrayItems(parameter.validation)...)
-	parameter.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(parameter.validation)...)
-
-	byName := make(map[string][]*Validation)
-	collectCompiledObjectProperties(parameter.validation, byName)
-
-	for index := range parameter.properties {
-		property := &parameter.properties[index]
-		property.validation = conjunctiveValidation(byName[property.name]...)
-	}
 }
 
 //nolint:cyclop,gocognit // The finite wire/shape metadata table is clearest at one invariant boundary.

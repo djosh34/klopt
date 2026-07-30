@@ -58,10 +58,6 @@ func (decoder *QueryDecoder) Decode(input *url.URL) (json.RawMessage, error) {
 			}
 
 			pair.property = claim.property
-			if claim.property >= 0 {
-				pair.childName = decoder.parameters[claim.parameter].properties[claim.property].name
-			}
-
 			claimed[claim.parameter] = append(claimed[claim.parameter], pair)
 
 			continue
@@ -235,27 +231,29 @@ func (decoder *QueryDecoder) malformedDeepName(base string, name string) error {
 
 //nolint:cyclop // The finite wire-kind switch is the decoder's central policy.
 func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrences []rawPair) error {
+	if len(parameter.anyOf) != 0 {
+		return parameter.writeAnyOfValue(encoder, occurrences)
+	}
+
 	switch parameter.wire {
 	case wirePrimitive:
 		if len(occurrences) != 1 {
 			return errors.New("duplicate scalar occurrence")
 		}
 
-		value, err := convertQueryParameterValue(parameter, func(candidate *queryParameter) (jsontext.Value, error) {
-			return encodeQueryScalar(candidate.scalarType, occurrences[0].decodedValue, parameter.allowEmpty)
-		})
-		if err != nil {
+		return writeScalar(encoder, parameter.scalarType, occurrences[0].decodedValue, parameter.allowEmpty)
+	case wireFormArrayRepeated:
+		if err := encoder.WriteToken(jsontext.BeginArray); err != nil {
 			return err
 		}
 
-		return encoder.WriteValue(value)
-	case wireFormArrayRepeated:
-		values := make([]string, 0, len(occurrences))
 		for _, occurrence := range occurrences {
-			values = append(values, occurrence.decodedValue)
+			if err := writeScalar(encoder, parameter.scalarType, occurrence.decodedValue, parameter.allowEmpty); err != nil {
+				return err
+			}
 		}
 
-		return writeConvertedArray(encoder, parameter, values)
+		return encoder.WriteToken(jsontext.EndArray)
 	case wireDelimitedArray:
 		if len(occurrences) != 1 {
 			return errors.New("duplicate non-exploded array occurrence")
@@ -266,19 +264,25 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 			return err
 		}
 
-		return writeConvertedArray(encoder, parameter, values)
+		if err := encoder.WriteToken(jsontext.BeginArray); err != nil {
+			return err
+		}
+
+		for _, value := range values {
+			if err := writeScalar(encoder, parameter.scalarType, value, parameter.allowEmpty); err != nil {
+				return err
+			}
+		}
+
+		return encoder.WriteToken(jsontext.EndArray)
 	case wireFormObjectNamed, wireDelimitedObject:
 		if len(occurrences) != 1 {
 			return errors.New("duplicate non-exploded object occurrence")
 		}
 
-		return parameter.writeConvertedObject(encoder, func(candidate *queryParameter, output *jsontext.Encoder) error {
-			return candidate.writeNamedObject(output, occurrences[0])
-		})
+		return parameter.writeNamedObject(encoder, occurrences[0])
 	case wireFormObjectExploded, wireDeepObject:
-		return parameter.writeConvertedObject(encoder, func(candidate *queryParameter, output *jsontext.Encoder) error {
-			return candidate.writeExplodedObject(output, occurrences)
-		})
+		return parameter.writeExplodedObject(encoder, occurrences)
 	case wireJSONContent:
 		if len(occurrences) != 1 {
 			return errors.New("duplicate JSON content occurrence")
@@ -290,25 +294,31 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 	}
 }
 
-func (parameter *queryParameter) writeConvertedObject(
-	encoder *jsontext.Encoder,
-	write func(*queryParameter, *jsontext.Encoder) error,
-) error {
-	value, err := convertQueryParameterValue(parameter, func(candidate *queryParameter) (jsontext.Value, error) {
+func (parameter *queryParameter) writeAnyOfValue(encoder *jsontext.Encoder, occurrences []rawPair) error {
+	var lastErr error
+
+	for index := range parameter.anyOf {
+		candidate := &parameter.anyOf[index]
+
 		var output bytes.Buffer
 
 		candidateEncoder := jsontext.NewEncoder(&output)
-		if err := write(candidate, candidateEncoder); err != nil {
-			return nil, err
+		err := candidate.writeValue(candidateEncoder, occurrences)
+
+		value := jsontext.Value(bytes.TrimSpace(output.Bytes()))
+		if err == nil {
+			errs := candidate.validation.Validate(json.RawMessage(value))
+			if len(errs) == 0 {
+				return encoder.WriteValue(value)
+			}
+
+			err = errors.Join(errs...)
 		}
 
-		return append(jsontext.Value(nil), bytes.TrimSpace(output.Bytes())...), nil
-	})
-	if err != nil {
-		return err
+		lastErr = err
 	}
 
-	return encoder.WriteValue(value)
+	return lastErr
 }
 
 //nolint:cyclop // Declared and dynamic packed properties share duplicate detection and ordered emission.
@@ -347,17 +357,11 @@ func (parameter *queryParameter) writeNamedObject(encoder *jsontext.Encoder, occ
 		}
 
 		typeName := parameter.dynamicType
-
-		valueValidation := parameter.dynamicValidation
-
 		if ok {
 			typeName = parameter.properties[propertyIndex].scalarType
-			valueValidation = parameter.properties[propertyIndex].validation
 		}
 
-		if err := writeConvertedScalar(
-			encoder, valueValidation, typeName, tokens[index+1], parameter.allowEmpty,
-		); err != nil {
+		if err := writeScalar(encoder, typeName, tokens[index+1], parameter.allowEmpty); err != nil {
 			return fmt.Errorf("property %q: %w", name, err)
 		}
 	}
@@ -371,11 +375,11 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 		return err
 	}
 
-	for _, property := range parameter.properties {
+	for propertyIndex, property := range parameter.properties {
 		count := 0
 
 		for _, occurrence := range occurrences {
-			if occurrence.childName == property.name {
+			if occurrence.property == propertyIndex {
 				count++
 			}
 		}
@@ -399,18 +403,11 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 		}
 
 		for _, occurrence := range occurrences {
-			if occurrence.childName != property.name {
+			if occurrence.property != propertyIndex {
 				continue
 			}
 
-			valueValidation := property.validation
-			if property.array {
-				valueValidation = property.itemValidation
-			}
-
-			if err := writeConvertedScalar(
-				encoder, valueValidation, property.scalarType, occurrence.decodedValue, parameter.allowEmpty,
-			); err != nil {
+			if err := writeScalar(encoder, property.scalarType, occurrence.decodedValue, parameter.allowEmpty); err != nil {
 				return fmt.Errorf("property %q: %w", property.name, err)
 			}
 		}
@@ -425,7 +422,7 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 	seen := make(map[string]struct{})
 
 	for _, occurrence := range occurrences {
-		if _, declared := parameter.propertyByName[occurrence.childName]; declared {
+		if occurrence.property != -1 {
 			continue
 		}
 
@@ -438,10 +435,7 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 			return err
 		}
 
-		if err := writeConvertedScalar(
-			encoder, parameter.dynamicValidation, parameter.dynamicType,
-			occurrence.decodedValue, parameter.allowEmpty,
-		); err != nil {
+		if err := writeScalar(encoder, parameter.dynamicType, occurrence.decodedValue, parameter.allowEmpty); err != nil {
 			return fmt.Errorf("property %q: %w", occurrence.childName, err)
 		}
 	}
@@ -513,135 +507,4 @@ func writeScalar(encoder *jsontext.Encoder, typeName string, value string, allow
 	default:
 		return fmt.Errorf("unsupported scalar type %q", typeName)
 	}
-}
-
-func encodeQueryScalar(typeName string, value string, allowEmpty bool) (jsontext.Value, error) {
-	var output bytes.Buffer
-
-	encoder := jsontext.NewEncoder(&output)
-	if err := writeScalar(encoder, typeName, value, allowEmpty); err != nil {
-		return nil, err
-	}
-
-	return append(jsontext.Value(nil), bytes.TrimSpace(output.Bytes())...), nil
-}
-
-func writeConvertedScalar(
-	encoder *jsontext.Encoder,
-	validation *Validation,
-	fallbackType string,
-	value string,
-	allowEmpty bool,
-) error {
-	if validation == nil || len(validation.AnyOfValidations) == 0 {
-		return writeScalar(encoder, fallbackType, value, allowEmpty)
-	}
-
-	converted, err := convertParameterValue(validation, func(candidate *Validation) (jsontext.Value, error) {
-		typeName := fallbackType
-
-		if candidate != nil {
-			if compiledType := compiledValidationType(candidate); compiledType != "" {
-				typeName = compiledType
-			}
-		}
-
-		return encodeQueryScalar(typeName, value, allowEmpty)
-	})
-	if err != nil {
-		return err
-	}
-
-	return encoder.WriteValue(converted)
-}
-
-func writeConvertedArray(
-	encoder *jsontext.Encoder,
-	parameter *queryParameter,
-	values []string,
-) error {
-	converted, err := convertQueryParameterValue(parameter, func(candidate *queryParameter) (jsontext.Value, error) {
-		var output bytes.Buffer
-
-		arrayEncoder := jsontext.NewEncoder(&output)
-		if err := arrayEncoder.WriteToken(jsontext.BeginArray); err != nil {
-			return nil, err
-		}
-
-		for _, value := range values {
-			if err := writeConvertedScalar(
-				arrayEncoder, candidate.itemValidation, candidate.scalarType, value, parameter.allowEmpty,
-			); err != nil {
-				return nil, err
-			}
-		}
-
-		if err := arrayEncoder.WriteToken(jsontext.EndArray); err != nil {
-			return nil, err
-		}
-
-		return append(jsontext.Value(nil), bytes.TrimSpace(output.Bytes())...), nil
-	})
-	if err != nil {
-		return err
-	}
-
-	return encoder.WriteValue(converted)
-}
-
-func convertQueryParameterValue(
-	parameter *queryParameter,
-	convert func(*queryParameter) (jsontext.Value, error),
-) (jsontext.Value, error) {
-	if parameter.validation == nil || len(parameter.validation.AnyOfValidations) == 0 {
-		return convert(parameter)
-	}
-
-	return convertParameterValue(parameter.validation, func(validation *Validation) (jsontext.Value, error) {
-		candidate, err := queryParameterForValidation(parameter, validation)
-		if err != nil {
-			return nil, err
-		}
-
-		return convert(&candidate)
-	})
-}
-
-func queryParameterForValidation(
-	parameter *queryParameter,
-	validation *Validation,
-) (queryParameter, error) {
-	candidate := *parameter
-	candidate.validation = validation
-
-	switch parameter.wire {
-	case wirePrimitive:
-		if typeName := compiledValidationType(validation); typeName != "" {
-			candidate.scalarType = typeName
-		}
-	case wireFormArrayRepeated, wireDelimitedArray:
-		typeName, err := compiledArrayScalarType(validation)
-		if err != nil {
-			return queryParameter{}, err
-		}
-
-		candidate.scalarType = string(typeName)
-	case wireFormObjectNamed, wireFormObjectExploded, wireDelimitedObject, wireDeepObject:
-		properties, byName, err := compileQueryProperties(validation, parameter.wire == wireDeepObject)
-		if err != nil {
-			return queryParameter{}, err
-		}
-
-		candidate.properties = properties
-		candidate.propertyByName = byName
-
-		candidate.dynamicType, err = queryAdditionalPropertiesType(validation)
-		if err != nil {
-			return queryParameter{}, fmt.Errorf("additionalProperties: %w", err)
-		}
-	}
-
-	attachQueryValueValidations(&candidate)
-
-	return candidate, nil
 }

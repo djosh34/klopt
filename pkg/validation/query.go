@@ -38,27 +38,24 @@ type QueryDecoder struct {
 }
 
 type queryParameter struct {
-	name              string
-	wire              wireKind
-	separator         string
-	required          bool
-	allowEmpty        bool
-	validation        *Validation
-	defaultValue      jsontext.Value
-	scalarType        string
-	dynamicType       string
-	itemValidation    *Validation
-	dynamicValidation *Validation
-	properties        []queryProperty
-	propertyByName    map[string]int
+	name           string
+	wire           wireKind
+	separator      string
+	required       bool
+	allowEmpty     bool
+	validation     *Validation
+	defaultValue   jsontext.Value
+	scalarType     string
+	dynamicType    string
+	properties     []queryProperty
+	propertyByName map[string]int
+	anyOf          []queryParameter
 }
 
 type queryProperty struct {
-	name           string
-	scalarType     string
-	array          bool
-	validation     *Validation
-	itemValidation *Validation
+	name       string
+	scalarType string
+	array      bool
 }
 
 type queryClaim struct {
@@ -150,7 +147,14 @@ func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDeco
 			parameter.propertyByName[property.Name] = propertyIndex
 		}
 
-		attachQueryValueValidations(&parameter)
+		if len(parameter.validation.AnyOfValidations) != 0 {
+			candidates, err := compileQueryAnyOfCandidates(parameter)
+			if err != nil {
+				return nil, fmt.Errorf("generated query parameter %q: %w", compiled.Name, err)
+			}
+
+			parameter.anyOf = candidates
+		}
 
 		parameters[index] = parameter
 	}
@@ -450,9 +454,14 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		return parameter, nil
 	}
 
-	directType, err := compiledStyleType(parameter.validation)
-	if err != nil {
-		return queryParameter{}, fmt.Errorf("parameter %q: %w", name, err)
+	if len(parameter.validation.AnyOfValidations) == 0 {
+		if pointer := styleParameterAnyOfPointer(parameter.validation); pointer != "" {
+			return queryParameter{}, fmt.Errorf(
+				"parameter %q schema at %s has unsupported nested anyOf in style serialization",
+				name,
+				pointer,
+			)
+		}
 	}
 
 	style := "form"
@@ -469,6 +478,33 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		if err != nil {
 			return queryParameter{}, fmt.Errorf("parameter %q at %s explode: %w", name, located.Pointer, err)
 		}
+	}
+
+	if len(parameter.validation.AnyOfValidations) != 0 {
+		if style != "form" {
+			return queryParameter{}, fmt.Errorf(
+				"parameter %q schema at %s/anyOf: direct primitive anyOf requires form style",
+				name,
+				parameter.validation.SchemaPointer,
+			)
+		}
+
+		parameter.wire = wirePrimitive
+
+		candidates, candidateErr := compileQueryAnyOfCandidates(parameter)
+		if candidateErr != nil {
+			return queryParameter{}, fmt.Errorf("parameter %q: %w", name, candidateErr)
+		}
+
+		parameter.scalarType = candidates[0].scalarType
+		parameter.anyOf = candidates
+
+		return parameter, nil
+	}
+
+	directType := compiledValidationType(parameter.validation)
+	if directType == "" {
+		directType = "string"
 	}
 
 	switch directType {
@@ -538,8 +574,6 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		return queryParameter{}, fmt.Errorf("parameter %q has unsupported direct type %q", name, directType)
 	}
 
-	attachQueryValueValidations(&parameter)
-
 	return parameter, nil
 }
 
@@ -571,13 +605,42 @@ func compileQueryParameterSchema(
 	return validation, defaultValue, nil
 }
 
-func compiledQueryScalarType(validations ...*Validation) (string, error) {
-	typeName, err := compiledPathScalarType(validations...)
-	if err != nil {
-		return "", err
+func compileQueryAnyOfCandidates(parameter queryParameter) ([]queryParameter, error) {
+	if parameter.wire != wirePrimitive {
+		return nil, fmt.Errorf(
+			"schema at %s/anyOf has unsupported non-primitive parameter wire",
+			parameter.validation.SchemaPointer,
+		)
 	}
 
-	return string(typeName), nil
+	compiled, err := compilePrimitiveAnyOf(parameter.validation)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates := make([]queryParameter, 0, len(compiled))
+	for _, compiledCandidate := range compiled {
+		candidate := parameter
+		candidate.validation = compiledCandidate.validation
+		candidate.scalarType = compiledCandidate.scalarType
+		candidate.anyOf = nil
+		candidates = append(candidates, candidate)
+	}
+
+	return candidates, nil
+}
+
+func compiledQueryScalarType(validations ...*Validation) (string, error) {
+	typeName := compiledValidationType(validations...)
+	if typeName == "" {
+		typeName = "string"
+	}
+
+	if !isScalarType(typeName) {
+		return "", fmt.Errorf("must have a primitive type, got compiled type %q", typeName)
+	}
+
+	return typeName, nil
 }
 
 func queryAdditionalPropertiesType(validation *Validation) (string, error) {
@@ -588,15 +651,6 @@ func queryAdditionalPropertiesType(validation *Validation) (string, error) {
 	additional := compiledAdditionalProperties(validation)
 	if len(additional) == 0 {
 		return "string", nil
-	}
-
-	if len(additional) == 1 && len(additional[0].AnyOfValidations) != 0 {
-		typeName, err := compiledQueryScalarType(additional...)
-		if err != nil {
-			return "", fmt.Errorf("style-based dynamic properties: %w", err)
-		}
-
-		return typeName, nil
 	}
 
 	typeName := compiledValidationType(additional...)
@@ -681,22 +735,13 @@ func compileQueryProperties(
 		}
 
 		propertyValidations := compiledByName[name]
-		propertyValidation := conjunctiveValidation(propertyValidations...)
 
-		typeName := "string"
-
-		if propertyValidation != nil {
-			var err error
-
-			typeName, err = compiledStyleType(propertyValidation)
-			if err != nil {
-				return nil, nil, fmt.Errorf("style-based object property %q: %w", name, err)
-			}
+		typeName := compiledValidationType(propertyValidations...)
+		if typeName == "" {
+			typeName = "string"
 		}
 
-		property := queryProperty{
-			name: name, scalarType: typeName, validation: propertyValidation,
-		}
+		property := queryProperty{name: name, scalarType: typeName}
 		if typeName == "array" && allowPrimitiveArrays {
 			items := make([]*Validation, 0)
 			for _, propertyValidation := range propertyValidations {
@@ -711,7 +756,6 @@ func compileQueryProperties(
 			}
 
 			property.array = true
-			property.itemValidation = conjunctiveValidation(items...)
 		} else if !isScalarType(typeName) {
 			return nil, nil, fmt.Errorf("style-based object property %q must have a direct primitive type", name)
 		}
@@ -721,34 +765,6 @@ func compileQueryProperties(
 	}
 
 	return properties, byName, nil
-}
-
-func attachQueryValueValidations(parameter *queryParameter) {
-	if parameter == nil || parameter.validation == nil {
-		return
-	}
-
-	parameter.itemValidation = conjunctiveValidation(compiledArrayItems(parameter.validation)...)
-	parameter.dynamicValidation = conjunctiveValidation(compiledAdditionalProperties(parameter.validation)...)
-
-	byName := make(map[string][]*Validation)
-	collectCompiledObjectProperties(parameter.validation, byName)
-
-	for index := range parameter.properties {
-		property := &parameter.properties[index]
-
-		property.validation = conjunctiveValidation(byName[property.name]...)
-		if !property.array {
-			continue
-		}
-
-		var items []*Validation
-		for _, validation := range byName[property.name] {
-			collectCompiledArrayItems(validation, &items)
-		}
-
-		property.itemValidation = conjunctiveValidation(items...)
-	}
 }
 
 func locatedRawChild(parent oas.LocatedSchema, raw json.RawMessage, tokens ...string) oas.LocatedSchema {
