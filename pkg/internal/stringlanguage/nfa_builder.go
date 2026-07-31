@@ -56,13 +56,6 @@ func (builder *nfaBuilder) repeat(
 }
 
 func (builder *nfaBuilder) newState() (int, error) {
-	if err := builder.budget.add(
-		&builder.budget.nfaStates, 1, builder.budget.limits.nfaStates,
-		"NFA construction", "NFA states",
-	); err != nil {
-		return 0, err
-	}
-
 	state := len(builder.machine.states)
 	builder.machine.states = append(builder.machine.states, nfaState{})
 
@@ -70,13 +63,6 @@ func (builder *nfaBuilder) newState() (int, error) {
 }
 
 func (builder *nfaBuilder) addEdge(from int, edge nfaEdge) error {
-	if err := builder.budget.add(
-		&builder.budget.nfaEdges, 1, builder.budget.limits.nfaEdges,
-		"NFA construction", "NFA edges",
-	); err != nil {
-		return err
-	}
-
 	builder.machine.states[from].edges = append(builder.machine.states[from].edges, edge)
 
 	return nil

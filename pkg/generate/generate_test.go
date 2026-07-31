@@ -125,8 +125,8 @@ paths: {}
 	})
 }
 
-// TestGenerateInMemoryLeavesSuiteConstructionToGoTest verifies fuzz setup owns generation admission.
-func TestGenerateInMemoryLeavesSuiteConstructionToGoTest(t *testing.T) {
+// TestGenerateInMemoryGeneratedFuzzSetupRuns verifies the generated fuzz setup.
+func TestGenerateInMemoryGeneratedFuzzSetupRuns(t *testing.T) {
 	t.Parallel()
 
 	files, err := GenerateInMemory("generatedconstruction", []byte(`openapi: 3.0.3
@@ -155,8 +155,7 @@ paths:
 	)
 	command.Dir = repo
 	result, err := command.CombinedOutput()
-	require.Error(t, err, string(result))
-	require.Contains(t, string(result), "raw Go regexp generator does not support case-folding flags")
+	require.NoError(t, err, string(result))
 }
 
 // TestGenerateWritesCompiledValidation covers every exported validation field and generated compilation.

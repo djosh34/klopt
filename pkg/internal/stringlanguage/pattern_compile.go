@@ -16,30 +16,13 @@ import (
 func compilePattern(
 	source string,
 	settings *patternvalidator.PatternValidation,
-	work *budget,
 ) (*dfa, error) {
-	if len(source) > patternsyntax.MaximumSourceBytes {
-		return nil, limitError(
-			"input", "source bytes", patternsyntax.MaximumSourceBytes, uint64(len(source)),
-		)
-	}
-
 	if !utf8.ValidString(source) {
 		return nil, errors.New("source is not valid UTF-8")
 	}
 
 	if settings.RejectsNonASCII() && firstNonASCII(source) >= 0 {
 		return nil, errors.New("non-ASCII pattern is rejected by policy")
-	}
-
-	if err := work.add(
-		&work.cumulativeSourceBytes,
-		uint64(len(source)),
-		work.limits.cumulativeSourceBytes,
-		"input",
-		"cumulative source bytes",
-	); err != nil {
-		return nil, err
 	}
 
 	if settings.UsesRE2() {
@@ -52,21 +35,11 @@ func compilePattern(
 			return nil, fmt.Errorf("parse accepted raw Go regexp: %w", err)
 		}
 
-		if err := work.add(
-			&work.cumulativeASTNodes,
-			rawNodeCount(expression),
-			work.limits.cumulativeASTNodes,
-			"parse",
-			"cumulative AST nodes",
-		); err != nil {
-			return nil, err
-		}
-
 		if err := validateRawCapabilities(expression); err != nil {
 			return nil, err
 		}
 
-		return compileRawPattern(expression, work)
+		return compileRawPattern(expression)
 	}
 
 	tree, err := patternsyntax.Parse(source)
@@ -78,45 +51,10 @@ func compilePattern(
 		return nil, errors.New("non-ASCII pattern value is rejected by policy")
 	}
 
-	if err := work.add(
-		&work.cumulativeASTNodes,
-		uint64(len(tree.Nodes)),
-		work.limits.cumulativeASTNodes,
-		"parse",
-		"cumulative AST nodes",
-	); err != nil {
-		return nil, err
-	}
-
-	return compileESPattern(tree, work)
-}
-
-func rawNodeCount(expression *regexpsyntax.Regexp) uint64 {
-	count := uint64(0)
-
-	stack := []*regexpsyntax.Regexp{expression}
-	for len(stack) > 0 {
-		last := len(stack) - 1
-		node := stack[last]
-		stack = stack[:last]
-
-		if count == ^uint64(0) {
-			return count
-		}
-
-		count++
-
-		stack = append(stack, node.Sub...)
-	}
-
-	return count
+	return compileESPattern(tree)
 }
 
 func validateRawCapabilities(expression *regexpsyntax.Regexp) error {
-	if expression.Flags&regexpsyntax.FoldCase != 0 {
-		return errors.New("raw Go regexp generator does not support case-folding flags")
-	}
-
 	switch expression.Op {
 	case regexpsyntax.OpNoMatch,
 		regexpsyntax.OpEmptyMatch,

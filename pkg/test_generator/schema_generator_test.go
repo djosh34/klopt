@@ -76,7 +76,7 @@ func TestGeneratedSchemasExerciseRequiredShapes(t *testing.T) {
 	)
 }
 
-func TestGeneratedValidSchemasExerciseTheDocumentProgram(t *testing.T) {
+func TestGeneratedValidSchemasExerciseTheGeneratorShell(t *testing.T) {
 	t.Parallel()
 
 	for seed := 0; seed < 24; seed++ {
@@ -90,18 +90,23 @@ func TestGeneratedValidSchemasExerciseTheDocumentProgram(t *testing.T) {
 		require.NoError(t, err)
 
 		for tapeByte := byte(0); tapeByte < 8; tapeByte++ {
-			sample, decodeErr := compiled.Decode([]byte{tapeByte})
-			if ResourceLimited(decodeErr) {
+			sample, status, decodeErr := compiled.Decode([]byte{tapeByte})
+			require.NoErrorf(t, decodeErr, "schema seed %d tape %d", seed, tapeByte)
+
+			if status == Exhausted {
 				continue
 			}
 
-			require.NoErrorf(t, decodeErr, "schema seed %d tape %d", seed, tapeByte)
-			require.NoErrorf(t, compiled.Check(sample, func(operationID string, body []byte) error {
-				return errors.Join(validations[operationID].Body.Validate(body)...)
-			}), "schema seed %d tape %d: %s", seed, tapeByte, generated.OpenAPIJSON)
+			require.NotNil(t, validations[sample.OperationID].Body)
+			require.Emptyf(
+				t,
+				validations[sample.OperationID].Body.Validate(sample.Body),
+				"schema seed %d tape %d: %s",
+				seed,
+				tapeByte,
+				generated.OpenAPIJSON,
+			)
 		}
-
-		compiled.Close()
 	}
 }
 

@@ -3,8 +3,6 @@ package stringlanguage
 
 import "strings"
 
-const maximumEmailIntermediateStates = maximumProductStates
-
 func emailLanguage() (Language, error) {
 	machine, err := formatDFA(emailPattern())
 	if err != nil {
@@ -13,10 +11,7 @@ func emailLanguage() (Language, error) {
 
 	machine = minimizeDFA(machine)
 
-	limited, err := limitEmailPartLengths(machine)
-	if err != nil {
-		return Language{}, &CompileError{Operation: "compile format", Err: err}
-	}
+	limited := limitEmailPartLengths(machine)
 
 	return Language{dfa: *minimizeDFA(limited)}, nil
 }
@@ -124,7 +119,7 @@ type emailLengthState struct {
 	over    bool
 }
 
-func limitEmailPartLengths(machine *dfa) (*dfa, error) {
+func limitEmailPartLengths(machine *dfa) *dfa {
 	initial := emailLengthState{}
 	states := []emailLengthState{initial}
 	ids := map[emailLengthState]uint32{initial: 0}
@@ -140,7 +135,12 @@ func limitEmailPartLengths(machine *dfa) (*dfa, error) {
 
 		state := dfaState{accepting: machine.states[tracked.machine].accepting && !tracked.over}
 
-		alphabet := partitionRuneSets(scalarUniverse, machine.scalarRanges(tracked.machine), asciiClasses)
+		machineRanges := make(runeSet, 0, len(machine.states[tracked.machine].edges))
+		for _, edge := range machine.scalarEdges(tracked.machine) {
+			machineRanges = append(machineRanges, runeRange{first: edge.first, last: edge.last})
+		}
+
+		alphabet := partitionRuneSets(scalarUniverse, machineRanges, asciiClasses)
 		for _, characterClass := range alphabet {
 			next := tracked
 			if characterClass.first < 128 {
@@ -156,12 +156,6 @@ func limitEmailPartLengths(machine *dfa) (*dfa, error) {
 
 			nextID, ok := ids[next]
 			if !ok {
-				if len(states) >= maximumEmailIntermediateStates {
-					return nil, limitError(
-						"DFA construction", "DFA states", maximumEmailIntermediateStates, uint64(len(states)+1),
-					)
-				}
-
 				nextID = uint32(len(states))
 				ids[next] = nextID
 				states = append(states, next)
@@ -175,7 +169,7 @@ func limitEmailPartLengths(machine *dfa) (*dfa, error) {
 		result.states = append(result.states, state)
 	}
 
-	return result, nil
+	return result
 }
 
 func deadDFAState(machine *dfa, state uint32) bool {

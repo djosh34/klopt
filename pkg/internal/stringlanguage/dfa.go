@@ -1,4 +1,4 @@
-//nolint:godoclint // Private deterministic automaton vocabulary stays inside stringlanguage.
+//nolint:godoclint,mnd // Private deterministic automaton vocabulary stays inside stringlanguage.
 package stringlanguage
 
 import (
@@ -28,11 +28,6 @@ type subsetState struct {
 	previousLF   bool
 }
 
-type leafSpecification struct {
-	machine   *dfa
-	wantMatch bool
-}
-
 func (machine *dfa) advance(state uint32, value rune) uint32 {
 	edges := machine.states[state].edges
 
@@ -53,25 +48,18 @@ func (machine *dfa) advance(state uint32, value rune) uint32 {
 	return edges[index].target
 }
 
-func determinize(machine *nfa, work *budget) (*dfa, error) {
+func determinize(machine *nfa) (*dfa, error) {
 	initial := subsetState{states: unconditionalClosure(machine, []int{machine.start}), atStart: true}
 	states := []subsetState{initial}
 	keys := map[string]uint32{subsetKey(initial): 0}
 	result := &dfa{utf16: machine.utf16}
 
-	if err := addDFAState(work, result, machine, initial); err != nil {
+	if err := addDFAState(result, machine, initial); err != nil {
 		return nil, err
 	}
 
 	alphabet := nfaAlphabet(machine)
 	for current := 0; current < len(states); current++ {
-		if err := work.add(
-			&work.dfaTransitions, uint64(len(alphabet)), work.limits.dfaTransitions,
-			"DFA construction", "DFA transitions",
-		); err != nil {
-			return nil, err
-		}
-
 		for _, characterClass := range alphabet {
 			next := moveSubset(machine, states[current], characterClass.first)
 			key := subsetKey(next)
@@ -80,7 +68,7 @@ func determinize(machine *nfa, work *budget) (*dfa, error) {
 			if !ok {
 				nextID = uint32(len(states))
 
-				if err := addDFAState(work, result, machine, next); err != nil {
+				if err := addDFAState(result, machine, next); err != nil {
 					return nil, err
 				}
 
@@ -98,90 +86,8 @@ func determinize(machine *nfa, work *budget) (*dfa, error) {
 	return result, nil
 }
 
-func addDFAState(work *budget, result *dfa, machine *nfa, state subsetState) error {
-	if err := work.add(
-		&work.dfaStates, 1, work.limits.dfaStates,
-		"DFA construction", "DFA states",
-	); err != nil {
-		return err
-	}
-
+func addDFAState(result *dfa, machine *nfa, state subsetState) error {
 	result.states = append(result.states, dfaState{accepting: acceptsAtEnd(machine, state)})
-
-	return nil
-}
-
-func combineLeaves(leaves []leafSpecification, work *budget) (*dfa, error) {
-	if len(leaves) == 1 && leaves[0].wantMatch {
-		return leaves[0].machine, nil
-	}
-
-	initial := make([]uint32, len(leaves))
-	tuples := [][]uint32{initial}
-	keys := map[string]uint32{stateTupleKey(initial): 0}
-
-	result := &dfa{utf16: true}
-	if err := addCombinedState(result, leaves, initial, work); err != nil {
-		return nil, err
-	}
-
-	for current := 0; current < len(tuples); current++ {
-		alphabet := combinedAlphabet(leaves, tuples[current])
-		if err := work.add(
-			&work.dfaTransitions, uint64(len(alphabet)), work.limits.dfaTransitions,
-			"DFA construction", "DFA transitions",
-		); err != nil {
-			return nil, err
-		}
-
-		for _, characterClass := range alphabet {
-			next := make([]uint32, len(leaves))
-			for index, leaf := range leaves {
-				next[index] = leaf.machine.advance(tuples[current][index], characterClass.first)
-			}
-
-			key := stateTupleKey(next)
-
-			nextID, ok := keys[key]
-			if !ok {
-				nextID = uint32(len(tuples))
-
-				if err := addCombinedState(result, leaves, next, work); err != nil {
-					return nil, err
-				}
-
-				keys[key] = nextID
-
-				tuples = append(tuples, next)
-			}
-
-			appendDFAEdge(&result.states[current].edges, dfaEdge{
-				first: characterClass.first, last: characterClass.last, target: nextID,
-			})
-		}
-	}
-
-	return result, nil
-}
-
-func addCombinedState(result *dfa, leaves []leafSpecification, tuple []uint32, work *budget) error {
-	if err := work.add(
-		&work.dfaStates, 1, work.limits.dfaStates,
-		"DFA construction", "DFA states",
-	); err != nil {
-		return err
-	}
-
-	accepting := true
-	for index, leaf := range leaves {
-		if leaf.machine.states[tuple[index]].accepting != leaf.wantMatch {
-			accepting = false
-
-			break
-		}
-	}
-
-	result.states = append(result.states, dfaState{accepting: accepting})
 
 	return nil
 }
@@ -202,20 +108,53 @@ func nfaAlphabet(machine *nfa) runeSet {
 	return partitionRuneSets(machine.universe, sources...)
 }
 
-func combinedAlphabet(leaves []leafSpecification, tuple []uint32) runeSet {
-	sources := make([]runeSet, 0, len(leaves))
-	for index, leaf := range leaves {
-		edges := leaf.machine.states[tuple[index]].edges
-
-		set := make(runeSet, 0, len(edges))
-		for _, edge := range edges {
-			set = append(set, runeRange{first: edge.first, last: edge.last})
+func (machine *dfa) scalarEdges(state uint32) []dfaEdge {
+	if !machine.utf16 {
+		edges := make([]dfaEdge, 0, len(machine.states[state].edges))
+		for _, edge := range machine.states[state].edges {
+			for _, item := range intersectRuneSets(
+				runeSet{{first: edge.first, last: edge.last}}, scalarUniverse,
+			) {
+				appendDFAEdge(&edges, dfaEdge{first: item.first, last: item.last, target: edge.target})
+			}
 		}
 
-		sources = append(sources, set)
+		return edges
 	}
 
-	return partitionRuneSets(codeUnitUniverse(), sources...)
+	edges := make([]dfaEdge, 0, len(machine.states[state].edges))
+	for _, edge := range machine.states[state].edges {
+		for _, item := range intersectRuneSets(
+			runeSet{{first: edge.first, last: edge.last}},
+			runeSet{{first: 0, last: firstSurrogate - 1}, {first: lastSurrogate + 1, last: maximumCodeUnit}},
+		) {
+			appendDFAEdge(&edges, dfaEdge{first: item.first, last: item.last, target: edge.target})
+		}
+	}
+
+	for high := rune(firstSurrogate); high <= 0xdbff; high++ {
+		afterHigh := machine.advance(state, high)
+		for _, edge := range machine.states[afterHigh].edges {
+			first := max(edge.first, rune(0xdc00))
+
+			last := min(edge.last, rune(lastSurrogate))
+			if first > last {
+				continue
+			}
+
+			appendDFAEdge(&edges, dfaEdge{
+				first:  utf16Scalar(high, first),
+				last:   utf16Scalar(high, last),
+				target: edge.target,
+			})
+		}
+	}
+
+	return edges
+}
+
+func utf16Scalar(high rune, low rune) rune {
+	return 0x10000 + (high-firstSurrogate)*0x400 + low - 0xdc00
 }
 
 func partitionRuneSets(universe runeSet, sources ...runeSet) runeSet {

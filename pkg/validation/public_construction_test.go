@@ -1,3 +1,4 @@
+//nolint:godoclint // Public construction tests document the retained validation seam.
 package validation_test
 
 import (
@@ -122,4 +123,29 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 		"#/paths/~1request/post/requestBody/content/application~1json/schema/pattern: ",
 		"patternvalidator: nil option",
 	}, ""))
+}
+
+func TestParseRetainsOneExactPatternLanguage(t *testing.T) {
+	t.Parallel()
+
+	spec := []byte(`{
+		"openapi":"3.0.4",
+		"info":{"title":"pattern","version":"1"},
+		"paths":{"/request":{"post":{
+			"operationId":"request",
+			"requestBody":{"content":{"application/json":{"schema":{
+				"type":"string","pattern":"^a+$"
+			}}}},
+			"responses":{"204":{"description":"empty"}}
+		}}}
+	}`)
+
+	parsed, err := validation.Parse(spec)
+	require.NoError(t, err)
+
+	compiled := parsed["request"].Body.StringValidation
+	require.NotNil(t, compiled.CompiledPattern)
+	require.NotNil(t, compiled.CompiledPatternLanguage)
+	require.True(t, compiled.CompiledPatternLanguage.Matches("aa"))
+	require.False(t, compiled.CompiledPatternLanguage.Matches("b"))
 }

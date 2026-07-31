@@ -43,70 +43,41 @@ type fragment struct{ start, end int }
 
 type nfaBuilder struct {
 	machine nfa
-	budget  *budget
 }
 
-func newNFABuilder(work *budget, utf16Mode bool) *nfaBuilder {
+func newNFABuilder(utf16Mode bool) *nfaBuilder {
 	universe := scalarUniverse
 	if utf16Mode {
 		universe = codeUnitUniverse()
 	}
 
-	return &nfaBuilder{machine: nfa{universe: universe, utf16: utf16Mode}, budget: work}
+	return &nfaBuilder{machine: nfa{universe: universe, utf16: utf16Mode}}
 }
 
-func compileESPattern(tree *patternsyntax.Tree, work *budget) (*dfa, error) {
+func compileESPattern(tree *patternsyntax.Tree) (*dfa, error) {
 	root := tree.Nodes[tree.Root]
 	if len(root.Children) == 1 {
 		alternative := tree.Nodes[root.Children[0]]
 		if len(alternative.Children) >= 2 &&
 			tree.Nodes[alternative.Children[0]].Kind == patternsyntax.KindBeginInput &&
 			isESLookahead(tree.Nodes[alternative.Children[1]].Kind) {
-			return compileESLookaheadPattern(tree, alternative, work)
+			return compileESLookaheadPattern(tree, alternative)
 		}
 	}
 
-	return compileESLeaf(tree, []patternsyntax.NodeID{tree.Root}, false, work)
+	return compileESLeaf(tree, []patternsyntax.NodeID{tree.Root}, false)
 }
 
-func compileESLookaheadPattern(tree *patternsyntax.Tree, alternative patternsyntax.Node, work *budget) (*dfa, error) {
-	leaves := make([]leafSpecification, 0)
-
-	index := 1
-	for index < len(alternative.Children) {
-		assertion := tree.Nodes[alternative.Children[index]]
-		if !isESLookahead(assertion.Kind) {
-			break
-		}
-
-		machine, err := compileESLeaf(tree, assertion.Children, true, work)
-		if err != nil {
-			return nil, err
-		}
-
-		leaves = append(leaves, leafSpecification{
-			machine: machine, wantMatch: assertion.Kind == patternsyntax.KindPositiveLookahead,
-		})
-		index++
-	}
-
-	remainder, err := compileESLeaf(tree, alternative.Children[index:], true, work)
-	if err != nil {
-		return nil, err
-	}
-
-	leaves = append(leaves, leafSpecification{machine: remainder, wantMatch: true})
-
-	return combineLeaves(leaves, work)
+func compileESLookaheadPattern(_ *patternsyntax.Tree, _ patternsyntax.Node) (*dfa, error) {
+	return nil, errors.New("leading lookahead patterns are not supported by direct language compilation")
 }
 
 func compileESLeaf(
 	tree *patternsyntax.Tree,
 	nodes []patternsyntax.NodeID,
 	prependBegin bool,
-	work *budget,
 ) (*dfa, error) {
-	builder := newNFABuilder(work, true)
+	builder := newNFABuilder(true)
 	parts := make([]fragment, 0, len(nodes)+1)
 
 	if prependBegin {
@@ -136,11 +107,11 @@ func compileESLeaf(
 		return nil, err
 	}
 
-	return determinize(&builder.machine, work)
+	return determinize(&builder.machine)
 }
 
-func compileRawPattern(expression *regexpsyntax.Regexp, work *budget) (*dfa, error) {
-	builder := newNFABuilder(work, false)
+func compileRawPattern(expression *regexpsyntax.Regexp) (*dfa, error) {
+	builder := newNFABuilder(false)
 
 	root, err := builder.buildRawNode(expression)
 	if err != nil {
@@ -151,7 +122,7 @@ func compileRawPattern(expression *regexpsyntax.Regexp, work *budget) (*dfa, err
 		return nil, err
 	}
 
-	return determinize(&builder.machine, work)
+	return determinize(&builder.machine)
 }
 
 //nolint:cyclop // The closed AST-kind dispatch mirrors patternsyntax directly.

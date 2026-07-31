@@ -1,4 +1,4 @@
-//nolint:godoclint,mnd // Private assertion closure tracks ECMAScript and RE2 positions.
+//nolint:godoclint // Private assertion closure tracks ECMAScript and RE2 positions.
 package stringlanguage
 
 import (
@@ -145,15 +145,6 @@ func subsetKey(state subsetState) string {
 	key := []byte{flags}
 	for _, item := range state.states {
 		key = binary.AppendUvarint(key, uint64(item)+1)
-	}
-
-	return string(key)
-}
-
-func stateTupleKey(states []uint32) string {
-	key := make([]byte, 0, len(states)*2)
-	for _, state := range states {
-		key = binary.AppendUvarint(key, uint64(state)+1)
 	}
 
 	return string(key)

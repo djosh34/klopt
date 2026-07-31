@@ -88,8 +88,10 @@ type StringValidation struct {
 
 	// CompiledPattern is the compiled form of Pattern used by Validate.
 	CompiledPattern *patternvalidator.PatternValidation
+	// CompiledPatternLanguage is the exact language form used by generation.
+	CompiledPatternLanguage *stringlanguage.Language
 	// CompiledFormat is the compiled form of Format used by Validate.
-	CompiledFormat *stringlanguage.Set
+	CompiledFormat *stringlanguage.Language
 }
 
 // ArrayValidation holds array-specific constraints.

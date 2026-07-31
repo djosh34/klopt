@@ -736,8 +736,14 @@ func (compiler *schemaCompiler) compileString(
 			return keywordError(pointer, "pattern", err)
 		}
 
+		language, err := stringlanguage.Pattern(pattern, compiler.patternOptions...)
+		if err != nil {
+			return keywordError(pointer, "pattern", err)
+		}
+
 		validation.StringValidation.Pattern = pattern
 		validation.StringValidation.CompiledPattern = compiled
+		validation.StringValidation.CompiledPatternLanguage = &language
 	}
 
 	return nil
@@ -811,20 +817,17 @@ func invalidFormatPair(pointer string, typeName string, format string) error {
 }
 
 // compileStringFormat builds one already allowlisted native string format.
-func compileStringFormat(format string) (*stringlanguage.Set, error) {
+func compileStringFormat(format string) (*stringlanguage.Language, error) {
 	language, err := stringlanguage.Format(format)
 	if err != nil {
 		return nil, err
 	}
 
-	return stringlanguage.Compile([]stringlanguage.Requirement{{
-		Language:  language,
-		WantMatch: true,
-	}}, stringlanguage.Length{})
+	return &language, nil
 }
 
 // MustCompileStringFormat rebuilds one format already checked by Parse for generated validators.
-func MustCompileStringFormat(format string) *stringlanguage.Set {
+func MustCompileStringFormat(format string) *stringlanguage.Language {
 	compiled, err := compileStringFormat(format)
 	if err != nil {
 		panic(fmt.Sprintf("compile prevalidated string format %q: %v", format, err))

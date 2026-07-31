@@ -1,87 +1,268 @@
+//nolint:cyclop,godoclint // Tuple validation and traversal are the complete walk state machine.
 package stringlanguage
 
-import "slices"
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"unicode/utf16"
+)
 
-// State identifies one immutable state in a compiled string language.
-type State uint32
+// Requirement says whether the result must match or not match Language.
+type Requirement struct {
+	Language  Language
+	WantMatch bool
+}
 
-// ScalarRange is one productive Unicode-scalar transition.
+// ScalarRange is one range of Unicode scalar values.
 type ScalarRange struct {
 	First rune
 	Last  rune
-	Next  State
-
-	distance uint64
 }
 
-// Matches reports whether one exact language accepts value.
+// Walk advances every requirement over one shared rune stream.
+type Walk interface {
+	Accepting() bool
+	Ranges() []ScalarRange
+	Advance(value rune) error
+}
+
+type tupleWalk struct {
+	machines []dfa
+	states   []uint32
+	wants    []bool
+}
+
+// Begin starts a simultaneous walk over one-language DFAs.
+func Begin(requirements []Requirement) (Walk, error) {
+	machines := make([]dfa, len(requirements))
+	states := make([]uint32, len(requirements))
+	wants := make([]bool, len(requirements))
+
+	for index, requirement := range requirements {
+		if err := validateDFA(requirement.Language.dfa); err != nil {
+			return nil, &CompileError{
+				Operation: "begin string walk",
+				Err:       fmt.Errorf("requirement %d has an invalid language: %w", index, err),
+			}
+		}
+
+		machines[index] = requirement.Language.dfa
+		wants[index] = requirement.WantMatch
+	}
+
+	return &tupleWalk{machines: machines, states: states, wants: wants}, nil
+}
+
+// Matches reports whether value belongs to one exact language.
 func (language Language) Matches(value string) bool {
-	if len(language.dfa.states) == 0 {
+	if err := validateDFA(language.dfa); err != nil {
 		return false
 	}
 
 	state := uint32(0)
+
 	for _, scalar := range value {
-		state = advanceScalar(&language.dfa, state, scalar)
+		var err error
+
+		state, err = advanceScalarChecked(&language.dfa, state, scalar)
+		if err != nil {
+			return false
+		}
 	}
 
 	return language.dfa.states[state].accepting
 }
 
-// Start returns the initial state of a compiled language.
-func (set *Set) Start() State {
-	return 0
+func (walk *tupleWalk) Accepting() bool {
+	if walk == nil || len(walk.states) != len(walk.machines) || len(walk.wants) != len(walk.machines) {
+		return false
+	}
+
+	for index, machine := range walk.machines {
+		state := walk.states[index]
+		if state >= uint32(len(machine.states)) {
+			return false
+		}
+
+		if machine.states[state].accepting != walk.wants[index] {
+			return false
+		}
+	}
+
+	return true
 }
 
-// Accepting reports whether stopping at state produces a member.
-func (set *Set) Accepting(state State) bool {
-	return set != nil && int(state) < len(set.product.states) && set.product.states[state].accepting
-}
-
-// ProductiveRanges returns immediate scalar ranges that can still reach acceptance.
-// A shortest-completion edge is first so a zero-filled tape always terminates.
-func (set *Set) ProductiveRanges(state State) []ScalarRange {
-	if set == nil || int(state) >= len(set.product.states) {
+func (walk *tupleWalk) Ranges() []ScalarRange {
+	if walk == nil || len(walk.states) != len(walk.machines) || len(walk.wants) != len(walk.machines) {
 		return nil
 	}
 
-	currentDistance := set.product.shortest[state]
-	result := make([]ScalarRange, 0)
-
-	for _, edge := range set.product.states[state].edges {
-		if set.product.shortest[edge.next] < 0 {
-			continue
+	sources := make([]runeSet, 0, len(walk.machines))
+	for index, machine := range walk.machines {
+		if err := validateDFA(machine); err != nil {
+			return nil
 		}
 
-		for _, scalarRange := range edge.ranges {
-			result = append(result, ScalarRange{
-				First: scalarRange.first, Last: scalarRange.last, Next: State(edge.next),
-			})
+		state := walk.states[index]
+		if state >= uint32(len(machine.states)) {
+			return nil
+		}
+
+		edges := machine.scalarEdges(state)
+
+		set := make(runeSet, 0, len(edges))
+		for _, edge := range edges {
+			set = append(set, runeRange{first: edge.first, last: edge.last})
+		}
+
+		sources = append(sources, set)
+	}
+
+	if len(sources) == 0 {
+		ranges := make([]ScalarRange, 0, len(scalarUniverse))
+		for _, item := range scalarUniverse {
+			ranges = append(ranges, ScalarRange{First: item.first, Last: item.last})
+		}
+
+		return ranges
+	}
+
+	partition := partitionRuneSets(scalarUniverse, sources...)
+
+	ranges := make([]ScalarRange, 0, len(partition))
+	for _, item := range partition {
+		ranges = append(ranges, ScalarRange{First: item.first, Last: item.last})
+	}
+
+	return ranges
+}
+
+//nolint:gocognit // DFA validation checks every state, edge, and alphabet segment.
+func validateDFA(machine dfa) error {
+	if len(machine.states) == 0 {
+		return errors.New("DFA has no states")
+	}
+
+	universe := scalarUniverse
+	if machine.utf16 {
+		universe = codeUnitUniverse()
+	}
+
+	for stateIndex, state := range machine.states {
+		for edgeIndex, edge := range state.edges {
+			if edge.first > edge.last {
+				return fmt.Errorf("DFA state %d edge %d has an inverted range", stateIndex, edgeIndex)
+			}
+
+			if edge.target >= uint32(len(machine.states)) {
+				return fmt.Errorf("DFA state %d edge %d has target %d outside state table", stateIndex, edgeIndex, edge.target)
+			}
+
+			if edgeIndex > 0 && state.edges[edgeIndex-1].last >= edge.first {
+				return fmt.Errorf("DFA state %d edges overlap or are unsorted", stateIndex)
+			}
+		}
+
+		for _, allowed := range universe {
+			next := allowed.first
+			for _, edge := range state.edges {
+				if edge.last < allowed.first {
+					continue
+				}
+
+				if edge.first > allowed.last {
+					break
+				}
+
+				if edge.first > next || edge.last > allowed.last {
+					return fmt.Errorf("DFA state %d does not cover its alphabet", stateIndex)
+				}
+
+				next = edge.last + 1
+			}
+
+			if next <= allowed.last {
+				return fmt.Errorf("DFA state %d does not cover its alphabet", stateIndex)
+			}
 		}
 	}
 
-	slices.SortStableFunc(result, func(left ScalarRange, right ScalarRange) int {
-		leftCompletes := set.product.shortest[left.Next] < currentDistance
+	return nil
+}
 
-		rightCompletes := set.product.shortest[right.Next] < currentDistance
-		if leftCompletes != rightCompletes {
-			if leftCompletes {
-				return -1
-			}
+func (walk *tupleWalk) Advance(value rune) error {
+	if walk == nil {
+		return errors.New("advance nil string walk")
+	}
 
-			return 1
+	if value < 0 || value > maximumScalar || value >= firstSurrogate && value <= lastSurrogate {
+		return fmt.Errorf("invalid Unicode scalar U+%04X", value)
+	}
+
+	if len(walk.states) != len(walk.machines) || len(walk.wants) != len(walk.machines) {
+		return errors.New("invalid string walk state")
+	}
+
+	next := make([]uint32, len(walk.states))
+	for index, machine := range walk.machines {
+		state := walk.states[index]
+		if state >= uint32(len(machine.states)) {
+			return fmt.Errorf("invalid DFA state %d for requirement %d", state, index)
 		}
 
-		if left.First < right.First {
+		advanced, err := advanceScalarChecked(&machine, state, value)
+		if err != nil {
+			return fmt.Errorf("advance requirement %d: %w", index, err)
+		}
+
+		next[index] = advanced
+	}
+
+	copy(walk.states, next)
+
+	return nil
+}
+
+func advanceScalarChecked(machine *dfa, state uint32, scalar rune) (uint32, error) {
+	if machine == nil || state >= uint32(len(machine.states)) {
+		return 0, errors.New("invalid DFA state")
+	}
+
+	if !machine.utf16 || scalar <= maximumCodeUnit {
+		return advanceDFAState(machine, state, scalar)
+	}
+
+	high, low := utf16.EncodeRune(scalar)
+
+	state, err := advanceDFAState(machine, state, high)
+	if err != nil {
+		return 0, err
+	}
+
+	return advanceDFAState(machine, state, low)
+}
+
+func advanceDFAState(machine *dfa, state uint32, value rune) (uint32, error) {
+	if machine == nil || state >= uint32(len(machine.states)) {
+		return 0, errors.New("invalid DFA state")
+	}
+
+	edges := machine.states[state].edges
+
+	index, found := slices.BinarySearchFunc(edges, value, func(edge dfaEdge, target rune) int {
+		switch {
+		case edge.last < target:
 			return -1
-		}
-
-		if left.First > right.First {
+		case edge.first > target:
 			return 1
+		default:
+			return 0
 		}
-
-		return 0
 	})
+	if !found {
+		return 0, fmt.Errorf("DFA state %d has no transition for U+%04X", state, value)
+	}
 
-	return result
+	return edges[index].target, nil
 }
