@@ -24,6 +24,51 @@ func TestGeneratedSchemaPublicResultHasOnlyTwoFacts(t *testing.T) {
 	require.Equal(t, "Valid", typeOfResult.Field(1).Name)
 }
 
+func FuzzGeneratedSchemaDecode(f *testing.F) {
+	// These are deterministic Rapid example seeds, not duplicated schema fixtures.
+	for _, seed := range []int{
+		0, 1, 2, 3, 4, 5, 6, 7,
+		8, 9, 10, 11, 12, 13, 14, 15,
+		16, 17, 18, 19, 20, 21, 22, 23,
+		31, 47, 63, 79, 95, 111, 127, 255,
+		511, 767, 1023, 1279, 1535, 1791, 1999,
+	} {
+		value := uint64(seed)
+		f.Add(seed, []byte{
+			byte(value), byte(value >> 8), byte(value >> 16), byte(value >> 24),
+			byte(value >> 32), byte(value >> 40), byte(value >> 48), byte(value >> 56),
+		})
+	}
+
+	f.Fuzz(func(t *testing.T, schemaSeed int, tape []byte) {
+		generated := rapid.Custom(func(t *rapid.T) []GeneratedSchema {
+			return GenerateSchemas(t)
+		}).Example(schemaSeed)
+		if len(generated) == 0 {
+			t.Fatal("schema generator returned no documents")
+		}
+
+		validSchema := generated[0]
+		if !validSchema.Valid {
+			t.Fatal("schema generator returned a non-valid first document")
+		}
+
+		generator, err := Compile(validSchema.OpenAPIJSON)
+		if err != nil {
+			t.Fatalf("compile schema seed %d: %v", schemaSeed, err)
+		}
+
+		_, status, err := generator.Decode(tape)
+		if err != nil {
+			t.Fatalf("decode schema seed %d: %v", schemaSeed, err)
+		}
+
+		if status != Generated && status != Exhausted {
+			t.Fatalf("decode schema seed %d returned unknown status %d", schemaSeed, status)
+		}
+	})
+}
+
 // TestGeneratedSchemasExerciseRequiredShapes keeps generation pressure visible
 // without leaking counters into the public generator result.
 func TestGeneratedSchemasExerciseRequiredShapes(t *testing.T) {
