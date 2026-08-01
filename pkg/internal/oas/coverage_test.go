@@ -11,6 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestParseReturnsFixedVersionRegexpCompilationErrors(t *testing.T) {
+	t.Parallel()
+
+	sources, document, err := parseWithSemanticVersionPattern(
+		[]byte(`{"openapi":"3.0.3","paths":{}}`),
+		nil,
+		`[`,
+	)
+	require.Error(t, err)
+	require.Nil(t, sources)
+	require.Nil(t, document)
+}
+
 func TestDocumentAdmissionFailures(t *testing.T) {
 	t.Parallel()
 

@@ -944,8 +944,17 @@ func isPathScalarType(typeName styleScalarType) bool {
 	return typeName == "string" || typeName == "boolean" || typeName == "integer" || typeName == "number"
 }
 
-//nolint:cyclop // Constructor validation, declaration ordering, and segment compilation form one fixed pipeline.
 func newPathDecoder(operationID string, pathTemplate string, parameters []pathParameter) (*PathDecoder, error) {
+	return newPathDecoderWithRegexpCompiler(operationID, pathTemplate, parameters, regexp.Compile)
+}
+
+//nolint:cyclop // Constructor validation, declaration ordering, and segment compilation form one fixed pipeline.
+func newPathDecoderWithRegexpCompiler(
+	operationID string,
+	pathTemplate string,
+	parameters []pathParameter,
+	compileRegexp func(string) (*regexp.Regexp, error),
+) (*PathDecoder, error) {
 	if _, err := oas.RequestValidationName(operationID); err != nil {
 		return nil, fmt.Errorf("path decoder operation ID: %w", err)
 	}
@@ -989,7 +998,12 @@ func newPathDecoder(operationID string, pathTemplate string, parameters []pathPa
 
 	segments := make([]*regexp.Regexp, 0, strings.Count(pathTemplate, "/")+1)
 	for _, segment := range strings.Split(pathTemplate, "/") {
-		segments = append(segments, mustCompilePathSegment(segment))
+		compiled, compileErr := compilePathSegment(segment, compileRegexp)
+		if compileErr != nil {
+			return nil, fmt.Errorf("compile path template %q: %w", pathTemplate, compileErr)
+		}
+
+		segments = append(segments, compiled)
 	}
 
 	return &PathDecoder{
@@ -1018,7 +1032,14 @@ func clonePathParameter(parameter pathParameter) pathParameter {
 	return cloned
 }
 
-func mustCompilePathSegment(segment string) *regexp.Regexp {
+func compilePathSegment(
+	segment string,
+	compileRegexp func(string) (*regexp.Regexp, error),
+) (*regexp.Regexp, error) {
+	if compileRegexp == nil {
+		return nil, errors.New("path regexp compiler is nil")
+	}
+
 	pattern := "^"
 
 	for index := 0; index < len(segment); {
@@ -1040,7 +1061,16 @@ func mustCompilePathSegment(segment string) *regexp.Regexp {
 
 	pattern += "$"
 
-	return regexp.MustCompile(pattern)
+	compiled, err := compileRegexp(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	if compiled == nil {
+		return nil, errors.New("path regexp compiler returned nil")
+	}
+
+	return compiled, nil
 }
 
 func syntheticPathValidation(operationID string, parameters []pathParameter) *Validation {

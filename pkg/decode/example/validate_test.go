@@ -14,12 +14,15 @@ import (
 func TestGeneratedMustDecoderHelpersAdvertiseTheirPanicBoundaries(t *testing.T) {
 	t.Parallel()
 
-	require.Panics(t, func() {
-		mustQueryDecoder(validation.QueryDecoderDefinition{OperationID: "query"})
-	})
-	require.Panics(t, func() {
-		mustPathDecoder(validation.PathDecoderDefinition{OperationID: "path"})
-	})
+	queryDefinition := validation.QueryDecoderDefinition{OperationID: "query"}
+	_, queryErr := validation.NewQueryDecoderFromGenerated(queryDefinition)
+	require.Error(t, queryErr)
+	require.PanicsWithError(t, queryErr.Error(), func() { mustQueryDecoder(queryDefinition) })
+
+	pathDefinition := validation.PathDecoderDefinition{OperationID: "path"}
+	_, pathErr := validation.NewPathDecoderFromGenerated(pathDefinition)
+	require.Error(t, pathErr)
+	require.PanicsWithError(t, pathErr.Error(), func() { mustPathDecoder(pathDefinition) })
 }
 
 // TestRequestValidationBodies is the hand-maintained behavior table for the generated fixture.

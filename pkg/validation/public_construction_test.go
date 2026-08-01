@@ -239,6 +239,43 @@ func TestMustCompileStringFormatAdvertisesItsPanicBoundary(t *testing.T) {
 	require.Panics(t, func() { validation.MustCompileStringFormat("unknown") })
 }
 
+func TestParseReturnsMalformedPatternErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, spec := range []string{
+		`openapi: 3.0.3
+paths:
+  /body:
+    post:
+      operationId: body
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string, pattern: '['}
+`,
+		`openapi: 3.0.3
+paths:
+  /{id}:
+    get:
+      operationId: path
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, pattern: '['}}
+`,
+		`openapi: 3.0.3
+paths:
+  /query:
+    get:
+      operationId: query
+      parameters:
+        - {name: q, in: query, schema: {type: string, pattern: '['}}
+`,
+	} {
+		parsed, err := validation.Parse([]byte(spec))
+		require.Error(t, err)
+		require.Nil(t, parsed)
+	}
+}
+
 func TestParseRetainsPatternAdmissionAndValidation(t *testing.T) {
 	t.Parallel()
 

@@ -123,7 +123,7 @@ func TestParseParameterAndOptionFailureMatrix(t *testing.T) {
 
 	_, err := compileStringFormat("unknown")
 	require.Error(t, err)
-	require.Panics(t, func() { MustCompileStringFormat("unknown") })
+	require.PanicsWithError(t, err.Error(), func() { MustCompileStringFormat("unknown") })
 }
 
 func TestQueryAndPathParameterAdmissionFailureMatrix(t *testing.T) {

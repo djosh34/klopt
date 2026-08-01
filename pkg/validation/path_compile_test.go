@@ -2,13 +2,20 @@
 package validation
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/stretchr/testify/require"
 )
+
+//nolint:nilnil // Deliberately simulates a malformed regexp compiler result.
+func nilRegexpCompiler(string) (*regexp.Regexp, error) {
+	return nil, nil
+}
 
 func pathDefinitionForTest(t *testing.T, decoder *PathDecoder) PathDecoderDefinition {
 	t.Helper()
@@ -17,6 +24,35 @@ func pathDefinitionForTest(t *testing.T, decoder *PathDecoder) PathDecoderDefini
 	require.NoError(t, err)
 
 	return definition
+}
+
+func TestNewPathDecoderReturnsRegexpCompilationErrors(t *testing.T) {
+	t.Parallel()
+
+	parameters := []pathParameter{{
+		name: "id", wire: pathWireSimplePrimitive, validation: &Validation{
+			SchemaPointer: "#/path/id", KindValidation: KindValidation{Type: "string"},
+		}, scalarType: "string",
+	}}
+
+	expected := errors.New("compile path regexp")
+	decoder, err := newPathDecoderWithRegexpCompiler(
+		"path",
+		"/{id}",
+		parameters,
+		func(string) (*regexp.Regexp, error) { return nil, expected },
+	)
+	require.ErrorIs(t, err, expected)
+	require.Nil(t, decoder)
+
+	for _, compileRegexp := range []func(string) (*regexp.Regexp, error){
+		nil,
+		nilRegexpCompiler,
+	} {
+		decoder, err = newPathDecoderWithRegexpCompiler("path", "/{id}", parameters, compileRegexp)
+		require.Error(t, err)
+		require.Nil(t, decoder)
+	}
 }
 
 func TestCompilePathDecoderBuildsSimpleStringMetadata(t *testing.T) {

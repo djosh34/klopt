@@ -869,7 +869,7 @@ func compileStringFormat(format string) (*stringlanguage.Language, error) {
 func MustCompileStringFormat(format string) *stringlanguage.Language {
 	compiled, err := compileStringFormat(format)
 	if err != nil {
-		panic(fmt.Sprintf("compile prevalidated string format %q: %v", format, err))
+		panic(err)
 	}
 
 	return compiled

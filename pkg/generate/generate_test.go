@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"text/template"
 
 	generatedexample "github.com/djosh34/klopt/pkg/decode/example"
@@ -36,6 +37,19 @@ func unrelated() {
 	generated, err := executeTemplate(templates, "source.go", nil)
 	require.NoError(t, err)
 	require.Contains(t, string(generated), "func unrelated() {\n\n\tprintln")
+}
+
+// TestRenderReturnsTemplateParseErrors verifies malformed templates return errors.
+func TestRenderReturnsTemplateParseErrors(t *testing.T) {
+	t.Parallel()
+
+	files, err := renderWithTemplates(
+		fstest.MapFS{"templates/validate.go.tmpl": {Data: []byte(`{{`)}},
+		"generated",
+		nil,
+	)
+	require.Error(t, err)
+	require.Nil(t, files)
 }
 
 // TestRenderReturnsConstructionErrors verifies malformed decoder definitions stop rendering.

@@ -18,12 +18,10 @@ import (
 )
 
 // semanticVersionPattern implements the Semantic Versioning 2.0.0 grammar.
-var semanticVersionPattern = regexp.MustCompile(
-	`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)` +
-		`(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)` +
-		`(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?` +
-		`(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$`,
-)
+const semanticVersionPattern = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)` +
+	`(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)` +
+	`(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?` +
+	`(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$`
 
 // Source retains one parsed document and one acquired operation's request inputs.
 type Source struct {
@@ -98,9 +96,18 @@ func ParseWithParameterValidation(
 }
 
 // parse ingests and acquires one OpenAPI document with optional raw Parameter Object validation.
+func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source, json.RawMessage, error) {
+	return parseWithSemanticVersionPattern(spec, validateParameter, semanticVersionPattern)
+}
+
+// parseWithSemanticVersionPattern parses using the supplied version grammar.
 //
 //nolint:cyclop // Document decoding, version admission, and request collection form one ordered parse.
-func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source, json.RawMessage, error) {
+func parseWithSemanticVersionPattern(
+	spec []byte,
+	validateParameter ParameterValidator,
+	versionPattern string,
+) (map[string]Source, json.RawMessage, error) {
 	document := spec
 	if json.Valid(spec) {
 		if err := rejectDuplicateJSONNames(spec); err != nil {
@@ -132,7 +139,12 @@ func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source
 		)
 	}
 
-	versionParts := semanticVersionPattern.FindStringSubmatch(version)
+	compiledVersionPattern, err := regexp.Compile(versionPattern)
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile Semantic Versioning pattern: %w", err)
+	}
+
+	versionParts := compiledVersionPattern.FindStringSubmatch(version)
 	if len(versionParts) == 0 {
 		return nil, nil, errors.New("OpenAPI document version must be a Semantic Versioning 2.0.0 version")
 	}

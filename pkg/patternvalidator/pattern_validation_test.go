@@ -214,7 +214,10 @@ func TestParseAndMustParseOptionsAndSealing(t *testing.T) {
 
 	must := MustParse("a", RejectNonASCII, UseRE2)
 	require.Equal(t, validation.Validate("a"), must.Validate("a"))
-	require.Panics(t, func() { MustParse("[") })
+
+	_, parseErr := Parse("[")
+	require.Error(t, parseErr)
+	require.PanicsWithError(t, parseErr.Error(), func() { MustParse("[") })
 
 	defaultValidation := MustParse("a")
 

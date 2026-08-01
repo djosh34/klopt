@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io/fs"
 	"maps"
 	"slices"
 	"text/template"
@@ -16,8 +17,6 @@ import (
 
 //go:embed templates/*.go.tmpl
 var templateFiles embed.FS
-
-var validationTemplates = template.Must(template.ParseFS(templateFiles, "templates/*.go.tmpl"))
 
 type operationRender struct {
 	OperationID string
@@ -31,6 +30,19 @@ func render(
 	packageName string,
 	parsed map[string]validation.RequestValidation,
 ) (map[string][]byte, error) {
+	return renderWithTemplates(templateFiles, packageName, parsed)
+}
+
+func renderWithTemplates(
+	templateFS fs.FS,
+	packageName string,
+	parsed map[string]validation.RequestValidation,
+) (map[string][]byte, error) {
+	validationTemplates, err := template.ParseFS(templateFS, "templates/*.go.tmpl")
+	if err != nil {
+		return nil, fmt.Errorf("parse validation templates: %w", err)
+	}
+
 	operations := make([]operationRender, 0, len(parsed))
 	hasQuery := false
 	hasPath := false
