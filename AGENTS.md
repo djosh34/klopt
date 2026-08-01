@@ -26,5 +26,8 @@ Follow these rules ONLY when your prompt does NOT contain smth like 'Do not crea
     - All subagents must be told to never create subagents themselves
     - When subagents are done, always close them, never reuse them. Always create new ones
     - Please leave the subagents alone, if you need to wait, just blocking wait on them.
+    - When unspecified which model and/or reasoning:
+        - use gpt-5.6-sol agents on high reasoning
+
 
 
