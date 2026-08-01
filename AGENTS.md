@@ -17,12 +17,14 @@ ALWAYS crosscheck with 3.0.x openapi spec, before asking me anything. you MUST h
 
 When deviating from the openapi spec, we hard and loudly reject (must return error, never silent) during Parse phase and not during Validate phase, unless stated otherwise
 
+When your prompt DOES contain smth like 'Do not create subagents':
+    - Never create new agent (no create_agent, no subagent, no codex, no whatever)
+    - If you feel like you need to create agent, that is wrong!
+
 Follow these rules ONLY when your prompt does NOT contain smth like 'Do not create subagents':
     - Always orchastrate EVERYTHING (and i mean EVERYTHING) to subagents. Never do anything yourself.
     - All subagents must be told to never create subagents themselves
     - When subagents are done, always close them, never reuse them. Always create new ones
     - Please leave the subagents alone, if you need to wait, just blocking wait on them.
-When your prompt DOES contain smth like 'Do not create subagents':
-    - Never create new agent (no create_agent, no subagent, no codex, no whatever)
 
 
