@@ -1,9 +1,20 @@
 //nolint:godoclint // Private DFA minimization supports the bounded format grammars.
 package stringlanguage
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"fmt"
+)
 
-func minimizeDFA(machine *dfa) *dfa {
+func minimizeDFA(machine *dfa) (*dfa, error) {
+	if machine == nil {
+		return nil, fmt.Errorf("minimize DFA: machine is nil")
+	}
+
+	if err := validateDFA(*machine); err != nil {
+		return nil, fmt.Errorf("minimize DFA: %w", err)
+	}
+
 	classes := make([]uint32, len(machine.states))
 	for index := range machine.states {
 		if machine.states[index].accepting {
@@ -28,7 +39,7 @@ func minimizeDFA(machine *dfa) *dfa {
 		}
 
 		if equalDFAClasses(classes, nextClasses) {
-			return rebuildDFAClasses(machine, classes)
+			return rebuildDFAClasses(machine, classes), nil
 		}
 
 		classes = nextClasses

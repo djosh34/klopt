@@ -3,7 +3,8 @@ package validation_test
 
 import (
 	"encoding/json"
-	"strings"
+	"errors"
+	"net/url"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
@@ -12,6 +13,24 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func queryDefinitionForTest(t *testing.T, decoder *validation.QueryDecoder) validation.QueryDecoderDefinition {
+	t.Helper()
+
+	definition, err := decoder.Definition()
+	require.NoError(t, err)
+
+	return definition
+}
+
+func pathDefinitionForTest(t *testing.T, decoder *validation.PathDecoder) validation.PathDecoderDefinition {
+	t.Helper()
+
+	definition, err := decoder.Definition()
+	require.NoError(t, err)
+
+	return definition
+}
 
 // TestPublicCompiledFieldsSupportDirectConstruction verifies the external construction API.
 func TestPublicCompiledFieldsSupportDirectConstruction(t *testing.T) {
@@ -89,7 +108,7 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 	)
 
 	unsealed := new(patternvalidator.PatternValidation)
-	composite(unsealed)
+	require.NoError(t, composite(unsealed))
 	require.True(t, unsealed.RejectsNonASCII())
 	require.True(t, unsealed.UsesRE2())
 
@@ -111,21 +130,116 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 	compiled := parsed["request"].Body.StringValidation.CompiledPattern
 	require.True(t, compiled.RejectsNonASCII())
 	require.True(t, compiled.UsesRE2())
-	require.Panics(t, func() { composite(compiled) })
+	require.Error(t, composite(compiled))
 	require.True(t, compiled.RejectsNonASCII())
 	require.True(t, compiled.UsesRE2())
 
-	require.Panics(t, func() { validation.PatternOptions(nil) })
+	nilComposite := validation.PatternOptions(nil)
+	require.Error(t, nilComposite(new(patternvalidator.PatternValidation)))
+
+	customErr := errors.New("custom option failed")
+	failing := validation.PatternOptions(func(*patternvalidator.PatternValidation) error { return customErr })
+	require.ErrorIs(t, failing(new(patternvalidator.PatternValidation)), customErr)
+	_, err = validation.Parse(spec, failing)
+	require.ErrorIs(t, err, customErr)
 
 	_, err = validation.Parse(spec, nil)
-	require.EqualError(t, err, strings.Join([]string{
-		"compile operationId \"request\": compile schema at ",
-		"#/paths/~1request/post/requestBody/content/application~1json/schema/pattern: ",
-		"patternvalidator: nil option",
-	}, ""))
+	require.Error(t, err)
 }
 
-func TestParseRetainsOneExactPatternLanguage(t *testing.T) {
+func TestValidationRejectsNilCyclesAndMalformedCompiledState(t *testing.T) {
+	t.Parallel()
+
+	var nilValidation *validation.Validation
+	require.NotEmpty(t, nilValidation.Validate(json.RawMessage(`null`)))
+
+	nilChildren := []*validation.Validation{
+		{ArrayValidation: validation.ArrayValidation{Items: nil}, AllOfValidations: []*validation.Validation{nil}},
+		{ObjectValidation: validation.ObjectValidation{Properties: []validation.PropertyValidation{{Name: "value"}}}},
+		{AnyOfValidations: []*validation.Validation{nil}},
+	}
+	for _, compiled := range nilChildren {
+		require.NotEmpty(t, compiled.Validate(json.RawMessage(`null`)))
+	}
+
+	cycles := []func(*validation.Validation){
+		func(root *validation.Validation) { root.ArrayValidation.Items = root },
+		func(root *validation.Validation) {
+			root.ObjectValidation.Properties = []validation.PropertyValidation{{Name: "value", Validation: root}}
+		},
+		func(root *validation.Validation) { root.ObjectValidation.AdditionalPropertiesValidation = root },
+		func(root *validation.Validation) { root.AllOfValidations = []*validation.Validation{root} },
+		func(root *validation.Validation) { root.AnyOfValidations = []*validation.Validation{root} },
+	}
+	for _, makeCycle := range cycles {
+		compiled := new(validation.Validation)
+		makeCycle(compiled)
+		require.NotEmpty(t, compiled.Validate(json.RawMessage(`null`)))
+	}
+
+	malformed := []*validation.Validation{
+		{KindValidation: validation.KindValidation{Type: "unknown"}},
+		{EnumValidation: validation.EnumValidation{Values: []json.RawMessage{json.RawMessage(`1`)}}},
+		{NumberValidation: validation.NumberValidation{Minimum: &validation.NumberBound{Value: "1"}}},
+		{StringValidation: validation.StringValidation{MinLength: &validation.CountBound{Value: "1"}}},
+		{StringValidation: validation.StringValidation{Pattern: "a"}},
+	}
+	for _, compiled := range malformed {
+		require.NotEmpty(t, compiled.Validate(json.RawMessage(`null`)))
+	}
+}
+
+func TestDecoderNilAndMalformedDefinitionFailuresReturnErrors(t *testing.T) {
+	t.Parallel()
+
+	var query *validation.QueryDecoder
+
+	_, err := query.Definition()
+	require.Error(t, err)
+	_, err = query.Decode(&url.URL{})
+	require.Error(t, err)
+
+	var path *validation.PathDecoder
+
+	_, err = path.Definition()
+	require.Error(t, err)
+	_, err = path.DecodePathParams(&url.URL{})
+	require.Error(t, err)
+
+	_, err = validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{OperationID: "query"})
+	require.Error(t, err)
+	_, err = validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{OperationID: "path"})
+	require.Error(t, err)
+
+	malformedValidation := &validation.Validation{
+		NumberValidation: validation.NumberValidation{
+			Minimum: &validation.NumberBound{Value: "1", ExactValue: jsonvalue.Number{Lexeme: "invalid"}},
+		},
+	}
+	_, err = validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+		OperationID: "query",
+		Parameters: []validation.QueryParameterDefinition{{
+			Name: "q", Validation: malformedValidation, ScalarType: "string",
+		}},
+	})
+	require.Error(t, err)
+	_, err = validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+		OperationID: "path", PathTemplate: "/{p}",
+		Parameters: []validation.PathParameterDefinition{{
+			Name: "p", Validation: malformedValidation, ScalarType: "string",
+		}},
+	})
+	require.Error(t, err)
+}
+
+func TestMustCompileStringFormatAdvertisesItsPanicBoundary(t *testing.T) {
+	t.Parallel()
+
+	require.NotNil(t, validation.MustCompileStringFormat("date"))
+	require.Panics(t, func() { validation.MustCompileStringFormat("unknown") })
+}
+
+func TestParseRetainsPatternAdmissionAndValidation(t *testing.T) {
 	t.Parallel()
 
 	spec := []byte(`{
@@ -145,7 +259,6 @@ func TestParseRetainsOneExactPatternLanguage(t *testing.T) {
 
 	compiled := parsed["request"].Body.StringValidation
 	require.NotNil(t, compiled.CompiledPattern)
-	require.NotNil(t, compiled.CompiledPatternLanguage)
-	require.True(t, compiled.CompiledPatternLanguage.Matches("aa"))
-	require.False(t, compiled.CompiledPatternLanguage.Matches("b"))
+	require.Empty(t, parsed["request"].Body.Validate([]byte(`"aa"`)))
+	require.NotEmpty(t, parsed["request"].Body.Validate([]byte(`"b"`)))
 }

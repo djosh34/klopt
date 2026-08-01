@@ -2,8 +2,8 @@
 //
 // Parse is the OpenAPI constructor. Callers may also construct a compiled graph
 // directly by populating every exported textual and exact field consistently.
-// Invalid field combinations, mutation after construction, and mutation
-// concurrent with Validate have undefined behavior.
+// Validate reports nil, cyclic, or malformed compiled state as validation errors.
+// Mutation concurrent with Validate has undefined behavior.
 package validation
 
 import (
@@ -88,8 +88,6 @@ type StringValidation struct {
 
 	// CompiledPattern is the compiled form of Pattern used by Validate.
 	CompiledPattern *patternvalidator.PatternValidation
-	// CompiledPatternLanguage is the exact language form used by generation.
-	CompiledPatternLanguage *stringlanguage.Language
 	// CompiledFormat is the compiled form of Format used by Validate.
 	CompiledFormat *stringlanguage.Language
 }

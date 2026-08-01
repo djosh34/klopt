@@ -10,6 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func pathDefinitionForTest(t *testing.T, decoder *PathDecoder) PathDecoderDefinition {
+	t.Helper()
+
+	definition, err := decoder.Definition()
+	require.NoError(t, err)
+
+	return definition
+}
+
 func TestCompilePathDecoderBuildsSimpleStringMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -25,7 +34,7 @@ func TestCompilePathDecoderBuildsSimpleStringMetadata(t *testing.T) {
 			Validation: decoder.parameters[0].validation, ScalarType: "string",
 			Properties: []PathPropertyDefinition{},
 		}},
-	}, decoder.Definition())
+	}, pathDefinitionForTest(t, decoder))
 
 	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/value"})
 	require.NoError(t, err)
@@ -77,7 +86,7 @@ func TestCompilePathDecoderDerivesStyleMetadataFromCompiledValidation(t *testing
 			decoder, err := compilePathDecoderForTest(t, "\n      parameters:\n        - "+test.parameter+"\n")
 			require.NoError(t, err)
 
-			definition := decoder.Definition().Parameters[0]
+			definition := pathDefinitionForTest(t, decoder).Parameters[0]
 			require.Equal(t, uint8(test.expectedWire), definition.Wire)
 			require.Equal(t, test.expectedExplode, definition.Explode)
 			require.Equal(t, test.expectedScalar, definition.ScalarType)
@@ -99,7 +108,7 @@ func TestCompilePathDecoderSupportsSchemaLessJSONContent(t *testing.T) {
         - {name: id, in: path, required: true, content: {application/json: {}}}
 `)
 	require.NoError(t, err)
-	require.Equal(t, uint8(pathWireJSONContent), decoder.Definition().Parameters[0].Wire)
+	require.Equal(t, uint8(pathWireJSONContent), pathDefinitionForTest(t, decoder).Parameters[0].Wire)
 
 	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/null"})
 	require.NoError(t, err)
@@ -299,7 +308,7 @@ func TestCompilePathDecoderUsesStringDynamicValuesForEveryAdditionalPropertiesFo
            schema: {type: object`+test.additionalProperties+`}}
 `)
 			require.NoError(t, err)
-			require.Equal(t, "string", decoder.Definition().Parameters[0].DynamicType)
+			require.Equal(t, "string", pathDefinitionForTest(t, decoder).Parameters[0].DynamicType)
 
 			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/other=value"})
 			if test.decodeError != "" {
@@ -348,8 +357,9 @@ func TestCompilePathDecoderMapsEverySchemaStyleAndShapeWire(t *testing.T) {
         - {name: id, in: path, required: true%s, explode: %t, schema: %s}
 `, style, test.explode, test.schema))
 			require.NoError(t, err)
-			require.Equal(t, uint8(test.wire), decoder.Definition().Parameters[0].Wire)
-			require.Equal(t, test.explode, decoder.Definition().Parameters[0].Explode)
+			definition := pathDefinitionForTest(t, decoder).Parameters[0]
+			require.Equal(t, uint8(test.wire), definition.Wire)
+			require.Equal(t, test.explode, definition.Explode)
 		})
 	}
 }

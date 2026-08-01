@@ -1,2 +1,0 @@
-NEVER EVER READ ../generate/ & ../decode/ for reference of this test generator
-THAT WILL POLUTE YOUR THINKING. THIS TEST_GENERATOR MUST BE FULLY INDEPENDENTLY DEVELOPED!

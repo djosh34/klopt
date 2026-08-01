@@ -4,6 +4,8 @@
 package example
 
 import (
+	"github.com/djosh34/klopt/pkg/jsonvalue"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
@@ -107,6 +109,189 @@ var allOfObject = validation.RequestValidation{
 			},
 		},
 	},
+}
+
+var anyOfBodyAndParameters = validation.RequestValidation{
+	Body: &validation.Validation{
+		SchemaPointer: "#/paths/~1any-of~1{id}/post/requestBody/content/application~1json/schema",
+		BodyRequired:  true,
+
+		KindValidation: validation.KindValidation{
+			Type: "string",
+		},
+
+		ObjectValidation: validation.ObjectValidation{
+			AdditionalPropertiesAllowed: true,
+		},
+
+		AllOfValidations: []*validation.Validation{
+			{
+				SchemaPointer: "#/paths/~1any-of~1{id}/post/requestBody/content/application~1json/schema/allOf/0",
+
+				StringValidation: validation.StringValidation{
+					Pattern: "^[^x]+$",
+
+					CompiledPattern: patternvalidator.MustParse(
+						"^[^x]+$",
+					),
+				},
+
+				ObjectValidation: validation.ObjectValidation{
+					AdditionalPropertiesAllowed: true,
+				},
+			},
+		},
+
+		AnyOfValidations: []*validation.Validation{
+			{
+				SchemaPointer: "#/paths/~1any-of~1{id}/post/requestBody/content/application~1json/schema/anyOf/0",
+
+				StringValidation: validation.StringValidation{
+					Pattern: "^a",
+
+					CompiledPattern: patternvalidator.MustParse(
+						"^a",
+					),
+				},
+
+				ObjectValidation: validation.ObjectValidation{
+					AdditionalPropertiesAllowed: true,
+				},
+			}, {
+				SchemaPointer: "#/paths/~1any-of~1{id}/post/requestBody/content/application~1json/schema/anyOf/1",
+
+				StringValidation: validation.StringValidation{
+					Pattern: "z$",
+
+					CompiledPattern: patternvalidator.MustParse(
+						"z$",
+					),
+				},
+
+				ObjectValidation: validation.ObjectValidation{
+					AdditionalPropertiesAllowed: true,
+				},
+			},
+		},
+	},
+	Query: mustQueryDecoder(validation.QueryDecoderDefinition{
+		OperationID: "anyOfBodyAndParameters",
+		Parameters: []validation.QueryParameterDefinition{
+			{
+				Name: "q",
+				Wire: 0,
+
+				Validation: &validation.Validation{
+					SchemaPointer: "#/paths/~1any-of~1{id}/post/parameters/1/schema",
+
+					ObjectValidation: validation.ObjectValidation{
+						AdditionalPropertiesAllowed: true,
+					},
+
+					AnyOfValidations: []*validation.Validation{
+						{
+							SchemaPointer: "#/paths/~1any-of~1{id}/post/parameters/1/schema/anyOf/0",
+
+							KindValidation: validation.KindValidation{
+								Type: "integer",
+							},
+
+							NumberValidation: validation.NumberValidation{
+								Minimum: &validation.NumberBound{
+									Value: "10",
+
+									ExactValue: jsonvalue.Number{Lexeme: "10"},
+								},
+							},
+
+							ObjectValidation: validation.ObjectValidation{
+								AdditionalPropertiesAllowed: true,
+							},
+						}, {
+							SchemaPointer: "#/paths/~1any-of~1{id}/post/parameters/1/schema/anyOf/1",
+
+							KindValidation: validation.KindValidation{
+								Type: "string",
+							},
+
+							StringValidation: validation.StringValidation{
+								Pattern: "^7$",
+
+								CompiledPattern: patternvalidator.MustParse(
+									"^7$",
+								),
+							},
+
+							ObjectValidation: validation.ObjectValidation{
+								AdditionalPropertiesAllowed: true,
+							},
+						},
+					},
+				},
+
+				ScalarType: "integer",
+			},
+		},
+	}),
+	Path: mustPathDecoder(validation.PathDecoderDefinition{
+		OperationID:  "anyOfBodyAndParameters",
+		PathTemplate: "/any-of/{id}",
+		Parameters: []validation.PathParameterDefinition{
+			{
+				Name: "id",
+				Wire: 0,
+
+				Validation: &validation.Validation{
+					SchemaPointer: "#/paths/~1any-of~1{id}/post/parameters/0/schema",
+
+					ObjectValidation: validation.ObjectValidation{
+						AdditionalPropertiesAllowed: true,
+					},
+
+					AnyOfValidations: []*validation.Validation{
+						{
+							SchemaPointer: "#/paths/~1any-of~1{id}/post/parameters/0/schema/anyOf/0",
+
+							KindValidation: validation.KindValidation{
+								Type: "integer",
+							},
+
+							NumberValidation: validation.NumberValidation{
+								Minimum: &validation.NumberBound{
+									Value: "10",
+
+									ExactValue: jsonvalue.Number{Lexeme: "10"},
+								},
+							},
+
+							ObjectValidation: validation.ObjectValidation{
+								AdditionalPropertiesAllowed: true,
+							},
+						}, {
+							SchemaPointer: "#/paths/~1any-of~1{id}/post/parameters/0/schema/anyOf/1",
+
+							KindValidation: validation.KindValidation{
+								Type: "string",
+							},
+
+							StringValidation: validation.StringValidation{
+								Pattern: "^7$",
+
+								CompiledPattern: patternvalidator.MustParse(
+									"^7$",
+								),
+							},
+
+							ObjectValidation: validation.ObjectValidation{
+								AdditionalPropertiesAllowed: true,
+							},
+						},
+					},
+				},
+				ScalarType: "integer",
+			},
+		},
+	}),
 }
 
 var arrayNotNullable = validation.RequestValidation{
@@ -4409,6 +4594,8 @@ var stringNoFormatNullable = validation.RequestValidation{
 var RequestValidations = map[string]validation.RequestValidation{
 	"allOfObject": allOfObject,
 
+	"anyOfBodyAndParameters": anyOfBodyAndParameters,
+
 	"arrayNotNullable": arrayNotNullable,
 
 	"arrayNullable": arrayNullable,
@@ -4430,4 +4617,22 @@ var RequestValidations = map[string]validation.RequestValidation{
 	"stringNoFormatNotNullable": stringNoFormatNotNullable,
 
 	"stringNoFormatNullable": stringNoFormatNullable,
+}
+
+func mustQueryDecoder(definition validation.QueryDecoderDefinition) *validation.QueryDecoder {
+	decoder, err := validation.NewQueryDecoderFromGenerated(definition)
+	if err != nil {
+		panic(err)
+	}
+
+	return decoder
+}
+
+func mustPathDecoder(definition validation.PathDecoderDefinition) *validation.PathDecoder {
+	decoder, err := validation.NewPathDecoderFromGenerated(definition)
+	if err != nil {
+		panic(err)
+	}
+
+	return decoder
 }

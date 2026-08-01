@@ -41,7 +41,9 @@ func Pattern(source string, options ...patternvalidator.Option) (Language, error
 			}
 		}
 
-		option(settings)
+		if err := option(settings); err != nil {
+			return Language{}, &CompileError{Operation: "compile pattern", Err: err}
+		}
 	}
 
 	machine, err := compilePattern(source, settings)
@@ -92,6 +94,10 @@ func formatDFA(source string) (*dfa, error) {
 		return nil, &CompileError{Operation: "compile format", Err: err}
 	}
 
+	return compileFormatExpression(expression)
+}
+
+func compileFormatExpression(expression *regexpsyntax.Regexp) (*dfa, error) {
 	machine, err := compileRawPattern(expression)
 	if err != nil {
 		return nil, &CompileError{Operation: "compile format", Err: err}

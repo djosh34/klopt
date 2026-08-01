@@ -2,6 +2,7 @@
 package stringlanguage
 
 import (
+	"fmt"
 	"slices"
 )
 
@@ -28,24 +29,8 @@ type subsetState struct {
 	previousLF   bool
 }
 
-func (machine *dfa) advance(state uint32, value rune) uint32 {
-	edges := machine.states[state].edges
-
-	index, found := slices.BinarySearchFunc(edges, value, func(edge dfaEdge, target rune) int {
-		switch {
-		case edge.last < target:
-			return -1
-		case edge.first > target:
-			return 1
-		default:
-			return 0
-		}
-	})
-	if !found {
-		panic("DFA transition table does not cover its alphabet")
-	}
-
-	return edges[index].target
+func (machine *dfa) advance(state uint32, value rune) (uint32, error) {
+	return advanceDFAState(machine, state, value)
 }
 
 func determinize(machine *nfa) (*dfa, error) {
@@ -54,9 +39,7 @@ func determinize(machine *nfa) (*dfa, error) {
 	keys := map[string]uint32{subsetKey(initial): 0}
 	result := &dfa{utf16: machine.utf16}
 
-	if err := addDFAState(result, machine, initial); err != nil {
-		return nil, err
-	}
+	addDFAState(result, machine, initial)
 
 	alphabet := nfaAlphabet(machine)
 	for current := 0; current < len(states); current++ {
@@ -68,9 +51,7 @@ func determinize(machine *nfa) (*dfa, error) {
 			if !ok {
 				nextID = uint32(len(states))
 
-				if err := addDFAState(result, machine, next); err != nil {
-					return nil, err
-				}
+				addDFAState(result, machine, next)
 
 				keys[key] = nextID
 
@@ -83,13 +64,15 @@ func determinize(machine *nfa) (*dfa, error) {
 		}
 	}
 
+	if err := validateDFA(*result); err != nil {
+		return nil, fmt.Errorf("determinize DFA: %w", err)
+	}
+
 	return result, nil
 }
 
-func addDFAState(result *dfa, machine *nfa, state subsetState) error {
+func addDFAState(result *dfa, machine *nfa, state subsetState) {
 	result.states = append(result.states, dfaState{accepting: acceptsAtEnd(machine, state)})
-
-	return nil
 }
 
 func nfaAlphabet(machine *nfa) runeSet {
@@ -108,7 +91,12 @@ func nfaAlphabet(machine *nfa) runeSet {
 	return partitionRuneSets(machine.universe, sources...)
 }
 
-func (machine *dfa) scalarEdges(state uint32) []dfaEdge {
+//nolint:cyclop // Scalar projection handles direct and UTF-16 DFA alphabets explicitly.
+func (machine *dfa) scalarEdges(state uint32) ([]dfaEdge, error) {
+	if machine == nil || state >= uint32(len(machine.states)) {
+		return nil, fmt.Errorf("invalid DFA state %d", state)
+	}
+
 	if !machine.utf16 {
 		edges := make([]dfaEdge, 0, len(machine.states[state].edges))
 		for _, edge := range machine.states[state].edges {
@@ -119,7 +107,7 @@ func (machine *dfa) scalarEdges(state uint32) []dfaEdge {
 			}
 		}
 
-		return edges
+		return edges, nil
 	}
 
 	edges := make([]dfaEdge, 0, len(machine.states[state].edges))
@@ -133,7 +121,11 @@ func (machine *dfa) scalarEdges(state uint32) []dfaEdge {
 	}
 
 	for high := rune(firstSurrogate); high <= 0xdbff; high++ {
-		afterHigh := machine.advance(state, high)
+		afterHigh, err := machine.advance(state, high)
+		if err != nil {
+			return nil, err
+		}
+
 		for _, edge := range machine.states[afterHigh].edges {
 			first := max(edge.first, rune(0xdc00))
 
@@ -150,7 +142,7 @@ func (machine *dfa) scalarEdges(state uint32) []dfaEdge {
 		}
 	}
 
-	return edges
+	return edges, nil
 }
 
 func utf16Scalar(high rune, low rune) rune {

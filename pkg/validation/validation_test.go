@@ -182,6 +182,33 @@ func TestParseCompilesIndependentOperationGraphs(t *testing.T) {
 	require.Empty(t, parsed["RequiredBody"].Body.Validate(json.RawMessage(`"still compiled"`)))
 }
 
+// TestParseRetainsRequestBodiesForEveryOperationMethod prevents method filtering.
+func TestParseRetainsRequestBodiesForEveryOperationMethod(t *testing.T) {
+	t.Parallel()
+
+	for _, method := range []string{"get", "head", "delete", "options", "trace", "post", "put", "patch"} {
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
+
+			spec := fmt.Appendf(nil, `openapi: 3.0.3
+paths:
+  /request:
+    %s:
+      operationId: request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: string}
+`, method)
+			requests, err := Parse(spec)
+			require.NoError(t, err)
+			require.NotNil(t, requests["request"].Body)
+			require.Empty(t, requests["request"].Body.Validate(json.RawMessage(`"body"`)))
+		})
+	}
+}
+
 // TestParseBuildsOneRequestValidationPerOperation covers the atomic public Parse result.
 func TestParseBuildsOneRequestValidationPerOperation(t *testing.T) {
 	t.Parallel()
@@ -716,17 +743,167 @@ func TestValidationNestedAndAllOf(t *testing.T) {
 func TestParseRejectsUniqueItemsAtItsSourcePointer(t *testing.T) {
 	t.Parallel()
 
-	want := `compile operationId "checkThing": compile schema at ` +
-		`#/paths/~1things/post/requestBody/content/application~1json/schema/uniqueItems: unsupported keyword`
+	const pointer = "#/paths/~1things/post/requestBody/content/application~1json/schema/uniqueItems"
 
-	for _, value := range []string{"true", "false", "null", `"yes"`, "1", `{}`} {
+	for _, value := range []string{"true", "false", "null", `"yes"`, "1", `[]`, `{}`} {
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := Parse(openAPISpec(`{"uniqueItems":`+value+`}`, "", false))
-			require.EqualError(t, err, want)
+			parsed, err := Parse(openAPISpec(`{"uniqueItems":`+value+`}`, "", false))
+			require.Nil(t, parsed)
+			require.Error(t, err)
+			require.ErrorContains(t, err, pointer)
 		})
 	}
+}
+
+// TestParseRejectsUniqueItemsAcrossAuthoredSchemaLocations covers reachable and otherwise ignored schemas.
+func TestParseRejectsUniqueItemsAcrossAuthoredSchemaLocations(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		spec    string
+		pointer string
+	}{
+		{
+			name: "raw reference sibling",
+			spec: string(openAPISpec(
+				`{"$ref":"#/components/schemas/Target","uniqueItems":false}`,
+				`,"components":{"schemas":{"Target":{"type":"array","items":{}}}}`,
+				false,
+			)),
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/uniqueItems",
+		},
+		{
+			name: "referenced schema",
+			spec: string(openAPISpec(
+				`{"$ref":"#/components/schemas/Target"}`,
+				`,"components":{"schemas":{"Target":{"uniqueItems":false}}}`,
+				false,
+			)),
+			pointer: "#/components/schemas/Target/uniqueItems",
+		},
+		{
+			name:    "unreachable escaped component",
+			spec:    `{"openapi":"3.0.3","paths":{},"components":{"schemas":{"a/b~c":{"uniqueItems":false}}}}`,
+			pointer: "#/components/schemas/a~1b~0c/uniqueItems",
+		},
+		{
+			name: "response media type",
+			spec: `{"openapi":"3.0.3","paths":{"/things":{"get":{"operationId":"things","responses":` +
+				`{"200":{"description":"ok","content":{"application/json":{"schema":{"uniqueItems":false}}}}}}}}}`,
+			pointer: "#/paths/~1things/get/responses/200/content/application~1json/schema/uniqueItems",
+		},
+		{
+			name: "callback request body",
+			spec: `{"openapi":"3.0.3","paths":{"/things":{"post":{"operationId":"things","callbacks":{"event":` +
+				`{"{$request.body#/url}":{"post":{"operationId":"callback","requestBody":{"content":` +
+				`{"application/json":{"schema":{"uniqueItems":false}}}}}}}}}}}}`,
+			pointer: "#/paths/~1things/post/callbacks/event/{$request.body#~1url}/post/requestBody/" +
+				"content/application~1json/schema/uniqueItems",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse([]byte(test.spec))
+			require.Nil(t, parsed)
+			require.Error(t, err)
+			require.ErrorContains(t, err, test.pointer)
+		})
+	}
+}
+
+// TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword covers the fixed nested traversal order.
+func TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		schema  string
+		pointer string
+	}{
+		{name: "items", schema: `{"items":{"uniqueItems":false}}`, pointer: "/items/uniqueItems"},
+		{
+			name: "properties", schema: `{"properties":{"a/b~c":{"uniqueItems":false}}}`,
+			pointer: "/properties/a~1b~0c/uniqueItems",
+		},
+		{
+			name: "additional properties", schema: `{"additionalProperties":{"uniqueItems":false}}`,
+			pointer: "/additionalProperties/uniqueItems",
+		},
+		{name: "allOf", schema: `{"allOf":[{"uniqueItems":false}]}`, pointer: "/allOf/0/uniqueItems"},
+		{name: "anyOf", schema: `{"anyOf":[{"uniqueItems":false}]}`, pointer: "/anyOf/0/uniqueItems"},
+		{name: "oneOf", schema: `{"oneOf":[{"uniqueItems":false}]}`, pointer: "/oneOf/0/uniqueItems"},
+		{name: "not", schema: `{"not":{"uniqueItems":false}}`, pointer: "/not/uniqueItems"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := fmt.Appendf(nil, `{"openapi":"3.0.3","paths":{},"components":{"schemas":{"Only":%s}}}`, test.schema)
+			parsed, err := Parse(spec)
+			require.Nil(t, parsed)
+			require.Error(t, err)
+			require.ErrorContains(t, err, "#/components/schemas/Only"+test.pointer)
+		})
+	}
+}
+
+// TestParseRejectsUniqueItemsBeforeReferenceResolutionDiscardsAnIntermediateSchema
+// locks reachable compilation order ahead of later schema failures.
+func TestParseRejectsUniqueItemsBeforeReferenceResolutionDiscardsAnIntermediateSchema(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse([]byte(`{
+		"openapi":"3.0.3",
+		"paths":{
+			"/first":{"post":{"operationId":"alpha","requestBody":{"content":{"application/json":{
+				"schema":{"$ref":"#/components/schemas/First"}
+			}}}}},
+			"/later":{"post":{"operationId":"beta","requestBody":{"content":{"application/json":{
+				"schema":{"type":1}
+			}}}}}
+		},
+		"components":{"schemas":{
+			"First":{"$ref":"#/x-chain/middle"},
+			"Final":{}
+		}},
+		"x-chain":{"middle":{"$ref":"#/components/schemas/Final","uniqueItems":false}}
+	}`))
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "#/x-chain/middle/uniqueItems")
+	require.NotContains(t, err.Error(), "#/paths/~1later")
+}
+
+// TestParsePreservesEarlierErrorsBeforeCompleteUniqueItemsTraversal locks ordinary Parse precedence.
+func TestParsePreservesEarlierErrorsBeforeCompleteUniqueItemsTraversal(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse([]byte(`{
+		"openapi":"3.0.3",
+		"paths":{"not-a-path":{}},
+		"components":{"schemas":{"Only":{"uniqueItems":false}}}
+	}`))
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "must begin with /")
+	require.NotContains(t, err.Error(), "uniqueItems")
+}
+
+// TestParseSelectsUniqueItemsDeterministically uses lexical maps and the documented nested keyword order.
+func TestParseSelectsUniqueItemsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse([]byte(`{
+		"openapi":"3.0.3",
+		"paths":{},
+		"components":{"schemas":{
+			"Zulu":{"uniqueItems":false},
+			"Alpha":{"properties":{"z":{"uniqueItems":false}},"items":{"uniqueItems":false}}
+		}}
+	}`))
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "#/components/schemas/Alpha/items/uniqueItems")
 }
 
 // TestParseRejectsUnsupportedAndMalformedReachableSchemas covers every parse-time rejection.

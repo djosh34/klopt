@@ -57,67 +57,85 @@ type Number struct {
 }
 
 // Compare returns -1, 0, or 1 according to the exact mathematical ordering.
-func (number Number) Compare(other Number) int {
+func (number Number) Compare(other Number) (int, error) {
+	number, err := number.checked()
+	if err != nil {
+		return 0, err
+	}
+
+	other, err = other.checked()
+	if err != nil {
+		return 0, err
+	}
+
 	if number.Rational != nil && other.Rational != nil {
-		return number.Rational.Cmp(other.Rational)
+		return number.Rational.Cmp(other.Rational), nil
 	}
 
 	negative, digits, exponent := decimalParts(number.Lexeme)
 	otherNegative, otherDigits, otherExponent := decimalParts(other.Lexeme)
 
 	if digits == "0" || otherDigits == "0" {
-		return compareZero(negative, digits, otherNegative, otherDigits)
+		return compareZero(negative, digits, otherNegative, otherDigits), nil
 	}
 
 	if negative != otherNegative {
 		if negative {
-			return -1
+			return -1, nil
 		}
 
-		return 1
+		return 1, nil
 	}
 
 	comparison := compareMagnitudes(digits, exponent, otherDigits, otherExponent)
 	if negative {
-		return -comparison
+		return -comparison, nil
 	}
 
-	return comparison
+	return comparison, nil
 }
 
 // IsInteger reports whether the exact mathematical value is an integer.
-func (number Number) IsInteger() bool {
+func (number Number) IsInteger() (bool, error) {
+	number, err := number.checked()
+	if err != nil {
+		return false, err
+	}
+
 	if number.Rational != nil {
-		return number.Rational.IsInt()
+		return number.Rational.IsInt(), nil
 	}
 
 	_, digits, exponent := decimalParts(number.Lexeme)
 
-	return digits == "0" || exponent.Sign() >= 0
+	return digits == "0" || exponent.Sign() >= 0, nil
 }
 
 // IsMultipleOf reports whether the exact quotient by divisor is an integer.
-func (number Number) IsMultipleOf(divisor Number) bool {
-	_, digits, exponent := decimalParts(number.Lexeme)
+func (number Number) IsMultipleOf(divisor Number) (bool, error) {
+	number, err := number.checked()
+	if err != nil {
+		return false, err
+	}
 
+	divisor, err = divisor.checked()
+	if err != nil {
+		return false, err
+	}
+
+	_, digits, exponent := decimalParts(number.Lexeme)
 	_, divisorDigits, divisorExponent := decimalParts(divisor.Lexeme)
+
 	if divisorDigits == "0" {
-		return false
+		return false, nil
 	}
 
 	if digits == "0" {
-		return true
+		return true, nil
 	}
 
-	coefficient, ok := new(big.Int).SetString(digits, decimalRadix)
-	if !ok {
-		return false
-	}
-
-	divisorCoefficient, ok := new(big.Int).SetString(divisorDigits, decimalRadix)
-	if !ok {
-		return false
-	}
+	coefficient := decimalInteger(digits)
+	divisorCoefficient := decimalInteger(divisorDigits)
 
 	common := new(big.Int).GCD(nil, nil, coefficient, divisorCoefficient)
 	coefficient.Quo(coefficient, common)
@@ -127,7 +145,29 @@ func (number Number) IsMultipleOf(divisor Number) bool {
 
 	return factorBalance(coefficient, divisorCoefficient, delta, decimalFactorTwo) >= 0 &&
 		factorBalance(coefficient, divisorCoefficient, delta, decimalFactorFive) >= 0 &&
-		containsOnlyDecimalFactors(divisorCoefficient)
+		containsOnlyDecimalFactors(divisorCoefficient), nil
+}
+
+// checked validates and normalizes public Number state.
+func (number Number) checked() (Number, error) {
+	parsed, err := ParseNumber(number.Lexeme)
+	if err != nil {
+		return Number{}, fmt.Errorf("invalid jsonvalue.Number: %w", err)
+	}
+
+	if parsed.Lexeme != number.Lexeme {
+		return Number{}, fmt.Errorf("jsonvalue.Number lexeme %q is not canonical", number.Lexeme)
+	}
+
+	if number.Rational != nil {
+		if parsed.Rational == nil || number.Rational.Cmp(parsed.Rational) != 0 {
+			return Number{}, errors.New("jsonvalue.Number rational does not match its lexeme")
+		}
+
+		parsed.Rational = new(big.Rat).Set(number.Rational)
+	}
+
+	return parsed, nil
 }
 
 // Member is one JSON object member.
@@ -234,21 +274,24 @@ func ParseNumber(lexeme string) (Number, error) {
 		return Number{}, fmt.Errorf("parse JSON number %q: %w", lexeme, eofErr)
 	}
 
-	canonical, exponent, err := normalizeJSONNumber(number.String())
-	if err != nil {
-		return Number{}, err
-	}
+	canonical, exponent := normalizeJSONNumber(number.String())
 
 	var rational *big.Rat
 
 	magnitude := new(big.Int).Abs(exponent)
 	if magnitude.Cmp(big.NewInt(maximumMaterializedExponent)) <= 0 {
-		parsed, parsedOK := new(big.Rat).SetString(canonical)
-		if !parsedOK {
-			return Number{}, fmt.Errorf("parse exact JSON number %q", lexeme)
+		_, digits, decimalExponent := decimalParts(canonical)
+
+		rational = new(big.Rat).SetInt(decimalInteger(digits))
+		if decimalExponent.Sign() >= 0 {
+			rational.Mul(rational, new(big.Rat).SetInt(decimalPower(decimalExponent)))
+		} else {
+			rational.Quo(rational, new(big.Rat).SetInt(decimalPower(new(big.Int).Neg(decimalExponent))))
 		}
 
-		rational = parsed
+		if strings.HasPrefix(canonical, "-") {
+			rational.Neg(rational)
+		}
 	}
 
 	return Number{Lexeme: canonical, Rational: rational}, nil
@@ -319,12 +362,12 @@ func (value Value) Hash() (Hash, error) {
 
 // MarshalJSON returns deterministic canonical JSON.
 func (value Value) MarshalJSON() ([]byte, error) {
-	var encoded bytes.Buffer
+	encoded := make([]byte, 0)
 	if err := encodeValue(&encoded, value); err != nil {
 		return nil, err
 	}
 
-	return encoded.Bytes(), nil
+	return encoded, nil
 }
 
 // decodeValue decodes one value from decoder.
@@ -499,20 +542,20 @@ func membersByName(members []Member) map[string]Value {
 	return byName
 }
 
-// encodeValue writes one deterministic JSON value.
-func encodeValue(encoded *bytes.Buffer, value Value) error {
+// encodeValue appends one deterministic JSON value.
+func encodeValue(encoded *[]byte, value Value) error {
 	switch value.Kind {
 	case KindNull:
-		return writeString(encoded, "null")
+		*encoded = append(*encoded, "null"...)
 	case KindBoolean:
-		return writeString(encoded, fmt.Sprintf("%t", value.Boolean))
+		*encoded = append(*encoded, fmt.Sprintf("%t", value.Boolean)...)
 	case KindNumber:
 		canonical, err := ParseNumber(value.Number.Lexeme)
 		if err != nil {
 			return err
 		}
 
-		return writeString(encoded, canonical.Lexeme)
+		*encoded = append(*encoded, canonical.Lexeme...)
 	case KindString:
 		return encodeString(encoded, value.String)
 	case KindArray:
@@ -522,10 +565,12 @@ func encodeValue(encoded *bytes.Buffer, value Value) error {
 	default:
 		return fmt.Errorf("invalid JSON value kind %d", value.Kind)
 	}
+
+	return nil
 }
 
-// encodeString writes one valid UTF-8 JSON string.
-func encodeString(encoded *bytes.Buffer, value string) error {
+// encodeString appends one valid UTF-8 JSON string.
+func encodeString(encoded *[]byte, value string) error {
 	if !utf8.ValidString(value) {
 		return errors.New("JSON string must contain valid UTF-8")
 	}
@@ -535,20 +580,18 @@ func encodeString(encoded *bytes.Buffer, value string) error {
 		return fmt.Errorf("encode JSON string: %w", err)
 	}
 
-	return writeBytes(encoded, stringJSON)
+	*encoded = append(*encoded, stringJSON...)
+
+	return nil
 }
 
-// encodeArray writes an ordered JSON array.
-func encodeArray(encoded *bytes.Buffer, values []Value) error {
-	if err := encoded.WriteByte('['); err != nil {
-		return err
-	}
+// encodeArray appends an ordered JSON array.
+func encodeArray(encoded *[]byte, values []Value) error {
+	*encoded = append(*encoded, '[')
 
 	for index, value := range values {
 		if index > 0 {
-			if err := encoded.WriteByte(','); err != nil {
-				return err
-			}
+			*encoded = append(*encoded, ',')
 		}
 
 		if err := encodeValue(encoded, value); err != nil {
@@ -556,64 +599,43 @@ func encodeArray(encoded *bytes.Buffer, values []Value) error {
 		}
 	}
 
-	return encoded.WriteByte(']')
+	*encoded = append(*encoded, ']')
+
+	return nil
 }
 
-// encodeObject writes object members in lexical name order.
-func encodeObject(encoded *bytes.Buffer, members []Member) error {
-	if err := validateMembers(members); err != nil {
-		return err
-	}
-
+// encodeObject appends object members in lexical name order.
+func encodeObject(encoded *[]byte, members []Member) error {
 	sorted := append([]Member(nil), members...)
 	sort.Slice(sorted, func(left int, right int) bool {
 		return sorted[left].Name < sorted[right].Name
 	})
 
-	if err := encoded.WriteByte('{'); err != nil {
-		return err
-	}
+	*encoded = append(*encoded, '{')
 
 	for index, member := range sorted {
 		if index > 0 {
-			if err := encoded.WriteByte(','); err != nil {
-				return err
+			if member.Name == sorted[index-1].Name {
+				return fmt.Errorf("duplicate JSON object name %q", member.Name)
 			}
+
+			*encoded = append(*encoded, ',')
 		}
 
-		nameJSON, err := json.Marshal(member.Name)
-		if err != nil {
+		if err := encodeString(encoded, member.Name); err != nil {
 			return fmt.Errorf("encode object name %q: %w", member.Name, err)
 		}
 
-		if err := writeBytes(encoded, nameJSON); err != nil {
-			return err
-		}
-
-		if err := encoded.WriteByte(':'); err != nil {
-			return err
-		}
+		*encoded = append(*encoded, ':')
 
 		if err := encodeValue(encoded, member.Value); err != nil {
 			return fmt.Errorf("encode object member %q: %w", member.Name, err)
 		}
 	}
 
-	return encoded.WriteByte('}')
-}
+	*encoded = append(*encoded, '}')
 
-// writeString handles the writer error even though bytes.Buffer currently cannot fail.
-func writeString(encoded *bytes.Buffer, value string) error {
-	_, err := encoded.WriteString(value)
-
-	return err
-}
-
-// writeBytes handles the writer error even though bytes.Buffer currently cannot fail.
-func writeBytes(encoded *bytes.Buffer, value []byte) error {
-	_, err := encoded.Write(value)
-
-	return err
+	return nil
 }
 
 // validateMembers rejects duplicate object names.
@@ -635,7 +657,7 @@ func validateMembers(members []Member) error {
 }
 
 // normalizeJSONNumber returns a short exact representation and its decimal exponent.
-func normalizeJSONNumber(number string) (string, *big.Int, error) {
+func normalizeJSONNumber(number string) (string, *big.Int) {
 	lexeme := number
 
 	negative := strings.HasPrefix(lexeme, "-")
@@ -645,13 +667,7 @@ func normalizeJSONNumber(number string) (string, *big.Int, error) {
 
 	exponent := new(big.Int)
 	if exponentIndex := strings.IndexAny(lexeme, "eE"); exponentIndex >= 0 {
-		parsedExponent, ok := new(big.Int).SetString(lexeme[exponentIndex+1:], decimalRadix)
-		if !ok {
-			return "", nil, fmt.Errorf("invalid JSON number %q", number)
-		}
-
-		exponent.Set(parsedExponent)
-
+		exponent.Set(parseSignedDecimalInteger(lexeme[exponentIndex+1:]))
 		lexeme = lexeme[:exponentIndex]
 	}
 
@@ -663,13 +679,13 @@ func normalizeJSONNumber(number string) (string, *big.Int, error) {
 
 	digits := strings.TrimLeft(lexeme, "0")
 	if digits == "" {
-		return "0", new(big.Int), nil
+		return "0", new(big.Int)
 	}
 
 	trimmedDigits := strings.TrimRight(digits, "0")
 	exponent.Add(exponent, big.NewInt(int64(len(digits)-len(trimmedDigits)-fractionLength)))
 
-	return formatCanonicalNumber(negative, trimmedDigits, exponent), exponent, nil
+	return formatCanonicalNumber(negative, trimmedDigits, exponent), exponent
 }
 
 // decimalParts splits a canonical number into sign, coefficient digits, and exponent.
@@ -681,13 +697,7 @@ func decimalParts(lexeme string) (bool, string, *big.Int) {
 
 	exponent := new(big.Int)
 	if exponentIndex := strings.IndexByte(lexeme, 'e'); exponentIndex >= 0 {
-		parsedExponent, ok := new(big.Int).SetString(lexeme[exponentIndex+1:], decimalRadix)
-		if !ok {
-			panic("jsonvalue.Number contains an invalid canonical exponent")
-		}
-
-		exponent.Set(parsedExponent)
-
+		exponent.Set(parseSignedDecimalInteger(lexeme[exponentIndex+1:]))
 		lexeme = lexeme[:exponentIndex]
 	}
 
@@ -704,6 +714,37 @@ func decimalParts(lexeme string) (bool, string, *big.Int) {
 	}
 
 	return negative, digits, exponent
+}
+
+// decimalInteger parses known decimal digits.
+func decimalInteger(digits string) *big.Int {
+	integer := new(big.Int)
+	for _, digit := range digits {
+		integer.Mul(integer, big.NewInt(decimalRadix))
+		integer.Add(integer, big.NewInt(int64(digit-'0')))
+	}
+
+	return integer
+}
+
+// parseSignedDecimalInteger parses a known signed decimal integer.
+func parseSignedDecimalInteger(digits string) *big.Int {
+	negative := strings.HasPrefix(digits, "-")
+	if negative || strings.HasPrefix(digits, "+") {
+		digits = digits[1:]
+	}
+
+	integer := decimalInteger(digits)
+	if negative {
+		integer.Neg(integer)
+	}
+
+	return integer
+}
+
+// decimalPower returns 10 to a known safely materialized exponent.
+func decimalPower(exponent *big.Int) *big.Int {
+	return new(big.Int).Exp(big.NewInt(decimalRadix), exponent, nil)
 }
 
 // compareZero compares a zero operand without losing the other operand's sign.

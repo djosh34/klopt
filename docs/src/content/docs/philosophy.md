@@ -75,10 +75,10 @@ OpenAPI 3.0.3 is large. This library rejects unsupported behavior during parsing
 
 This is intentional. Clear rejection is safer than accepting a document with partial semantics. The supported model can grow as its behavior becomes testable.
 
-## Generative testing
+## Deterministic testing
 
-Validation receives extensive generative testing. A Rapid-based schema generator builds supported OpenAPI documents and mutated invalid copies. Request-body tests use native Go fuzzing over deterministic byte tapes: each tape selects an operation, a valid or invalid root goal, and one lazy walk through the document's signed constraint graph.
+Validation behavior is specified with ordinary table-driven Go tests. Named matrices cover supported schema rules, malformed input, decoder repeatability, generated/runtime parity, and hand-maintained request-body examples without generated tests, property-test dependencies, or fuzz targets.
 
-Generating JSON with a known schema verdict is hard. The graph exposes only choices that can still finish, then small number, string, array, and object components construct the final value from the active rules. Invalid walks normally introduce one selected fault while preserving valid siblings, with broader failures available less often. The generated fuzz target has no preplanned cases or schema-specific seeds: ordinary `go test` runs its single empty-tape baseline, and Go replays any fuzz inputs it has saved.
+Every production package is checked for complete Go statement coverage. The checker permits only one exact, drift-detected `encodeString` error return that cannot execute after its valid-UTF-8 precondition; it rejects every other uncovered production statement.
 
 OpenAPI details in this documentation follow the [OpenAPI 3.0.4 Schema Object](https://spec.openapis.org/oas/v3.0.4.html#schema-object).

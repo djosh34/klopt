@@ -28,7 +28,6 @@ var semanticVersionPattern = regexp.MustCompile(
 // Source retains one parsed document and one acquired operation's request inputs.
 type Source struct {
 	Document            json.RawMessage
-	Method              string
 	PathTemplate        string
 	RequestSchema       LocatedSchema
 	RequestBodyRequired bool
@@ -80,49 +79,54 @@ func (referenceError *ReferenceError) Unwrap() error {
 
 // Parse parses YAML once and collects every application/json request Schema Object.
 func Parse(spec []byte) (map[string]Source, error) {
-	return parse(spec, nil)
+	sources, _, err := parse(spec, nil)
+
+	return sources, err
 }
 
 // ParseWithParameterValidation validates every raw Parameter Object before merge or filtering.
+// It also returns the normalized document for validation that must run after request compilation.
 func ParseWithParameterValidation(
 	spec []byte,
 	validateParameter ParameterValidator,
-) (map[string]Source, error) {
+) (map[string]Source, json.RawMessage, error) {
 	if validateParameter == nil {
-		return nil, errors.New("parameter validator must not be nil")
+		return nil, nil, errors.New("parameter validator must not be nil")
 	}
 
 	return parse(spec, validateParameter)
 }
 
 // parse ingests and acquires one OpenAPI document with optional raw Parameter Object validation.
-func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source, error) {
+//
+//nolint:cyclop // Document decoding, version admission, and request collection form one ordered parse.
+func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source, json.RawMessage, error) {
 	document := spec
 	if json.Valid(spec) {
 		if err := rejectDuplicateJSONNames(spec); err != nil {
-			return nil, fmt.Errorf("parse OpenAPI document JSON: %w", err)
+			return nil, nil, fmt.Errorf("parse OpenAPI document JSON: %w", err)
 		}
 	} else {
 		var err error
 
 		document, err = yaml.YAMLToJSON(spec)
 		if err != nil {
-			return nil, fmt.Errorf("parse OpenAPI YAML: %w", err)
+			return nil, nil, fmt.Errorf("parse OpenAPI YAML: %w", err)
 		}
 	}
 
 	var root map[string]json.RawMessage
 	if unmarshalErr := json.Unmarshal(document, &root); unmarshalErr != nil {
-		return nil, fmt.Errorf("parse OpenAPI document JSON: %w", unmarshalErr)
+		return nil, nil, fmt.Errorf("parse OpenAPI document JSON: %w", unmarshalErr)
 	}
 
 	if root == nil {
-		return nil, errors.New("OpenAPI document must be an object")
+		return nil, nil, errors.New("OpenAPI document must be an object")
 	}
 
 	var version string
 	if err := json.Unmarshal(root["openapi"], &version); err != nil {
-		return nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"OpenAPI document version must be a Semantic Versioning 2.0.0 version: %w",
 			err,
 		)
@@ -130,16 +134,22 @@ func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source
 
 	versionParts := semanticVersionPattern.FindStringSubmatch(version)
 	if len(versionParts) == 0 {
-		return nil, errors.New("OpenAPI document version must be a Semantic Versioning 2.0.0 version")
+		return nil, nil, errors.New("OpenAPI document version must be a Semantic Versioning 2.0.0 version")
 	}
 
 	if versionParts[1] != "3" || versionParts[2] != "0" {
-		return nil, errors.New("OpenAPI document feature set must be 3.0")
+		return nil, nil, errors.New("OpenAPI document feature set must be 3.0")
 	}
 
-	source := Source{Document: append(json.RawMessage(nil), document...)}
+	normalized := append(json.RawMessage(nil), document...)
+	source := Source{Document: normalized}
 
-	return source.collectRequests(root["paths"], validateParameter)
+	sources, err := source.collectRequests(root["paths"], validateParameter)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return sources, normalized, nil
 }
 
 // rejectDuplicateJSONNames preflights decoded member-name uniqueness across one JSON document.
@@ -154,10 +164,16 @@ func rejectDuplicateJSONNames(document []byte) error {
 	return nil
 }
 
+// jsonTokenReader is the token-stream seam used for duplicate-name admission.
+type jsonTokenReader interface {
+	Token() (json.Token, error)
+	More() bool
+}
+
 // rejectDuplicateJSONValue walks one complete value from the decoder.
 //
 //nolint:cyclop // JSON objects and arrays require separate recursive token handling.
-func rejectDuplicateJSONValue(decoder *json.Decoder, pointer string) error {
+func rejectDuplicateJSONValue(decoder jsonTokenReader, pointer string) error {
 	token, tokenErr := decoder.Token()
 	if tokenErr != nil {
 		return tokenErr
@@ -201,57 +217,28 @@ func rejectDuplicateJSONValue(decoder *json.Decoder, pointer string) error {
 				return childErr
 			}
 		}
-	default:
-		return fmt.Errorf("unexpected JSON delimiter %q at %s", delimiter, pointer)
 	}
 
-	closing, closingErr := decoder.Token()
-	if closingErr != nil {
-		return closingErr
-	}
+	_, closingErr := decoder.Token()
 
-	if closing != delimiter+2 {
-		return fmt.Errorf("unexpected JSON delimiter %q at %s", closing, pointer)
-	}
-
-	return nil
+	return closingErr
 }
 
 // Resolve follows a local Reference Object chain and ignores all Reference Object siblings.
 func (source Source) Resolve(schema LocatedSchema) (LocatedSchema, error) {
-	current := LocatedSchema{Raw: append(json.RawMessage(nil), schema.Raw...), Pointer: schema.Pointer}
-	seen := make(map[string]struct{})
-	chain := make([]string, 0)
+	return source.resolve(schema, nil)
+}
 
-	for {
-		reference, isReference, err := referenceFrom(current.Raw)
-		if err != nil {
-			return LocatedSchema{}, newReferenceError(current.Pointer, reference, chain, err)
-		}
-
-		if !isReference {
-			return current, nil
-		}
-
-		if _, cycle := seen[reference]; cycle {
-			return LocatedSchema{}, newReferenceError(
-				current.Pointer,
-				reference,
-				append(chain, reference),
-				errors.New("reference cycle"),
-			)
-		}
-
-		seen[reference] = struct{}{}
-		chain = append(chain, reference)
-
-		target, targetErr := source.At(reference)
-		if targetErr != nil {
-			return LocatedSchema{}, newReferenceError(current.Pointer, reference, chain, targetErr)
-		}
-
-		current = target
+// ResolveAndInspect inspects each raw occurrence before following its Reference Object.
+func (source Source) ResolveAndInspect(
+	schema LocatedSchema,
+	inspect func(LocatedSchema) error,
+) (LocatedSchema, error) {
+	if inspect == nil {
+		return LocatedSchema{}, errors.New("reference inspector must not be nil")
 	}
+
+	return source.resolve(schema, inspect)
 }
 
 // At returns the value selected by a local JSON Pointer.
@@ -294,6 +281,52 @@ func (source Source) Child(parent LocatedSchema, tokens ...string) (LocatedSchem
 	current.Raw = append(json.RawMessage(nil), current.Raw...)
 
 	return current, nil
+}
+
+// resolve implements reference traversal with an optional pre-resolution inspector.
+func (source Source) resolve(
+	schema LocatedSchema,
+	inspect func(LocatedSchema) error,
+) (LocatedSchema, error) {
+	current := LocatedSchema{Raw: append(json.RawMessage(nil), schema.Raw...), Pointer: schema.Pointer}
+	seen := make(map[string]struct{})
+	chain := make([]string, 0)
+
+	for {
+		if inspect != nil {
+			if err := inspect(current); err != nil {
+				return LocatedSchema{}, err
+			}
+		}
+
+		reference, isReference, err := referenceFrom(current.Raw)
+		if err != nil {
+			return LocatedSchema{}, newReferenceError(current.Pointer, reference, chain, err)
+		}
+
+		if !isReference {
+			return current, nil
+		}
+
+		if _, cycle := seen[reference]; cycle {
+			return LocatedSchema{}, newReferenceError(
+				current.Pointer,
+				reference,
+				append(chain, reference),
+				errors.New("reference cycle"),
+			)
+		}
+
+		seen[reference] = struct{}{}
+		chain = append(chain, reference)
+
+		target, targetErr := source.At(reference)
+		if targetErr != nil {
+			return LocatedSchema{}, newReferenceError(current.Pointer, reference, chain, targetErr)
+		}
+
+		current = target
+	}
 }
 
 // collectRequests walks all path operations in deterministic path and method order.
@@ -349,7 +382,8 @@ func (source Source) collectRequests(
 			return nil, fmt.Errorf("resolve OpenAPI path item %q: %w", path, err)
 		}
 
-		if validateErr := validatePathItem(resolved); validateErr != nil {
+		pathItemMembers, validateErr := decodePathItem(resolved)
+		if validateErr != nil {
 			return nil, fmt.Errorf("parse OpenAPI path item %q: %w", path, validateErr)
 		}
 
@@ -370,12 +404,7 @@ func (source Source) collectRequests(
 			return nil, fmt.Errorf("parse OpenAPI path item parameters for %q: %w", path, correspondenceErr)
 		}
 
-		operations, err := operationChildren(resolved)
-		if err != nil {
-			return nil, fmt.Errorf("parse OpenAPI path item %q: %w", path, err)
-		}
-
-		for _, operation := range operations {
+		for _, operation := range operationChildren(pathItemMembers, resolved.Pointer) {
 			operationSource, operationID, err := source.requestSource(
 				path,
 				expressionsByPath[path],
@@ -386,8 +415,6 @@ func (source Source) collectRequests(
 			if err != nil {
 				return nil, err
 			}
-
-			operationSource.Method = operation.Method
 
 			if first, duplicate := locations[operationID]; duplicate {
 				return nil, fmt.Errorf(
@@ -697,15 +724,15 @@ func validateDeclaredPathParameters(
 	return nil
 }
 
-// validatePathItem rejects unknown non-extension fixed fields.
-func validatePathItem(pathItem LocatedSchema) error {
+// decodePathItem rejects unknown non-extension fixed fields.
+func decodePathItem(pathItem LocatedSchema) (map[string]json.RawMessage, error) {
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(pathItem.Raw, &members); err != nil {
-		return err
+		return nil, err
 	}
 
 	if members == nil {
-		return errors.New("path item must be an object")
+		return nil, errors.New("path item must be an object")
 	}
 
 	allowed := map[string]struct{}{
@@ -717,10 +744,10 @@ func validatePathItem(pathItem LocatedSchema) error {
 			continue
 		}
 
-		return fmt.Errorf("unknown Path Item field %q at %s", name, pathItem.Pointer)
+		return nil, fmt.Errorf("unknown Path Item field %q at %s", name, pathItem.Pointer)
 	}
 
-	return nil
+	return members, nil
 }
 
 // optionalBoolean decodes an absent-or-boolean field without accepting null.
@@ -797,16 +824,7 @@ type operationChild struct {
 }
 
 // operationChildren returns operation members in deterministic method order.
-func operationChildren(pathItem LocatedSchema) ([]operationChild, error) {
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(pathItem.Raw, &members); err != nil {
-		return nil, err
-	}
-
-	if members == nil {
-		return nil, errors.New("path item must be an object")
-	}
-
+func operationChildren(members map[string]json.RawMessage, pointer string) []operationChild {
 	methods := []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 
 	operations := make([]operationChild, 0, len(methods))
@@ -815,14 +833,14 @@ func operationChildren(pathItem LocatedSchema) ([]operationChild, error) {
 			operations = append(operations, operationChild{
 				Schema: LocatedSchema{
 					Raw:     raw,
-					Pointer: appendPointer(pathItem.Pointer, method),
+					Pointer: appendPointer(pointer, method),
 				},
 				Method: method,
 			})
 		}
 	}
 
-	return operations, nil
+	return operations
 }
 
 // referenceFrom recognizes an OpenAPI Reference Object.

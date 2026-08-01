@@ -16,6 +16,10 @@ import (
 
 // DecodePathParams decodes one operation-relative URL path into a validated JSON object.
 func (decoder *PathDecoder) DecodePathParams(input *url.URL) (json.RawMessage, error) {
+	if decoder == nil {
+		return nil, errors.New("path decoder is nil")
+	}
+
 	result, err := decoder.decodePathParams(input)
 	if err != nil {
 		return nil, fmt.Errorf("decode path parameters for operation %q: %w", decoder.operationID, err)
@@ -125,10 +129,8 @@ func (parameter *pathParameter) decodePathValue(raw string) (jsontext.Value, err
 		return parameter.decodePathPrimitive(raw)
 	case pathShapeArray:
 		return parameter.decodePathArray(raw)
-	case pathShapeObject:
-		return parameter.decodePathObject(raw)
 	default:
-		return nil, fmt.Errorf("unknown compiled path wire %d", parameter.wire)
+		return parameter.decodePathObject(raw)
 	}
 }
 
@@ -372,14 +374,9 @@ func splitExplodedPathObject(raw string, separator string) ([][2]string, error) 
 }
 
 func encodePathArray(typeName styleScalarType, rawValues []string) (jsontext.Value, error) {
-	var output bytes.Buffer
+	output := []byte{'['}
 
-	encoder := jsontext.NewEncoder(&output)
-	if err := encoder.WriteToken(jsontext.BeginArray); err != nil {
-		return nil, err
-	}
-
-	for _, raw := range rawValues {
+	for index, raw := range rawValues {
 		decoded, err := decodePathToken(raw)
 		if err != nil {
 			return nil, err
@@ -390,29 +387,23 @@ func encodePathArray(typeName styleScalarType, rawValues []string) (jsontext.Val
 			return nil, err
 		}
 
-		if err := encoder.WriteValue(value); err != nil {
-			return nil, err
+		if index > 0 {
+			output = append(output, ',')
 		}
+
+		output = append(output, value...)
 	}
 
-	if err := encoder.WriteToken(jsontext.EndArray); err != nil {
-		return nil, err
-	}
+	output = append(output, ']')
 
-	return append(jsontext.Value(nil), bytes.TrimSpace(output.Bytes())...), nil
+	return jsontext.Value(output), nil
 }
 
-//nolint:cyclop // Decode, policy, type selection, duplicate checks, and encoding meet at this object boundary.
 func (parameter *pathParameter) encodePathObjectValue(rawPairs [][2]string) (jsontext.Value, error) {
-	var output bytes.Buffer
-
-	encoder := jsontext.NewEncoder(&output)
-	if err := encoder.WriteToken(jsontext.BeginObject); err != nil {
-		return nil, err
-	}
+	output := []byte{'{'}
 
 	seen := make(map[string]struct{}, len(rawPairs))
-	for _, pair := range rawPairs {
+	for index, pair := range rawPairs {
 		name, err := decodePathToken(pair[0])
 		if err != nil {
 			return nil, err
@@ -445,20 +436,18 @@ func (parameter *pathParameter) encodePathObjectValue(rawPairs [][2]string) (jso
 			return nil, fmt.Errorf("property %q: %w", name, err)
 		}
 
-		if err := encoder.WriteToken(jsontext.String(name)); err != nil {
-			return nil, err
+		if index > 0 {
+			output = append(output, ',')
 		}
 
-		if err := encoder.WriteValue(encoded); err != nil {
-			return nil, err
-		}
+		output = appendJSONString(output, name)
+		output = append(output, ':')
+		output = append(output, encoded...)
 	}
 
-	if err := encoder.WriteToken(jsontext.EndObject); err != nil {
-		return nil, err
-	}
+	output = append(output, '}')
 
-	return append(jsontext.Value(nil), bytes.TrimSpace(output.Bytes())...), nil
+	return jsontext.Value(output), nil
 }
 
 func decodePathToken(raw string) (string, error) {
@@ -486,26 +475,27 @@ func encodePathScalar(typeName styleScalarType, value string) (jsontext.Value, e
 }
 
 func encodePathObject(parameters []pathParameter, values []jsontext.Value) (json.RawMessage, error) {
-	var output bytes.Buffer
-
-	encoder := jsontext.NewEncoder(&output)
-	if err := encoder.WriteToken(jsontext.BeginObject); err != nil {
-		return nil, fmt.Errorf("encode path object: %w", err)
-	}
+	output := []byte{'{'}
 
 	for index, parameter := range parameters {
-		if err := encoder.WriteToken(jsontext.String(parameter.name)); err != nil {
-			return nil, fmt.Errorf("encode path parameter name %q: %w", parameter.name, err)
+		if !utf8.ValidString(parameter.name) {
+			return nil, fmt.Errorf("encode path parameter name %q: invalid UTF-8", parameter.name)
 		}
 
-		if err := encoder.WriteValue(values[index]); err != nil {
-			return nil, fmt.Errorf("encode path parameter %q: %w", parameter.name, err)
+		if !values[index].IsValid() {
+			return nil, fmt.Errorf("encode path parameter %q: invalid JSON value", parameter.name)
 		}
+
+		if index > 0 {
+			output = append(output, ',')
+		}
+
+		output = appendJSONString(output, parameter.name)
+		output = append(output, ':')
+		output = append(output, values[index]...)
 	}
 
-	if err := encoder.WriteToken(jsontext.EndObject); err != nil {
-		return nil, fmt.Errorf("encode path object: %w", err)
-	}
+	output = append(output, '}')
 
-	return append(json.RawMessage(nil), bytes.TrimSpace(output.Bytes())...), nil
+	return json.RawMessage(output), nil
 }

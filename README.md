@@ -157,16 +157,13 @@ if err != nil {
 }
 ```
 
-The returned map contains all needed generated files. The source is caller-owned, generated packages export one `RequestValidations` map, and generated tests cover JSON request bodies.
+The returned map contains exactly one caller-owned file, `validate.go`. Generated packages export one `RequestValidations` map; tests remain ordinary hand-maintained Go tests.
 
-## Test generation
-
-Klopt undergoes extensive fuzz testing using its own [JSON test generator](https://djosh34.github.io/klopt/architecture/#test-generation).
+Klopt supports `anyOf` for request bodies and for direct/root primitive schema-style path and query parameters. Parameter `anyOf` does not extend to nested, object, array, or content-based parameter schemas.
 
 ## Roadmap
 
-- [ ] Add proper format support for Int32 (`int32`), Int64 (`int64`), `float`, `double`, UUID, CIDR, IPv4, and possibly more, including the required test-generation additions.
-- [ ] Continue improving test generation.
+- [ ] Continue expanding supported OpenAPI behavior with deterministic conformance tables.
 - [ ] Broaden OpenAPI support with `oneOf` and `not`.
 
 # Contributing

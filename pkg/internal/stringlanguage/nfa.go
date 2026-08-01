@@ -81,12 +81,7 @@ func compileESLeaf(
 	parts := make([]fragment, 0, len(nodes)+1)
 
 	if prependBegin {
-		begin, err := builder.assertion(edgeBeginText)
-		if err != nil {
-			return nil, err
-		}
-
-		parts = append(parts, begin)
+		parts = append(parts, builder.assertion(edgeBeginText))
 	}
 
 	for _, node := range nodes {
@@ -98,14 +93,8 @@ func compileESLeaf(
 		parts = append(parts, built)
 	}
 
-	root, err := builder.concatenate(parts)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := builder.wrapSearch(root); err != nil {
-		return nil, err
-	}
+	root := builder.concatenate(parts)
+	builder.wrapSearch(root)
 
 	return determinize(&builder.machine)
 }
@@ -118,9 +107,7 @@ func compileRawPattern(expression *regexpsyntax.Regexp) (*dfa, error) {
 		return nil, err
 	}
 
-	if err := builder.wrapSearch(root); err != nil {
-		return nil, err
-	}
+	builder.wrapSearch(root)
 
 	return determinize(&builder.machine)
 }
@@ -140,35 +127,35 @@ func (builder *nfaBuilder) buildESNode(tree *patternsyntax.Tree, nodeID patterns
 			{first: '\r', last: '\r'},
 			{first: '\n', last: '\n'},
 			{first: 0x2028, last: 0x2029},
-		}, builder.machine.universe))
+		}, builder.machine.universe)), nil
 	case patternsyntax.KindClass:
-		return builder.characters(esClassSet(node))
+		return builder.characters(esClassSet(node)), nil
 	case patternsyntax.KindDigit:
-		return builder.characters(digitSet())
+		return builder.characters(digitSet()), nil
 	case patternsyntax.KindNotDigit:
-		return builder.characters(complementRuneSet(digitSet(), builder.machine.universe))
+		return builder.characters(complementRuneSet(digitSet(), builder.machine.universe)), nil
 	case patternsyntax.KindSpace:
-		return builder.characters(spaceSet())
+		return builder.characters(spaceSet()), nil
 	case patternsyntax.KindNotSpace:
-		return builder.characters(complementRuneSet(spaceSet(), builder.machine.universe))
+		return builder.characters(complementRuneSet(spaceSet(), builder.machine.universe)), nil
 	case patternsyntax.KindWord:
-		return builder.characters(wordSet())
+		return builder.characters(wordSet()), nil
 	case patternsyntax.KindNotWord:
-		return builder.characters(complementRuneSet(wordSet(), builder.machine.universe))
+		return builder.characters(complementRuneSet(wordSet(), builder.machine.universe)), nil
 	case patternsyntax.KindBeginInput:
-		return builder.assertion(edgeBeginText)
+		return builder.assertion(edgeBeginText), nil
 	case patternsyntax.KindEndInput:
-		return builder.assertion(edgeEndText)
+		return builder.assertion(edgeEndText), nil
 	case patternsyntax.KindWordBoundary:
-		return builder.assertion(edgeWordBoundary)
+		return builder.assertion(edgeWordBoundary), nil
 	case patternsyntax.KindNotWordBoundary:
-		return builder.assertion(edgeNotWordBoundary)
+		return builder.assertion(edgeNotWordBoundary), nil
 	case patternsyntax.KindCapture, patternsyntax.KindGroup:
 		return builder.buildESNode(tree, node.Children[0])
 	case patternsyntax.KindRepeat:
 		child := tree.Nodes[node.Children[0]]
 		if child.Kind == patternsyntax.KindLiteral && child.Value > maximumCodeUnit {
-			return builder.repeatAstralLiteral(child.Value, node)
+			return builder.repeatAstralLiteral(child.Value, node), nil
 		}
 
 		return builder.repeat(
@@ -184,27 +171,25 @@ func (builder *nfaBuilder) buildESNode(tree *patternsyntax.Tree, nodeID patterns
 	}
 }
 
-func (builder *nfaBuilder) repeatAstralLiteral(value rune, node patternsyntax.Node) (fragment, error) {
+func (builder *nfaBuilder) repeatAstralLiteral(value rune, node patternsyntax.Node) fragment {
 	high, low := utf16.EncodeRune(value)
 
-	prefix, err := builder.characters(runeSet{{first: high, last: high}})
-	if err != nil {
-		return fragment{}, err
+	prefix := builder.characters(runeSet{{first: high, last: high}})
+
+	parts := make([]fragment, 0, max(node.Repeat.Minimum, node.Repeat.Maximum))
+	for range node.Repeat.Minimum {
+		parts = append(parts, builder.characters(runeSet{{first: low, last: low}}))
 	}
 
-	repeated, err := builder.repeat(
-		func() (fragment, error) {
-			return builder.characters(runeSet{{first: low, last: low}})
-		},
-		node.Repeat.Minimum,
-		node.Repeat.Maximum,
-		node.Repeat.Unbounded,
-	)
-	if err != nil {
-		return fragment{}, err
+	if node.Repeat.Unbounded {
+		parts = append(parts, builder.star(builder.characters(runeSet{{first: low, last: low}})))
+	} else {
+		for range node.Repeat.Maximum - node.Repeat.Minimum {
+			parts = append(parts, builder.optional(builder.characters(runeSet{{first: low, last: low}})))
+		}
 	}
 
-	return builder.concatenate([]fragment{prefix, repeated})
+	return builder.concatenate([]fragment{prefix, builder.concatenate(parts)})
 }
 
 func (builder *nfaBuilder) buildESChildren(
@@ -223,39 +208,31 @@ func (builder *nfaBuilder) buildESChildren(
 	}
 
 	if alternate {
-		return builder.alternate(parts)
+		return builder.alternate(parts), nil
 	}
 
-	return builder.concatenate(parts)
+	return builder.concatenate(parts), nil
 }
 
 func (builder *nfaBuilder) esLiteral(value rune) (fragment, error) {
 	if value <= maximumCodeUnit {
-		return builder.characters(runeSet{{first: value, last: value}})
+		return builder.characters(runeSet{{first: value, last: value}}), nil
 	}
 
 	high, low := utf16.EncodeRune(value)
+	first := builder.characters(runeSet{{first: high, last: high}})
+	second := builder.characters(runeSet{{first: low, last: low}})
 
-	first, err := builder.characters(runeSet{{first: high, last: high}})
-	if err != nil {
-		return fragment{}, err
-	}
-
-	second, err := builder.characters(runeSet{{first: low, last: low}})
-	if err != nil {
-		return fragment{}, err
-	}
-
-	return builder.concatenate([]fragment{first, second})
+	return builder.concatenate([]fragment{first, second}), nil
 }
 
 //nolint:cyclop // The closed regexp/syntax operation dispatch is intentionally explicit.
 func (builder *nfaBuilder) buildRawNode(expression *regexpsyntax.Regexp) (fragment, error) {
 	switch expression.Op {
 	case regexpsyntax.OpNoMatch:
-		return builder.noMatch()
+		return builder.noMatch(), nil
 	case regexpsyntax.OpEmptyMatch:
-		return builder.empty()
+		return builder.empty(), nil
 	case regexpsyntax.OpLiteral:
 		parts := make([]fragment, 0, len(expression.Rune))
 		for _, value := range expression.Rune {
@@ -266,38 +243,33 @@ func (builder *nfaBuilder) buildRawNode(expression *regexpsyntax.Regexp) (fragme
 				}
 			}
 
-			built, err := builder.characters(normalizeRuneSet(characters))
-			if err != nil {
-				return fragment{}, err
-			}
-
-			parts = append(parts, built)
+			parts = append(parts, builder.characters(normalizeRuneSet(characters)))
 		}
 
-		return builder.concatenate(parts)
+		return builder.concatenate(parts), nil
 	case regexpsyntax.OpCharClass:
 		set := make(runeSet, 0, len(expression.Rune)/2)
 		for index := 0; index+1 < len(expression.Rune); index += 2 {
 			set = append(set, runeRange{first: expression.Rune[index], last: expression.Rune[index+1]})
 		}
 
-		return builder.characters(intersectRuneSets(normalizeRuneSet(set), scalarUniverse))
+		return builder.characters(intersectRuneSets(normalizeRuneSet(set), scalarUniverse)), nil
 	case regexpsyntax.OpAnyCharNotNL:
-		return builder.characters(complementRuneSet(runeSet{{first: '\n', last: '\n'}}, scalarUniverse))
+		return builder.characters(complementRuneSet(runeSet{{first: '\n', last: '\n'}}, scalarUniverse)), nil
 	case regexpsyntax.OpAnyChar:
-		return builder.characters(scalarUniverse)
+		return builder.characters(scalarUniverse), nil
 	case regexpsyntax.OpBeginLine:
-		return builder.assertion(edgeBeginLine)
+		return builder.assertion(edgeBeginLine), nil
 	case regexpsyntax.OpEndLine:
-		return builder.assertion(edgeEndLine)
+		return builder.assertion(edgeEndLine), nil
 	case regexpsyntax.OpBeginText:
-		return builder.assertion(edgeBeginText)
+		return builder.assertion(edgeBeginText), nil
 	case regexpsyntax.OpEndText:
-		return builder.assertion(edgeEndText)
+		return builder.assertion(edgeEndText), nil
 	case regexpsyntax.OpWordBoundary:
-		return builder.assertion(edgeWordBoundary)
+		return builder.assertion(edgeWordBoundary), nil
 	case regexpsyntax.OpNoWordBoundary:
-		return builder.assertion(edgeNotWordBoundary)
+		return builder.assertion(edgeNotWordBoundary), nil
 	case regexpsyntax.OpCapture:
 		return builder.buildRawNode(expression.Sub[0])
 	case regexpsyntax.OpStar:
@@ -325,10 +297,10 @@ func (builder *nfaBuilder) buildRawNode(expression *regexpsyntax.Regexp) (fragme
 		}
 
 		if expression.Op == regexpsyntax.OpAlternate {
-			return builder.alternate(parts)
+			return builder.alternate(parts), nil
 		}
 
-		return builder.concatenate(parts)
+		return builder.concatenate(parts), nil
 	default:
 		return fragment{}, errors.New("raw Go regexp generator does not support regexp operation")
 	}

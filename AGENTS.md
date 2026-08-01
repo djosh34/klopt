@@ -29,5 +29,3 @@ Follow these rules ONLY when your prompt does NOT contain smth like 'Do not crea
     - When unspecified which model and/or reasoning:
         - use gpt-5.6-sol agents on high reasoning
 
-
-

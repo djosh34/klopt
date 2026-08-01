@@ -30,7 +30,7 @@ const (
 )
 
 // Option configures a newly allocated PatternValidation before parsing starts.
-type Option func(*PatternValidation)
+type Option func(*PatternValidation) error
 
 // PatternValidation is one immutable compiled pattern validation.
 type PatternValidation struct {
@@ -46,15 +46,25 @@ type check struct {
 }
 
 // RejectNonASCII requires an ASCII pattern and rejects non-ASCII subjects.
-func RejectNonASCII(validation *PatternValidation) {
-	validation.mustAcceptOptions()
+func RejectNonASCII(validation *PatternValidation) error {
+	if err := validation.acceptOptions(); err != nil {
+		return err
+	}
+
 	validation.rejectNonASCII = true
+
+	return nil
 }
 
 // UseRE2 selects raw Go regexp syntax and semantics.
-func UseRE2(validation *PatternValidation) {
-	validation.mustAcceptOptions()
+func UseRE2(validation *PatternValidation) error {
+	if err := validation.acceptOptions(); err != nil {
+		return err
+	}
+
 	validation.useRE2 = true
+
+	return nil
 }
 
 // Parse compiles source into an immutable pattern validation.
@@ -68,7 +78,9 @@ func Parse(source string, options ...Option) (*PatternValidation, error) {
 			return nil, errors.New("patternvalidator: nil option")
 		}
 
-		option(validation)
+		if err := option(validation); err != nil {
+			return nil, err
+		}
 	}
 
 	if len(source) > patternsyntax.MaximumSourceBytes {
@@ -134,19 +146,31 @@ func Parse(source string, options ...Option) (*PatternValidation, error) {
 			return nil, err
 		}
 
-		checks = make([]check, 0, len(specifications))
-		for _, specification := range specifications {
-			compiled, err := regexp.Compile(specification.source)
-			if err != nil {
-				return nil, &ParseError{
-					Kind:   ParseErrorInternalTranslation,
-					Offset: specification.span.Start,
-					Cause:  err,
-				}
-			}
+		return compiledPatternValidation(validation, specifications)
+	}
 
-			checks = append(checks, check{regexp: compiled, wantMatch: specification.wantMatch})
+	validation.checks = checks
+	validation.sealed = true
+
+	return validation, nil
+}
+
+func compiledPatternValidation(
+	validation *PatternValidation,
+	specifications []checkSpecification,
+) (*PatternValidation, error) {
+	checks := make([]check, 0, len(specifications))
+	for _, specification := range specifications {
+		compiled, err := regexp.Compile(specification.source)
+		if err != nil {
+			return nil, &ParseError{
+				Kind:   ParseErrorInternalTranslation,
+				Offset: specification.span.Start,
+				Cause:  err,
+			}
 		}
+
+		checks = append(checks, check{regexp: compiled, wantMatch: specification.wantMatch})
 	}
 
 	validation.checks = checks
@@ -318,10 +342,16 @@ func (validation *PatternValidation) UsesRE2() bool {
 	return validation != nil && validation.useRE2
 }
 
-func (validation *PatternValidation) mustAcceptOptions() {
-	if validation.sealed {
-		panic("patternvalidator: option applied after Parse")
+func (validation *PatternValidation) acceptOptions() error {
+	if validation == nil {
+		return errors.New("patternvalidator: nil validation")
 	}
+
+	if validation.sealed {
+		return errors.New("patternvalidator: option applied after Parse")
+	}
+
+	return nil
 }
 
 func publicSyntaxError(err error) error {

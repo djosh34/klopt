@@ -156,10 +156,6 @@ func parameterObjectIdentity(parameter LocatedSchema) (parameterIdentity, error)
 		)
 	}
 
-	if err := validateParameterFields(members, identity, parameter.Pointer); err != nil {
-		return parameterIdentity{}, err
-	}
-
 	if identity.location == "path" {
 		required, err := optionalBoolean(members["required"], "required")
 		if err != nil {
@@ -178,6 +174,10 @@ func parameterObjectIdentity(parameter LocatedSchema) (parameterIdentity, error)
 				parameter.Pointer,
 			)
 		}
+	}
+
+	if err := validateParameterFields(members, identity, parameter.Pointer); err != nil {
+		return parameterIdentity{}, err
 	}
 
 	return identity, nil

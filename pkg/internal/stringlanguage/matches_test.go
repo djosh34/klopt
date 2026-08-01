@@ -31,8 +31,12 @@ func TestLanguageMatchesRetainsFormatSemantics(t *testing.T) {
 
 			language, err := Format(test.format)
 			require.NoError(t, err)
-			require.True(t, language.Matches(test.valid))
-			require.False(t, language.Matches(test.invalid))
+			matches, err := language.Matches(test.valid)
+			require.NoError(t, err)
+			require.True(t, matches)
+			matches, err = language.Matches(test.invalid)
+			require.NoError(t, err)
+			require.False(t, matches)
 		})
 	}
 }
@@ -42,6 +46,29 @@ func TestLanguagePatternRetainsRE2CaseFolding(t *testing.T) {
 
 	language, err := Pattern(`(?i)^a+$`, patternvalidator.UseRE2)
 	require.NoError(t, err)
-	require.True(t, language.Matches("AaA"))
-	require.False(t, language.Matches("b"))
+	matches, err := language.Matches("AaA")
+	require.NoError(t, err)
+	require.True(t, matches)
+	matches, err = language.Matches("b")
+	require.NoError(t, err)
+	require.False(t, matches)
+}
+
+func TestLanguageMatchesRejectsMalformedDFAState(t *testing.T) {
+	t.Parallel()
+
+	malformed := []Language{
+		{},
+		{dfa: dfa{states: []dfaState{{edges: []dfaEdge{{first: 0, last: 1, target: 1}}}}}},
+		{dfa: dfa{states: []dfaState{{edges: []dfaEdge{{first: 1, last: 0}}}}}},
+	}
+	for _, language := range malformed {
+		_, err := language.Matches("value")
+		require.Error(t, err)
+	}
+
+	_, err := minimizeDFA(&malformed[1].dfa)
+	require.Error(t, err)
+	_, err = advanceDFAState(&malformed[1].dfa, 0, 0)
+	require.Error(t, err)
 }

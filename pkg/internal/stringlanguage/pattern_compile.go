@@ -4,7 +4,6 @@ package stringlanguage
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	regexpsyntax "regexp/syntax"
 	"unicode/utf8"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 )
 
-//nolint:cyclop // Common policy and the two deliberately separate dialect paths stay explicit.
 func compilePattern(
 	source string,
 	settings *patternvalidator.PatternValidation,
@@ -26,20 +24,12 @@ func compilePattern(
 	}
 
 	if settings.UsesRE2() {
-		if _, err := regexp.Compile(source); err != nil {
+		expression, err := regexpsyntax.Parse(source, regexpsyntax.Perl)
+		if err != nil {
 			return nil, fmt.Errorf("raw Go regexp syntax: %w", err)
 		}
 
-		expression, err := regexpsyntax.Parse(source, regexpsyntax.Perl)
-		if err != nil {
-			return nil, fmt.Errorf("parse accepted raw Go regexp: %w", err)
-		}
-
-		if err := validateRawCapabilities(expression); err != nil {
-			return nil, err
-		}
-
-		return compileRawPattern(expression)
+		return compileRawExpression(expression)
 	}
 
 	tree, err := patternsyntax.Parse(source)
@@ -52,6 +42,14 @@ func compilePattern(
 	}
 
 	return compileESPattern(tree)
+}
+
+func compileRawExpression(expression *regexpsyntax.Regexp) (*dfa, error) {
+	if err := validateRawCapabilities(expression); err != nil {
+		return nil, err
+	}
+
+	return compileRawPattern(expression)
 }
 
 func validateRawCapabilities(expression *regexpsyntax.Regexp) error {

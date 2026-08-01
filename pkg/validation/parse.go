@@ -28,7 +28,7 @@ func Parse(
 		patternOptions: patternOptions,
 	}
 
-	sources, err := oas.ParseWithParameterValidation(
+	sources, document, err := oas.ParseWithParameterValidation(
 		spec,
 		func(source oas.Source, parameter oas.LocatedSchema) error {
 			rawCompiler.source = source
@@ -80,6 +80,10 @@ func Parse(
 		}
 
 		requestValidations[operationID] = requestValidation
+	}
+
+	if err := rejectAuthoredUniqueItems(document); err != nil {
+		return nil, err
 	}
 
 	return requestValidations, nil
@@ -237,22 +241,38 @@ type schemaCompiler struct {
 
 // PatternOptions composes pattern options for APIs that accept exactly one option.
 func PatternOptions(options ...patternvalidator.Option) patternvalidator.Option {
-	for _, option := range options {
-		if option == nil {
-			panic("nil pattern option")
-		}
-	}
-
-	return func(validation *patternvalidator.PatternValidation) {
+	return func(validation *patternvalidator.PatternValidation) error {
 		for _, option := range options {
-			option(validation)
+			if option == nil {
+				return errors.New("nil pattern option")
+			}
+
+			if err := option(validation); err != nil {
+				return err
+			}
 		}
+
+		return nil
 	}
 }
 
 // compile resolves and compiles one reachable schema occurrence.
 func (compiler *schemaCompiler) compile(occurrence oas.LocatedSchema) (*Validation, error) {
-	resolved, err := compiler.source.Resolve(occurrence)
+	var inspectErr error
+
+	resolved, err := compiler.source.ResolveAndInspect(
+		occurrence,
+		func(authored oas.LocatedSchema) error {
+			inspectErr = rejectAuthoredSchemaUniqueItems(authored)
+
+			return inspectErr
+		},
+	)
+
+	if inspectErr != nil {
+		return nil, inspectErr
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("resolve schema at %s: %w", occurrence.Pointer, err)
 	}
@@ -304,7 +324,7 @@ func schemaMembers(schema oas.LocatedSchema) (map[string]json.RawMessage, error)
 
 // rejectUnsupportedKeywords rejects behavior outside the runtime validator contract.
 func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessage) error {
-	for _, keyword := range []string{"oneOf", "not", "uniqueItems"} {
+	for _, keyword := range []string{"oneOf", "not"} {
 		if _, ok := members[keyword]; ok {
 			return fmt.Errorf("compile schema at %s/%s: unsupported keyword", pointer, keyword)
 		}
@@ -484,9 +504,25 @@ func validateDefault(raw json.RawMessage, kind KindValidation) error {
 		return nil
 	}
 
+	return validateParsedDefault(value, kind)
+}
+
+// validateParsedDefault checks one already-parsed default against its declared kind.
+func validateParsedDefault(value jsonvalue.Value, kind KindValidation) error {
+	integer := false
+
+	if value.Kind == jsonvalue.KindNumber {
+		var err error
+
+		integer, err = value.Number.IsInteger()
+		if err != nil {
+			return fmt.Errorf("invalid default number: %w", err)
+		}
+	}
+
 	matches := map[string]bool{
 		"boolean": value.Kind == jsonvalue.KindBoolean,
-		"integer": value.Kind == jsonvalue.KindNumber && value.Number.IsInteger(),
+		"integer": integer,
 		"number":  value.Kind == jsonvalue.KindNumber,
 		"string":  value.Kind == jsonvalue.KindString,
 		"array":   value.Kind == jsonvalue.KindArray,
@@ -547,27 +583,29 @@ func validateExternalDocs(raw json.RawMessage) error {
 		return err
 	}
 
-	urlRaw, ok := object["url"]
+	_, ok := object["url"]
 	if !ok {
 		return errors.New("url is required")
 	}
 
+	documentationURL := ""
+
 	for name, value := range object {
 		switch name {
 		case "description", "url":
-			if _, decodeErr := decodeString(value, name); decodeErr != nil {
+			decoded, decodeErr := decodeString(value, name)
+			if decodeErr != nil {
 				return decodeErr
+			}
+
+			if name == "url" {
+				documentationURL = decoded
 			}
 		default:
 			if !strings.HasPrefix(name, "x-") {
 				return fmt.Errorf("unsupported field %q", name)
 			}
 		}
-	}
-
-	documentationURL, err := decodeString(urlRaw, "url")
-	if err != nil {
-		return err
 	}
 
 	if documentationURL == "" {
@@ -650,7 +688,8 @@ func compileEnum(validation *Validation, pointer string, members map[string]json
 
 // compileNumber compiles exact numeric constraints.
 //
-//nolint:cyclop // OpenAPI numeric keywords are independent and intentionally compiled together.
+
+// compileNumber compiles exact numeric bounds and formats into validation state.
 func compileNumber(validation *Validation, pointer string, members map[string]json.RawMessage) error {
 	minimum, err := decodeOptionalNumber(members, "minimum")
 	if err != nil {
@@ -690,12 +729,7 @@ func compileNumber(validation *Validation, pointer string, members map[string]js
 			return keywordError(pointer, "multipleOf", err)
 		}
 
-		zero, zeroErr := jsonvalue.ParseNumber("0")
-		if zeroErr != nil {
-			return keywordError(pointer, "multipleOf", zeroErr)
-		}
-
-		if multiple.Compare(zero) <= 0 {
+		if err := validatePositiveNumber(multiple); err != nil {
 			return keywordError(pointer, "multipleOf", errors.New("must be greater than zero"))
 		}
 
@@ -736,14 +770,12 @@ func (compiler *schemaCompiler) compileString(
 			return keywordError(pointer, "pattern", err)
 		}
 
-		language, err := stringlanguage.Pattern(pattern, compiler.patternOptions...)
-		if err != nil {
+		if _, err := stringlanguage.Pattern(pattern, compiler.patternOptions...); err != nil {
 			return keywordError(pointer, "pattern", err)
 		}
 
 		validation.StringValidation.Pattern = pattern
 		validation.StringValidation.CompiledPattern = compiled
-		validation.StringValidation.CompiledPatternLanguage = &language
 	}
 
 	return nil
@@ -793,18 +825,25 @@ func compileFormat(
 			return invalidFormatPair(pointer, typeName, format)
 		}
 
-		compiled, compileErr := compileStringFormat(format)
-		if compileErr != nil {
-			return keywordError(pointer, "format", compileErr)
-		}
-
-		validation.StringValidation.Format = format
-		validation.StringValidation.CompiledFormat = compiled
+		return compileValidationStringFormat(validation, pointer, format)
 	default:
 		return keywordError(pointer, "format", fmt.Errorf(
 			"format %q is legal OpenAPI but unsupported by this tool", format,
 		))
 	}
+
+	return nil
+}
+
+// compileValidationStringFormat compiles one admitted string format into validation state.
+func compileValidationStringFormat(validation *Validation, pointer string, format string) error {
+	compiled, err := compileStringFormat(format)
+	if err != nil {
+		return keywordError(pointer, "format", err)
+	}
+
+	validation.StringValidation.Format = format
+	validation.StringValidation.CompiledFormat = compiled
 
 	return nil
 }
@@ -878,7 +917,8 @@ func (compiler *schemaCompiler) compileArray(
 
 // compileObject compiles object bounds, names, and child schemas.
 //
-//nolint:cyclop // Object keywords require distinct malformed-input diagnostics.
+
+// compileObject compiles object bounds, properties, and additional-property behavior.
 func (compiler *schemaCompiler) compileObject(
 	validation *Validation,
 	schema oas.LocatedSchema,
@@ -912,12 +952,7 @@ func (compiler *schemaCompiler) compileObject(
 	if raw, ok := members["additionalProperties"]; ok {
 		trimmed := bytes.TrimSpace(raw)
 		if bytes.Equal(trimmed, []byte("true")) || bytes.Equal(trimmed, []byte("false")) {
-			allowed, err := decodeBoolean(raw, "additionalProperties")
-			if err != nil {
-				return keywordError(schema.Pointer, "additionalProperties", err)
-			}
-
-			validation.ObjectValidation.AdditionalPropertiesAllowed = allowed
+			validation.ObjectValidation.AdditionalPropertiesAllowed = bytes.Equal(trimmed, []byte("true"))
 		} else {
 			child, err := compiler.source.Child(schema, "additionalProperties")
 			if err != nil {
@@ -1152,16 +1187,11 @@ func decodeOptionalNonNegativeInteger(members map[string]json.RawMessage, keywor
 	}
 
 	value, err := decodeNumber(raw, keyword)
-	if err != nil || !value.IsInteger() {
+	if err != nil {
 		return nil, fmt.Errorf("%s must be a non-negative integer", keyword)
 	}
 
-	zero, err := jsonvalue.ParseNumber("0")
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", keyword, err)
-	}
-
-	if value.Compare(zero) < 0 {
+	if err := validateNonNegativeInteger(value); err != nil {
 		return nil, fmt.Errorf("%s must be a non-negative integer", keyword)
 	}
 

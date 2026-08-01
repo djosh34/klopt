@@ -3,6 +3,7 @@ package validation
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"mime"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/jsonvalue"
 	"github.com/go-json-experiment/json/jsontext"
 )
 
@@ -97,7 +99,15 @@ type QueryPropertyDefinition struct {
 
 // Definition returns the generation-only compiled form of decoder.
 // Its Validation pointers remain shared; see QueryDecoderDefinition.
-func (decoder *QueryDecoder) Definition() QueryDecoderDefinition {
+func (decoder *QueryDecoder) Definition() (QueryDecoderDefinition, error) {
+	if decoder == nil {
+		return QueryDecoderDefinition{}, errors.New("query decoder is nil")
+	}
+
+	if len(decoder.parameters) == 0 {
+		return QueryDecoderDefinition{}, errors.New("query decoder has no parameters")
+	}
+
 	definition := QueryDecoderDefinition{
 		OperationID: decoder.operationID,
 		Parameters:  make([]QueryParameterDefinition, len(decoder.parameters)),
@@ -119,17 +129,29 @@ func (decoder *QueryDecoder) Definition() QueryDecoderDefinition {
 		definition.Parameters[index] = compiled
 	}
 
-	return definition
+	return definition, nil
 }
 
 // NewQueryDecoderFromGenerated restores a generator-produced decoder definition.
 //
-//nolint:funcorder // The definition method sits beside its public types above this restoring constructor.
+//nolint:cyclop,funcorder // Restore validates every generated query field beside its transport types.
 func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDecoder, error) {
+	if _, err := oas.RequestValidationName(definition.OperationID); err != nil {
+		return nil, fmt.Errorf("generated query decoder operation ID: %w", err)
+	}
+
+	if len(definition.Parameters) == 0 {
+		return nil, errors.New("generated query decoder has no parameters")
+	}
+
 	parameters := make([]queryParameter, len(definition.Parameters))
 	for index, compiled := range definition.Parameters {
-		if compiled.Validation == nil || wireKind(compiled.Wire) > wireJSONContent {
+		if compiled.Name == "" || compiled.Validation == nil || wireKind(compiled.Wire) > wireJSONContent {
 			return nil, fmt.Errorf("generated query parameter %q is invalid", compiled.Name)
+		}
+
+		if err := validateCompiledState(compiled.Validation); err != nil {
+			return nil, fmt.Errorf("generated query parameter %q validation: %w", compiled.Name, err)
 		}
 
 		parameter := queryParameter{
@@ -141,10 +163,28 @@ func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDeco
 			propertyByName: make(map[string]int, len(compiled.Properties)),
 		}
 		for propertyIndex, property := range compiled.Properties {
+			if property.Name == "" {
+				return nil, fmt.Errorf("generated query parameter %q has an invalid property name", compiled.Name)
+			}
+
+			if _, duplicate := parameter.propertyByName[property.Name]; duplicate {
+				return nil, fmt.Errorf("generated query parameter %q has duplicate property %q", compiled.Name, property.Name)
+			}
+
 			parameter.properties[propertyIndex] = queryProperty{
 				name: property.Name, scalarType: property.ScalarType, array: property.Array,
 			}
 			parameter.propertyByName[property.Name] = propertyIndex
+		}
+
+		if parameter.defaultValue != nil {
+			if _, err := jsonvalue.Parse(parameter.defaultValue); err != nil {
+				return nil, fmt.Errorf("generated query parameter %q default: %w", compiled.Name, err)
+			}
+		}
+
+		if err := validateQueryParameterMetadata(parameter); err != nil {
+			return nil, fmt.Errorf("generated query parameter %q: %w", compiled.Name, err)
 		}
 
 		if len(parameter.validation.AnyOfValidations) != 0 {
@@ -160,6 +200,66 @@ func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDeco
 	}
 
 	return newQueryDecoder(definition.OperationID, parameters)
+}
+
+//nolint:cyclop,gocyclo // The finite wire-kind metadata table is clearest at one invariant boundary.
+func validateQueryParameterMetadata(parameter queryParameter) error {
+	propertiesAllowed := false
+
+	switch parameter.wire {
+	case wirePrimitive, wireFormArrayRepeated:
+		if !isScalarType(parameter.scalarType) || parameter.separator != "" ||
+			parameter.dynamicType != "" || len(parameter.properties) != 0 {
+			return errors.New("primitive or repeated-array metadata is invalid")
+		}
+	case wireDelimitedArray:
+		if !isScalarType(parameter.scalarType) ||
+			(parameter.separator != "," && parameter.separator != " " && parameter.separator != "|") ||
+			parameter.dynamicType != "" || len(parameter.properties) != 0 {
+			return errors.New("delimited-array metadata is invalid")
+		}
+	case wireFormObjectNamed:
+		propertiesAllowed = true
+
+		if parameter.scalarType != "" || parameter.separator != "," {
+			return errors.New("named-object metadata is invalid")
+		}
+	case wireFormObjectExploded, wireDeepObject:
+		propertiesAllowed = true
+
+		if parameter.scalarType != "" || parameter.separator != "" {
+			return errors.New("exploded-object metadata is invalid")
+		}
+	case wireDelimitedObject:
+		propertiesAllowed = true
+
+		if parameter.scalarType != "" || parameter.separator != " " && parameter.separator != "|" {
+			return errors.New("delimited-object metadata is invalid")
+		}
+	case wireJSONContent:
+		if parameter.scalarType != "" || parameter.separator != "" ||
+			parameter.dynamicType != "" || len(parameter.properties) != 0 {
+			return errors.New("JSON content metadata is invalid")
+		}
+	default:
+		return fmt.Errorf("wire %d is invalid", parameter.wire)
+	}
+
+	if !propertiesAllowed {
+		return nil
+	}
+
+	if parameter.dynamicType != "" && !isScalarType(parameter.dynamicType) {
+		return errors.New("dynamic property type is invalid")
+	}
+
+	for _, property := range parameter.properties {
+		if !isScalarType(property.scalarType) || property.array && parameter.wire != wireDeepObject {
+			return fmt.Errorf("property %q metadata is invalid", property.name)
+		}
+	}
+
+	return nil
 }
 
 func compileQueryDecoder(operationID string, source oas.Source, compiler *schemaCompiler) (*QueryDecoder, error) {
@@ -502,7 +602,11 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		return parameter, nil
 	}
 
-	directType := compiledValidationType(parameter.validation)
+	directType, err := compiledValidationType(parameter.validation)
+	if err != nil {
+		return queryParameter{}, fmt.Errorf("parameter %q: %w", name, err)
+	}
+
 	if directType == "" {
 		directType = "string"
 	}
@@ -570,8 +674,6 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 		if err != nil {
 			return queryParameter{}, fmt.Errorf("parameter %q additionalProperties: %w", name, err)
 		}
-	default:
-		return queryParameter{}, fmt.Errorf("parameter %q has unsupported direct type %q", name, directType)
 	}
 
 	return parameter, nil
@@ -582,11 +684,6 @@ func compileQueryParameterSchema(
 	schema oas.LocatedSchema,
 	compiler *schemaCompiler,
 ) (*Validation, jsontext.Value, error) {
-	validation, err := compiler.compile(schema)
-	if err != nil {
-		return nil, nil, fmt.Errorf("parameter %q schema: %w", name, err)
-	}
-
 	resolved, err := compiler.source.Resolve(schema)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parameter %q: resolve schema at %s: %w", name, schema.Pointer, err)
@@ -595,6 +692,11 @@ func compileQueryParameterSchema(
 	members, err := schemaMembers(resolved)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parameter %q: %w", name, err)
+	}
+
+	validation, err := compiler.compile(resolved)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parameter %q schema: %w", name, err)
 	}
 
 	var defaultValue jsontext.Value
@@ -631,7 +733,11 @@ func compileQueryAnyOfCandidates(parameter queryParameter) ([]queryParameter, er
 }
 
 func compiledQueryScalarType(validations ...*Validation) (string, error) {
-	typeName := compiledValidationType(validations...)
+	typeName, err := compiledValidationType(validations...)
+	if err != nil {
+		return "", err
+	}
+
 	if typeName == "" {
 		typeName = "string"
 	}
@@ -653,7 +759,11 @@ func queryAdditionalPropertiesType(validation *Validation) (string, error) {
 		return "string", nil
 	}
 
-	typeName := compiledValidationType(additional...)
+	typeName, err := compiledValidationType(additional...)
+	if err != nil {
+		return "", err
+	}
+
 	if typeName == "" {
 		return "string", nil
 	}
@@ -736,7 +846,11 @@ func compileQueryProperties(
 
 		propertyValidations := compiledByName[name]
 
-		typeName := compiledValidationType(propertyValidations...)
+		typeName, err := compiledValidationType(propertyValidations...)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		if typeName == "" {
 			typeName = "string"
 		}

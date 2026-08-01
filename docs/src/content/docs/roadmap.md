@@ -1,18 +1,13 @@
 ---
 title: Roadmap
-description: Known hard problems and likely next steps for validation test generation.
+description: Known hard problems and likely next steps for validation.
 ---
-
-## Test generation
-
-- Correctly intersect string patterns across `allOf`.
 
 ## Composition
 
 - Potentially support `oneOf` and `not`.
-- Validation is easier than generating useful random JSON for these branches. Test generation is the limiting problem.
+- Broaden parameter serialization support independently of current root primitive `anyOf` behavior.
 
 ## Ongoing quality
 
-- Improve JSON value generation and shrinking.
-- Expand schema mutation and cross-validator coverage as new behavior lands.
+- Expand deterministic OpenAPI conformance tables as supported behavior grows.

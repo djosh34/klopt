@@ -28,6 +28,24 @@ func TestParseAndValidateAnyOfWithActiveSiblings(t *testing.T) {
 	}
 }
 
+func TestAnyOfAllFailDiagnosticsFollowLocalAllOfThenCompositionOrder(t *testing.T) {
+	t.Parallel()
+
+	validation := mustParseSchema(t, `{
+		"type":"string",
+		"minLength":3,
+		"allOf":[{"maxLength":1}],
+		"anyOf":[{"pattern":"^a"},{"pattern":"z$"}]
+	}`, "")
+
+	errs := validation.Validate(json.RawMessage(`"xy"`))
+	require.Len(t, errs, 3)
+	require.ErrorContains(t, errs[0], "keyword minLength")
+	require.ErrorContains(t, errs[1], "/allOf/0")
+	require.ErrorContains(t, errs[1], "keyword maxLength")
+	require.ErrorContains(t, errs[2], "keyword anyOf")
+}
+
 func TestAnyOfWorksRecursivelyAndThroughReferences(t *testing.T) {
 	t.Parallel()
 

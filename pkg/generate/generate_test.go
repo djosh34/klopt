@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"go/scanner"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"text/template"
 
+	generatedexample "github.com/djosh34/klopt/pkg/decode/example"
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
@@ -36,14 +38,47 @@ func unrelated() {
 	require.Contains(t, string(generated), "func unrelated() {\n\n\tprintln")
 }
 
-// TestGenerateInMemoryReturnsBothSources verifies the public non-filesystem generation boundary.
-func TestGenerateInMemoryReturnsBothSources(t *testing.T) {
+// TestRenderReturnsConstructionErrors verifies malformed decoder definitions stop rendering.
+func TestRenderReturnsConstructionErrors(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name          string
-		spec          []byte
-		patternOption patternvalidator.Option
+	tests := map[string]map[string]validation.RequestValidation{
+		"operation name": {"": {}},
+		"query definition": {
+			"query": {Query: &validation.QueryDecoder{}},
+		},
+		"path definition": {
+			"path": {Path: &validation.PathDecoder{}},
+		},
+	}
+	for name, requests := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			files, err := render("generated", requests)
+			require.Error(t, err)
+			require.Nil(t, files)
+		})
+	}
+}
+
+// TestExecuteTemplateReturnsExecutionError verifies template execution errors are returned.
+func TestExecuteTemplateReturnsExecutionError(t *testing.T) {
+	t.Parallel()
+
+	templates := template.Must(template.New("source.go").Parse(`{{template "missing.go" .}}`))
+	generated, err := executeTemplate(templates, "source.go", nil)
+	require.Error(t, err)
+	require.Nil(t, generated)
+}
+
+// TestGenerateInMemoryReturnsOnlyValidationSource verifies generated artifact ownership.
+func TestGenerateInMemoryReturnsOnlyValidationSource(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		spec []byte
 	}{
 		{
 			name: "request body",
@@ -57,7 +92,6 @@ paths:
           application/json:
             schema: {type: string, pattern: '(?i)a'}
 `),
-			patternOption: validation.PatternOptions(patternvalidator.UseRE2),
 		},
 		{
 			name: "no validations",
@@ -66,25 +100,19 @@ paths:
   /bodyless:
     get: {operationId: bodyless}
 `),
-			patternOption: validation.PatternOptions(),
 		},
-	}
-
-	for _, test := range tests {
+	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			files, err := GenerateInMemory("generated", test.spec, test.patternOption)
+			files, err := GenerateInMemory(
+				"generated",
+				test.spec,
+				validation.PatternOptions(patternvalidator.UseRE2),
+			)
 			require.NoError(t, err)
-			require.Len(t, files, 2)
+			require.Len(t, files, 1)
 			require.NotEmpty(t, files["validate.go"])
-
-			testSource := string(files["validate_test.go"])
-			require.NotEmpty(t, testSource)
-			require.Contains(t, testSource, "func FuzzValidations(f *testing.F)")
-			require.Equal(t, 1, strings.Count(testSource, "f.Add([]byte{})"))
-			require.NotContains(t, testSource, "TestValidations")
-			require.NotContains(t, testSource, "rapid.")
 		})
 	}
 }
@@ -125,11 +153,11 @@ paths: {}
 	})
 }
 
-// TestGenerateInMemoryGeneratedFuzzSetupRuns verifies the generated fuzz setup.
-func TestGenerateInMemoryGeneratedFuzzSetupRuns(t *testing.T) {
+// TestGenerateInMemoryIsStable verifies repeated generation returns identical source.
+func TestGenerateInMemoryIsStable(t *testing.T) {
 	t.Parallel()
 
-	files, err := GenerateInMemory("generatedconstruction", []byte(`openapi: 3.0.3
+	spec := []byte(`openapi: 3.0.3
 paths:
   /request:
     post:
@@ -138,24 +166,20 @@ paths:
         content:
           application/json:
             schema: {type: string, pattern: '(?i)a'}
-`), validation.PatternOptions(patternvalidator.UseRE2))
-	require.NoError(t, err)
-
-	repo := repoRoot(t)
-	output, err := os.MkdirTemp(filepath.Join(repo, "pkg"), "generate-construction-boundary-")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, os.RemoveAll(output)) })
-
-	for name, source := range files {
-		require.NoError(t, os.WriteFile(filepath.Join(output, name), source, 0o644))
-	}
-
-	command := exec.CommandContext(
-		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "^FuzzValidations$",
+`)
+	first, err := GenerateInMemory(
+		"generatedconstruction",
+		spec,
+		validation.PatternOptions(patternvalidator.UseRE2),
 	)
-	command.Dir = repo
-	result, err := command.CombinedOutput()
-	require.NoError(t, err, string(result))
+	require.NoError(t, err)
+	second, err := GenerateInMemory(
+		"generatedconstruction",
+		spec,
+		validation.PatternOptions(patternvalidator.UseRE2),
+	)
+	require.NoError(t, err)
+	require.Equal(t, first, second)
 }
 
 // TestGenerateWritesCompiledValidation covers every exported validation field and generated compilation.
@@ -542,6 +566,7 @@ func TestGeneratedRequestValidation(t *testing.T) {
 }
 `)
 	require.NoError(t, os.WriteFile(filepath.Join(output, "probe_test.go"), probe, 0o644))
+	writeRuntimeSpec(t, output, "generaterequestfixture", spec)
 
 	command := exec.CommandContext(
 		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "^TestGeneratedRequestValidation$",
@@ -851,6 +876,7 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 }
 `)
 	require.NoError(t, os.WriteFile(filepath.Join(output, "probe_test.go"), probe, 0o644))
+	writeRuntimeSpec(t, output, "generatequeryparityfixture", spec)
 
 	command := exec.CommandContext(
 		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "TestGeneratedRuntimeParity",
@@ -893,13 +919,37 @@ paths:
           application/json: {}`)
 	require.NoError(t, Generate(output, "generateschemalessbody", spec, validation.PatternOptions()))
 
+	probe := []byte(`package generateschemalessbody
+
+import "testing"
+
+func TestSchemaLessBodies(t *testing.T) {
+	tests := []struct {
+		operationID string
+		body []byte
+		valid bool
+	}{
+		{operationID: "absentSchema", body: []byte("null"), valid: true},
+		{operationID: "explicitEmptySchema", body: []byte("{\"value\":1}"), valid: true},
+		{operationID: "requiredAbsentSchema", valid: false},
+	}
+	for _, test := range tests {
+		errs := RequestValidations[test.operationID].Body.Validate(test.body)
+		if (len(errs) == 0) != test.valid {
+			t.Fatalf("%s validity = %t, errors = %v", test.operationID, len(errs) == 0, errs)
+		}
+	}
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(output, "probe_test.go"), probe, 0o644))
+
 	command := exec.CommandContext(
 		t.Context(),
 		"go",
 		"test",
 		"./pkg/"+filepath.Base(output),
 		"-run",
-		"^FuzzValidations$",
+		"^TestSchemaLessBodies$",
 	)
 	command.Dir = repo
 	result, err := command.CombinedOutput()
@@ -1035,17 +1085,11 @@ paths:
 
 			generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
 			require.NoError(t, err)
-			generatedTest, err := os.ReadFile(filepath.Join(output, "validate_test.go"))
-			require.NoError(t, err)
 
 			source := string(generated)
 			require.Contains(t, source, "patternvalidator.MustParse")
 			require.Equal(t, test.reject, strings.Contains(source, "patternvalidator.RejectNonASCII"))
 			require.Equal(t, test.useRE2, strings.Contains(source, "patternvalidator.UseRE2"))
-
-			testSource := string(generatedTest)
-			require.Equal(t, test.reject, strings.Contains(testSource, "patternvalidator.RejectNonASCII"))
-			require.Equal(t, test.useRE2, strings.Contains(testSource, "patternvalidator.UseRE2"))
 
 			probe := fmt.Appendf(nil, `package generatepatternparity
 
@@ -1069,7 +1113,7 @@ func TestPatternSettings(t *testing.T) {
 
 			command := exec.CommandContext(
 				t.Context(), "go", "test", "./pkg/"+filepath.Base(output),
-				"-run", "^(TestPatternSettings|FuzzValidations)$",
+				"-run", "^TestPatternSettings$",
 			)
 			command.Dir = repo
 			result, err := command.CombinedOutput()
@@ -1178,9 +1222,7 @@ paths: {}
 		t.Parallel()
 
 		output := t.TempDir()
-		for _, name := range []string{"validate.go", "validate_test.go"} {
-			require.NoError(t, os.Mkdir(filepath.Join(output, name), 0o755))
-		}
+		require.NoError(t, os.Mkdir(filepath.Join(output, "validate.go"), 0o755))
 
 		err := Generate(output, "generated", spec, validation.PatternOptions())
 
@@ -1201,13 +1243,48 @@ func TestGenerateExampleMatchesFixture(t *testing.T) {
 	output := t.TempDir()
 	require.NoError(t, Generate(output, "example", openAPI, validation.PatternOptions()))
 
-	for _, name := range []string{"validate.go", "validate_test.go"} {
-		actual, readErr := os.ReadFile(filepath.Join(output, name))
-		require.NoError(t, readErr)
+	entries, err := os.ReadDir(output)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "validate.go", entries[0].Name())
 
-		expected, readErr := os.ReadFile(filepath.Join(repo, "pkg", "decode", "example", name))
-		require.NoError(t, readErr)
-		require.True(t, bytes.Equal(expected, actual), "%s is stale; run make regen", name)
+	actual, err := os.ReadFile(filepath.Join(output, "validate.go"))
+	require.NoError(t, err)
+	expected, err := os.ReadFile(filepath.Join(repo, "pkg", "decode", "example", "validate.go"))
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(expected, actual), "validate.go is stale; run make regen")
+}
+
+// TestGeneratedExampleAnyOfMatchesRuntime proves body, path, and query parity for the committed fixture.
+func TestGeneratedExampleAnyOfMatchesRuntime(t *testing.T) {
+	t.Parallel()
+
+	repo := repoRoot(t)
+	openAPI, err := os.ReadFile(filepath.Join(repo, "resources", "openapi.yaml"))
+	require.NoError(t, err)
+
+	runtimeRequests, err := validation.Parse(openAPI)
+	require.NoError(t, err)
+
+	generated := generatedexample.RequestValidations["anyOfBodyAndParameters"]
+	runtime := runtimeRequests["anyOfBodyAndParameters"]
+
+	for _, body := range [][]byte{[]byte(`"ab"`), []byte(`"zz"`), []byte(`"x"`), []byte(`"xz"`), []byte(`7`)} {
+		generatedErrors := generated.Body.Validate(body)
+		runtimeErrors := runtime.Body.Validate(body)
+		require.Equal(t, fmt.Sprint(runtimeErrors), fmt.Sprint(generatedErrors), string(body))
+	}
+
+	for _, value := range []string{"7", "12", "8"} {
+		generatedPath, generatedPathErr := generated.Path.DecodePathParams(&url.URL{Path: "/any-of/" + value})
+		runtimePath, runtimePathErr := runtime.Path.DecodePathParams(&url.URL{Path: "/any-of/" + value})
+		require.Equal(t, string(runtimePath), string(generatedPath), "path %s", value)
+		require.Equal(t, fmt.Sprint(runtimePathErr), fmt.Sprint(generatedPathErr), "path %s", value)
+
+		generatedQuery, generatedQueryErr := generated.Query.Decode(&url.URL{RawQuery: "q=" + value})
+		runtimeQuery, runtimeQueryErr := runtime.Query.Decode(&url.URL{RawQuery: "q=" + value})
+		require.Equal(t, string(runtimeQuery), string(generatedQuery), "query %s", value)
+		require.Equal(t, fmt.Sprint(runtimeQueryErr), fmt.Sprint(generatedQueryErr), "query %s", value)
 	}
 }
 
@@ -1221,12 +1298,28 @@ func TestRegenerateExample(t *testing.T) { //nolint:paralleltest // This test ex
 	openAPI, err := os.ReadFile(filepath.Join(repo, "resources", "openapi.yaml"))
 	require.NoError(t, err)
 
+	exampleDir := filepath.Join(repo, "pkg", "decode", "example")
+	handOwnedTest, err := os.ReadFile(filepath.Join(exampleDir, "validate_test.go"))
+	require.NoError(t, err)
+
 	require.NoError(t, Generate(
-		filepath.Join(repo, "pkg", "decode", "example"),
+		exampleDir,
 		"example",
 		openAPI,
 		validation.PatternOptions(),
 	))
+
+	after, err := os.ReadFile(filepath.Join(exampleDir, "validate_test.go"))
+	require.NoError(t, err)
+	require.Equal(t, handOwnedTest, after)
+}
+
+// writeRuntimeSpec supplies runtime Parse input to one generated-package parity probe.
+func writeRuntimeSpec(t *testing.T, output string, packageName string, spec []byte) {
+	t.Helper()
+
+	source := fmt.Appendf(nil, "package %s\n\nvar openAPI = []byte(%q)\n", packageName, spec)
+	require.NoError(t, os.WriteFile(filepath.Join(output, "runtime_spec_test.go"), source, 0o644))
 }
 
 // repoRoot returns the repository root for generator tests.

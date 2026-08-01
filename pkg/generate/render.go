@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
 	"text/template"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
@@ -18,30 +17,20 @@ import (
 //go:embed templates/*.go.tmpl
 var templateFiles embed.FS
 
-type patternSettings struct {
-	RejectNonASCII bool
-	UseRE2         bool
-}
+var validationTemplates = template.Must(template.ParseFS(templateFiles, "templates/*.go.tmpl"))
 
 type operationRender struct {
 	OperationID string
 	Name        string
 	Body        *validation.Validation
-	Query       *validation.QueryDecoder
-	Path        *validation.PathDecoder
+	Query       *validation.QueryDecoderDefinition
+	Path        *validation.PathDecoderDefinition
 }
 
 func render(
 	packageName string,
-	openAPI []byte,
 	parsed map[string]validation.RequestValidation,
-	settings patternSettings,
 ) (map[string][]byte, error) {
-	templates, err := template.ParseFS(templateFiles, "templates/*.go.tmpl")
-	if err != nil {
-		return nil, fmt.Errorf("parse templates: %w", err)
-	}
-
 	operations := make([]operationRender, 0, len(parsed))
 	hasQuery := false
 	hasPath := false
@@ -53,47 +42,49 @@ func render(
 		}
 
 		request := parsed[operationID]
-		operations = append(operations, operationRender{
-			OperationID: operationID,
-			Name:        name,
-			Body:        request.Body,
-			Query:       request.Query,
-			Path:        request.Path,
-		})
-		hasQuery = hasQuery || request.Query != nil
-		hasPath = hasPath || request.Path != nil
+
+		operation := operationRender{OperationID: operationID, Name: name, Body: request.Body}
+		if request.Query != nil {
+			definition, definitionErr := request.Query.Definition()
+			if definitionErr != nil {
+				return nil, fmt.Errorf("render operation ID %q query decoder: %w", operationID, definitionErr)
+			}
+
+			operation.Query = &definition
+			hasQuery = true
+		}
+
+		if request.Path != nil {
+			definition, definitionErr := request.Path.Definition()
+			if definitionErr != nil {
+				return nil, fmt.Errorf("render operation ID %q path decoder: %w", operationID, definitionErr)
+			}
+
+			operation.Path = &definition
+			hasPath = true
+		}
+
+		operations = append(operations, operation)
 	}
 
 	data := struct {
 		Package    string
-		OpenAPI    string
 		Operations []operationRender
 		HasQuery   bool
 		HasPath    bool
-		Pattern    patternSettings
 	}{
 		Package:    packageName,
-		OpenAPI:    strconv.Quote(string(openAPI)),
 		Operations: operations,
 		HasQuery:   hasQuery,
 		HasPath:    hasPath,
-		Pattern:    settings,
 	}
 
-	validate, err := executeTemplate(templates, "validate.go.tmpl", data)
+	validate, err := executeTemplate(validationTemplates, "validate.go.tmpl", data)
 	if err != nil {
 		return nil, err
 	}
 
-	validateTest, err := executeTemplate(templates, "validate_test.go.tmpl", data)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string][]byte{
-		"validate.go":      validate,
-		"validate_test.go": validateTest,
-	}, nil
+	return map[string][]byte{"validate.go": validate}, nil
 }
 
 func executeTemplate(templates *template.Template, name string, data any) ([]byte, error) {

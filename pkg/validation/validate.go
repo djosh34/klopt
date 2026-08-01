@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"sort"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
@@ -34,6 +35,10 @@ var (
 
 // Validate validates one present or absent raw JSON request body.
 func (validation *Validation) Validate(body json.RawMessage) []error {
+	if err := validateCompiledState(validation); err != nil {
+		return []error{fmt.Errorf("invalid compiled validation: %w", err)}
+	}
+
 	if len(body) == 0 {
 		if validation.BodyRequired {
 			return []error{newValidationError(validation, "#", "requestBody", "required body is absent")}
@@ -47,6 +52,235 @@ func (validation *Validation) Validate(body json.RawMessage) []error {
 	}
 
 	return validateRaw(validation, body, "#")
+}
+
+// validateCompiledState rejects malformed public validation graphs before traversal.
+func validateCompiledState(root *Validation) error {
+	active := make(map[*Validation]struct{})
+	validated := make(map[*Validation]struct{})
+
+	var validateNode func(*Validation) error
+
+	validateNode = func(validation *Validation) error {
+		if validation == nil {
+			return errors.New("validation node is nil")
+		}
+
+		if _, cyclic := active[validation]; cyclic {
+			return fmt.Errorf("validation cycle reaches schema %q", validation.SchemaPointer)
+		}
+
+		if _, done := validated[validation]; done {
+			return nil
+		}
+
+		active[validation] = struct{}{}
+		defer delete(active, validation)
+
+		if err := validateLocalCompiledState(validation); err != nil {
+			return fmt.Errorf("schema %q: %w", validation.SchemaPointer, err)
+		}
+
+		children := make([]*Validation, 0, 3+len(validation.ObjectValidation.Properties)+
+			len(validation.AllOfValidations)+len(validation.AnyOfValidations))
+		if validation.ArrayValidation.Items != nil {
+			children = append(children, validation.ArrayValidation.Items)
+		}
+
+		for _, property := range validation.ObjectValidation.Properties {
+			children = append(children, property.Validation)
+		}
+
+		if validation.ObjectValidation.AdditionalPropertiesValidation != nil {
+			children = append(children, validation.ObjectValidation.AdditionalPropertiesValidation)
+		}
+
+		children = append(children, validation.AllOfValidations...)
+		children = append(children, validation.AnyOfValidations...)
+
+		for _, child := range children {
+			if err := validateNode(child); err != nil {
+				return err
+			}
+		}
+
+		validated[validation] = struct{}{}
+
+		return nil
+	}
+
+	return validateNode(root)
+}
+
+// validateLocalCompiledState checks every exported keyword family at one validation node.
+//
+//nolint:cyclop // Every exported compiled keyword family is checked at one node boundary.
+func validateLocalCompiledState(validation *Validation) error {
+	if typeName := validation.KindValidation.Type; typeName != "" &&
+		typeName != "boolean" && typeName != "integer" && typeName != "number" &&
+		typeName != "string" && typeName != "array" && typeName != "object" {
+		return fmt.Errorf("invalid type %q", typeName)
+	}
+
+	if len(validation.EnumValidation.Values) != len(validation.EnumValidation.ExactValues) {
+		return errors.New("enum source and exact values differ in length")
+	}
+
+	for index, exact := range validation.EnumValidation.ExactValues {
+		_, err := exact.MarshalJSON()
+		if err != nil {
+			return fmt.Errorf("enum member %d: %w", index, err)
+		}
+
+		authored, err := jsonvalue.Parse(validation.EnumValidation.Values[index])
+		if err != nil {
+			return fmt.Errorf("enum member %d source: %w", index, err)
+		}
+
+		if !authored.Equal(exact) {
+			return fmt.Errorf("enum member %d source and exact value differ", index)
+		}
+	}
+
+	if err := validateNumberCompiledState(validation.NumberValidation); err != nil {
+		return err
+	}
+
+	for _, compiled := range []struct {
+		name  string
+		bound *CountBound
+	}{
+		{name: "minLength", bound: validation.StringValidation.MinLength},
+		{name: "maxLength", bound: validation.StringValidation.MaxLength},
+		{name: "minItems", bound: validation.ArrayValidation.MinItems},
+		{name: "maxItems", bound: validation.ArrayValidation.MaxItems},
+		{name: "minProperties", bound: validation.ObjectValidation.MinProperties},
+		{name: "maxProperties", bound: validation.ObjectValidation.MaxProperties},
+	} {
+		name, bound := compiled.name, compiled.bound
+		if bound != nil {
+			if err := validateCountBound(bound); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+		}
+	}
+
+	if validation.StringValidation.Pattern != "" && validation.StringValidation.CompiledPattern == nil {
+		return errors.New("pattern has no compiled validation")
+	}
+
+	if validation.StringValidation.CompiledFormat != nil {
+		if _, err := validation.StringValidation.CompiledFormat.Matches(""); err != nil {
+			return fmt.Errorf("format: %w", err)
+		}
+	} else if format := validation.StringValidation.Format; format != "" && format != "password" {
+		return fmt.Errorf("format %q has no compiled language", format)
+	}
+
+	return nil
+}
+
+// validateNumberCompiledState checks exact numeric source and compiled forms together.
+//
+//nolint:cyclop // Exact numeric source and compiled forms are checked together.
+func validateNumberCompiledState(number NumberValidation) error {
+	for _, compiled := range []struct {
+		name  string
+		bound *NumberBound
+	}{
+		{name: "minimum", bound: number.Minimum},
+		{name: "maximum", bound: number.Maximum},
+	} {
+		name, bound := compiled.name, compiled.bound
+		if bound == nil {
+			continue
+		}
+
+		parsed, err := jsonvalue.ParseNumber(bound.Value)
+		if err != nil {
+			return fmt.Errorf("%s source: %w", name, err)
+		}
+
+		comparison, err := parsed.Compare(bound.ExactValue)
+		if err != nil {
+			return fmt.Errorf("%s exact value: %w", name, err)
+		}
+
+		if comparison != 0 {
+			return fmt.Errorf("%s source and exact value differ", name)
+		}
+	}
+
+	if number.ExactMultipleOf == nil {
+		if number.MultipleOf != "" {
+			return errors.New("multipleOf has no exact value")
+		}
+
+		return nil
+	}
+
+	parsed, err := jsonvalue.ParseNumber(number.MultipleOf)
+	if err != nil {
+		return fmt.Errorf("multipleOf source: %w", err)
+	}
+
+	comparison, err := parsed.Compare(*number.ExactMultipleOf)
+	if err != nil {
+		return fmt.Errorf("multipleOf exact value: %w", err)
+	}
+
+	if comparison != 0 {
+		return errors.New("multipleOf source and exact value differ")
+	}
+
+	return validatePositiveNumber(parsed)
+}
+
+// validateCountBound checks one exact non-negative integer compiled bound.
+func validateCountBound(bound *CountBound) error {
+	parsed, err := jsonvalue.ParseNumber(bound.Value)
+	if err != nil {
+		return err
+	}
+
+	comparison, err := parsed.Compare(bound.ExactValue)
+	if err != nil {
+		return err
+	}
+
+	if comparison != 0 {
+		return errors.New("source and exact value differ")
+	}
+
+	return validateNonNegativeInteger(parsed)
+}
+
+// validatePositiveNumber checks the exact-number precondition for multipleOf.
+func validatePositiveNumber(number jsonvalue.Number) error {
+	comparison, err := number.Compare(jsonvalue.Number{Lexeme: "0"})
+	if err != nil {
+		return err
+	}
+
+	if comparison <= 0 {
+		return errors.New("multipleOf is not positive")
+	}
+
+	return nil
+}
+
+// validateNonNegativeInteger checks the exact-number precondition for count bounds.
+func validateNonNegativeInteger(number jsonvalue.Number) error {
+	integer, err := number.IsInteger()
+	if err != nil {
+		return err
+	}
+
+	if !integer || strings.HasPrefix(number.Lexeme, "-") {
+		return errors.New("bound is not a non-negative integer")
+	}
+
+	return nil
 }
 
 // instance retains raw JSON and only the decoded data needed by one keyword family.
@@ -156,10 +390,20 @@ func decodeInstance(raw json.RawMessage) (instance, error) {
 	return result, nil
 }
 
+// objectMemberDecoder is the streaming seam used to decode strict object members.
+type objectMemberDecoder interface {
+	Token() (json.Token, error)
+	More() bool
+	Decode(value any) error
+}
+
 // decodeObjectMembers streams and lexically sorts raw object member values.
 func decodeObjectMembers(raw []byte) ([]rawMember, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
+	return decodeObjectMembersFrom(json.NewDecoder(bytes.NewReader(raw)))
+}
 
+// decodeObjectMembersFrom decodes object members from one token stream.
+func decodeObjectMembersFrom(decoder objectMemberDecoder) ([]rawMember, error) {
 	opening, err := decoder.Token()
 	if err != nil {
 		return nil, err
@@ -223,7 +467,14 @@ func (kind KindValidation) validate(validation *Validation, value instance, poin
 	case "boolean":
 		matches = value.kind == jsonvalue.KindBoolean
 	case "integer":
-		matches = value.kind == jsonvalue.KindNumber && value.number.IsInteger()
+		if value.kind == jsonvalue.KindNumber {
+			integer, err := value.number.IsInteger()
+			if err != nil {
+				return []error{newValidationError(validation, pointer, "type", err.Error())}
+			}
+
+			matches = integer
+		}
 	case "number":
 		matches = value.kind == jsonvalue.KindNumber
 	case "string":
@@ -274,8 +525,10 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 	var errs []error
 
 	if number.Minimum != nil {
-		comparison := value.number.Compare(number.Minimum.ExactValue)
-		if comparison < 0 || comparison == 0 && number.Minimum.Exclusive {
+		comparison, err := value.number.Compare(number.Minimum.ExactValue)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "minimum", err.Error()))
+		} else if comparison < 0 || comparison == 0 && number.Minimum.Exclusive {
 			reason := fmt.Sprintf("value must be greater than or equal to %s", number.Minimum.Value)
 			keyword := "minimum"
 
@@ -289,8 +542,10 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 	}
 
 	if number.Maximum != nil {
-		comparison := value.number.Compare(number.Maximum.ExactValue)
-		if comparison > 0 || comparison == 0 && number.Maximum.Exclusive {
+		comparison, err := value.number.Compare(number.Maximum.ExactValue)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "maximum", err.Error()))
+		} else if comparison > 0 || comparison == 0 && number.Maximum.Exclusive {
 			reason := fmt.Sprintf("value must be less than or equal to %s", number.Maximum.Value)
 			keyword := "maximum"
 
@@ -303,13 +558,18 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 		}
 	}
 
-	if number.ExactMultipleOf != nil && !value.number.IsMultipleOf(*number.ExactMultipleOf) {
-		errs = append(errs, newValidationError(
-			validation,
-			pointer,
-			"multipleOf",
-			fmt.Sprintf("value must be an exact multiple of %s", number.MultipleOf),
-		))
+	if number.ExactMultipleOf != nil {
+		multiple, err := value.number.IsMultipleOf(*number.ExactMultipleOf)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "multipleOf", err.Error()))
+		} else if !multiple {
+			errs = append(errs, newValidationError(
+				validation,
+				pointer,
+				"multipleOf",
+				fmt.Sprintf("value must be an exact multiple of %s", number.MultipleOf),
+			))
+		}
 	}
 
 	if err := validateNumberFormat(value.number, number.Format); err != nil {
@@ -344,11 +604,26 @@ func validateSignedInteger(
 	maximum jsonvalue.Number,
 	format string,
 ) error {
-	if !number.IsInteger() {
+	integer, err := number.IsInteger()
+	if err != nil {
+		return err
+	}
+
+	if !integer {
 		return fmt.Errorf("value is not an integer in %s", format)
 	}
 
-	if number.Compare(minimum) < 0 || number.Compare(maximum) > 0 {
+	minimumComparison, err := number.Compare(minimum)
+	if err != nil {
+		return err
+	}
+
+	maximumComparison, err := number.Compare(maximum)
+	if err != nil {
+		return err
+	}
+
+	if minimumComparison < 0 || maximumComparison > 0 {
 		return fmt.Errorf("value is outside %s signed range", format)
 	}
 
@@ -365,6 +640,8 @@ func validateFloat(number jsonvalue.Number, bitSize int) error {
 }
 
 // validate applies string length, pattern, and format constraints.
+//
+//nolint:cyclop // Independent string keywords each propagate malformed compiled state.
 func (stringValidation StringValidation) validate(
 	validation *Validation,
 	value instance,
@@ -377,16 +654,26 @@ func (stringValidation StringValidation) validate(
 	var errs []error
 
 	length := utf8.RuneCountInString(value.string)
-	if stringValidation.MinLength != nil && compareCount(length, stringValidation.MinLength) < 0 {
-		errs = append(errs, newValidationError(validation, pointer, "minLength", fmt.Sprintf(
-			"length %d is less than %s", length, stringValidation.MinLength.Value,
-		)))
+	if stringValidation.MinLength != nil {
+		comparison, err := compareCount(length, stringValidation.MinLength)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "minLength", err.Error()))
+		} else if comparison < 0 {
+			errs = append(errs, newValidationError(validation, pointer, "minLength", fmt.Sprintf(
+				"length %d is less than %s", length, stringValidation.MinLength.Value,
+			)))
+		}
 	}
 
-	if stringValidation.MaxLength != nil && compareCount(length, stringValidation.MaxLength) > 0 {
-		errs = append(errs, newValidationError(validation, pointer, "maxLength", fmt.Sprintf(
-			"length %d is greater than %s", length, stringValidation.MaxLength.Value,
-		)))
+	if stringValidation.MaxLength != nil {
+		comparison, err := compareCount(length, stringValidation.MaxLength)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "maxLength", err.Error()))
+		} else if comparison > 0 {
+			errs = append(errs, newValidationError(validation, pointer, "maxLength", fmt.Sprintf(
+				"length %d is greater than %s", length, stringValidation.MaxLength.Value,
+			)))
+		}
 	}
 
 	if stringValidation.CompiledPattern != nil && !stringValidation.CompiledPattern.Validate(value.string) {
@@ -395,10 +682,15 @@ func (stringValidation StringValidation) validate(
 		)))
 	}
 
-	if stringValidation.CompiledFormat != nil && !stringValidation.CompiledFormat.Matches(value.string) {
-		errs = append(errs, newValidationError(validation, pointer, "format", fmt.Sprintf(
-			"string does not match %q format", stringValidation.Format,
-		)))
+	if stringValidation.CompiledFormat != nil {
+		matches, err := stringValidation.CompiledFormat.Matches(value.string)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "format", err.Error()))
+		} else if !matches {
+			errs = append(errs, newValidationError(validation, pointer, "format", fmt.Sprintf(
+				"string does not match %q format", stringValidation.Format,
+			)))
+		}
 	}
 
 	return errs
@@ -411,16 +703,27 @@ func (array ArrayValidation) validate(validation *Validation, value instance, po
 	}
 
 	var errs []error
-	if array.MinItems != nil && compareCount(len(value.array), array.MinItems) < 0 {
-		errs = append(errs, newValidationError(validation, pointer, "minItems", fmt.Sprintf(
-			"item count %d is less than %s", len(value.array), array.MinItems.Value,
-		)))
+
+	if array.MinItems != nil {
+		comparison, err := compareCount(len(value.array), array.MinItems)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "minItems", err.Error()))
+		} else if comparison < 0 {
+			errs = append(errs, newValidationError(validation, pointer, "minItems", fmt.Sprintf(
+				"item count %d is less than %s", len(value.array), array.MinItems.Value,
+			)))
+		}
 	}
 
-	if array.MaxItems != nil && compareCount(len(value.array), array.MaxItems) > 0 {
-		errs = append(errs, newValidationError(validation, pointer, "maxItems", fmt.Sprintf(
-			"item count %d is greater than %s", len(value.array), array.MaxItems.Value,
-		)))
+	if array.MaxItems != nil {
+		comparison, err := compareCount(len(value.array), array.MaxItems)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "maxItems", err.Error()))
+		} else if comparison > 0 {
+			errs = append(errs, newValidationError(validation, pointer, "maxItems", fmt.Sprintf(
+				"item count %d is greater than %s", len(value.array), array.MaxItems.Value,
+			)))
+		}
 	}
 
 	if array.Items != nil {
@@ -443,16 +746,27 @@ func (object ObjectValidation) validate(validation *Validation, value instance, 
 	}
 
 	var errs []error
-	if object.MinProperties != nil && compareCount(len(value.object), object.MinProperties) < 0 {
-		errs = append(errs, newValidationError(validation, pointer, "minProperties", fmt.Sprintf(
-			"property count %d is less than %s", len(value.object), object.MinProperties.Value,
-		)))
+
+	if object.MinProperties != nil {
+		comparison, err := compareCount(len(value.object), object.MinProperties)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "minProperties", err.Error()))
+		} else if comparison < 0 {
+			errs = append(errs, newValidationError(validation, pointer, "minProperties", fmt.Sprintf(
+				"property count %d is less than %s", len(value.object), object.MinProperties.Value,
+			)))
+		}
 	}
 
-	if object.MaxProperties != nil && compareCount(len(value.object), object.MaxProperties) > 0 {
-		errs = append(errs, newValidationError(validation, pointer, "maxProperties", fmt.Sprintf(
-			"property count %d is greater than %s", len(value.object), object.MaxProperties.Value,
-		)))
+	if object.MaxProperties != nil {
+		comparison, err := compareCount(len(value.object), object.MaxProperties)
+		if err != nil {
+			errs = append(errs, newValidationError(validation, pointer, "maxProperties", err.Error()))
+		} else if comparison > 0 {
+			errs = append(errs, newValidationError(validation, pointer, "maxProperties", fmt.Sprintf(
+				"property count %d is greater than %s", len(value.object), object.MaxProperties.Value,
+			)))
+		}
 	}
 
 	for _, required := range object.Required {
@@ -493,7 +807,7 @@ func (object ObjectValidation) validate(validation *Validation, value instance, 
 }
 
 // compareCount compares one in-memory count with an exact schema bound.
-func compareCount(count int, bound *CountBound) int {
+func compareCount(count int, bound *CountBound) (int, error) {
 	value := jsonvalue.Number{
 		Lexeme:   fmt.Sprintf("%d", count),
 		Rational: new(big.Rat).SetInt64(int64(count)),

@@ -177,7 +177,7 @@
 	{{if .Array}}Array: true,{{end}}
 }{{end}}
 
-{{define "queryParameter"}}validation.QueryParameterDefinition{
+{{define "queryParameter"}}{
 	Name: {{printf "%q" .Name}},
 	Wire: {{.Wire}},
 	{{with .Separator}}Separator: {{printf "%q" .}},{{end}}
@@ -206,7 +206,7 @@
 	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
 }{{end}}
 
-{{define "pathParameter"}}validation.PathParameterDefinition{
+{{define "pathParameter"}}{
 	Name: {{printf "%q" .Name}},
 	Wire: {{.Wire}},
 	{{if .Explode}}Explode: true,{{end}}
@@ -244,8 +244,8 @@ import (
 {{range .Operations}}
 var {{.Name}} = validation.RequestValidation{
 	{{with .Body}}Body: {{template "validation" .}},{{end}}
-	{{with .Query}}Query: mustQueryDecoder({{template "queryDecoder" .Definition}}),{{end}}
-	{{with .Path}}Path: mustPathDecoder({{template "pathDecoder" .Definition}}),{{end}}
+	{{with .Query}}Query: mustQueryDecoder({{template "queryDecoder" .}}),{{end}}
+	{{with .Path}}Path: mustPathDecoder({{template "pathDecoder" .}}),{{end}}
 }
 {{end}}
 
@@ -262,6 +262,7 @@ func mustQueryDecoder(definition validation.QueryDecoderDefinition) *validation.
 	if err != nil {
 		panic(err)
 	}
+
 	return decoder
 }
 {{end}}
@@ -272,6 +273,7 @@ func mustPathDecoder(definition validation.PathDecoderDefinition) *validation.Pa
 	if err != nil {
 		panic(err)
 	}
+
 	return decoder
 }
 {{end}}

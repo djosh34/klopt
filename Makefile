@@ -1,4 +1,4 @@
-.PHONY: help lint fmt tools test t test-object-keys-additional-properties-false docs
+.PHONY: help lint fmt tools test t test-object-keys-additional-properties-false regen coverage docs
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "%-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -21,6 +21,9 @@ t: test ## Run tests
 
 regen: ## Regenerate the example validation fixture
 	REGENERATE=1 go test ./pkg/generate -count=1 -run '^TestRegenerateExample$$'
+
+coverage: ## Require complete production statement coverage
+	./scripts/check-coverage.sh
 
 docs: ## Preview docs
 	npm --prefix docs ci && npm --prefix docs run dev

@@ -15,7 +15,7 @@ var requestValidationConflicts = map[string]struct{}{
 	"else": {}, "fallthrough": {}, "for": {}, "func": {}, "go": {}, "goto": {}, "if": {}, "import": {},
 	"interface": {}, "map": {}, "package": {}, "range": {}, "return": {}, "select": {}, "struct": {},
 	"switch": {}, "type": {}, "var": {}, "init": {}, "RequestValidations": {}, "mustQueryDecoder": {},
-	"mustPathDecoder": {}, "openAPI": {}, "FuzzValidations": {}, "validateBody": {}, "json": {}, "jsonvalue": {},
+	"mustPathDecoder": {}, "json": {}, "jsonvalue": {},
 	"patternvalidator": {}, "validation": {}, "string": {}, "error": {}, "byte": {}, "int": {}, "nil": {},
 	"true": {}, "panic": {},
 }

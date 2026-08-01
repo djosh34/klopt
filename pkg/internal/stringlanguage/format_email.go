@@ -5,15 +5,23 @@ import "strings"
 
 func emailLanguage() (Language, error) {
 	machine, err := formatDFA(emailPattern())
+
+	return finishEmailLanguage(machine, err)
+}
+
+func finishEmailLanguage(machine *dfa, err error) (Language, error) {
 	if err != nil {
 		return Language{}, err
 	}
 
-	machine = minimizeDFA(machine)
+	for _, step := range []func(*dfa) (*dfa, error){minimizeDFA, limitEmailPartLengths, minimizeDFA} {
+		machine, err = step(machine)
+		if err != nil {
+			return Language{}, err
+		}
+	}
 
-	limited := limitEmailPartLengths(machine)
-
-	return Language{dfa: *minimizeDFA(limited)}, nil
+	return Language{dfa: *machine}, nil
 }
 
 func emailPattern() string {
@@ -119,7 +127,8 @@ type emailLengthState struct {
 	over    bool
 }
 
-func limitEmailPartLengths(machine *dfa) *dfa {
+//nolint:cyclop // Length tracking and checked DFA construction form one bounded pass.
+func limitEmailPartLengths(machine *dfa) (*dfa, error) {
 	initial := emailLengthState{}
 	states := []emailLengthState{initial}
 	ids := map[emailLengthState]uint32{initial: 0}
@@ -136,7 +145,13 @@ func limitEmailPartLengths(machine *dfa) *dfa {
 		state := dfaState{accepting: machine.states[tracked.machine].accepting && !tracked.over}
 
 		machineRanges := make(runeSet, 0, len(machine.states[tracked.machine].edges))
-		for _, edge := range machine.scalarEdges(tracked.machine) {
+
+		scalarEdges, err := machine.scalarEdges(tracked.machine)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, edge := range scalarEdges {
 			machineRanges = append(machineRanges, runeRange{first: edge.first, last: edge.last})
 		}
 
@@ -149,7 +164,11 @@ func limitEmailPartLengths(machine *dfa) *dfa {
 				next.over = true
 			}
 
-			next.machine = machine.advance(tracked.machine, characterClass.first)
+			next.machine, err = machine.advance(tracked.machine, characterClass.first)
+			if err != nil {
+				return nil, err
+			}
+
 			if deadDFAState(machine, next.machine) {
 				next = emailLengthState{machine: next.machine, over: true}
 			}
@@ -169,7 +188,7 @@ func limitEmailPartLengths(machine *dfa) *dfa {
 		result.states = append(result.states, state)
 	}
 
-	return result
+	return result, nil
 }
 
 func deadDFAState(machine *dfa, state uint32) bool {

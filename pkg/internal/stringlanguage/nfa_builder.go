@@ -7,7 +7,6 @@ import (
 	"github.com/djosh34/klopt/pkg/internal/patternsyntax"
 )
 
-//nolint:nestif // Bounded and unbounded Thompson construction share the required prefix.
 func (builder *nfaBuilder) repeat(
 	build func() (fragment, error),
 	minimum int,
@@ -30,12 +29,7 @@ func (builder *nfaBuilder) repeat(
 			return fragment{}, err
 		}
 
-		starred, err := builder.star(part)
-		if err != nil {
-			return fragment{}, err
-		}
-
-		parts = append(parts, starred)
+		parts = append(parts, builder.star(part))
 	} else {
 		for range maximum - minimum {
 			part, err := build()
@@ -43,230 +37,137 @@ func (builder *nfaBuilder) repeat(
 				return fragment{}, err
 			}
 
-			optional, err := builder.optional(part)
-			if err != nil {
-				return fragment{}, err
-			}
-
-			parts = append(parts, optional)
+			parts = append(parts, builder.optional(part))
 		}
 	}
 
-	return builder.concatenate(parts)
+	return builder.concatenate(parts), nil
 }
 
-func (builder *nfaBuilder) newState() (int, error) {
+func (builder *nfaBuilder) newState() int {
 	state := len(builder.machine.states)
 	builder.machine.states = append(builder.machine.states, nfaState{})
 
-	return state, nil
+	return state
 }
 
-func (builder *nfaBuilder) addEdge(from int, edge nfaEdge) error {
+func (builder *nfaBuilder) addEdge(from int, edge nfaEdge) {
 	builder.machine.states[from].edges = append(builder.machine.states[from].edges, edge)
-
-	return nil
 }
 
-func (builder *nfaBuilder) empty() (fragment, error) {
-	state, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
+func (builder *nfaBuilder) empty() fragment {
+	state := builder.newState()
 
-	return fragment{start: state, end: state}, nil
+	return fragment{start: state, end: state}
 }
 
-func (builder *nfaBuilder) noMatch() (fragment, error) {
-	start, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
-
-	end, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
-
-	return fragment{start: start, end: end}, nil
+func (builder *nfaBuilder) noMatch() fragment {
+	return fragment{start: builder.newState(), end: builder.newState()}
 }
 
-func (builder *nfaBuilder) characters(set runeSet) (fragment, error) {
-	start, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
-
-	end, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
-
-	if err := builder.addEdge(start, nfaEdge{
+func (builder *nfaBuilder) characters(set runeSet) fragment {
+	start := builder.newState()
+	end := builder.newState()
+	builder.addEdge(start, nfaEdge{
 		to: end, kind: edgeCharacters, characters: normalizeRuneSet(set),
-	}); err != nil {
-		return fragment{}, err
-	}
+	})
 
-	return fragment{start: start, end: end}, nil
+	return fragment{start: start, end: end}
 }
 
-func (builder *nfaBuilder) assertion(kind edgeKind) (fragment, error) {
-	start, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
+func (builder *nfaBuilder) assertion(kind edgeKind) fragment {
+	start := builder.newState()
+	end := builder.newState()
+	builder.addEdge(start, nfaEdge{to: end, kind: kind})
 
-	end, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
-
-	if err := builder.addEdge(start, nfaEdge{to: end, kind: kind}); err != nil {
-		return fragment{}, err
-	}
-
-	return fragment{start: start, end: end}, nil
+	return fragment{start: start, end: end}
 }
 
-func (builder *nfaBuilder) concatenate(parts []fragment) (fragment, error) {
+func (builder *nfaBuilder) concatenate(parts []fragment) fragment {
 	if len(parts) == 0 {
 		return builder.empty()
 	}
 
 	result := parts[0]
 	for _, part := range parts[1:] {
-		if err := builder.addEdge(result.end, nfaEdge{to: part.start, kind: edgeEpsilon}); err != nil {
-			return fragment{}, err
-		}
-
+		builder.addEdge(result.end, nfaEdge{to: part.start, kind: edgeEpsilon})
 		result.end = part.end
 	}
 
-	return result, nil
+	return result
 }
 
-func (builder *nfaBuilder) alternate(parts []fragment) (fragment, error) {
+func (builder *nfaBuilder) alternate(parts []fragment) fragment {
 	if len(parts) == 0 {
 		return builder.empty()
 	}
 
-	start, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
+	start := builder.newState()
 
-	end, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
-
+	end := builder.newState()
 	for _, part := range parts {
-		if err := builder.addEdge(start, nfaEdge{to: part.start, kind: edgeEpsilon}); err != nil {
-			return fragment{}, err
-		}
-
-		if err := builder.addEdge(part.end, nfaEdge{to: end, kind: edgeEpsilon}); err != nil {
-			return fragment{}, err
-		}
+		builder.addEdge(start, nfaEdge{to: part.start, kind: edgeEpsilon})
+		builder.addEdge(part.end, nfaEdge{to: end, kind: edgeEpsilon})
 	}
 
-	return fragment{start: start, end: end}, nil
+	return fragment{start: start, end: end}
 }
 
-func (builder *nfaBuilder) optional(part fragment) (fragment, error) {
-	start, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
+func (builder *nfaBuilder) optional(part fragment) fragment {
+	start := builder.newState()
+
+	end := builder.newState()
+	for _, edge := range []nfaEdge{
+		{to: part.start, kind: edgeEpsilon},
+		{to: end, kind: edgeEpsilon},
+	} {
+		builder.addEdge(start, edge)
 	}
 
-	end, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
+	builder.addEdge(part.end, nfaEdge{to: end, kind: edgeEpsilon})
+
+	return fragment{start: start, end: end}
+}
+
+func (builder *nfaBuilder) star(part fragment) fragment {
+	start := builder.newState()
+
+	end := builder.newState()
+	for _, edge := range []nfaEdge{
+		{to: part.start, kind: edgeEpsilon},
+		{to: end, kind: edgeEpsilon},
+	} {
+		builder.addEdge(start, edge)
 	}
 
 	for _, edge := range []nfaEdge{
 		{to: part.start, kind: edgeEpsilon},
 		{to: end, kind: edgeEpsilon},
 	} {
-		if err := builder.addEdge(start, edge); err != nil {
-			return fragment{}, err
-		}
+		builder.addEdge(part.end, edge)
 	}
 
-	if err := builder.addEdge(part.end, nfaEdge{to: end, kind: edgeEpsilon}); err != nil {
-		return fragment{}, err
-	}
-
-	return fragment{start: start, end: end}, nil
+	return fragment{start: start, end: end}
 }
 
-func (builder *nfaBuilder) star(part fragment) (fragment, error) {
-	start, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
+func (builder *nfaBuilder) wrapSearch(root fragment) {
+	start := builder.newState()
 
-	end, err := builder.newState()
-	if err != nil {
-		return fragment{}, err
-	}
-
-	for _, edge := range []nfaEdge{
-		{to: part.start, kind: edgeEpsilon},
-		{to: end, kind: edgeEpsilon},
-	} {
-		if err := builder.addEdge(start, edge); err != nil {
-			return fragment{}, err
-		}
-	}
-
-	for _, edge := range []nfaEdge{
-		{to: part.start, kind: edgeEpsilon},
-		{to: end, kind: edgeEpsilon},
-	} {
-		if err := builder.addEdge(part.end, edge); err != nil {
-			return fragment{}, err
-		}
-	}
-
-	return fragment{start: start, end: end}, nil
-}
-
-func (builder *nfaBuilder) wrapSearch(root fragment) error {
-	start, err := builder.newState()
-	if err != nil {
-		return err
-	}
-
-	accept, err := builder.newState()
-	if err != nil {
-		return err
-	}
-
+	accept := builder.newState()
 	for _, edge := range []nfaEdge{
 		{to: root.start, kind: edgeEpsilon},
 		{to: start, kind: edgeCharacters, characters: builder.machine.universe},
 	} {
-		if err := builder.addEdge(start, edge); err != nil {
-			return err
-		}
+		builder.addEdge(start, edge)
 	}
 
-	if err := builder.addEdge(root.end, nfaEdge{to: accept, kind: edgeEpsilon}); err != nil {
-		return err
-	}
-
-	if err := builder.addEdge(accept, nfaEdge{
+	builder.addEdge(root.end, nfaEdge{to: accept, kind: edgeEpsilon})
+	builder.addEdge(accept, nfaEdge{
 		to: accept, kind: edgeCharacters, characters: builder.machine.universe,
-	}); err != nil {
-		return err
-	}
+	})
 
 	builder.machine.start = start
 	builder.machine.accept = accept
-
-	return nil
 }
 
 func digitSet() runeSet {

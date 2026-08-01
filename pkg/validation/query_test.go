@@ -237,7 +237,7 @@ func TestQueryDecoderAcceptsParsedApplicationJSONMediaTypes(t *testing.T) {
 			require.Equal(
 				t,
 				"#/paths/~1items/get/parameters/0/content/"+test.pointer+"/schema",
-				decoder.Definition().Parameters[0].Validation.SchemaPointer,
+				queryDefinitionForTest(t, decoder).Parameters[0].Validation.SchemaPointer,
 			)
 			actual, err := decoder.Decode(&url.URL{RawQuery: `q=true`})
 			require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestQueryJSONContentAbsentAndExplicitEmptySchemasCompileEquivalently(t *tes
 
 	absent := parseQueryDecoder(t, `{name: q, in: query, content: {application/json: {}}}`)
 	explicit := parseQueryDecoder(t, `{name: q, in: query, content: {application/json: {schema: {}}}}`)
-	require.Equal(t, absent.Definition(), explicit.Definition())
+	require.Equal(t, queryDefinitionForTest(t, absent), queryDefinitionForTest(t, explicit))
 }
 
 func TestQueryJSONContentUsesOrdinarySchemaCompilation(t *testing.T) {
@@ -1219,26 +1219,38 @@ func TestQueryDecoderPreservesParameterOrderAndSortsValidationLookup(t *testing.
 	require.Equal(t, `{"z":"last","a":1}`, string(actual))
 }
 
-func FuzzQueryDecoder(f *testing.F) {
-	decoder := parseQueryDecoder(f, `{name: q, in: query, allowEmptyValue: true, schema: {type: array, items: {type: string}, maxItems: 5}}`)
-	for _, seed := range []string{"", "q=x", "q=%FF", "q=a&q=b", "%zz=x", "unknown=value"} {
-		f.Add(seed)
+func TestQueryDecoderNamedRobustnessQueries(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, allowEmptyValue: true, schema: {type: array, items: {type: string}, maxItems: 5}}`)
+	for _, test := range []struct {
+		name     string
+		rawQuery string
+	}{
+		{name: "empty"},
+		{name: "scalar", rawQuery: "q=x"},
+		{name: "invalid byte", rawQuery: "q=%FF"},
+		{name: "repeated", rawQuery: "q=a&q=b"},
+		{name: "malformed escape", rawQuery: "%zz=x"},
+		{name: "unknown", rawQuery: "unknown=value"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			first, firstErr := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			second, secondErr := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.Equal(t, first, second)
+			require.Equal(t, fmt.Sprint(firstErr), fmt.Sprint(secondErr))
+
+			if firstErr != nil {
+				require.Nil(t, first)
+
+				return
+			}
+
+			require.True(t, json.Valid(first))
+		})
 	}
-
-	f.Fuzz(func(t *testing.T, rawQuery string) {
-		first, firstErr := decoder.Decode(&url.URL{RawQuery: rawQuery})
-		second, secondErr := decoder.Decode(&url.URL{RawQuery: rawQuery})
-		require.Equal(t, first, second)
-		require.Equal(t, fmt.Sprint(firstErr), fmt.Sprint(secondErr))
-
-		if firstErr != nil {
-			require.Nil(t, first)
-
-			return
-		}
-
-		require.True(t, json.Valid(first))
-	})
 }
 
 func TestQueryDecoderAnyOfUsesFirstWorkingBranchInSourceOrder(t *testing.T) {

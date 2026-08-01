@@ -212,8 +212,8 @@ func TestGeneratedPathDecoderMatchesSegmentsAndExpressionOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"z", "a"}, []string{
-		decoder.Definition().Parameters[0].Name,
-		decoder.Definition().Parameters[1].Name,
+		pathDefinitionForTest(t, decoder).Parameters[0].Name,
+		pathDefinitionForTest(t, decoder).Parameters[1].Name,
 	})
 
 	input, err := url.Parse("/literal.+/%2F/a%2Db-c//")
@@ -343,19 +343,19 @@ func TestGeneratedPathDecoderDefinitionRoundTripAndCopiesMetadata(t *testing.T) 
 	}
 	decoder, err := validation.NewPathDecoderFromGenerated(definition)
 	require.NoError(t, err)
-	require.Equal(t, definition, decoder.Definition())
-	require.Same(t, definition.Parameters[0].Validation, decoder.Definition().Parameters[0].Validation)
+	require.Equal(t, definition, pathDefinitionForTest(t, decoder))
+	require.Same(t, definition.Parameters[0].Validation, pathDefinitionForTest(t, decoder).Parameters[0].Validation)
 
 	definition.PathTemplate = "/changed"
 	definition.Parameters[0].Name = "changed"
 	definition.Parameters[0].Properties[0].Name = "changed"
-	restored := decoder.Definition()
+	restored := pathDefinitionForTest(t, decoder)
 	require.Equal(t, "/{object}", restored.PathTemplate)
 	require.Equal(t, "object", restored.Parameters[0].Name)
 	require.Equal(t, "known", restored.Parameters[0].Properties[0].Name)
 
 	restored.Parameters[0].Properties[0].Name = "alsoChanged"
-	require.Equal(t, "known", decoder.Definition().Parameters[0].Properties[0].Name)
+	require.Equal(t, "known", pathDefinitionForTest(t, decoder).Parameters[0].Properties[0].Name)
 }
 
 func TestGeneratedPathDecoderRejectsInvalidDefinitions(t *testing.T) {
@@ -715,7 +715,14 @@ func TestGeneratedPathDecoderIsConcurrent(t *testing.T) {
 					return
 				}
 
-				if decoder.Definition().PathTemplate != "/items/{id}" {
+				definition, definitionErr := decoder.Definition()
+				if definitionErr != nil {
+					errResults <- definitionErr
+
+					return
+				}
+
+				if definition.PathTemplate != "/items/{id}" {
 					errResults <- errors.New("definition changed")
 
 					return
@@ -732,37 +739,46 @@ func TestGeneratedPathDecoderIsConcurrent(t *testing.T) {
 	}
 }
 
-func FuzzGeneratedPathDecoder(f *testing.F) {
+func TestGeneratedPathDecoderNamedRobustnessPaths(t *testing.T) {
+	t.Parallel()
+
 	decoder, err := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
-		OperationID: "fuzzPath", PathTemplate: "/prefix/{x}-{y}",
+		OperationID: "robustPath", PathTemplate: "/prefix/{x}-{y}",
 		Parameters: []validation.PathParameterDefinition{
 			{Name: "x", Wire: 0, Validation: pathStringValidation(), ScalarType: "string"},
 			{Name: "y", Wire: 0, Validation: pathStringValidation(), ScalarType: "string"},
 		},
 	})
-	if err != nil {
-		f.Fatal(err)
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name string
+		path string
+	}{
+		{name: "normal", path: "/prefix/a-b"},
+		{name: "encoded delimiter", path: "/prefix/a%2Db-c"},
+		{name: "empty components", path: "/prefix/-"},
+		{name: "wrong prefix", path: "/other/a-b"},
+		{name: "extra slash", path: "/prefix/a/b-c"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			input := &url.URL{Path: test.path}
+			first, firstErr := decoder.DecodePathParams(input)
+			second, secondErr := decoder.DecodePathParams(input)
+			require.Equal(t, string(first), string(second))
+			require.Equal(t, fmt.Sprint(firstErr), fmt.Sprint(secondErr))
+
+			if firstErr != nil {
+				require.Nil(t, first)
+
+				return
+			}
+
+			require.True(t, json.Valid(first))
+		})
 	}
-
-	for _, path := range []string{"/prefix/a-b", "/prefix/a%2Db-c", "/prefix/-", "/other/a-b", "/prefix/a/b-c"} {
-		f.Add(path)
-	}
-
-	f.Fuzz(func(t *testing.T, path string) {
-		input := &url.URL{Path: path}
-		first, firstErr := decoder.DecodePathParams(input)
-		second, secondErr := decoder.DecodePathParams(input)
-		require.Equal(t, string(first), string(second))
-		require.Equal(t, fmt.Sprint(firstErr), fmt.Sprint(secondErr))
-
-		if firstErr != nil {
-			require.Nil(t, first)
-
-			return
-		}
-
-		require.True(t, json.Valid(first))
-	})
 }
 
 func mustGeneratedPathDecoder(
