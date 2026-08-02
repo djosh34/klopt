@@ -352,53 +352,41 @@ func (walker *authoredSchemaWalker) schema(raw json.RawMessage, pointer string) 
 		return nil
 	}
 
-	members, ok := rawObject(raw)
+	if _, ok := rawObject(raw); !ok {
+		return nil
+	}
+
+	resolved, err := walker.resolveSchema(raw, pointer)
+	if err != nil {
+		return err
+	}
+
+	members, ok := rawObject(resolved.Raw)
 	if !ok {
 		return nil
 	}
 
-	resolved, available, resolveErr := walker.resolveSchema(raw, pointer)
-	if resolveErr != nil {
-		return resolveErr
-	}
-
-	if !available {
-		return nil
-	}
-
-	if resolved.Pointer != pointer {
-		return walker.schema(resolved.Raw, resolved.Pointer)
-	}
-
-	return walker.nestedSchemas(members, pointer)
+	return walker.nestedSchemas(members, resolved.Pointer)
 }
 
 // resolveSchema inspects every raw schema in a reference chain before resolution discards siblings.
 func (walker *authoredSchemaWalker) resolveSchema(
 	raw json.RawMessage,
 	pointer string,
-) (oas.LocatedSchema, bool, error) {
-	var uniqueItemsErr error
-
+) (oas.LocatedSchema, error) {
 	resolved, err := walker.source.ResolveAndInspect(
 		oas.LocatedSchema{Raw: raw, Pointer: pointer},
 		func(authored oas.LocatedSchema) error {
-			uniqueItemsErr = rejectAuthoredSchemaUniqueItems(authored)
+			walker.markSeen("schema", authored.Pointer)
 
-			return uniqueItemsErr
+			return rejectAuthoredSchemaUniqueItems(authored)
 		},
 	)
-
-	if uniqueItemsErr != nil {
-		return oas.LocatedSchema{}, false, uniqueItemsErr
-	}
-
 	if err != nil {
-		// Complete traversal must not add admission failures for otherwise unreachable references.
-		return oas.LocatedSchema{}, false, nil //nolint:nilerr // An explicit unavailable-traversal result.
+		return oas.LocatedSchema{}, err
 	}
 
-	return resolved, true, nil
+	return resolved, nil
 }
 
 // nestedSchemas traverses nested Schema Object keywords in one fixed order.
@@ -483,9 +471,14 @@ func (walker *authoredSchemaWalker) seen(kind string, pointer string) bool {
 		return true
 	}
 
-	walker.visited[key] = struct{}{}
+	walker.markSeen(kind, pointer)
 
 	return false
+}
+
+// markSeen records one typed object pointer without changing traversal flow.
+func (walker *authoredSchemaWalker) markSeen(kind string, pointer string) {
+	walker.visited[kind+"\x00"+pointer] = struct{}{}
 }
 
 // rejectAuthoredSchemaUniqueItems rejects key presence without decoding its value.

@@ -22,14 +22,15 @@ func TestRequestValidationNameUsesInjectiveOperationIDMapping(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"getPet":              "getPet",
-		"get_pet":             "get__pet",
-		"get-pet":             "get_0pet",
-		"pets/get":            "pets_1get",
-		"for":                 "_xfor",
-		"RequestValidations":  "_xRequestValidations",
-		"mustPathDecoder":     "_xmustPathDecoder",
-		"ordinaryIdentifier1": "ordinaryIdentifier1",
+		"getPet":               "getPet",
+		"get_pet":              "get__pet",
+		"get-pet":              "get_0pet",
+		"pets/get":             "pets_1get",
+		"for":                  "_xfor",
+		"RequestValidations":   "_xRequestValidations",
+		"mustPathDecoder":      "_xmustPathDecoder",
+		"generatedValidations": "_xgeneratedValidations",
+		"ordinaryIdentifier1":  "ordinaryIdentifier1",
 	}
 
 	for operationID, expected := range tests {
@@ -66,10 +67,10 @@ func TestRequestValidationNamePrefixesEveryCompilationConflict(t *testing.T) {
 		"break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "for",
 		"func", "go", "goto", "if", "import", "interface", "map", "package", "range", "return", "select",
 		"struct", "switch", "type", "var", "init", "RequestValidations", "mustQueryDecoder", "mustPathDecoder",
-		"json", "jsonvalue", "patternvalidator", "validation",
+		"generatedValidations", "json", "jsonvalue", "patternvalidator", "validation",
 		"string", "error", "byte", "int", "nil", "true", "panic",
 	}
-	require.Len(t, conflicts, 40)
+	require.Len(t, conflicts, 41)
 
 	for _, operationID := range conflicts {
 		actual, err := RequestValidationName(operationID)

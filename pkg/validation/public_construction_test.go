@@ -230,6 +230,57 @@ func TestDecoderNilAndMalformedDefinitionFailuresReturnErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestGeneratedDecodersRejectMalformedNumericFormats(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		typeName   string
+		format     string
+		wantError  string
+		scalarType string
+	}{
+		{
+			name: "unknown", typeName: "number", format: "bogus",
+			wantError: `invalid numeric format "bogus"`, scalarType: "number",
+		},
+		{
+			name: "integer format on string", typeName: "string", format: "int32",
+			wantError: "invalid type/format pair", scalarType: "string",
+		},
+		{
+			name: "float format on integer", typeName: "integer", format: "float",
+			wantError: "invalid type/format pair", scalarType: "integer",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			compiled := &validation.Validation{
+				KindValidation:   validation.KindValidation{Type: test.typeName},
+				NumberValidation: validation.NumberValidation{Format: test.format},
+			}
+			query, queryErr := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+				OperationID: "query",
+				Parameters: []validation.QueryParameterDefinition{{
+					Name: "q", Wire: 0, Validation: compiled, ScalarType: test.scalarType,
+				}},
+			})
+			require.Nil(t, query)
+			require.ErrorContains(t, queryErr, test.wantError)
+
+			path, pathErr := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+				OperationID: "path", PathTemplate: "/{p}",
+				Parameters: []validation.PathParameterDefinition{{
+					Name: "p", Wire: 0, Validation: compiled, ScalarType: test.scalarType,
+				}},
+			})
+			require.Nil(t, path)
+			require.ErrorContains(t, pathErr, test.wantError)
+		})
+	}
+}
+
 func TestGeneratedQueryDecoderRejectsMetadataInconsistentWithValidation(t *testing.T) {
 	t.Parallel()
 

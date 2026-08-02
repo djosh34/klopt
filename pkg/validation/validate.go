@@ -47,7 +47,10 @@ func (validation *Validation) Validate(body json.RawMessage) []error {
 		return []error{newValidationError(validation, "#", "body", err.Error())}
 	}
 
-	run := validationRun{anyOfMatches: make(map[validationMemoKey]bool)}
+	run := validationRun{
+		anyOfMatches: make(map[validationMemoKey]bool),
+		active:       make(map[validationMemoKey]struct{}),
+	}
 
 	return validateRaw(&run, validation, body, "#")
 }
@@ -140,7 +143,7 @@ func validateLocalCompiledState(validation *Validation) error {
 		}
 	}
 
-	if err := validateNumberCompiledState(validation.NumberValidation); err != nil {
+	if err := validateNumberCompiledState(validation.KindValidation, validation.NumberValidation); err != nil {
 		return err
 	}
 
@@ -191,7 +194,21 @@ func validateLocalCompiledState(validation *Validation) error {
 // validateNumberCompiledState checks exact numeric source and compiled forms together.
 //
 //nolint:cyclop // Exact numeric source and compiled forms are checked together.
-func validateNumberCompiledState(number NumberValidation) error {
+func validateNumberCompiledState(kind KindValidation, number NumberValidation) error {
+	switch number.Format {
+	case "":
+	case "int32", "int64":
+		if kind.Type != "" && kind.Type != "integer" && kind.Type != "number" {
+			return fmt.Errorf("invalid type/format pair %q/%q", kind.Type, number.Format)
+		}
+	case "float", "double":
+		if kind.Type != "" && kind.Type != "number" {
+			return fmt.Errorf("invalid type/format pair %q/%q", kind.Type, number.Format)
+		}
+	default:
+		return fmt.Errorf("invalid numeric format %q", number.Format)
+	}
+
 	for _, compiled := range []struct {
 		name  string
 		bound *NumberBound
@@ -311,27 +328,54 @@ type rawMember struct {
 type validationMemoKey struct {
 	validation *Validation
 	pointer    string
-	raw        string
 }
 
-// validationRun owns memoized anyOf verdicts for one Validate request.
+// validationRun owns memoized anyOf verdicts and active recursion for one Validate request.
 type validationRun struct {
 	anyOfMatches map[validationMemoKey]bool
+	active       map[validationMemoKey]struct{}
+	graphErr     error
 }
 
 // validateRaw applies one compiled schema node to one raw instance node.
 func validateRaw(run *validationRun, validation *Validation, raw json.RawMessage, pointer string) []error {
+	if run.graphErr != nil {
+		return nil
+	}
+
+	if validation == nil {
+		run.graphErr = fmt.Errorf("instance %s: validation node is nil", pointer)
+
+		return []error{run.graphErr}
+	}
+
+	key := validationMemoKey{validation: validation, pointer: pointer}
+	if _, cyclic := run.active[key]; cyclic {
+		run.graphErr = fmt.Errorf(
+			"instance %s schema %q: validation cycle", pointer, validation.SchemaPointer,
+		)
+
+		return []error{run.graphErr}
+	}
+
+	run.active[key] = struct{}{}
+	defer delete(run.active, key)
+
 	errs := validateLocalAndAllOf(run, validation, raw, pointer)
-	if len(validation.AnyOfValidations) == 0 {
+	if run.graphErr != nil || len(validation.AnyOfValidations) == 0 {
 		return errs
 	}
 
 	for _, child := range validation.AnyOfValidations {
-		key := validationMemoKey{validation: child, pointer: pointer, raw: string(raw)}
+		key := validationMemoKey{validation: child, pointer: pointer}
 
 		matches, cached := run.anyOfMatches[key]
 		if !cached {
 			matches = len(validateRaw(run, child, raw, pointer)) == 0
+			if run.graphErr != nil {
+				return append(errs, run.graphErr)
+			}
+
 			run.anyOfMatches[key] = matches
 		}
 

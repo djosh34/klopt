@@ -981,12 +981,13 @@ func TestGenerateUsesSharedOperationNames(t *testing.T) {
 	t.Parallel()
 
 	for operationID, backingName := range map[string]string{
-		"init":         "_xinit",
-		"validation":   "_x" + "validation",
-		"request/path": "request_1path",
-		"get-pet":      "get_0pet",
-		"get_pet":      "get__pet",
-		"errors":       "errors",
+		"init":                 "_xinit",
+		"validation":           "_x" + "validation",
+		"generatedValidations": "_xgeneratedValidations",
+		"request/path":         "request_1path",
+		"get-pet":              "get_0pet",
+		"get_pet":              "get__pet",
+		"errors":               "errors",
 	} {
 		t.Run(operationID, func(t *testing.T) {
 			t.Parallel()

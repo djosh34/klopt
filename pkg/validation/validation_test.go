@@ -866,6 +866,69 @@ func TestParseRejectsUniqueItemsAcrossAuthoredSchemaLocations(t *testing.T) {
 	}
 }
 
+// TestParsePropagatesUnreachableSchemaReferenceErrors covers complete traversal resolution failures.
+func TestParsePropagatesUnreachableSchemaReferenceErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		spec string
+	}{
+		{
+			name: "schema component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"schemas":{
+				"Broken":{"$ref":"#/components/schemas/Missing"}
+			}}}`,
+		},
+		{
+			name: "response schema",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"responses":{
+				"Broken":{"description":"broken","content":{"application/json":{
+					"schema":{"$ref":"#/components/schemas/Missing"}
+				}}}
+			}}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse([]byte(test.spec))
+			require.Nil(t, parsed)
+
+			var referenceErr *oas.ReferenceError
+			require.ErrorAs(t, err, &referenceErr)
+			require.ErrorContains(t, err, `#/components/schemas/Missing`)
+		})
+	}
+}
+
+// TestUniqueItemsTraversalMarksEveryResolvedSchema prevents repeated suffix resolution.
+func TestUniqueItemsTraversalMarksEveryResolvedSchema(t *testing.T) {
+	t.Parallel()
+
+	document := json.RawMessage(`{"components":{"schemas":{
+		"First":{"$ref":"#/components/schemas/Middle"},
+		"Middle":{"$ref":"#/components/schemas/Last"},
+		"Last":{"type":"string"}
+	}}}`)
+	walker := authoredSchemaWalker{
+		source:  oas.Source{Document: document},
+		visited: make(map[string]struct{}),
+	}
+	first, err := walker.source.At("#/components/schemas/First")
+	require.NoError(t, err)
+	require.NoError(t, walker.schema(first.Raw, first.Pointer))
+
+	for _, pointer := range []string{
+		"#/components/schemas/First",
+		"#/components/schemas/Middle",
+		"#/components/schemas/Last",
+	} {
+		_, visited := walker.visited["schema\x00"+pointer]
+		require.True(t, visited, pointer)
+	}
+}
+
 // TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword covers the fixed nested traversal order.
 func TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword(t *testing.T) {
 	t.Parallel()

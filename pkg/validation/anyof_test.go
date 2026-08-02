@@ -4,6 +4,7 @@ package validation
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -73,6 +74,37 @@ func TestSharedFailingAnyOfGraphValidatesOncePerNode(t *testing.T) {
 	errs := shared.Validate(json.RawMessage(`false`))
 	require.Len(t, errs, 1)
 	require.ErrorContains(t, errs[0], "keyword anyOf")
+}
+
+func TestAnyOfMemoKeysDoNotRetainRawRequestValues(t *testing.T) {
+	t.Parallel()
+
+	_, retainsRaw := reflect.TypeFor[validationMemoKey]().FieldByName("raw")
+	require.False(t, retainsRaw)
+}
+
+func TestDirectAnyOfNilValidationReturnsAnError(t *testing.T) {
+	t.Parallel()
+
+	compiled := &Validation{AnyOfValidations: []*Validation{
+		nil,
+		{KindValidation: KindValidation{Type: "string"}},
+	}}
+
+	require.NotPanics(t, func() {
+		errs := compiled.Validate(json.RawMessage(`"valid alternative"`))
+		require.ErrorContains(t, errors.Join(errs...), "nil")
+	})
+}
+
+func TestDirectAnyOfCycleReturnsAnError(t *testing.T) {
+	t.Parallel()
+
+	compiled := new(Validation)
+	compiled.AnyOfValidations = []*Validation{compiled}
+
+	errs := compiled.Validate(json.RawMessage(`true`))
+	require.ErrorContains(t, errors.Join(errs...), "cycle")
 }
 
 func TestParseRejectsMalformedAnyOfAtExactPointer(t *testing.T) {
