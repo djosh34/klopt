@@ -1066,6 +1066,7 @@ func TestParseInputShapeChecksInertMetadata(t *testing.T) {
 		{name: "xml_object", schema: `{"xml":"item"}`, pointer: "/xml"},
 		{name: "xml_field", schema: `{"xml":{"wrapped":"yes"}}`, pointer: "/xml/wrapped"},
 		{name: "xml_namespace", schema: `{"xml":{"namespace":"relative/path"}}`, pointer: "/xml/namespace"},
+		{name: "xml_namespace_invalid_URI", schema: `{"xml":{"namespace":"https://example.test/a|b"}}`, pointer: "/xml/namespace"},
 		{name: "xml_unknown", schema: `{"xml":{"role":"semantic"}}`, pointer: "/xml/role"},
 	}
 
@@ -1415,6 +1416,10 @@ func TestParseInputRejectsMalformedMediaTypeExampleObject(t *testing.T) {
 			name: "mutually exclusive value", json: `{"value":1,"externalValue":"example.json"}`,
 			yaml: `{value: 1, externalValue: example.json}`, pointer: "/externalValue",
 		},
+		{
+			name: "external value invalid URI", json: `{"externalValue":"https://example.test/a|b"}`,
+			yaml: `{externalValue: "https://example.test/a|b"}`, pointer: "/externalValue",
+		},
 		{name: "unknown field", json: `{"unknown":1}`, yaml: `{unknown: 1}`, pointer: "/unknown"},
 	}
 
@@ -1445,6 +1450,33 @@ paths:
 					require.ErrorContains(t, err, "/content/application~1json/examples/bad"+test.pointer)
 				})
 			}
+		})
+	}
+}
+
+func TestParseInputIgnoresMediaTypeExampleReferenceSiblingsAndTarget(t *testing.T) {
+	t.Parallel()
+
+	for encoding, document := range map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{},"examples":{"kept-inert":{"$ref":"#/components/examples/Missing","valeu":1}}}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+            examples:
+              kept-inert: {$ref: "#/components/examples/Missing", valeu: 1}
+`,
+	} {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.NoError(t, err)
 		})
 	}
 }

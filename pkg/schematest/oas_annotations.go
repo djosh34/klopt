@@ -140,6 +140,10 @@ func validateExampleObject(example map[string]*jsonValue, pointer string) error 
 			return fmt.Errorf("%s/externalValue: must be a non-empty URL", pointer)
 		}
 
+		if err := validateURIReference(externalValue.text); err != nil {
+			return fmt.Errorf("%s/externalValue: must be a URL: %w", pointer, err)
+		}
+
 		if _, err := url.Parse(externalValue.text); err != nil {
 			return fmt.Errorf("%s/externalValue: must be a URL", pointer)
 		}
@@ -180,6 +184,10 @@ func validateXMLMetadata(value *jsonValue, pointer string) error {
 	}
 
 	if namespace, exists := object["namespace"]; exists {
+		if err := validateURIReference(namespace.text); err != nil {
+			return fmt.Errorf("%s/namespace: must be a non-relative URI: %w", pointer, err)
+		}
+
 		parsed, parseErr := url.Parse(namespace.text)
 		if parseErr != nil || !parsed.IsAbs() {
 			return fmt.Errorf("%s/namespace: must be a non-relative URI", pointer)
