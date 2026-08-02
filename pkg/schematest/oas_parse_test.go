@@ -1173,7 +1173,7 @@ func TestParseInputRejectsMalformedSelectedRequestBodyFields(t *testing.T) {
 	}
 }
 
-func TestParseInputRejectsMalformedSelectedMediaTypeFields(t *testing.T) {
+func TestParseInputRejectsInvalidSelectedMediaTypeFields(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -1183,7 +1183,7 @@ func TestParseInputRejectsMalformedSelectedMediaTypeFields(t *testing.T) {
 		pointer string
 	}{
 		{name: "unknown", json: `"bogus":1`, yaml: "bogus: 1", pointer: "/bogus"},
-		{name: "encoding", json: `"encoding":1`, yaml: "encoding: 1", pointer: "/encoding"},
+		{name: "encoding", json: `"encoding":{}`, yaml: "encoding: {}", pointer: "/encoding"},
 	}
 
 	for _, test := range tests {

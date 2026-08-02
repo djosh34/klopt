@@ -234,9 +234,7 @@ func validateMediaTypeFields(media map[string]*jsonValue, pointer string) error 
 		switch name {
 		case "schema", "example", "examples":
 		case "encoding":
-			if _, err := requireJSONObject(media[name], pointer+"/encoding"); err != nil {
-				return err
-			}
+			return fmt.Errorf("%s/encoding: encoding does not apply to application/json", pointer)
 		default:
 			if !strings.HasPrefix(name, "x-") {
 				return fmt.Errorf("%s/%s: unknown Media Type Object field", pointer, escapePointerToken(name))
