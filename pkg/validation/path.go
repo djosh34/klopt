@@ -1,4 +1,4 @@
-//nolint:godoclint,lll // Private path runtime names and diagnostics are local implementation details.
+//nolint:godoclint // Private path runtime names and diagnostics are local implementation details.
 package validation
 
 import (
@@ -51,6 +51,7 @@ type pathParameter struct {
 	dynamicType    styleScalarType
 	properties     []pathProperty
 	propertyByName map[string]int
+	anyOf          []pathParameter
 }
 
 type pathProperty struct {
@@ -144,8 +145,14 @@ func compileSchemaPathParameter(
 		return pathParameter{}, fmt.Errorf("schema-style path parameter %q accepts JSON null", name)
 	}
 
-	if binaryErr := rejectPathBinary(validation); binaryErr != nil {
-		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, binaryErr)
+	if len(validation.AnyOfValidations) == 0 {
+		if pointer := styleParameterAnyOfPointer(validation); pointer != "" {
+			return pathParameter{}, fmt.Errorf(
+				"path parameter %q schema at %s has unsupported nested anyOf in style serialization",
+				name,
+				pointer,
+			)
+		}
 	}
 
 	styleOffset, explode, err := compilePathStyle(name, members)
@@ -153,7 +160,32 @@ func compileSchemaPathParameter(
 		return pathParameter{}, err
 	}
 
+	if len(validation.AnyOfValidations) != 0 {
+		return compileAnyOfPathParameter(name, styleOffset, explode, validation)
+	}
+
 	return compileSchemaPathMetadata(name, styleOffset, explode, validation)
+}
+
+func compileAnyOfPathParameter(
+	name string,
+	styleOffset pathWireKind,
+	explode bool,
+	validation *Validation,
+) (pathParameter, error) {
+	parameter := pathParameter{
+		name: name, wire: styleOffset + pathWireKind(pathShapePrimitive), explode: explode, validation: validation,
+	}
+
+	candidates, err := compilePathAnyOfCandidates(parameter)
+	if err != nil {
+		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, err)
+	}
+
+	parameter.scalarType = candidates[0].scalarType
+	parameter.anyOf = candidates
+
+	return parameter, nil
 }
 
 func compilePathStyle(
@@ -204,7 +236,12 @@ func compileSchemaPathMetadata(
 
 	var err error
 
-	switch typeName := compiledValidationType(validation); typeName {
+	typeName, err := compiledValidationType(validation)
+	if err != nil {
+		return pathParameter{}, err
+	}
+
+	switch typeName {
 	case "array":
 		parameter.wire = styleOffset + pathWireKind(pathShapeArray)
 
@@ -227,10 +264,11 @@ func compileSchemaPathMetadata(
 	default:
 		parameter.wire = styleOffset + pathWireKind(pathShapePrimitive)
 
-		parameter.scalarType, err = compiledPathScalarType(validation)
-		if err != nil {
-			return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, err)
+		if typeName == "" {
+			typeName = "string"
 		}
+
+		parameter.scalarType = styleScalarType(typeName)
 	}
 
 	return parameter, nil
@@ -260,10 +298,6 @@ func compileJSONPathParameter(
 		if _, present := members[field]; present {
 			return pathParameter{}, fmt.Errorf("path parameter %q content cannot be combined with %s", name, field)
 		}
-	}
-
-	if binaryErr := rejectPathBinary(validation); binaryErr != nil {
-		return pathParameter{}, fmt.Errorf("path parameter %q: %w", name, binaryErr)
 	}
 
 	return pathParameter{name: name, wire: pathWireJSONContent, validation: validation}, nil
@@ -331,44 +365,12 @@ func pathJSONMediaType(
 	return mediaTypeName, rawMediaType, nil
 }
 
-func rejectPathBinary(validation *Validation) error {
-	if validation.StringValidation.Format == "binary" {
-		return fmt.Errorf(
-			"schema at %s format %q is unsupported for path parameters",
-			validation.SchemaPointer,
-			validation.StringValidation.Format,
-		)
-	}
-
-	if validation.ArrayValidation.Items != nil {
-		if err := rejectPathBinary(validation.ArrayValidation.Items); err != nil {
-			return err
-		}
-	}
-
-	for _, property := range validation.ObjectValidation.Properties {
-		if err := rejectPathBinary(property.Validation); err != nil {
-			return err
-		}
-	}
-
-	if validation.ObjectValidation.AdditionalPropertiesValidation != nil {
-		if err := rejectPathBinary(validation.ObjectValidation.AdditionalPropertiesValidation); err != nil {
-			return err
-		}
-	}
-
-	for _, child := range validation.AllOfValidations {
-		if err := rejectPathBinary(child); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func compiledPathScalarType(validations ...*Validation) (styleScalarType, error) {
-	typeName := compiledValidationType(validations...)
+	typeName, err := compiledValidationType(validations...)
+	if err != nil {
+		return "", err
+	}
+
 	if typeName == "" {
 		typeName = "string"
 	}
@@ -393,7 +395,11 @@ func compiledArrayScalarType(validation *Validation) (styleScalarType, error) {
 		return "string", nil
 	}
 
-	typeName := homogeneousEnumType(enumItems)
+	typeName, err := homogeneousEnumType(enumItems)
+	if err != nil {
+		return "", err
+	}
+
 	if !isScalarType(typeName) {
 		return "", fmt.Errorf("enum array items do not have one primitive type")
 	}
@@ -471,11 +477,18 @@ func compiledPathPropertyScalarType(
 ) (styleScalarType, error) {
 	types := make([]string, 0)
 	for _, validation := range validations {
-		collectCompiledValidationTypes(validation, &types)
+		if err := collectCompiledValidationTypes(validation, &types); err != nil {
+			return "", err
+		}
 	}
 
 	if len(types) == 0 && len(enumValues) != 0 {
-		types = append(types, homogeneousEnumType(enumValues))
+		typeName, err := homogeneousEnumType(enumValues)
+		if err != nil {
+			return "", err
+		}
+
+		types = append(types, typeName)
 	}
 
 	typeName := intersectQuerySchemaTypes(types)
@@ -529,41 +542,176 @@ func collectCompiledAdditionalProperties(validation *Validation, additional *[]*
 	}
 }
 
-func compiledValidationType(validations ...*Validation) string {
+func compiledValidationType(validations ...*Validation) (string, error) {
 	types := make([]string, 0)
 	for _, validation := range validations {
-		collectCompiledValidationTypes(validation, &types)
+		if err := collectCompiledValidationTypes(validation, &types); err != nil {
+			return "", err
+		}
 	}
 
-	return intersectQuerySchemaTypes(types)
+	if len(types) == 0 {
+		return "", nil
+	}
+
+	return intersectQuerySchemaTypes(types), nil
 }
 
-func collectCompiledValidationTypes(validation *Validation, types *[]string) {
+func compilePathAnyOfCandidates(parameter pathParameter) ([]pathParameter, error) {
+	if pathShape(parameter.wire%pathWireKind(pathShapeCount)) != pathShapePrimitive {
+		return nil, fmt.Errorf(
+			"schema at %s/anyOf has unsupported non-primitive parameter wire",
+			parameter.validation.SchemaPointer,
+		)
+	}
+
+	compiled, err := compilePrimitiveAnyOf(parameter.validation)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates := make([]pathParameter, 0, len(compiled))
+	for _, compiledCandidate := range compiled {
+		candidate := parameter
+		candidate.validation = compiledCandidate.validation
+		candidate.scalarType = styleScalarType(compiledCandidate.scalarType)
+		candidate.anyOf = nil
+		candidates = append(candidates, candidate)
+	}
+
+	return candidates, nil
+}
+
+type primitiveAnyOfCandidate struct {
+	validation *Validation
+	scalarType string
+}
+
+func compilePrimitiveAnyOf(validation *Validation) ([]primitiveAnyOfCandidate, error) {
+	parent := *validation
+	children := parent.AnyOfValidations
+	parent.AnyOfValidations = nil
+
+	if pointer := styleParameterAnyOfPointer(&parent); pointer != "" {
+		return nil, fmt.Errorf("schema at %s has unsupported nested anyOf", pointer)
+	}
+
+	parentTypes := make([]string, 0)
+	if err := collectCompiledValidationTypes(&parent, &parentTypes); err != nil {
+		return nil, err
+	}
+
+	candidates := make([]primitiveAnyOfCandidate, 0, len(children))
+	for _, child := range children {
+		if pointer := styleParameterAnyOfPointer(child); pointer != "" {
+			return nil, fmt.Errorf("schema at %s has unsupported nested anyOf", pointer)
+		}
+
+		types := append([]string(nil), parentTypes...)
+		if err := collectCompiledValidationTypes(child, &types); err != nil {
+			return nil, err
+		}
+
+		typeName := intersectQuerySchemaTypes(types)
+		if len(types) != 0 && typeName == "" {
+			continue
+		}
+
+		if !isScalarType(typeName) {
+			return nil, fmt.Errorf(
+				"schema at %s has unsupported anyOf parameter wire type %q; only direct primitive alternatives are supported",
+				child.SchemaPointer,
+				typeName,
+			)
+		}
+
+		branch := parent
+		branch.AllOfValidations = append(append([]*Validation(nil), parent.AllOfValidations...), child)
+		candidates = append(candidates, primitiveAnyOfCandidate{validation: &branch, scalarType: typeName})
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf(
+			"schema at %s/anyOf has no satisfiable direct primitive alternatives",
+			validation.SchemaPointer,
+		)
+	}
+
+	return candidates, nil
+}
+
+func styleParameterAnyOfPointer(validation *Validation) string {
+	if len(validation.AnyOfValidations) != 0 {
+		return validation.SchemaPointer + "/anyOf"
+	}
+
+	if validation.ArrayValidation.Items != nil {
+		if pointer := styleParameterAnyOfPointer(validation.ArrayValidation.Items); pointer != "" {
+			return pointer
+		}
+	}
+
+	for _, property := range validation.ObjectValidation.Properties {
+		if pointer := styleParameterAnyOfPointer(property.Validation); pointer != "" {
+			return pointer
+		}
+	}
+
+	if validation.ObjectValidation.AdditionalPropertiesValidation != nil {
+		if pointer := styleParameterAnyOfPointer(validation.ObjectValidation.AdditionalPropertiesValidation); pointer != "" {
+			return pointer
+		}
+	}
+
+	for _, child := range validation.AllOfValidations {
+		if pointer := styleParameterAnyOfPointer(child); pointer != "" {
+			return pointer
+		}
+	}
+
+	return ""
+}
+
+func collectCompiledValidationTypes(validation *Validation, types *[]string) error {
 	if validation.KindValidation.Type != "" {
 		*types = append(*types, validation.KindValidation.Type)
 	}
 
-	if enumType := homogeneousEnumType(validation.EnumValidation.ExactValues); enumType != "" {
+	enumType, err := homogeneousEnumType(validation.EnumValidation.ExactValues)
+	if err != nil {
+		return err
+	}
+
+	if enumType != "" {
 		*types = append(*types, enumType)
 	}
 
 	for _, child := range validation.AllOfValidations {
-		collectCompiledValidationTypes(child, types)
+		if err := collectCompiledValidationTypes(child, types); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
-func homogeneousEnumType(values []jsonvalue.Value) string {
+//nolint:cyclop // JSON kinds and integer-number unification form one finite type intersection.
+func homogeneousEnumType(values []jsonvalue.Value) (string, error) {
 	if len(values) == 0 {
-		return ""
+		return "", nil
 	}
 
-	typeName := enumValueType(values[0])
-	if typeName == "" {
-		return ""
+	typeName, err := enumValueType(values[0])
+	if err != nil || typeName == "" {
+		return "", err
 	}
 
 	for _, value := range values[1:] {
-		valueType := enumValueType(value)
+		valueType, valueErr := enumValueType(value)
+		if valueErr != nil {
+			return "", valueErr
+		}
+
 		if typeName == "integer" && valueType == "number" {
 			typeName = "number"
 
@@ -575,34 +723,39 @@ func homogeneousEnumType(values []jsonvalue.Value) string {
 		}
 
 		if valueType != typeName {
-			return ""
+			return "", nil
 		}
 	}
 
-	return typeName
+	return typeName, nil
 }
 
-func enumValueType(value jsonvalue.Value) string {
+func enumValueType(value jsonvalue.Value) (string, error) {
 	switch value.Kind {
 	case jsonvalue.KindBoolean:
-		return "boolean"
+		return "boolean", nil
 	case jsonvalue.KindNumber:
-		if value.Number.IsInteger() {
-			return "integer"
+		integer, err := value.Number.IsInteger()
+		if err != nil {
+			return "", err
 		}
 
-		return "number"
+		if integer {
+			return "integer", nil
+		}
+
+		return "number", nil
 	case jsonvalue.KindString:
-		return "string"
+		return "string", nil
 	case jsonvalue.KindArray:
-		return "array"
+		return "array", nil
 	case jsonvalue.KindObject:
-		return "object"
+		return "object", nil
 	case jsonvalue.KindNull:
-		return ""
+		return "", nil
 	}
 
-	return ""
+	return "", nil
 }
 
 // PathDecoder decodes and validates one operation's path parameters.
@@ -641,7 +794,15 @@ type PathPropertyDefinition struct {
 }
 
 // Definition returns the generation-only compiled form of decoder.
-func (decoder *PathDecoder) Definition() PathDecoderDefinition {
+func (decoder *PathDecoder) Definition() (PathDecoderDefinition, error) {
+	if decoder == nil {
+		return PathDecoderDefinition{}, errors.New("path decoder is nil")
+	}
+
+	if len(decoder.parameters) == 0 {
+		return PathDecoderDefinition{}, errors.New("path decoder has no parameters")
+	}
+
 	definition := PathDecoderDefinition{
 		OperationID: decoder.operationID, PathTemplate: decoder.pathTemplate,
 		Parameters: make([]PathParameterDefinition, len(decoder.parameters)),
@@ -660,7 +821,7 @@ func (decoder *PathDecoder) Definition() PathDecoderDefinition {
 		}
 	}
 
-	return definition
+	return definition, nil
 }
 
 // NewPathDecoderFromGenerated restores a generator-produced path decoder definition.
@@ -671,9 +832,15 @@ func NewPathDecoderFromGenerated(definition PathDecoderDefinition) (*PathDecoder
 		return nil, fmt.Errorf("generated path decoder operation ID: %w", err)
 	}
 
+	if len(definition.Parameters) == 0 {
+		return nil, errors.New("generated path decoder has no parameters")
+	}
+
 	parameters := make([]pathParameter, len(definition.Parameters))
+
+	stateValidator := newCompiledStateValidator()
 	for index, compiled := range definition.Parameters {
-		parameter, err := pathParameterFromGenerated(compiled)
+		parameter, err := pathParameterFromGenerated(compiled, &stateValidator)
 		if err != nil {
 			return nil, err
 		}
@@ -684,9 +851,16 @@ func NewPathDecoderFromGenerated(definition PathDecoderDefinition) (*PathDecoder
 	return newPathDecoder(definition.OperationID, definition.PathTemplate, parameters)
 }
 
-func pathParameterFromGenerated(compiled PathParameterDefinition) (pathParameter, error) {
+func pathParameterFromGenerated(
+	compiled PathParameterDefinition,
+	stateValidator *compiledStateValidator,
+) (pathParameter, error) {
 	if compiled.Name == "" || strings.ContainsRune(compiled.Name, '/') || compiled.Validation == nil {
 		return pathParameter{}, fmt.Errorf("generated path parameter %q is invalid", compiled.Name)
+	}
+
+	if err := stateValidator.validate(compiled.Validation); err != nil {
+		return pathParameter{}, fmt.Errorf("generated path parameter %q validation: %w", compiled.Name, err)
 	}
 
 	wire := pathWireKind(compiled.Wire)
@@ -701,10 +875,6 @@ func pathParameterFromGenerated(compiled PathParameterDefinition) (pathParameter
 		propertyByName: make(map[string]int, len(compiled.Properties)),
 	}
 	for index, property := range compiled.Properties {
-		if _, duplicate := parameter.propertyByName[property.Name]; duplicate {
-			return pathParameter{}, fmt.Errorf("generated path parameter %q has duplicate property %q", compiled.Name, property.Name)
-		}
-
 		parameter.properties[index] = pathProperty{name: property.Name, scalarType: styleScalarType(property.ScalarType)}
 		parameter.propertyByName[property.Name] = index
 	}
@@ -713,7 +883,45 @@ func pathParameterFromGenerated(compiled PathParameterDefinition) (pathParameter
 		return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
 	}
 
+	parameter, err := validateGeneratedPathParameterConsistency(parameter)
+	if err != nil {
+		return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
+	}
+
 	return parameter, nil
+}
+
+func validateGeneratedPathParameterConsistency(parameter pathParameter) (pathParameter, error) {
+	if parameter.wire == pathWireJSONContent {
+		return parameter, nil
+	}
+
+	styleOffset := parameter.wire - parameter.wire%pathWireKind(pathShapeCount)
+	expected := parameter
+	expected.wire = styleOffset
+	expected.scalarType = ""
+	expected.dynamicType = ""
+	expected.properties = nil
+	expected.propertyByName = nil
+	expected.anyOf = nil
+
+	var err error
+	if len(expected.validation.AnyOfValidations) != 0 {
+		expected, err = compileAnyOfPathParameter(expected.name, styleOffset, expected.explode, expected.validation)
+	} else {
+		expected, err = compileSchemaPathMetadata(expected.name, styleOffset, expected.explode, expected.validation)
+	}
+
+	if err != nil {
+		return pathParameter{}, err
+	}
+
+	if expected.wire != parameter.wire || expected.scalarType != parameter.scalarType ||
+		expected.dynamicType != parameter.dynamicType || !slices.Equal(expected.properties, parameter.properties) {
+		return pathParameter{}, errors.New("wire metadata is inconsistent with validation")
+	}
+
+	return expected, nil
 }
 
 //nolint:cyclop,gocognit // The finite wire/shape metadata table is clearest at one invariant boundary.
@@ -777,8 +985,17 @@ func isPathScalarType(typeName styleScalarType) bool {
 	return typeName == "string" || typeName == "boolean" || typeName == "integer" || typeName == "number"
 }
 
-//nolint:cyclop // Constructor validation, declaration ordering, and segment compilation form one fixed pipeline.
 func newPathDecoder(operationID string, pathTemplate string, parameters []pathParameter) (*PathDecoder, error) {
+	return newPathDecoderWithRegexpCompiler(operationID, pathTemplate, parameters, regexp.Compile)
+}
+
+//nolint:cyclop // Constructor validation, declaration ordering, and segment compilation form one fixed pipeline.
+func newPathDecoderWithRegexpCompiler(
+	operationID string,
+	pathTemplate string,
+	parameters []pathParameter,
+	compileRegexp func(string) (*regexp.Regexp, error),
+) (*PathDecoder, error) {
 	if _, err := oas.RequestValidationName(operationID); err != nil {
 		return nil, fmt.Errorf("path decoder operation ID: %w", err)
 	}
@@ -822,12 +1039,12 @@ func newPathDecoder(operationID string, pathTemplate string, parameters []pathPa
 
 	segments := make([]*regexp.Regexp, 0, strings.Count(pathTemplate, "/")+1)
 	for _, segment := range strings.Split(pathTemplate, "/") {
-		matcher, compileErr := compilePathSegment(segment)
+		compiled, compileErr := compilePathSegment(segment, compileRegexp)
 		if compileErr != nil {
-			return nil, compileErr
+			return nil, fmt.Errorf("compile path template %q: %w", pathTemplate, compileErr)
 		}
 
-		segments = append(segments, matcher)
+		segments = append(segments, compiled)
 	}
 
 	return &PathDecoder{
@@ -856,7 +1073,14 @@ func clonePathParameter(parameter pathParameter) pathParameter {
 	return cloned
 }
 
-func compilePathSegment(segment string) (*regexp.Regexp, error) {
+func compilePathSegment(
+	segment string,
+	compileRegexp func(string) (*regexp.Regexp, error),
+) (*regexp.Regexp, error) {
+	if compileRegexp == nil {
+		return nil, errors.New("path regexp compiler is nil")
+	}
+
 	pattern := "^"
 
 	for index := 0; index < len(segment); {
@@ -878,9 +1102,13 @@ func compilePathSegment(segment string) (*regexp.Regexp, error) {
 
 	pattern += "$"
 
-	compiled, err := regexp.Compile(pattern)
+	compiled, err := compileRegexp(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("compile path segment %q: %w", segment, err)
+		return nil, err
+	}
+
+	if compiled == nil {
+		return nil, errors.New("path regexp compiler returned nil")
 	}
 
 	return compiled, nil

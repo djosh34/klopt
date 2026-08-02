@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/djosh34/klopt/pkg/validation"
 
 	"github.com/stretchr/testify/require"
@@ -77,6 +78,50 @@ func TestParseOpenAPI(t *testing.T) {
 									},
 								}},
 							},
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				},
+			},
+		},
+		"anyOfBodyAndParameters": {
+			expectedValidation: &validation.Validation{
+				SchemaPointer:  "#/paths/~1any-of~1{id}/post/requestBody/content/application~1json/schema",
+				BodyRequired:   true,
+				KindValidation: validation.KindValidation{Type: "string"},
+				ObjectValidation: validation.ObjectValidation{
+					AdditionalPropertiesAllowed: true,
+				},
+				AllOfValidations: []*validation.Validation{
+					{
+						SchemaPointer: "#/paths/~1any-of~1{id}/post/requestBody/content/application~1json/schema/allOf/0",
+						StringValidation: validation.StringValidation{
+							Pattern:         "^[^x]+$",
+							CompiledPattern: patternvalidator.MustParse("^[^x]+$"),
+						},
+						ObjectValidation: validation.ObjectValidation{
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+				},
+				AnyOfValidations: []*validation.Validation{
+					{
+						SchemaPointer: "#/paths/~1any-of~1{id}/post/requestBody/content/application~1json/schema/anyOf/0",
+						StringValidation: validation.StringValidation{
+							Pattern:         "^a",
+							CompiledPattern: patternvalidator.MustParse("^a"),
+						},
+						ObjectValidation: validation.ObjectValidation{
+							AdditionalPropertiesAllowed: true,
+						},
+					},
+					{
+						SchemaPointer: "#/paths/~1any-of~1{id}/post/requestBody/content/application~1json/schema/anyOf/1",
+						StringValidation: validation.StringValidation{
+							Pattern:         "z$",
+							CompiledPattern: patternvalidator.MustParse("z$"),
+						},
+						ObjectValidation: validation.ObjectValidation{
 							AdditionalPropertiesAllowed: true,
 						},
 					},

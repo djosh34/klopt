@@ -1,4 +1,4 @@
-//nolint:godoclint // Test and fuzz names already state their contracts.
+//nolint:godoclint // Test names already state their contracts.
 package patternsyntax
 
 import (
@@ -163,15 +163,76 @@ func TestParseEnforcesEveryLimitBoundary(t *testing.T) {
 	}
 }
 
-func FuzzParseNeverPanics(fuzz *testing.F) {
-	for _, source := range []string{"", "a", "[", `\`, "^(?=a)a", "é", string([]byte{0xff})} {
-		fuzz.Add(source)
-	}
+func TestParseNamedRobustnessSources(t *testing.T) {
+	t.Parallel()
 
-	fuzz.Fuzz(func(t *testing.T, source string) {
-		tree, err := Parse(source)
-		if err == nil {
-			require.NotNil(t, tree)
-		}
-	})
+	for _, test := range []struct {
+		name   string
+		source string
+	}{
+		{name: "empty", source: ""},
+		{name: "literal", source: "a"},
+		{name: "open class", source: "["},
+		{name: "trailing slash", source: `\`},
+		{name: "lookahead", source: "^(?=a)a"},
+		{name: "non-ASCII", source: "é"},
+		{name: "invalid UTF-8", source: string([]byte{0xff})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tree, err := Parse(test.source)
+			if err == nil {
+				require.NotNil(t, tree)
+			}
+		})
+	}
+}
+
+func TestParseCoversAcceptedEscapeAndRepeatForms(t *testing.T) {
+	t.Parallel()
+
+	for _, pattern := range []string{
+		`[\D\S\w\W\f\n\r\t\v\0\x41\u0042\cA\ca\é\-]`,
+		`(a{2,}){2}`,
+		`\xAF`,
+	} {
+		tree, err := Parse(pattern)
+		require.NoError(t, err, pattern)
+		require.NotNil(t, tree)
+	}
+}
+
+func TestParseRejectsEveryMalformedGrammarForm(t *testing.T) {
+	t.Parallel()
+
+	for _, pattern := range []string{
+		"*", "+", "?", "{", "}", "(?", "(?#a)", "(?()",
+		`\c`, `\c1`, `\k`, `\A`,
+		`[a--b]`, `[a-\`, `[\01]`, `[\x]`, `[\u]`, `[\u{41}]`, `[\u12]`,
+		`[\c`, `[\c]`, `[\c1]`, `[\p]`, `[\A]`, `[\a]`, `[\ud800]`,
+		`\999999999999999999999999(a)`,
+		"a{", "a{,}", "a{2,x}", "a{2,1}", "a{2", "a**", "a*?*", "a{999999999999999999999999}",
+		"(?=a)",
+	} {
+		_, err := Parse(pattern)
+		require.Error(t, err, pattern)
+	}
+}
+
+func TestPatternSyntaxErrorsAndByteHelpers(t *testing.T) {
+	t.Parallel()
+
+	ordinary := &Error{Kind: ErrorInvalidSyntax, Offset: 2, Message: "bad"}
+	require.Contains(t, ordinary.Error(), "byte 2")
+
+	complexity := &Error{Kind: ErrorTooComplex, Offset: 1, Limit: "nodes", Maximum: 2, Observed: 3}
+	require.Contains(t, complexity.Error(), "maximum 2")
+
+	require.Equal(t, 1, firstInvalidUTF8("a"+string([]byte{0xff})))
+	require.Zero(t, firstInvalidUTF8("é"))
+
+	value, ok := hexValue('F')
+	require.True(t, ok)
+	require.Equal(t, byte(15), value)
 }

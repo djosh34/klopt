@@ -18,6 +18,8 @@ import (
 )
 
 // Parse compiles every request validation in one OpenAPI document.
+//
+//nolint:cyclop // Request body, query, path, and final graph checks are explicit construction stages.
 func Parse(
 	spec []byte,
 	patternOptions ...patternvalidator.Option,
@@ -28,7 +30,7 @@ func Parse(
 		patternOptions: patternOptions,
 	}
 
-	sources, err := oas.ParseWithParameterValidation(
+	sources, document, err := oas.ParseWithParameterValidation(
 		spec,
 		func(source oas.Source, parameter oas.LocatedSchema) error {
 			rawCompiler.source = source
@@ -79,10 +81,44 @@ func Parse(
 			requestValidation.Path = decoder
 		}
 
+		if err := validateRequestCompiledState(requestValidation); err != nil {
+			return nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
+		}
+
 		requestValidations[operationID] = requestValidation
 	}
 
+	if err := rejectAuthoredUniqueItems(document); err != nil {
+		return nil, err
+	}
+
 	return requestValidations, nil
+}
+
+// validateRequestCompiledState checks every graph root once at the Parse boundary.
+func validateRequestCompiledState(request RequestValidation) error {
+	roots := make([]*Validation, 0, 1)
+	if request.Body != nil {
+		roots = append(roots, request.Body)
+	}
+
+	if request.Query != nil {
+		for _, parameter := range request.Query.parameters {
+			roots = append(roots, parameter.validation)
+		}
+	}
+
+	if request.Path != nil {
+		for _, parameter := range request.Path.parameters {
+			roots = append(roots, parameter.validation)
+		}
+	}
+
+	if len(roots) == 0 {
+		return nil
+	}
+
+	return validateCompiledState(&Validation{AllOfValidations: roots})
 }
 
 // validateRawParameter compiles one declaration before acquisition can override or ignore it.
@@ -237,22 +273,38 @@ type schemaCompiler struct {
 
 // PatternOptions composes pattern options for APIs that accept exactly one option.
 func PatternOptions(options ...patternvalidator.Option) patternvalidator.Option {
-	for _, option := range options {
-		if option == nil {
-			panic("nil pattern option")
-		}
-	}
-
-	return func(validation *patternvalidator.PatternValidation) {
+	return func(validation *patternvalidator.PatternValidation) error {
 		for _, option := range options {
-			option(validation)
+			if option == nil {
+				return errors.New("nil pattern option")
+			}
+
+			if err := option(validation); err != nil {
+				return err
+			}
 		}
+
+		return nil
 	}
 }
 
 // compile resolves and compiles one reachable schema occurrence.
 func (compiler *schemaCompiler) compile(occurrence oas.LocatedSchema) (*Validation, error) {
-	resolved, err := compiler.source.Resolve(occurrence)
+	var inspectErr error
+
+	resolved, err := compiler.source.ResolveAndInspect(
+		occurrence,
+		func(authored oas.LocatedSchema) error {
+			inspectErr = rejectAuthoredSchemaUniqueItems(authored)
+
+			return inspectErr
+		},
+	)
+
+	if inspectErr != nil {
+		return nil, inspectErr
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("resolve schema at %s: %w", occurrence.Pointer, err)
 	}
@@ -304,7 +356,7 @@ func schemaMembers(schema oas.LocatedSchema) (map[string]json.RawMessage, error)
 
 // rejectUnsupportedKeywords rejects behavior outside the runtime validator contract.
 func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessage) error {
-	for _, keyword := range []string{"oneOf", "anyOf", "not"} {
+	for _, keyword := range []string{"oneOf", "not"} {
 		if _, ok := members[keyword]; ok {
 			return fmt.Errorf("compile schema at %s/%s: unsupported keyword", pointer, keyword)
 		}
@@ -314,9 +366,9 @@ func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessag
 		"$ref": {}, "type": {}, "nullable": {}, "enum": {},
 		"minimum": {}, "maximum": {}, "exclusiveMinimum": {}, "exclusiveMaximum": {}, "multipleOf": {},
 		"minLength": {}, "maxLength": {}, "pattern": {}, "format": {},
-		"minItems": {}, "maxItems": {}, "items": {}, "uniqueItems": {},
+		"minItems": {}, "maxItems": {}, "items": {},
 		"minProperties": {}, "maxProperties": {}, "required": {}, "properties": {}, "additionalProperties": {},
-		"allOf": {}, "title": {}, "description": {}, "default": {}, "example": {}, "deprecated": {},
+		"allOf": {}, "anyOf": {}, "title": {}, "description": {}, "default": {}, "example": {}, "deprecated": {},
 		"readOnly": {}, "writeOnly": {}, "discriminator": {}, "xml": {}, "externalDocs": {},
 	}
 
@@ -369,7 +421,11 @@ func (compiler *schemaCompiler) compileKeywords(
 		return err
 	}
 
-	return compiler.compileAllOf(validation, schema, members)
+	if err := compiler.compileAllOf(validation, schema, members); err != nil {
+		return err
+	}
+
+	return compiler.compileAnyOf(validation, schema, members)
 }
 
 // compileDocumentation validates documentation-only field shapes.
@@ -467,22 +523,38 @@ func validateDiscriminator(pointer string, members map[string]json.RawMessage) e
 
 // validateDefault enforces OpenAPI's same-Schema-Object type rule for defaults.
 func validateDefault(raw json.RawMessage, kind KindValidation) error {
-	if kind.Type == "" {
-		return nil
-	}
-
 	value, err := jsonvalue.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("must be a valid value: %w", err)
+	}
+
+	if kind.Type == "" {
+		return nil
 	}
 
 	if value.Kind == jsonvalue.KindNull && kind.Nullable {
 		return nil
 	}
 
+	return validateParsedDefault(value, kind)
+}
+
+// validateParsedDefault checks one already-parsed default against its declared kind.
+func validateParsedDefault(value jsonvalue.Value, kind KindValidation) error {
+	integer := false
+
+	if value.Kind == jsonvalue.KindNumber {
+		var err error
+
+		integer, err = value.Number.IsInteger()
+		if err != nil {
+			return fmt.Errorf("invalid default number: %w", err)
+		}
+	}
+
 	matches := map[string]bool{
 		"boolean": value.Kind == jsonvalue.KindBoolean,
-		"integer": value.Kind == jsonvalue.KindNumber && value.Number.IsInteger(),
+		"integer": integer,
 		"number":  value.Kind == jsonvalue.KindNumber,
 		"string":  value.Kind == jsonvalue.KindString,
 		"array":   value.Kind == jsonvalue.KindArray,
@@ -543,27 +615,31 @@ func validateExternalDocs(raw json.RawMessage) error {
 		return err
 	}
 
-	urlRaw, ok := object["url"]
+	_, ok := object["url"]
 	if !ok {
 		return errors.New("url is required")
 	}
 
-	for name, value := range object {
+	documentationURL := ""
+
+	for _, name := range slices.Sorted(maps.Keys(object)) {
+		value := object[name]
+
 		switch name {
 		case "description", "url":
-			if _, decodeErr := decodeString(value, name); decodeErr != nil {
+			decoded, decodeErr := decodeString(value, name)
+			if decodeErr != nil {
 				return decodeErr
+			}
+
+			if name == "url" {
+				documentationURL = decoded
 			}
 		default:
 			if !strings.HasPrefix(name, "x-") {
 				return fmt.Errorf("unsupported field %q", name)
 			}
 		}
-	}
-
-	documentationURL, err := decodeString(urlRaw, "url")
-	if err != nil {
-		return err
 	}
 
 	if documentationURL == "" {
@@ -646,7 +722,8 @@ func compileEnum(validation *Validation, pointer string, members map[string]json
 
 // compileNumber compiles exact numeric constraints.
 //
-//nolint:cyclop // OpenAPI numeric keywords are independent and intentionally compiled together.
+
+// compileNumber compiles exact numeric bounds and formats into validation state.
 func compileNumber(validation *Validation, pointer string, members map[string]json.RawMessage) error {
 	minimum, err := decodeOptionalNumber(members, "minimum")
 	if err != nil {
@@ -686,12 +763,7 @@ func compileNumber(validation *Validation, pointer string, members map[string]js
 			return keywordError(pointer, "multipleOf", err)
 		}
 
-		zero, zeroErr := jsonvalue.ParseNumber("0")
-		if zeroErr != nil {
-			return keywordError(pointer, "multipleOf", zeroErr)
-		}
-
-		if multiple.Compare(zero) <= 0 {
+		if err := validatePositiveNumber(multiple); err != nil {
 			return keywordError(pointer, "multipleOf", errors.New("must be greater than zero"))
 		}
 
@@ -783,18 +855,25 @@ func compileFormat(
 			return invalidFormatPair(pointer, typeName, format)
 		}
 
-		compiled, compileErr := compileStringFormat(format)
-		if compileErr != nil {
-			return keywordError(pointer, "format", compileErr)
-		}
-
-		validation.StringValidation.Format = format
-		validation.StringValidation.CompiledFormat = compiled
+		return compileValidationStringFormat(validation, pointer, format)
 	default:
 		return keywordError(pointer, "format", fmt.Errorf(
 			"format %q is legal OpenAPI but unsupported by this tool", format,
 		))
 	}
+
+	return nil
+}
+
+// compileValidationStringFormat compiles one admitted string format into validation state.
+func compileValidationStringFormat(validation *Validation, pointer string, format string) error {
+	compiled, err := compileStringFormat(format)
+	if err != nil {
+		return keywordError(pointer, "format", err)
+	}
+
+	validation.StringValidation.Format = format
+	validation.StringValidation.CompiledFormat = compiled
 
 	return nil
 }
@@ -807,29 +886,26 @@ func invalidFormatPair(pointer string, typeName string, format string) error {
 }
 
 // compileStringFormat builds one already allowlisted native string format.
-func compileStringFormat(format string) (*stringlanguage.Set, error) {
+func compileStringFormat(format string) (*stringlanguage.Language, error) {
 	language, err := stringlanguage.Format(format)
 	if err != nil {
 		return nil, err
 	}
 
-	return stringlanguage.Compile([]stringlanguage.Requirement{{
-		Language:  language,
-		WantMatch: true,
-	}}, stringlanguage.Length{})
+	return &language, nil
 }
 
 // MustCompileStringFormat rebuilds one format already checked by Parse for generated validators.
-func MustCompileStringFormat(format string) *stringlanguage.Set {
+func MustCompileStringFormat(format string) *stringlanguage.Language {
 	compiled, err := compileStringFormat(format)
 	if err != nil {
-		panic(fmt.Sprintf("compile prevalidated string format %q: %v", format, err))
+		panic(err)
 	}
 
 	return compiled
 }
 
-// compileArray compiles array bounds, uniqueness, and item recursion.
+// compileArray compiles array bounds and item recursion.
 func (compiler *schemaCompiler) compileArray(
 	validation *Validation,
 	schema oas.LocatedSchema,
@@ -854,15 +930,6 @@ func (compiler *schemaCompiler) compileArray(
 		}
 	}
 
-	if raw, ok := members["uniqueItems"]; ok {
-		unique, err := decodeBoolean(raw, "uniqueItems")
-		if err != nil {
-			return keywordError(schema.Pointer, "uniqueItems", err)
-		}
-
-		validation.ArrayValidation.UniqueItems = unique
-	}
-
 	if _, ok := members["items"]; ok {
 		child, err := compiler.source.Child(schema, "items")
 		if err != nil {
@@ -880,7 +947,8 @@ func (compiler *schemaCompiler) compileArray(
 
 // compileObject compiles object bounds, names, and child schemas.
 //
-//nolint:cyclop // Object keywords require distinct malformed-input diagnostics.
+
+// compileObject compiles object bounds, properties, and additional-property behavior.
 func (compiler *schemaCompiler) compileObject(
 	validation *Validation,
 	schema oas.LocatedSchema,
@@ -914,12 +982,7 @@ func (compiler *schemaCompiler) compileObject(
 	if raw, ok := members["additionalProperties"]; ok {
 		trimmed := bytes.TrimSpace(raw)
 		if bytes.Equal(trimmed, []byte("true")) || bytes.Equal(trimmed, []byte("false")) {
-			allowed, err := decodeBoolean(raw, "additionalProperties")
-			if err != nil {
-				return keywordError(schema.Pointer, "additionalProperties", err)
-			}
-
-			validation.ObjectValidation.AdditionalPropertiesAllowed = allowed
+			validation.ObjectValidation.AdditionalPropertiesAllowed = bytes.Equal(trimmed, []byte("true"))
 		} else {
 			child, err := compiler.source.Child(schema, "additionalProperties")
 			if err != nil {
@@ -1024,32 +1087,56 @@ func (compiler *schemaCompiler) compileAllOf(
 	schema oas.LocatedSchema,
 	members map[string]json.RawMessage,
 ) error {
-	raw, ok := members["allOf"]
+	children, err := compiler.compileSchemaArray(schema, members, "allOf")
+	validation.AllOfValidations = children
+
+	return err
+}
+
+// compileAnyOf preserves alternative source order without flattening.
+func (compiler *schemaCompiler) compileAnyOf(
+	validation *Validation,
+	schema oas.LocatedSchema,
+	members map[string]json.RawMessage,
+) error {
+	children, err := compiler.compileSchemaArray(schema, members, "anyOf")
+	validation.AnyOfValidations = children
+
+	return err
+}
+
+// compileSchemaArray compiles one non-empty array of Schema Objects in source order.
+func (compiler *schemaCompiler) compileSchemaArray(
+	schema oas.LocatedSchema,
+	members map[string]json.RawMessage,
+	keyword string,
+) ([]*Validation, error) {
+	raw, ok := members[keyword]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
-	var children []json.RawMessage
-	if err := json.Unmarshal(raw, &children); err != nil || len(children) == 0 {
-		return keywordError(schema.Pointer, "allOf", errors.New("must be a non-empty array"))
+	var rawChildren []json.RawMessage
+	if err := json.Unmarshal(raw, &rawChildren); err != nil || len(rawChildren) == 0 {
+		return nil, keywordError(schema.Pointer, keyword, errors.New("must be a non-empty array"))
 	}
 
-	validation.AllOfValidations = make([]*Validation, 0, len(children))
-	for index := range children {
-		child, err := compiler.source.Child(schema, "allOf", fmt.Sprintf("%d", index))
+	children := make([]*Validation, 0, len(rawChildren))
+	for index := range rawChildren {
+		child, err := compiler.source.Child(schema, keyword, fmt.Sprintf("%d", index))
 		if err != nil {
-			return keywordError(schema.Pointer, "allOf", err)
+			return nil, keywordError(schema.Pointer, keyword, err)
 		}
 
 		parsed, err := compiler.compile(child)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		validation.AllOfValidations = append(validation.AllOfValidations, parsed)
+		children = append(children, parsed)
 	}
 
-	return nil
+	return children, nil
 }
 
 // decodeOptionalNumber decodes an absent-or-exact-number keyword.
@@ -1130,16 +1217,11 @@ func decodeOptionalNonNegativeInteger(members map[string]json.RawMessage, keywor
 	}
 
 	value, err := decodeNumber(raw, keyword)
-	if err != nil || !value.IsInteger() {
+	if err != nil {
 		return nil, fmt.Errorf("%s must be a non-negative integer", keyword)
 	}
 
-	zero, err := jsonvalue.ParseNumber("0")
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", keyword, err)
-	}
-
-	if value.Compare(zero) < 0 {
+	if err := validateNonNegativeInteger(value); err != nil {
 		return nil, fmt.Errorf("%s must be a non-negative integer", keyword)
 	}
 

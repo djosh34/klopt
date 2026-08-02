@@ -1,9 +1,8 @@
 // Package validation compiles OpenAPI 3.0.x request validations.
 //
-// Parse is the OpenAPI constructor. Callers may also construct a compiled graph
-// directly by populating every exported textual and exact field consistently.
-// Invalid field combinations, mutation after construction, and mutation
-// concurrent with Validate have undefined behavior.
+// Parse is the OpenAPI constructor. Generated validation graphs are checked when
+// their query and path decoders are restored. Compiled graphs are immutable while
+// requests are being validated; concurrent mutation has undefined behavior.
 package validation
 
 import (
@@ -34,6 +33,7 @@ type Validation struct {
 	ObjectValidation ObjectValidation
 
 	AllOfValidations []*Validation
+	AnyOfValidations []*Validation
 }
 
 // KindValidation constrains the JSON kind. An empty Type accepts every kind.
@@ -57,6 +57,8 @@ type NumberBound struct {
 
 	// ExactValue is the compiled numeric form of Value used by Validate.
 	ExactValue jsonvalue.Number
+
+	compiledValue *jsonvalue.CompiledNumber
 }
 
 // NumberValidation holds exact numeric constraints.
@@ -68,6 +70,8 @@ type NumberValidation struct {
 
 	// ExactMultipleOf is the compiled numeric form of MultipleOf used by Validate.
 	ExactMultipleOf *jsonvalue.Number
+
+	compiledMultipleOf *jsonvalue.CompiledNumber
 }
 
 // CountBound is one exact non-negative integer bound for a collection or string length.
@@ -88,15 +92,14 @@ type StringValidation struct {
 	// CompiledPattern is the compiled form of Pattern used by Validate.
 	CompiledPattern *patternvalidator.PatternValidation
 	// CompiledFormat is the compiled form of Format used by Validate.
-	CompiledFormat *stringlanguage.Set
+	CompiledFormat *stringlanguage.Language
 }
 
 // ArrayValidation holds array-specific constraints.
 type ArrayValidation struct {
-	MinItems    *CountBound
-	MaxItems    *CountBound
-	Items       *Validation
-	UniqueItems bool
+	MinItems *CountBound
+	MaxItems *CountBound
+	Items    *Validation
 }
 
 // PropertyValidation pairs one lexical object property name with its schema.

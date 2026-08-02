@@ -3,11 +3,7 @@ package oas
 import (
 	"errors"
 	"fmt"
-	"regexp"
 )
-
-// operationIDPattern is the exact supported operation-ID grammar.
-var operationIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*(?:[_/-][A-Za-z0-9]+)*$`)
 
 // requestValidationConflicts contains every generated compilation conflict.
 var requestValidationConflicts = map[string]struct{}{
@@ -15,9 +11,9 @@ var requestValidationConflicts = map[string]struct{}{
 	"else": {}, "fallthrough": {}, "for": {}, "func": {}, "go": {}, "goto": {}, "if": {}, "import": {},
 	"interface": {}, "map": {}, "package": {}, "range": {}, "return": {}, "select": {}, "struct": {},
 	"switch": {}, "type": {}, "var": {}, "init": {}, "RequestValidations": {}, "mustQueryDecoder": {},
-	"mustPathDecoder": {}, "openAPI": {}, "TestValidations": {}, "json": {}, "jsonvalue": {},
+	"mustPathDecoder": {}, "generatedValidations": {}, "json": {}, "jsonvalue": {},
 	"patternvalidator": {}, "validation": {}, "string": {}, "error": {}, "byte": {}, "int": {}, "nil": {},
-	"true": {}, "panic": {},
+	"true": {}, "panic": {}, "make": {}, "new": {},
 }
 
 // ErrInvalidOperationID reports an operation ID outside the supported grammar.
@@ -25,7 +21,7 @@ var ErrInvalidOperationID = errors.New("invalid operation ID")
 
 // RequestValidationName converts an exact operation ID to its generated backing identifier.
 func RequestValidationName(operationID string) (string, error) {
-	if !operationIDPattern.MatchString(operationID) {
+	if !validOperationID(operationID) {
 		return "", fmt.Errorf("%w: %q", ErrInvalidOperationID, operationID)
 	}
 
@@ -50,4 +46,37 @@ func RequestValidationName(operationID string) (string, error) {
 	}
 
 	return name, nil
+}
+
+// validOperationID reports whether operationID has the supported generated-name grammar.
+func validOperationID(operationID string) bool {
+	if operationID == "" || !isASCIILetter(operationID[0]) {
+		return false
+	}
+
+	for index := 1; index < len(operationID); index++ {
+		character := operationID[index]
+		if isASCIIAlphaNumeric(character) {
+			continue
+		}
+
+		if (character == '_' || character == '/' || character == '-') &&
+			index+1 < len(operationID) && isASCIIAlphaNumeric(operationID[index+1]) {
+			continue
+		}
+
+		return false
+	}
+
+	return true
+}
+
+// isASCIILetter reports whether character is an ASCII letter.
+func isASCIILetter(character byte) bool {
+	return character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z'
+}
+
+// isASCIIAlphaNumeric reports whether character is an ASCII letter or digit.
+func isASCIIAlphaNumeric(character byte) bool {
+	return isASCIILetter(character) || character >= '0' && character <= '9'
 }

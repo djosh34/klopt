@@ -3,22 +3,25 @@ package stringlanguage
 
 import "strings"
 
-const maximumEmailIntermediateStates = maximumProductStates
-
 func emailLanguage() (Language, error) {
 	machine, err := formatDFA(emailPattern())
+
+	return finishEmailLanguage(machine, err)
+}
+
+func finishEmailLanguage(machine *dfa, err error) (Language, error) {
 	if err != nil {
 		return Language{}, err
 	}
 
-	machine = minimizeDFA(machine)
-
-	limited, err := limitEmailPartLengths(machine)
-	if err != nil {
-		return Language{}, &CompileError{Operation: "compile format", Err: err}
+	for _, step := range []func(*dfa) (*dfa, error){minimizeDFA, limitEmailPartLengths, minimizeDFA} {
+		machine, err = step(machine)
+		if err != nil {
+			return Language{}, err
+		}
 	}
 
-	return Language{dfa: *minimizeDFA(limited)}, nil
+	return Language{dfa: *machine}, nil
 }
 
 func emailPattern() string {
@@ -124,113 +127,62 @@ type emailLengthState struct {
 	over    bool
 }
 
-type dfaClassSignature struct {
-	accepting   bool
-	transitions [asciiAlphabetSize]uint32
-}
-
-func minimizeDFA(machine *dfa) *dfa {
-	classes := make([]uint32, len(machine.states))
-	for index := range machine.states {
-		if machine.states[index].accepting {
-			classes[index] = 1
-		}
-	}
-
-	for {
-		ids := make(map[dfaClassSignature]uint32)
-		nextClasses := make([]uint32, len(machine.states))
-
-		for index, state := range machine.states {
-			signature := dfaClassSignature{accepting: state.accepting}
-			for value, target := range state.transitions {
-				signature.transitions[value] = classes[target]
-			}
-
-			class, ok := ids[signature]
-			if !ok {
-				class = uint32(len(ids))
-				ids[signature] = class
-			}
-
-			nextClasses[index] = class
-		}
-
-		if equalDFAClasses(classes, nextClasses) {
-			return rebuildDFAClasses(machine, classes)
-		}
-
-		classes = nextClasses
-	}
-}
-
-func equalDFAClasses(left []uint32, right []uint32) bool {
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-
-	return true
-}
-
-func rebuildDFAClasses(machine *dfa, classes []uint32) *dfa {
-	classCount := uint32(0)
-	for _, class := range classes {
-		classCount = max(classCount, class+1)
-	}
-
-	result := &dfa{states: make([]dfaState, classCount)}
-	initialized := make([]bool, classCount)
-
-	for index, class := range classes {
-		if initialized[class] {
-			continue
-		}
-
-		initialized[class] = true
-
-		result.states[class].accepting = machine.states[index].accepting
-		for value, target := range machine.states[index].transitions {
-			result.states[class].transitions[value] = classes[target]
-		}
-	}
-
-	return result
-}
-
+//nolint:cyclop // Length tracking and checked DFA construction form one bounded pass.
 func limitEmailPartLengths(machine *dfa) (*dfa, error) {
 	initial := emailLengthState{}
 	states := []emailLengthState{initial}
 	ids := map[emailLengthState]uint32{initial: 0}
-	result := &dfa{}
+	result := &dfa{utf16: machine.utf16}
+
+	asciiClasses := make(runeSet, 0, 128)
+	for value := rune(0); value < 128; value++ {
+		asciiClasses = append(asciiClasses, runeRange{first: value, last: value})
+	}
 
 	for current := 0; current < len(states); current++ {
 		tracked := states[current]
 
 		state := dfaState{accepting: machine.states[tracked.machine].accepting && !tracked.over}
-		for value := range asciiAlphabetSize {
-			next := advanceEmailLength(tracked, byte(value))
 
-			next.machine = machine.states[tracked.machine].transitions[value]
+		machineRanges := make(runeSet, 0, len(machine.states[tracked.machine].edges))
+
+		scalarEdges, err := machine.scalarEdges(tracked.machine)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, edge := range scalarEdges {
+			machineRanges = append(machineRanges, runeRange{first: edge.first, last: edge.last})
+		}
+
+		alphabet := partitionRuneSets(scalarUniverse, machineRanges, asciiClasses)
+		for _, characterClass := range alphabet {
+			next := tracked
+			if characterClass.first < 128 {
+				next = advanceEmailLength(tracked, byte(characterClass.first))
+			} else {
+				next.over = true
+			}
+
+			next.machine, err = machine.advance(tracked.machine, characterClass.first)
+			if err != nil {
+				return nil, err
+			}
+
 			if deadDFAState(machine, next.machine) {
 				next = emailLengthState{machine: next.machine, over: true}
 			}
 
 			nextID, ok := ids[next]
 			if !ok {
-				if len(states) >= maximumEmailIntermediateStates {
-					return nil, limitError(
-						"DFA construction", "DFA states", maximumEmailIntermediateStates, uint64(len(states)+1),
-					)
-				}
-
 				nextID = uint32(len(states))
 				ids[next] = nextID
 				states = append(states, next)
 			}
 
-			state.transitions[value] = nextID
+			appendDFAEdge(&state.edges, dfaEdge{
+				first: characterClass.first, last: characterClass.last, target: nextID,
+			})
 		}
 
 		result.states = append(result.states, state)
@@ -244,8 +196,8 @@ func deadDFAState(machine *dfa, state uint32) bool {
 		return false
 	}
 
-	for _, target := range machine.states[state].transitions {
-		if target != state {
+	for _, edge := range machine.states[state].edges {
+		if edge.target != state {
 			return false
 		}
 	}

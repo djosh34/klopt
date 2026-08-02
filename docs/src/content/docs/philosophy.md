@@ -71,14 +71,14 @@ Fully generated validation code is difficult to make bug-free and difficult to t
 
 ## A deliberate subset
 
-OpenAPI 3.0.3 is large. This library rejects unsupported behavior during parsing instead of guessing. Current examples include `oneOf`, `anyOf`, `not`, and reference cycles.
+OpenAPI 3.0.3 is large. This library rejects unsupported behavior during parsing instead of guessing. Current examples include `oneOf`, `not`, and reference cycles.
 
 This is intentional. Clear rejection is safer than accepting a document with partial semantics. The supported model can grow as its behavior becomes testable.
 
-## Generative testing
+## Deterministic testing
 
-Validation receives extensive [Rapid](https://pkg.go.dev/pgregory.net/rapid) property testing. The tests generate supported OpenAPI schemas, mutate copies into invalid schemas, and generate valid and invalid JSON around individual constraints.
+Validation behavior is specified with ordinary table-driven Go tests. Named matrices cover supported schema rules, malformed input, decoder repeatability, generated/runtime parity, and hand-maintained request-body examples without generated tests, property-test dependencies, or fuzz targets.
 
-Generating JSON that has a known relationship to a complex schema is hard. That part is not perfect and remains active work. The architecture is designed to make every improvement test the same runtime validator used by applications.
+Every production package is checked for complete Go statement coverage. The checker permits only one exact, drift-detected `encodeString` error return that cannot execute after its valid-UTF-8 precondition; it rejects every other uncovered production statement.
 
-OpenAPI details in this documentation follow the [OpenAPI 3.0.3 Schema Object](https://spec.openapis.org/oas/v3.0.3.html#schema-object).
+OpenAPI details in this documentation follow the [OpenAPI 3.0.4 Schema Object](https://spec.openapis.org/oas/v3.0.4.html#schema-object).

@@ -1,8 +1,10 @@
+//nolint:dupl,godoclint // Query and path malformed-definition matrices intentionally mirror the public seams.
 package validation_test
 
 import (
 	"encoding/json"
-	"strings"
+	"errors"
+	"net/url"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/jsonvalue"
@@ -11,6 +13,24 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func queryDefinitionForTest(t *testing.T, decoder *validation.QueryDecoder) validation.QueryDecoderDefinition {
+	t.Helper()
+
+	definition, err := decoder.Definition()
+	require.NoError(t, err)
+
+	return definition
+}
+
+func pathDefinitionForTest(t *testing.T, decoder *validation.PathDecoder) validation.PathDecoderDefinition {
+	t.Helper()
+
+	definition, err := decoder.Definition()
+	require.NoError(t, err)
+
+	return definition
+}
 
 // TestPublicCompiledFieldsSupportDirectConstruction verifies the external construction API.
 func TestPublicCompiledFieldsSupportDirectConstruction(t *testing.T) {
@@ -88,7 +108,7 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 	)
 
 	unsealed := new(patternvalidator.PatternValidation)
-	composite(unsealed)
+	require.NoError(t, composite(unsealed))
 	require.True(t, unsealed.RejectsNonASCII())
 	require.True(t, unsealed.UsesRE2())
 
@@ -110,16 +130,429 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 	compiled := parsed["request"].Body.StringValidation.CompiledPattern
 	require.True(t, compiled.RejectsNonASCII())
 	require.True(t, compiled.UsesRE2())
-	require.Panics(t, func() { composite(compiled) })
+	require.Error(t, composite(compiled))
 	require.True(t, compiled.RejectsNonASCII())
 	require.True(t, compiled.UsesRE2())
 
-	require.Panics(t, func() { validation.PatternOptions(nil) })
+	nilComposite := validation.PatternOptions(nil)
+	require.Error(t, nilComposite(new(patternvalidator.PatternValidation)))
+
+	customErr := errors.New("custom option failed")
+	failing := validation.PatternOptions(func(*patternvalidator.PatternValidation) error { return customErr })
+	require.ErrorIs(t, failing(new(patternvalidator.PatternValidation)), customErr)
+	_, err = validation.Parse(spec, failing)
+	require.ErrorIs(t, err, customErr)
 
 	_, err = validation.Parse(spec, nil)
-	require.EqualError(t, err, strings.Join([]string{
-		"compile operationId \"request\": compile schema at ",
-		"#/paths/~1request/post/requestBody/content/application~1json/schema/pattern: ",
-		"patternvalidator: nil option",
-	}, ""))
+	require.Error(t, err)
+}
+
+func TestValidationAllowsEmptyCompiledPropertyNames(t *testing.T) {
+	t.Parallel()
+
+	compiled := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "object"},
+		ObjectValidation: validation.ObjectValidation{Properties: []validation.PropertyValidation{
+			{Name: "", Validation: &validation.Validation{KindValidation: validation.KindValidation{Type: "string"}}},
+			{Name: "a", Validation: &validation.Validation{KindValidation: validation.KindValidation{Type: "string"}}},
+		}},
+	}
+
+	decoder, err := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+		OperationID: "emptyPropertyName",
+		Parameters: []validation.QueryParameterDefinition{{
+			Name: "q", Wire: 7, Validation: compiled,
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, decoder)
+	require.Empty(t, compiled.Validate(json.RawMessage(`{"":"value","a":"value"}`)))
+}
+
+func TestValidationRejectsUnsortedOrDuplicateCompiledPropertyNames(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name          string
+		properties    []validation.PropertyValidation
+		errorContains string
+	}{
+		{name: "unsorted", properties: []validation.PropertyValidation{
+			{Name: "z", Validation: new(validation.Validation)},
+			{Name: "a", Validation: new(validation.Validation)},
+		}, errorContains: "not strictly increasing"},
+		{name: "duplicate", properties: []validation.PropertyValidation{
+			{Name: "a", Validation: new(validation.Validation)},
+			{Name: "a", Validation: new(validation.Validation)},
+		}, errorContains: "not strictly increasing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			compiled := &validation.Validation{ObjectValidation: validation.ObjectValidation{
+				Properties: test.properties,
+			}}
+
+			decoder, err := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+				OperationID: "propertyNames",
+				Parameters: []validation.QueryParameterDefinition{{
+					Name: "q", Wire: 7, Validation: compiled,
+				}},
+			})
+			require.Nil(t, decoder)
+			require.ErrorContains(t, err, test.errorContains)
+		})
+	}
+}
+
+func TestDecoderNilAndMalformedDefinitionFailuresReturnErrors(t *testing.T) {
+	t.Parallel()
+
+	var query *validation.QueryDecoder
+
+	_, err := query.Definition()
+	require.Error(t, err)
+	_, err = query.Decode(&url.URL{})
+	require.Error(t, err)
+
+	var path *validation.PathDecoder
+
+	_, err = path.Definition()
+	require.Error(t, err)
+	_, err = path.DecodePathParams(&url.URL{})
+	require.Error(t, err)
+
+	_, err = validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{OperationID: "query"})
+	require.Error(t, err)
+	_, err = validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{OperationID: "path"})
+	require.Error(t, err)
+
+	malformedValidation := &validation.Validation{
+		NumberValidation: validation.NumberValidation{
+			Minimum: &validation.NumberBound{Value: "1", ExactValue: jsonvalue.Number{Lexeme: "invalid"}},
+		},
+	}
+	_, err = validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+		OperationID: "query",
+		Parameters: []validation.QueryParameterDefinition{{
+			Name: "q", Validation: malformedValidation, ScalarType: "string",
+		}},
+	})
+	require.Error(t, err)
+	_, err = validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+		OperationID: "path", PathTemplate: "/{p}",
+		Parameters: []validation.PathParameterDefinition{{
+			Name: "p", Validation: malformedValidation, ScalarType: "string",
+		}},
+	})
+	require.Error(t, err)
+}
+
+func TestGeneratedDecodersRejectMalformedNumericFormats(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		typeName   string
+		format     string
+		wantError  string
+		scalarType string
+	}{
+		{
+			name: "unknown", typeName: "number", format: "bogus",
+			wantError: `invalid numeric format "bogus"`, scalarType: "number",
+		},
+		{
+			name: "integer format on string", typeName: "string", format: "int32",
+			wantError: "invalid type/format pair", scalarType: "string",
+		},
+		{
+			name: "float format on integer", typeName: "integer", format: "float",
+			wantError: "invalid type/format pair", scalarType: "integer",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			compiled := &validation.Validation{
+				KindValidation:   validation.KindValidation{Type: test.typeName},
+				NumberValidation: validation.NumberValidation{Format: test.format},
+			}
+			query, queryErr := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+				OperationID: "query",
+				Parameters: []validation.QueryParameterDefinition{{
+					Name: "q", Wire: 0, Validation: compiled, ScalarType: test.scalarType,
+				}},
+			})
+			require.Nil(t, query)
+			require.ErrorContains(t, queryErr, test.wantError)
+
+			path, pathErr := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+				OperationID: "path", PathTemplate: "/{p}",
+				Parameters: []validation.PathParameterDefinition{{
+					Name: "p", Wire: 0, Validation: compiled, ScalarType: test.scalarType,
+				}},
+			})
+			require.Nil(t, path)
+			require.ErrorContains(t, pathErr, test.wantError)
+		})
+	}
+}
+
+func TestGeneratedDecodersRejectFormatWithMismatchedCompiledLanguage(t *testing.T) {
+	t.Parallel()
+
+	compiled := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "string"},
+		StringValidation: validation.StringValidation{
+			Format: "date", CompiledFormat: validation.MustCompileStringFormat("email"),
+		},
+	}
+
+	query, queryErr := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+		OperationID: "query",
+		Parameters: []validation.QueryParameterDefinition{{
+			Name: "q", Wire: 7, Validation: compiled,
+		}},
+	})
+	require.Nil(t, query)
+	require.ErrorContains(t, queryErr, "compiled language does not match")
+
+	path, pathErr := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+		OperationID: "path", PathTemplate: "/{p}",
+		Parameters: []validation.PathParameterDefinition{{
+			Name: "p", Wire: 9, Validation: compiled,
+		}},
+	})
+	require.Nil(t, path)
+	require.ErrorContains(t, pathErr, "compiled language does not match")
+}
+
+func TestGeneratedQueryDecoderRejectsMetadataInconsistentWithValidation(t *testing.T) {
+	t.Parallel()
+
+	stringValidation := &validation.Validation{KindValidation: validation.KindValidation{Type: "string"}}
+	arrayValidation := &validation.Validation{
+		KindValidation:  validation.KindValidation{Type: "array"},
+		ArrayValidation: validation.ArrayValidation{Items: stringValidation},
+	}
+	objectValidation := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "object"},
+		ObjectValidation: validation.ObjectValidation{
+			AdditionalPropertiesAllowed:    true,
+			AdditionalPropertiesValidation: &validation.Validation{KindValidation: validation.KindValidation{Type: "integer"}},
+			Properties:                     []validation.PropertyValidation{{Name: "known", Validation: stringValidation}},
+		},
+	}
+
+	for _, test := range []struct {
+		name      string
+		parameter validation.QueryParameterDefinition
+	}{
+		{
+			name: "primitive scalar type",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 0, Validation: stringValidation, ScalarType: "integer",
+			},
+		},
+		{
+			name: "array shape",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 0, Validation: arrayValidation, ScalarType: "string",
+			},
+		},
+		{
+			name: "array item type",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 1, Validation: arrayValidation, ScalarType: "integer",
+			},
+		},
+		{
+			name: "object shape",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 0, Validation: objectValidation, ScalarType: "string",
+			},
+		},
+		{
+			name: "object property",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 6, Validation: objectValidation, DynamicType: "integer",
+				Properties: []validation.QueryPropertyDefinition{{Name: "known", ScalarType: "boolean"}},
+			},
+		},
+		{
+			name: "object dynamic type",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 6, Validation: objectValidation, DynamicType: "number",
+				Properties: []validation.QueryPropertyDefinition{{Name: "known", ScalarType: "string"}},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+				OperationID: "query", Parameters: []validation.QueryParameterDefinition{test.parameter},
+			})
+			require.Nil(t, decoder)
+			require.ErrorContains(t, err, "inconsistent with validation")
+		})
+	}
+}
+
+func TestGeneratedPathDecoderRejectsMetadataInconsistentWithValidation(t *testing.T) {
+	t.Parallel()
+
+	stringValidation := &validation.Validation{KindValidation: validation.KindValidation{Type: "string"}}
+	arrayValidation := &validation.Validation{
+		KindValidation:  validation.KindValidation{Type: "array"},
+		ArrayValidation: validation.ArrayValidation{Items: stringValidation},
+	}
+	objectValidation := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "object"},
+		ObjectValidation: validation.ObjectValidation{
+			AdditionalPropertiesAllowed:    true,
+			AdditionalPropertiesValidation: &validation.Validation{KindValidation: validation.KindValidation{Type: "integer"}},
+			Properties:                     []validation.PropertyValidation{{Name: "known", Validation: stringValidation}},
+		},
+	}
+
+	for _, test := range []struct {
+		name      string
+		parameter validation.PathParameterDefinition
+	}{
+		{
+			name: "primitive scalar type",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 0, Validation: stringValidation, ScalarType: "integer",
+			},
+		},
+		{
+			name: "array shape",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 0, Validation: arrayValidation, ScalarType: "string",
+			},
+		},
+		{
+			name: "array item type",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 1, Validation: arrayValidation, ScalarType: "integer",
+			},
+		},
+		{
+			name: "object shape",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 0, Validation: objectValidation, ScalarType: "string",
+			},
+		},
+		{
+			name: "object property",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 2, Validation: objectValidation, DynamicType: "integer",
+				Properties: []validation.PathPropertyDefinition{{Name: "known", ScalarType: "boolean"}},
+			},
+		},
+		{
+			name: "object dynamic type",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 2, Validation: objectValidation, DynamicType: "number",
+				Properties: []validation.PathPropertyDefinition{{Name: "known", ScalarType: "string"}},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+				OperationID: "path", PathTemplate: "/{p}",
+				Parameters: []validation.PathParameterDefinition{test.parameter},
+			})
+			require.Nil(t, decoder)
+			require.ErrorContains(t, err, "inconsistent with validation")
+		})
+	}
+}
+
+func TestMustCompileStringFormatAdvertisesItsPanicBoundary(t *testing.T) {
+	t.Parallel()
+
+	require.NotNil(t, validation.MustCompileStringFormat("date"))
+	require.Panics(t, func() { validation.MustCompileStringFormat("unknown") })
+}
+
+func TestParseReturnsMalformedPatternErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		spec string
+	}{
+		{
+			name: "body",
+			spec: `openapi: 3.0.3
+paths:
+  /body:
+    post:
+      operationId: body
+      requestBody:
+        content:
+          application/json:
+            schema: {type: string, pattern: '['}
+`,
+		},
+		{
+			name: "path",
+			spec: `openapi: 3.0.3
+paths:
+  /{id}:
+    get:
+      operationId: path
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, pattern: '['}}
+`,
+		},
+		{
+			name: "query",
+			spec: `openapi: 3.0.3
+paths:
+  /query:
+    get:
+      operationId: query
+      parameters:
+        - {name: q, in: query, schema: {type: string, pattern: '['}}
+`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := validation.Parse([]byte(test.spec))
+			require.Error(t, err)
+			require.Nil(t, parsed)
+		})
+	}
+}
+
+func TestParseRetainsPatternAdmissionAndValidation(t *testing.T) {
+	t.Parallel()
+
+	spec := []byte(`{
+		"openapi":"3.0.4",
+		"info":{"title":"pattern","version":"1"},
+		"paths":{"/request":{"post":{
+			"operationId":"request",
+			"requestBody":{"content":{"application/json":{"schema":{
+				"type":"string","pattern":"^a+$"
+			}}}},
+			"responses":{"204":{"description":"empty"}}
+		}}}
+	}`)
+
+	parsed, err := validation.Parse(spec)
+	require.NoError(t, err)
+
+	compiled := parsed["request"].Body.StringValidation
+	require.NotNil(t, compiled.CompiledPattern)
+	require.Empty(t, parsed["request"].Body.Validate([]byte(`"aa"`)))
+	require.NotEmpty(t, parsed["request"].Body.Validate([]byte(`"b"`)))
 }

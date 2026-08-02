@@ -15,6 +15,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func queryDefinitionForTest(t *testing.T, decoder *QueryDecoder) QueryDecoderDefinition {
+	t.Helper()
+
+	definition, err := decoder.Definition()
+	require.NoError(t, err)
+
+	return definition
+}
+
 func TestGeneratedQueryDecoderDefinitionRoundTripAndRejections(t *testing.T) {
 	t.Parallel()
 
@@ -22,14 +31,23 @@ func TestGeneratedQueryDecoderDefinitionRoundTripAndRejections(t *testing.T) {
 		OperationID: "query",
 		Parameters: []QueryParameterDefinition{{
 			Name: "filter", Wire: uint8(wireDeepObject), Required: true, AllowEmpty: true,
-			Validation:   &Validation{KindValidation: KindValidation{Type: "object"}},
+			Validation: &Validation{
+				KindValidation: KindValidation{Type: "object"},
+				ObjectValidation: ObjectValidation{Properties: []PropertyValidation{{
+					Name: "key",
+					Validation: &Validation{
+						KindValidation:  KindValidation{Type: "array"},
+						ArrayValidation: ArrayValidation{Items: &Validation{KindValidation: KindValidation{Type: "string"}}},
+					},
+				}}},
+			},
 			DefaultValue: json.RawMessage(`{"key":[]}`),
 			Properties:   []QueryPropertyDefinition{{Name: "key", ScalarType: "string", Array: true}},
 		}},
 	}
 	decoder, err := NewQueryDecoderFromGenerated(definition)
 	require.NoError(t, err)
-	require.Equal(t, definition, decoder.Definition())
+	require.Equal(t, definition, queryDefinitionForTest(t, decoder))
 
 	definition.Parameters[0].Validation = nil
 	_, err = NewQueryDecoderFromGenerated(definition)
@@ -41,11 +59,24 @@ func TestGeneratedQueryDecoderDefinitionRoundTripAndRejections(t *testing.T) {
 	require.ErrorContains(t, err, "is invalid")
 
 	duplicate := QueryDecoderDefinition{OperationID: "query", Parameters: []QueryParameterDefinition{
-		{Name: "q", Wire: uint8(wirePrimitive), Validation: &Validation{}},
-		{Name: "q", Wire: uint8(wirePrimitive), Validation: &Validation{}},
+		{Name: "q", Wire: uint8(wirePrimitive), Validation: &Validation{}, ScalarType: "string"},
+		{Name: "q", Wire: uint8(wirePrimitive), Validation: &Validation{}, ScalarType: "string"},
 	}}
 	_, err = NewQueryDecoderFromGenerated(duplicate)
 	require.ErrorContains(t, err, "ownership")
+
+	malformedMetadata := []QueryParameterDefinition{
+		{Name: "q", Wire: uint8(wirePrimitive), Validation: &Validation{}},
+		{Name: "q", Wire: uint8(wireJSONContent), Validation: &Validation{}, ScalarType: "string"},
+		{Name: "q", Wire: uint8(wireDelimitedArray), Validation: &Validation{}, ScalarType: "string"},
+		{Name: "q", Wire: uint8(wireDeepObject), Validation: &Validation{}, Properties: []QueryPropertyDefinition{{Name: "value"}}},
+	}
+	for _, parameter := range malformedMetadata {
+		_, err = NewQueryDecoderFromGenerated(QueryDecoderDefinition{
+			OperationID: "query", Parameters: []QueryParameterDefinition{parameter},
+		})
+		require.Error(t, err)
+	}
 }
 
 func TestParseSharesCompiledValidationWithQueryDecoderDefinition(t *testing.T) {
@@ -69,7 +100,7 @@ components:
     Value: {type: string}
 `))
 	require.NoError(t, err)
-	require.Same(t, requests["shared"].Body, requests["shared"].Query.Definition().Parameters[0].Validation)
+	require.Same(t, requests["shared"].Body, queryDefinitionForTest(t, requests["shared"].Query).Parameters[0].Validation)
 }
 
 func TestQueryDecoderDefinitionSharesValidation(t *testing.T) {
@@ -94,7 +125,7 @@ func TestQueryDecoderDefinitionSharesValidation(t *testing.T) {
 
 	decoder, err := NewQueryDecoderFromGenerated(definition)
 	require.NoError(t, err)
-	require.Same(t, definition.Parameters[0].Validation, decoder.Definition().Parameters[0].Validation)
+	require.Same(t, definition.Parameters[0].Validation, queryDefinitionForTest(t, decoder).Parameters[0].Validation)
 
 	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5Bvalue%5D=ok`})
 	require.NoError(t, err)
@@ -104,7 +135,7 @@ func TestQueryDecoderDefinitionSharesValidation(t *testing.T) {
 	_, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bvalue%5D=ok`})
 	require.ErrorContains(t, err, "got string, want number")
 
-	decoder.Definition().Parameters[0].Validation.
+	queryDefinitionForTest(t, decoder).Parameters[0].Validation.
 		ObjectValidation.Properties[0].Validation.KindValidation.Type = "string"
 	actual, err = decoder.Decode(&url.URL{RawQuery: `filter%5Bvalue%5D=ok`})
 	require.NoError(t, err)
@@ -145,7 +176,13 @@ func TestQueryDecoderConcurrentDefinitionDecodeAndValidate(t *testing.T) {
 			defer wait.Done()
 
 			for range 100 {
-				concurrentDefinition := decoder.Definition()
+				concurrentDefinition, definitionErr := decoder.Definition()
+				if definitionErr != nil {
+					errs <- fmt.Errorf("definition: %w", definitionErr)
+
+					return
+				}
+
 				if validationErrs := concurrentDefinition.Parameters[0].Validation.
 					Validate(json.RawMessage(`{"value":"ok"}`)); len(validationErrs) != 0 {
 					errs <- fmt.Errorf("validate: %w", errors.Join(validationErrs...))

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +50,6 @@ func TestValidationSupportedKeywordsAtRootNestedAndAllOf(t *testing.T) {
 		{name: "minItems", schema: `{"minItems":1}`, valid: `[0]`, invalid: `[]`, keyword: "minItems"},
 		{name: "maxItems", schema: `{"maxItems":1}`, valid: `[0]`, invalid: `[0,1]`, keyword: "maxItems"},
 		{name: "items", schema: `{"items":{"type":"integer"}}`, valid: `[1]`, invalid: `[1.5]`, keyword: "type"},
-		{name: "uniqueItems", schema: `{"uniqueItems":true}`, valid: `[1,2]`, invalid: `[1,1.0]`, keyword: "uniqueItems"},
 		{name: "minProperties", schema: `{"minProperties":1}`, valid: `{"a":1}`, invalid: `{}`, keyword: "minProperties"},
 		{
 			name: "maxProperties", schema: `{"maxProperties":1}`,
@@ -112,6 +112,35 @@ func TestValidationSupportedKeywordsAtRootNestedAndAllOf(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseAppliesPatternOptionOncePerPattern preserves caller-owned option state.
+func TestParseAppliesPatternOptionOncePerPattern(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	option := func(*patternvalidator.PatternValidation) error {
+		calls++
+
+		return nil
+	}
+
+	parsed, err := Parse(openAPISpec(`{"type":"string","pattern":"^a$"}`, "", false), option)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Empty(t, parsed["checkThing"].Body.Validate(json.RawMessage(`"a"`)))
+}
+
+// TestParseRetainsLeadingLookaheadPattern covers the authoritative pattern matcher seam.
+func TestParseRetainsLeadingLookaheadPattern(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(openAPISpec(`{"type":"string","pattern":"^(?=a)a"}`, "", false))
+	require.NoError(t, err)
+
+	validation := parsed["checkThing"].Body
+	require.Empty(t, validation.Validate(json.RawMessage(`"ab"`)))
+	require.ErrorContains(t, errors.Join(validation.Validate(json.RawMessage(`"ba"`))...), "keyword pattern")
 }
 
 // TestParseExposesCompiledGraphAndCopiesInput covers the supported construction seam.
@@ -181,6 +210,33 @@ func TestParseCompilesIndependentOperationGraphs(t *testing.T) {
 	}
 
 	require.Empty(t, parsed["RequiredBody"].Body.Validate(json.RawMessage(`"still compiled"`)))
+}
+
+// TestParseRetainsRequestBodiesForEveryOperationMethod prevents method filtering.
+func TestParseRetainsRequestBodiesForEveryOperationMethod(t *testing.T) {
+	t.Parallel()
+
+	for _, method := range []string{"get", "head", "delete", "options", "trace", "post", "put", "patch"} {
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
+
+			spec := fmt.Appendf(nil, `openapi: 3.0.3
+paths:
+  /request:
+    %s:
+      operationId: request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: string}
+`, method)
+			requests, err := Parse(spec)
+			require.NoError(t, err)
+			require.NotNil(t, requests["request"].Body)
+			require.Empty(t, requests["request"].Body.Validate(json.RawMessage(`"body"`)))
+		})
+	}
 }
 
 // TestParseBuildsOneRequestValidationPerOperation covers the atomic public Parse result.
@@ -693,8 +749,8 @@ func TestValidationExactNumbers(t *testing.T) {
 	require.NotEmpty(t, integer.Validate(json.RawMessage(`1e-100001`)))
 }
 
-// TestValidationNestedUniqueItemsAndAllOf covers finite nesting and composition behavior directly.
-func TestValidationNestedUniqueItemsAndAllOf(t *testing.T) {
+// TestValidationNestedAndAllOf covers finite nesting and composition behavior directly.
+func TestValidationNestedAndAllOf(t *testing.T) {
 	t.Parallel()
 
 	components := `,"components":{"schemas":{"Node":{"type":"object","required":["value"],"properties":{
@@ -707,13 +763,463 @@ func TestValidationNestedUniqueItemsAndAllOf(t *testing.T) {
 	errs := nested.Validate(json.RawMessage(`{"value":1,"child":{"value":2.5}}`))
 	require.Contains(t, errors.Join(errs...).Error(), "instance #/child/value")
 
-	unique := mustParseSchema(t, `{"type":"array","items":{},"uniqueItems":true}`, "")
-	require.NotEmpty(t, unique.Validate(json.RawMessage(`[{"a":1},{"a":1.0}]`)))
-
 	allOf := mustParseSchema(t, `{"allOf":[{"minimum":1},{"maximum":2}]}`, "")
 	require.Empty(t, allOf.Validate(json.RawMessage(`1.5`)))
 	errs = allOf.Validate(json.RawMessage(`3`))
 	require.Contains(t, errors.Join(errs...).Error(), "/allOf/1")
+}
+
+// TestValidateDefaultRejectsMalformedUntypedValue keeps syntax validation independent of a declared type.
+func TestValidateDefaultRejectsMalformedUntypedValue(t *testing.T) {
+	t.Parallel()
+
+	require.ErrorContains(t, validateDefault(json.RawMessage(`invalid`), KindValidation{}), "must be a valid value")
+	require.NoError(t, validateDefault(json.RawMessage(`null`), KindValidation{}))
+}
+
+// TestParseSelectsExternalDocsErrorsDeterministically fixes lexical error precedence.
+func TestParseSelectsExternalDocsErrorsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	spec := openAPISpec(`{
+		"externalDocs":{"url":"/docs","description":1,"other":true}
+	}`, "", false)
+	for range 100 {
+		_, err := Parse(spec)
+		require.ErrorContains(t, err, "description must be a string")
+	}
+}
+
+// TestParseRejectsUniqueItemsAtItsSourcePointer covers every authored value shape.
+func TestParseRejectsUniqueItemsAtItsSourcePointer(t *testing.T) {
+	t.Parallel()
+
+	const pointer = "#/paths/~1things/post/requestBody/content/application~1json/schema/uniqueItems"
+
+	for _, value := range []string{"true", "false", "null", `"yes"`, "1", `[]`, `{}`} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse(openAPISpec(`{"uniqueItems":`+value+`}`, "", false))
+			require.Nil(t, parsed)
+			require.Error(t, err)
+			require.ErrorContains(t, err, pointer)
+		})
+	}
+}
+
+// TestParseRejectsUniqueItemsAcrossAuthoredSchemaLocations covers reachable and otherwise ignored schemas.
+func TestParseRejectsUniqueItemsAcrossAuthoredSchemaLocations(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		spec    string
+		pointer string
+	}{
+		{
+			name: "referenced schema",
+			spec: string(openAPISpec(
+				`{"$ref":"#/components/schemas/Target"}`,
+				`,"components":{"schemas":{"Target":{"uniqueItems":false}}}`,
+				false,
+			)),
+			pointer: "#/components/schemas/Target/uniqueItems",
+		},
+		{
+			name:    "unreachable escaped component",
+			spec:    `{"openapi":"3.0.3","paths":{},"components":{"schemas":{"a/b~c":{"uniqueItems":false}}}}`,
+			pointer: "#/components/schemas/a~1b~0c/uniqueItems",
+		},
+		{
+			name: "response media type",
+			spec: `{"openapi":"3.0.3","paths":{"/things":{"get":{"operationId":"things","responses":` +
+				`{"200":{"description":"ok","content":{"application/json":{"schema":{"uniqueItems":false}}}}}}}}}`,
+			pointer: "#/paths/~1things/get/responses/200/content/application~1json/schema/uniqueItems",
+		},
+		{
+			name: "callback request body",
+			spec: `{"openapi":"3.0.3","paths":{"/things":{"post":{"operationId":"things","callbacks":{"event":` +
+				`{"{$request.body#/url}":{"post":{"operationId":"callback","requestBody":{"content":` +
+				`{"application/json":{"schema":{"uniqueItems":false}}}}}}}}}}}}`,
+			pointer: "#/paths/~1things/post/callbacks/event/{$request.body#~1url}/post/requestBody/" +
+				"content/application~1json/schema/uniqueItems",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse([]byte(test.spec))
+			require.Nil(t, parsed)
+			require.Error(t, err)
+			require.ErrorContains(t, err, test.pointer)
+		})
+	}
+}
+
+// TestParsePropagatesUnreachableReferenceErrors covers complete traversal resolution failures.
+func TestParsePropagatesUnreachableReferenceErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		spec string
+		want string
+	}{
+		{
+			name: "schema component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"schemas":{
+				"Broken":{"$ref":"#/components/schemas/Missing"}
+			}}}`,
+			want: "#/components/schemas/Missing",
+		},
+		{
+			name: "response schema",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"responses":{
+				"Broken":{"description":"broken","content":{"application/json":{
+					"schema":{"$ref":"#/components/schemas/Missing"}
+				}}}
+			}}}`,
+			want: "#/components/schemas/Missing",
+		},
+		{
+			name: "parameter component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"parameters":{
+				"Broken":{"$ref":"#/components/parameters/Missing"}
+			}}}`,
+			want: "#/components/parameters/Missing",
+		},
+		{
+			name: "request body component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"requestBodies":{
+				"Broken":{"$ref":"#/components/requestBodies/Missing"}
+			}}}`,
+			want: "#/components/requestBodies/Missing",
+		},
+		{
+			name: "response component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"responses":{
+				"Broken":{"$ref":"#/components/responses/Missing"}
+			}}}`,
+			want: "#/components/responses/Missing",
+		},
+		{
+			name: "header component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"headers":{
+				"Broken":{"$ref":"#/components/headers/Missing"}
+			}}}`,
+			want: "#/components/headers/Missing",
+		},
+		{
+			name: "callback component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"callbacks":{
+				"Broken":{"$ref":"#/components/callbacks/Missing"}
+			}}}`,
+			want: "#/components/callbacks/Missing",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse([]byte(test.spec))
+			require.Nil(t, parsed)
+
+			var referenceErr *oas.ReferenceError
+			require.ErrorAs(t, err, &referenceErr)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+// TestUniqueItemsTraversalMarksEveryResolvedSchema prevents repeated suffix resolution.
+func TestUniqueItemsTraversalMarksEveryResolvedSchema(t *testing.T) {
+	t.Parallel()
+
+	document := json.RawMessage(`{"components":{"schemas":{
+		"First":{"$ref":"#/components/schemas/Middle"},
+		"Middle":{"$ref":"#/components/schemas/Last"},
+		"Last":{"type":"string"}
+	}}}`)
+	walker := authoredSchemaWalker{
+		source:  oas.Source{Document: document},
+		visited: make(map[string]struct{}),
+	}
+	first, err := walker.source.At("#/components/schemas/First")
+	require.NoError(t, err)
+	require.NoError(t, walker.schema(first.Raw, first.Pointer))
+
+	for _, pointer := range []string{
+		"#/components/schemas/First",
+		"#/components/schemas/Middle",
+		"#/components/schemas/Last",
+	} {
+		_, visited := walker.visited["schema\x00"+pointer]
+		require.True(t, visited, pointer)
+	}
+}
+
+// TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce prevents quadratic suffix traversal.
+func TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce(t *testing.T) {
+	t.Parallel()
+
+	const chainLength = 64
+
+	responses := make(map[string]any, chainLength)
+	for index := range chainLength {
+		name := fmt.Sprintf("R%02d", index)
+		if index == chainLength-1 {
+			responses[name] = map[string]any{"description": "terminal"}
+
+			continue
+		}
+
+		responses[name] = map[string]any{
+			"$ref": fmt.Sprintf("#/components/responses/R%02d", index+1),
+		}
+	}
+
+	document, err := json.Marshal(map[string]any{
+		"components": map[string]any{"responses": responses},
+	})
+	require.NoError(t, err)
+
+	walker := authoredSchemaWalker{
+		source:  oas.Source{Document: document},
+		visited: make(map[string]struct{}),
+	}
+	resolutionCount := 0
+
+	for index := range chainLength {
+		pointer := fmt.Sprintf("#/components/responses/R%02d", index)
+		response, atErr := walker.source.At(pointer)
+		require.NoError(t, atErr)
+
+		_, _, resolved, resolveErr := walker.resolve("response", response.Raw, response.Pointer)
+		require.NoError(t, resolveErr)
+
+		if resolved {
+			resolutionCount++
+		}
+	}
+
+	require.Equal(t, 1, resolutionCount)
+}
+
+// TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth bounds whole-tree decoding costs.
+//
+//nolint:paralleltest // Per-process allocation counts must run without concurrent tests.
+func TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth(t *testing.T) {
+	document := func(depth int) json.RawMessage {
+		return json.RawMessage(
+			`{"components":{"schemas":{"Deep":` +
+				strings.Repeat(`{"items":`, depth) + `{}` + strings.Repeat(`}`, depth) +
+				`}}}`,
+		)
+	}
+
+	allocatedBytes := func(depth int) int64 {
+		raw := document(depth)
+		result := testing.Benchmark(func(benchmark *testing.B) {
+			for benchmark.Loop() {
+				if err := rejectAuthoredUniqueItems(raw); err != nil {
+					panic(err)
+				}
+			}
+		})
+
+		return result.AllocedBytesPerOp()
+	}
+
+	shallow := allocatedBytes(64)
+	deep := allocatedBytes(128)
+	require.Less(t, deep, shallow*5/2)
+}
+
+// TestUniqueItemsTraversalReusesResolvedSchemaTargets bounds repeated-reference traversal costs.
+//
+//nolint:paralleltest // Per-process allocation counts must run without concurrent tests.
+func TestUniqueItemsTraversalReusesResolvedSchemaTargets(t *testing.T) {
+	document := func(references int) json.RawMessage {
+		schemas := make(map[string]any, references+1)
+		for index := range references {
+			schemas[fmt.Sprintf("Alias%02d", index)] = map[string]any{"$ref": "#/components/schemas/ZTarget"}
+		}
+
+		var target any = map[string]any{"type": "string"}
+		for range 256 {
+			target = map[string]any{"items": target}
+		}
+
+		schemas["ZTarget"] = target
+
+		raw, err := json.Marshal(map[string]any{"components": map[string]any{"schemas": schemas}})
+		require.NoError(t, err)
+
+		return raw
+	}
+
+	allocatedBytes := func(references int) int64 {
+		raw := document(references)
+		result := testing.Benchmark(func(benchmark *testing.B) {
+			for benchmark.Loop() {
+				if err := rejectAuthoredUniqueItems(raw); err != nil {
+					panic(err)
+				}
+			}
+		})
+
+		return result.AllocedBytesPerOp()
+	}
+
+	few := allocatedBytes(2)
+	many := allocatedBytes(16)
+	require.Less(t, many, few*5/2)
+}
+
+// TestParseIgnoresUniqueItemsSiblingOnReferenceObjects distinguishes Reference and Schema Objects.
+func TestParseIgnoresUniqueItemsSiblingOnReferenceObjects(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(openAPISpec(
+		`{"$ref":"#/components/schemas/Target","uniqueItems":false}`,
+		`,"components":{"schemas":{"Target":{"type":"array","items":{}}}}`,
+		false,
+	))
+	require.NoError(t, err)
+	require.Contains(t, parsed, "checkThing")
+}
+
+// TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword covers the fixed nested traversal order.
+func TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		schema  string
+		pointer string
+	}{
+		{name: "items", schema: `{"items":{"uniqueItems":false}}`, pointer: "/items/uniqueItems"},
+		{
+			name: "properties", schema: `{"properties":{"a/b~c":{"uniqueItems":false}}}`,
+			pointer: "/properties/a~1b~0c/uniqueItems",
+		},
+		{
+			name: "additional properties", schema: `{"additionalProperties":{"uniqueItems":false}}`,
+			pointer: "/additionalProperties/uniqueItems",
+		},
+		{name: "allOf", schema: `{"allOf":[{"uniqueItems":false}]}`, pointer: "/allOf/0/uniqueItems"},
+		{name: "anyOf", schema: `{"anyOf":[{"uniqueItems":false}]}`, pointer: "/anyOf/0/uniqueItems"},
+		{name: "oneOf", schema: `{"oneOf":[{"uniqueItems":false}]}`, pointer: "/oneOf/0/uniqueItems"},
+		{name: "not", schema: `{"not":{"uniqueItems":false}}`, pointer: "/not/uniqueItems"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := fmt.Appendf(nil, `{"openapi":"3.0.3","paths":{},"components":{"schemas":{"Only":%s}}}`, test.schema)
+			parsed, err := Parse(spec)
+			require.Nil(t, parsed)
+			require.Error(t, err)
+			require.ErrorContains(t, err, "#/components/schemas/Only"+test.pointer)
+		})
+	}
+}
+
+// TestParseIgnoresUniqueItemsOnIntermediateReferenceObjects covers resolved reference chains.
+func TestParseIgnoresUniqueItemsOnIntermediateReferenceObjects(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse([]byte(`{
+		"openapi":"3.0.3",
+		"paths":{
+			"/first":{"post":{"operationId":"alpha","requestBody":{"content":{"application/json":{
+				"schema":{"$ref":"#/components/schemas/First"}
+			}}}}},
+			"/later":{"post":{"operationId":"beta","requestBody":{"content":{"application/json":{
+				"schema":{}
+			}}}}}
+		},
+		"components":{"schemas":{
+			"First":{"$ref":"#/x-chain/middle"},
+			"Final":{}
+		}},
+		"x-chain":{"middle":{"$ref":"#/components/schemas/Final","uniqueItems":false}}
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, parsed, "alpha")
+	require.Contains(t, parsed, "beta")
+}
+
+// TestParsePreservesEarlierErrorsBeforeCompleteUniqueItemsTraversal locks ordinary Parse precedence.
+func TestParsePreservesEarlierErrorsBeforeCompleteUniqueItemsTraversal(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse([]byte(`{
+		"openapi":"3.0.3",
+		"paths":{"not-a-path":{}},
+		"components":{"schemas":{"Only":{"uniqueItems":false}}}
+	}`))
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "must begin with /")
+	require.NotContains(t, err.Error(), "uniqueItems")
+}
+
+// TestParseSelectsUniqueItemsDeterministically uses lexical maps and the documented nested keyword order.
+func TestParseSelectsUniqueItemsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse([]byte(`{
+		"openapi":"3.0.3",
+		"paths":{},
+		"components":{"schemas":{
+			"Zulu":{"uniqueItems":false},
+			"Alpha":{"properties":{"z":{"uniqueItems":false}},"items":{"uniqueItems":false}}
+		}}
+	}`))
+	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "#/components/schemas/Alpha/items/uniqueItems")
+}
+
+// TestNumericValidationReusesCompiledBoundsAcrossArrayItems bounds request-time bound parsing.
+//
+//nolint:paralleltest // Per-process allocation counts must run without concurrent tests.
+func TestNumericValidationReusesCompiledBoundsAcrossArrayItems(t *testing.T) {
+	digits := strings.Repeat("9", 1<<12)
+	minimum := "-" + digits
+	maximum := digits
+	multipleOf := "0." + strings.Repeat("0", 1<<12) + "1"
+	validation := mustParseSchema(t, `{"type":"array","items":{"type":"number","minimum":`+
+		minimum+`,"maximum":`+maximum+`,"multipleOf":`+multipleOf+`}}`, "")
+
+	allocatedBytes := func(items int) int64 {
+		body := json.RawMessage(`[` + strings.TrimSuffix(strings.Repeat("0,", items), ",") + `]`)
+		result := testing.Benchmark(func(benchmark *testing.B) {
+			for benchmark.Loop() {
+				if errs := validation.Validate(body); len(errs) != 0 {
+					panic(errors.Join(errs...))
+				}
+			}
+		})
+
+		return result.AllocedBytesPerOp()
+	}
+
+	many := allocatedBytes(16)
+	require.Less(t, many, int64((len(minimum)+len(maximum)+len(multipleOf))*64))
+}
+
+// TestParseAllowsEmptySchemaPropertyNames covers JSON's empty object member name.
+func TestParseAllowsEmptySchemaPropertyNames(t *testing.T) {
+	t.Parallel()
+
+	validation := mustParseSchema(t, `{
+		"type":"object",
+		"required":[""],
+		"properties":{"":{"type":"string"}},
+		"additionalProperties":false
+	}`, "")
+
+	require.Empty(t, validation.Validate(json.RawMessage(`{"":"value"}`)))
+	require.NotEmpty(t, validation.Validate(json.RawMessage(`{}`)))
 }
 
 // TestParseRejectsUnsupportedAndMalformedReachableSchemas covers every parse-time rejection.
@@ -727,7 +1233,6 @@ func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
 		want       string
 	}{
 		{name: "oneOf", schema: `{"oneOf":[{}]}`, want: "oneOf"},
-		{name: "anyOf", schema: `{"anyOf":[{}]}`, want: "anyOf"},
 		{name: "not", schema: `{"not":{}}`, want: "not"},
 		{name: "externalRef", schema: `{"$ref":"other.yaml#/Thing"}`, want: "external reference"},
 		{name: "unsupportedPattern", schema: `{"pattern":"x(?=a)"}`, want: "unsupported"},

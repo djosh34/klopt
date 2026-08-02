@@ -27,6 +27,10 @@ type rawPair struct {
 //
 //nolint:cyclop,gocognit // Claiming, ordered emission, and final validation are one request pipeline.
 func (decoder *QueryDecoder) Decode(input *url.URL) (json.RawMessage, error) {
+	if decoder == nil {
+		return nil, errors.New("query decoder is nil")
+	}
+
 	if input == nil {
 		return nil, fmt.Errorf("operationId %q decode query: URL is nil", decoder.operationID)
 	}
@@ -81,12 +85,8 @@ func (decoder *QueryDecoder) Decode(input *url.URL) (json.RawMessage, error) {
 		}
 	}
 
-	var output bytes.Buffer
-
-	encoder := jsontext.NewEncoder(&output)
-	if err := encoder.WriteToken(jsontext.BeginObject); err != nil {
-		return nil, fmt.Errorf("operationId %q encode query object: %w", decoder.operationID, err)
-	}
+	output := []byte{'{'}
+	emitted := 0
 
 	for index := range decoder.parameters {
 		parameter := &decoder.parameters[index]
@@ -108,28 +108,34 @@ func (decoder *QueryDecoder) Decode(input *url.URL) (json.RawMessage, error) {
 			}
 		}
 
-		if err := encoder.WriteToken(jsontext.String(parameter.name)); err != nil {
-			return nil, fmt.Errorf("operationId %q encode query parameter name %q: %w", decoder.operationID, parameter.name, err)
-		}
+		value := parameter.defaultValue
 
-		if len(occurrences) == 0 {
-			if err := encoder.WriteValue(parameter.defaultValue); err != nil {
-				return nil, fmt.Errorf("operationId %q encode query parameter %q default: %w", decoder.operationID, parameter.name, err)
+		if len(occurrences) != 0 {
+			var encoded bytes.Buffer
+			if err := parameter.writeValue(jsontext.NewEncoder(&encoded), occurrences); err != nil {
+				return nil, fmt.Errorf("operationId %q decode query parameter %q: %w", decoder.operationID, parameter.name, err)
 			}
 
-			continue
+			value = jsontext.Value(bytes.TrimSpace(encoded.Bytes()))
 		}
 
-		if err := parameter.writeValue(encoder, occurrences); err != nil {
-			return nil, fmt.Errorf("operationId %q decode query parameter %q: %w", decoder.operationID, parameter.name, err)
+		if !value.IsValid() {
+			return nil, fmt.Errorf("operationId %q encode query parameter %q: invalid JSON value", decoder.operationID, parameter.name)
 		}
+
+		if emitted > 0 {
+			output = append(output, ',')
+		}
+
+		output = appendJSONString(output, parameter.name)
+		output = append(output, ':')
+		output = append(output, value...)
+		emitted++
 	}
 
-	if err := encoder.WriteToken(jsontext.EndObject); err != nil {
-		return nil, fmt.Errorf("operationId %q encode query object: %w", decoder.operationID, err)
-	}
+	output = append(output, '}')
 
-	query := json.RawMessage(bytes.TrimSpace(output.Bytes()))
+	query := json.RawMessage(output)
 	if errs := decoder.validation.Validate(query); len(errs) != 0 {
 		return nil, fmt.Errorf("operationId %q validate query: %w", decoder.operationID, errors.Join(errs...))
 	}
@@ -231,6 +237,10 @@ func (decoder *QueryDecoder) malformedDeepName(base string, name string) error {
 
 //nolint:cyclop // The finite wire-kind switch is the decoder's central policy.
 func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrences []rawPair) error {
+	if len(parameter.anyOf) != 0 {
+		return parameter.writeAnyOfValue(encoder, occurrences)
+	}
+
 	switch parameter.wire {
 	case wirePrimitive:
 		if len(occurrences) != 1 {
@@ -290,6 +300,33 @@ func (parameter *queryParameter) writeValue(encoder *jsontext.Encoder, occurrenc
 	}
 }
 
+func (parameter *queryParameter) writeAnyOfValue(encoder *jsontext.Encoder, occurrences []rawPair) error {
+	var lastErr error
+
+	for index := range parameter.anyOf {
+		candidate := &parameter.anyOf[index]
+
+		var output bytes.Buffer
+
+		candidateEncoder := jsontext.NewEncoder(&output)
+		err := candidate.writeValue(candidateEncoder, occurrences)
+
+		value := jsontext.Value(bytes.TrimSpace(output.Bytes()))
+		if err == nil {
+			errs := candidate.validation.Validate(json.RawMessage(value))
+			if len(errs) == 0 {
+				return encoder.WriteValue(value)
+			}
+
+			err = errors.Join(errs...)
+		}
+
+		lastErr = err
+	}
+
+	return lastErr
+}
+
 //nolint:cyclop // Declared and dynamic packed properties share duplicate detection and ordered emission.
 func (parameter *queryParameter) writeNamedObject(encoder *jsontext.Encoder, occurrence rawPair) error {
 	tokens, err := splitStyleValue(occurrence, parameter.separator)
@@ -301,7 +338,8 @@ func (parameter *queryParameter) writeNamedObject(encoder *jsontext.Encoder, occ
 		return errors.New("object serialization must contain name/value pairs")
 	}
 
-	if err := encoder.WriteToken(jsontext.BeginObject); err != nil {
+	err = encoder.WriteToken(jsontext.BeginObject)
+	if err != nil {
 		return err
 	}
 
@@ -321,16 +359,18 @@ func (parameter *queryParameter) writeNamedObject(encoder *jsontext.Encoder, occ
 		}
 
 		seen[name] = struct{}{}
-		if err := encoder.WriteToken(jsontext.String(name)); err != nil {
-			return err
-		}
+		err = encoder.WriteToken(jsontext.String(name))
 
 		typeName := parameter.dynamicType
 		if ok {
 			typeName = parameter.properties[propertyIndex].scalarType
 		}
 
-		if err := writeScalar(encoder, typeName, tokens[index+1], parameter.allowEmpty); err != nil {
+		if err == nil {
+			err = writeScalar(encoder, typeName, tokens[index+1], parameter.allowEmpty)
+		}
+
+		if err != nil {
 			return fmt.Errorf("property %q: %w", name, err)
 		}
 	}
@@ -361,14 +401,9 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 			return fmt.Errorf("duplicate scalar object property %q", property.name)
 		}
 
-		if err := encoder.WriteToken(jsontext.String(property.name)); err != nil {
-			return err
-		}
-
-		if property.array {
-			if err := encoder.WriteToken(jsontext.BeginArray); err != nil {
-				return err
-			}
+		err := encoder.WriteToken(jsontext.String(property.name))
+		if property.array && err == nil {
+			err = encoder.WriteToken(jsontext.BeginArray)
 		}
 
 		for _, occurrence := range occurrences {
@@ -376,15 +411,17 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 				continue
 			}
 
-			if err := writeScalar(encoder, property.scalarType, occurrence.decodedValue, parameter.allowEmpty); err != nil {
-				return fmt.Errorf("property %q: %w", property.name, err)
+			if err == nil {
+				err = writeScalar(encoder, property.scalarType, occurrence.decodedValue, parameter.allowEmpty)
 			}
 		}
 
-		if property.array {
-			if err := encoder.WriteToken(jsontext.EndArray); err != nil {
-				return err
-			}
+		if property.array && err == nil {
+			err = encoder.WriteToken(jsontext.EndArray)
+		}
+
+		if err != nil {
+			return fmt.Errorf("property %q: %w", property.name, err)
 		}
 	}
 
@@ -400,11 +437,13 @@ func (parameter *queryParameter) writeExplodedObject(encoder *jsontext.Encoder, 
 		}
 
 		seen[occurrence.childName] = struct{}{}
-		if err := encoder.WriteToken(jsontext.String(occurrence.childName)); err != nil {
-			return err
+
+		err := encoder.WriteToken(jsontext.String(occurrence.childName))
+		if err == nil {
+			err = writeScalar(encoder, parameter.dynamicType, occurrence.decodedValue, parameter.allowEmpty)
 		}
 
-		if err := writeScalar(encoder, parameter.dynamicType, occurrence.decodedValue, parameter.allowEmpty); err != nil {
+		if err != nil {
 			return fmt.Errorf("property %q: %w", occurrence.childName, err)
 		}
 	}
@@ -444,6 +483,45 @@ func splitStyleValue(pair rawPair, separator string) ([]string, error) {
 	return tokens, nil
 }
 
+func appendJSONString(output []byte, value string) []byte {
+	const (
+		hexadecimal           = "0123456789abcdef"
+		firstControlCharacter = 0x20
+	)
+
+	output = append(output, '"')
+
+	for _, character := range value {
+		switch character {
+		case '"', '\\':
+			output = append(output, '\\', byte(character))
+		case '\b':
+			output = append(output, `\b`...)
+		case '\f':
+			output = append(output, `\f`...)
+		case '\n':
+			output = append(output, `\n`...)
+		case '\r':
+			output = append(output, `\r`...)
+		case '\t':
+			output = append(output, `\t`...)
+		default:
+			if character < firstControlCharacter {
+				output = append(
+					output,
+					'\\', 'u', '0', '0',
+					hexadecimal[byte(character)>>4],
+					hexadecimal[byte(character)&0x0f],
+				)
+			} else {
+				output = utf8.AppendRune(output, character)
+			}
+		}
+	}
+
+	return append(output, '"')
+}
+
 //nolint:cyclop // Four explicit OpenAPI scalar kinds are clearer than indirect conversion.
 func writeScalar(encoder *jsontext.Encoder, typeName string, value string, allowEmpty bool) error {
 	if value == "" && !allowEmpty {
@@ -468,12 +546,24 @@ func writeScalar(encoder *jsontext.Encoder, typeName string, value string, allow
 			return err
 		}
 
-		if typeName == "integer" && !number.IsInteger() {
-			return fmt.Errorf("%q is not an integer", value)
-		}
+		return writeParsedNumber(encoder, typeName, number)
 
-		return encoder.WriteValue(jsontext.Value(number.Lexeme))
 	default:
 		return fmt.Errorf("unsupported scalar type %q", typeName)
 	}
+}
+
+func writeParsedNumber(encoder *jsontext.Encoder, typeName string, number jsonvalue.Number) error {
+	if typeName == "integer" {
+		integer, err := number.IsInteger()
+		if err != nil {
+			return err
+		}
+
+		if !integer {
+			return fmt.Errorf("%q is not an integer", number.Lexeme)
+		}
+	}
+
+	return encoder.WriteValue(jsontext.Value(number.Lexeme))
 }

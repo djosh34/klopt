@@ -1,10 +1,11 @@
-//nolint:godoclint // Test and fuzz names already state their contracts.
+//nolint:godoclint // Test names already state their contracts.
 package patternvalidator
 
 import (
 	"encoding/json"
 	"errors"
 	"os"
+	regexpsyntax "regexp/syntax"
 	"strings"
 	"sync"
 	"testing"
@@ -213,17 +214,26 @@ func TestParseAndMustParseOptionsAndSealing(t *testing.T) {
 
 	must := MustParse("a", RejectNonASCII, UseRE2)
 	require.Equal(t, validation.Validate("a"), must.Validate("a"))
-	require.Panics(t, func() { MustParse("[") })
+
+	_, parseErr := Parse("[")
+	require.Error(t, parseErr)
+	require.PanicsWithError(t, parseErr.Error(), func() { MustParse("[") })
 
 	defaultValidation := MustParse("a")
 
-	require.Panics(t, func() { RejectNonASCII(defaultValidation) })
+	require.Error(t, RejectNonASCII(defaultValidation))
 	require.False(t, defaultValidation.RejectsNonASCII())
-	require.Panics(t, func() { UseRE2(defaultValidation) })
+	require.Error(t, UseRE2(defaultValidation))
 	require.False(t, defaultValidation.UsesRE2())
+	require.Error(t, RejectNonASCII(nil))
+	require.Error(t, UseRE2(nil))
 
 	_, err = Parse("a", nil)
-	require.EqualError(t, err, "patternvalidator: nil option")
+	require.Error(t, err)
+
+	customErr := errors.New("custom option failed")
+	_, err = Parse("a", func(*PatternValidation) error { return customErr })
+	require.ErrorIs(t, err, customErr)
 }
 
 func TestZeroAndNilValidationFailClosed(t *testing.T) {
@@ -303,36 +313,185 @@ func TestGeneratedRegexpLimitBoundaries(t *testing.T) {
 		translation := new(translator)
 		translation.write(strings.Repeat("a", length), patternsyntax.Span{})
 		require.NoError(t, translation.failure)
-		require.Equal(t, length, translation.output.Len())
+		require.Len(t, translation.output, length)
 	}
 
 	translation := new(translator)
 	translation.write(strings.Repeat("a", maximumGeneratedRegexpBytes+1), patternsyntax.Span{})
 	require.ErrorIs(t, translation.failure, ErrTooComplex)
-	require.Zero(t, translation.output.Len())
+	require.Empty(t, translation.output)
 }
 
-func FuzzParseAndValidateNeverPanic(fuzz *testing.F) {
-	for _, source := range []string{"", "a", "[", `\`, "^(?=a)a", "é", string([]byte{0xff})} {
-		for _, value := range []string{"", "ascii", "é", string([]byte{0xff})} {
-			fuzz.Add(source, value)
+func TestParseAndValidateNamedRobustnessMatrix(t *testing.T) {
+	t.Parallel()
+
+	sources := []struct {
+		name  string
+		value string
+	}{
+		{name: "empty", value: ""},
+		{name: "literal", value: "a"},
+		{name: "open class", value: "["},
+		{name: "trailing slash", value: `\`},
+		{name: "lookahead", value: "^(?=a)a"},
+		{name: "non-ASCII", value: "é"},
+		{name: "invalid UTF-8", value: string([]byte{0xff})},
+	}
+	values := []struct {
+		name  string
+		value string
+	}{
+		{name: "empty", value: ""},
+		{name: "ASCII", value: "ascii"},
+		{name: "non-ASCII", value: "é"},
+		{name: "invalid UTF-8", value: string([]byte{0xff})},
+	}
+	optionSets := []struct {
+		name    string
+		options []Option
+	}{
+		{name: "default"},
+		{name: "ASCII", options: []Option{RejectNonASCII}},
+		{name: "RE2", options: []Option{UseRE2}},
+		{name: "ASCII and RE2", options: []Option{RejectNonASCII, UseRE2}},
+	}
+
+	for _, source := range sources {
+		for _, value := range values {
+			for _, optionSet := range optionSets {
+				t.Run(source.name+"/"+value.name+"/"+optionSet.name, func(t *testing.T) {
+					t.Parallel()
+
+					validation, err := Parse(source.value, optionSet.options...)
+					if err == nil {
+						require.NotNil(t, validation)
+						_ = validation.Validate(value.value)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestErrorFormattingAndCompilationFailures(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("cause")
+	parseError := &ParseError{Kind: ParseErrorPolicy, Offset: 2, Cause: cause}
+	require.Contains(t, parseError.Error(), "byte 2")
+	require.ErrorIs(t, parseError, cause)
+
+	for kind := ParseErrorInvalidSyntax; kind <= ParseErrorInternalTranslation+1; kind++ {
+		require.NotEmpty(t, kind.String())
+	}
+
+	complexity := &ComplexityError{Phase: "parse", Limit: "nodes", Maximum: 1, Observed: 2}
+	require.Contains(t, complexity.Error(), "maximum 1")
+
+	validation, err := compiledPatternValidation(
+		new(PatternValidation),
+		[]checkSpecification{{source: "[", span: patternsyntax.Span{Start: 3}}},
+	)
+	require.Error(t, err)
+	require.Nil(t, validation)
+}
+
+func TestTranslationBranchesAndMalformedTrees(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		pattern string
+		value   string
+	}{
+		{pattern: `^\D$`, value: "x"},
+		{pattern: `^[\d\s\S\w\W]$`, value: "_"},
+		{pattern: `^a*$`, value: "aaa"},
+	} {
+		validation, err := Parse(test.pattern)
+		require.NoError(t, err)
+		require.True(t, validation.Validate(test.value))
+	}
+
+	lookahead := patternsyntax.Tree{Root: 0, Nodes: []patternsyntax.Node{{Kind: patternsyntax.KindPositiveLookahead}}}
+	_, err := translateNode(&lookahead, lookahead.Root)
+	require.Error(t, err)
+	_, err = translateSequence(&lookahead, []patternsyntax.NodeID{lookahead.Root})
+	require.Error(t, err)
+
+	malformedPrefix := leadingLookaheadTree(lookahead.Nodes, []patternsyntax.NodeID{0})
+	_, err = translateLeadingLookaheads(&malformedPrefix, malformedPrefix.Nodes[1])
+	require.Error(t, err)
+
+	malformedRemainder := leadingLookaheadTree(
+		[]patternsyntax.Node{
+			{Kind: patternsyntax.KindAlternative},
+			{Kind: patternsyntax.KindPositiveLookahead},
+		},
+		[]patternsyntax.NodeID{0, 1},
+	)
+	_, err = translateLeadingLookaheads(&malformedRemainder, malformedRemainder.Nodes[1])
+	require.Error(t, err)
+
+	normalized := normalizeRuneSet([]runeRange{{low: 2, high: 3}, {low: 2, high: 4}})
+	require.Equal(t, []runeRange{{low: 2, high: 4}}, normalized)
+	require.Empty(t, complementRuneSet([]runeRange{{low: 0, high: 0x10ffff}}))
+}
+
+func TestRawEscapeAndErrorOffsetHelpers(t *testing.T) {
+	t.Parallel()
+
+	require.Zero(t, rawGoErrorOffset("x", errors.New("ordinary")))
+	require.Zero(t, rawGoErrorOffset("source", &regexpsyntax.Error{Expr: "missing"}))
+
+	for _, source := range []string{`\Qquoted`, `\xAF`, `\x{Af}`, `\377`, `\a`} {
+		_, _, _ = rawEscapeValue(source, 0)
+	}
+
+	require.Equal(t, rune(0xaf), hexadecimalValue("aF"))
+	require.Zero(t, firstInvalidUTF8("valid"))
+
+	internal := publicSyntaxError(errors.New("internal"))
+
+	var parseError *ParseError
+	require.ErrorAs(t, internal, &parseError)
+	require.Equal(t, ParseErrorInternalTranslation, parseError.Kind)
+
+	complexity := publicSyntaxError(&patternsyntax.Error{
+		Kind: patternsyntax.ErrorTooComplex, Limit: "nodes", Maximum: 1, Observed: 2,
+	})
+	require.ErrorIs(t, complexity, ErrTooComplex)
+}
+
+func leadingLookaheadTree(
+	children []patternsyntax.Node,
+	remainder []patternsyntax.NodeID,
+) patternsyntax.Tree {
+	nodes := []patternsyntax.Node{
+		{Kind: patternsyntax.KindExpression, Children: []patternsyntax.NodeID{1}},
+		{Kind: patternsyntax.KindAlternative},
+		{Kind: patternsyntax.KindBeginInput},
+		{Kind: patternsyntax.KindPositiveLookahead, Children: []patternsyntax.NodeID{4}},
+	}
+	offset := patternsyntax.NodeID(len(nodes))
+
+	shifted := make([]patternsyntax.Node, len(children))
+	for index := range children {
+		shifted[index] = children[index]
+
+		shifted[index].Children = append([]patternsyntax.NodeID(nil), children[index].Children...)
+		for childIndex := range shifted[index].Children {
+			shifted[index].Children[childIndex] += offset
 		}
 	}
 
-	fuzz.Fuzz(func(t *testing.T, source string, value string) {
-		for _, options := range [][]Option{
-			nil,
-			{RejectNonASCII},
-			{UseRE2},
-			{RejectNonASCII, UseRE2},
-		} {
-			validation, err := Parse(source, options...)
-			if err == nil {
-				require.NotNil(t, validation)
-				_ = validation.Validate(value)
-			}
-		}
-	})
+	nodes = append(nodes, shifted...)
+
+	nodes[1].Children = []patternsyntax.NodeID{2, 3}
+	for _, child := range remainder {
+		nodes[1].Children = append(nodes[1].Children, child+offset)
+	}
+
+	return patternsyntax.Tree{Root: 0, Nodes: nodes}
 }
 
 func assertParseError(t *testing.T, err error, kind ParseErrorKind, offset int) {

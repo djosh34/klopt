@@ -1,4 +1,4 @@
-.PHONY: help lint fmt tools test t test-object-keys-additional-properties-false docs
+.PHONY: help lint fmt tools test t test-object-keys-additional-properties-false regen docs
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "%-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)

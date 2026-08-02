@@ -173,8 +173,6 @@ func (state *parser) parseAtom() (NodeID, error) {
 		return state.parseGroup()
 	case '\\':
 		return state.parseEscapeNode()
-	case ')':
-		return 0, syntaxError(start, "unmatched closing parenthesis")
 	case ']':
 		return 0, syntaxError(start, "unescaped closing bracket is not allowed here")
 	}

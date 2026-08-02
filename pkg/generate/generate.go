@@ -20,7 +20,7 @@ const (
 // ErrNilPatternOption reports a nil pattern option.
 var ErrNilPatternOption = errors.New("generate: nil pattern option")
 
-// Generate parses one OpenAPI document and writes validate.go and validate_test.go.
+// Generate parses one OpenAPI document and writes validate.go.
 func Generate(
 	dir string,
 	packageName string,
@@ -45,7 +45,7 @@ func Generate(
 	return nil
 }
 
-// GenerateInMemory parses one OpenAPI document and returns validate.go and validate_test.go.
+// GenerateInMemory parses one OpenAPI document and returns validate.go.
 //
 //nolint:revive // GenerateInMemory is the required public API name.
 func GenerateInMemory(
@@ -57,19 +57,12 @@ func GenerateInMemory(
 		return nil, ErrNilPatternOption
 	}
 
-	settings := patternSettings{}
-	captureSettings := patternvalidator.Option(func(compiled *patternvalidator.PatternValidation) {
-		patternOption(compiled)
-		settings.RejectNonASCII = compiled.RejectsNonASCII()
-		settings.UseRE2 = compiled.UsesRE2()
-	})
-
-	parsed, err := validation.Parse(openAPI, captureSettings)
+	parsed, err := validation.Parse(openAPI, patternOption)
 	if err != nil {
 		return nil, err
 	}
 
-	files, err := render(packageName, openAPI, parsed, settings)
+	files, err := render(packageName, parsed)
 	if err != nil {
 		return nil, err
 	}

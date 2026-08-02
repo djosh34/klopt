@@ -237,7 +237,7 @@ func TestQueryDecoderAcceptsParsedApplicationJSONMediaTypes(t *testing.T) {
 			require.Equal(
 				t,
 				"#/paths/~1items/get/parameters/0/content/"+test.pointer+"/schema",
-				decoder.Definition().Parameters[0].Validation.SchemaPointer,
+				queryDefinitionForTest(t, decoder).Parameters[0].Validation.SchemaPointer,
 			)
 			actual, err := decoder.Decode(&url.URL{RawQuery: `q=true`})
 			require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestQueryJSONContentAbsentAndExplicitEmptySchemasCompileEquivalently(t *tes
 
 	absent := parseQueryDecoder(t, `{name: q, in: query, content: {application/json: {}}}`)
 	explicit := parseQueryDecoder(t, `{name: q, in: query, content: {application/json: {schema: {}}}}`)
-	require.Equal(t, absent.Definition(), explicit.Definition())
+	require.Equal(t, queryDefinitionForTest(t, absent), queryDefinitionForTest(t, explicit))
 }
 
 func TestQueryJSONContentUsesOrdinarySchemaCompilation(t *testing.T) {
@@ -752,13 +752,13 @@ func TestQueryDecoderDeepObjectDynamicWireContract(t *testing.T) {
 	}
 }
 
-func TestQueryDecoderDeepObjectDeclaredEmptyChild(t *testing.T) {
+func TestQueryDecoderAllowsDeclaredEmptyPropertyName(t *testing.T) {
 	t.Parallel()
 
 	decoder := parseQueryDecoder(t, `{name: filter, in: query, allowEmptyValue: true, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'': {type: string}}}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5B%5D=x`})
+	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5B%5D=value`})
 	require.NoError(t, err)
-	require.JSONEq(t, `{"filter":{"":"x"}}`, string(actual))
+	require.JSONEq(t, `{"filter":{"":"value"}}`, string(actual))
 }
 
 func TestQueryDecoderDynamicOwnershipOrder(t *testing.T) {
@@ -1219,26 +1219,136 @@ func TestQueryDecoderPreservesParameterOrderAndSortsValidationLookup(t *testing.
 	require.Equal(t, `{"z":"last","a":1}`, string(actual))
 }
 
-func FuzzQueryDecoder(f *testing.F) {
-	decoder := parseQueryDecoder(f, `{name: q, in: query, allowEmptyValue: true, schema: {type: array, items: {type: string}, maxItems: 5}}`)
-	for _, seed := range []string{"", "q=x", "q=%FF", "q=a&q=b", "%zz=x", "unknown=value"} {
-		f.Add(seed)
+func TestQueryDecoderNamedRobustnessQueries(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, allowEmptyValue: true, schema: {type: array, items: {type: string}, maxItems: 5}}`)
+	for _, test := range []struct {
+		name     string
+		rawQuery string
+	}{
+		{name: "empty"},
+		{name: "scalar", rawQuery: "q=x"},
+		{name: "invalid byte", rawQuery: "q=%FF"},
+		{name: "repeated", rawQuery: "q=a&q=b"},
+		{name: "malformed escape", rawQuery: "%zz=x"},
+		{name: "unknown", rawQuery: "unknown=value"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			first, firstErr := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			second, secondErr := decoder.Decode(&url.URL{RawQuery: test.rawQuery})
+			require.Equal(t, first, second)
+			require.Equal(t, fmt.Sprint(firstErr), fmt.Sprint(secondErr))
+
+			if firstErr != nil {
+				require.Nil(t, first)
+
+				return
+			}
+
+			require.True(t, json.Valid(first))
+		})
 	}
+}
 
-	f.Fuzz(func(t *testing.T, rawQuery string) {
-		first, firstErr := decoder.Decode(&url.URL{RawQuery: rawQuery})
-		second, secondErr := decoder.Decode(&url.URL{RawQuery: rawQuery})
-		require.Equal(t, first, second)
-		require.Equal(t, fmt.Sprint(firstErr), fmt.Sprint(secondErr))
+func TestQueryDecoderAnyOfUsesFirstWorkingBranchInSourceOrder(t *testing.T) {
+	t.Parallel()
 
-		if firstErr != nil {
-			require.Nil(t, first)
+	for _, test := range []struct {
+		name     string
+		schema   string
+		expected string
+	}{
+		{name: "integer first", schema: `{anyOf: [{type: integer}, {type: string}]}`, expected: `{"q":7}`},
+		{name: "string first", schema: `{anyOf: [{type: string}, {type: integer}]}`, expected: `{"q":"7"}`},
+		{
+			name:     "later branch after validation failure",
+			schema:   `{anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}`,
+			expected: `{"q":"7"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-			return
-		}
+			decoder := parseQueryDecoder(t, `{name: q, in: query, schema: `+test.schema+`}`)
+			actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
 
-		require.True(t, json.Valid(first))
-	})
+func TestQueryDecoderAnyOfSkipsUnsatisfiableWireBranches(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+		{allOf: [{type: string}, {type: integer}]},
+		{type: string}
+	]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=value`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"value"}`, string(actual))
+}
+
+func TestQueryDecoderAnyOfRejectsWhenEveryWireBranchIsUnsatisfiable(t *testing.T) {
+	t.Parallel()
+
+	_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: {anyOf: [
+		{allOf: [{type: string}, {type: integer}]},
+		{allOf: [{type: boolean}, {type: number}]}
+	]}}`))
+	require.ErrorContains(t, err, "/anyOf")
+	require.ErrorContains(t, err, "no satisfiable direct primitive alternatives")
+}
+
+func TestQueryDecoderAnyOfKeepsParentAndAllOfConstraintsActive(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {
+      enum: ['7'],
+      allOf: [{minLength: 1}],
+      anyOf: [{type: integer}, {type: string, pattern: '^7$'}]
+    }}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"7"}`, string(actual))
+}
+
+func TestQueryDecoderAnyOfReturnsDeterministicAllFailError(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+      {type: boolean},
+      {type: integer, minimum: 10}
+    ]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=7`})
+	require.Nil(t, actual)
+	require.ErrorContains(t, err, "/anyOf/1")
+	require.ErrorContains(t, err, "minimum")
+}
+
+func TestQueryDecoderRejectsUnsupportedStyleAnyOfAtSourcePointer(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{name: "nested under allOf", schema: `{allOf: [{anyOf: [{type: integer}, {type: string}]}]}`, want: "/allOf/0/anyOf"},
+		{name: "nested array item", schema: `{type: array, items: {anyOf: [{type: integer}, {type: string}]}}`, want: "/items/anyOf"},
+		{name: "direct array", schema: `{anyOf: [{type: array, items: {type: string}}, {type: string}]}`, want: "/anyOf/0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: ` + test.schema + `}`))
+			require.ErrorContains(t, err, test.want)
+			require.ErrorContains(t, err, "unsupported")
+		})
+	}
 }
 
 func parseQueryDecoder(t testing.TB, parameter string) *validation.QueryDecoder {

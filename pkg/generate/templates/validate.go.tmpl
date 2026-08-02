@@ -20,43 +20,66 @@
 }{{end}}
 
 {{define "stringValidation"}}validation.StringValidation{
-	{{with .MinLength}}MinLength: {{template "countBound" .}},{{end}}
-	{{with .MaxLength}}MaxLength: {{template "countBound" .}},{{end}}
-	{{with .Pattern}}Pattern: {{printf "%q" .}},{{end}}
-	{{with .Format}}Format: {{printf "%q" .}},{{end}}
-	{{if .CompiledPattern}}CompiledPattern: patternvalidator.MustParse(
+{{- $emitted := false}}
+{{- with .MinLength}}
+	MinLength: {{template "countBound" .}},{{- $emitted = true}}{{- end}}
+{{- with .MaxLength}}{{if $emitted}}
+{{end}}
+	MaxLength: {{template "countBound" .}},{{- $emitted = true}}{{- end}}
+{{- with .Pattern}}{{if $emitted}}
+{{end}}
+	Pattern: {{printf "%q" .}},{{- $emitted = true}}{{- end}}
+{{- with .Format}}{{if $emitted}}
+{{end}}
+	Format: {{printf "%q" .}},{{- $emitted = true}}{{- end}}
+{{- if .CompiledPattern}}{{if $emitted}}
+{{end}}
+	CompiledPattern: patternvalidator.MustParse(
 		{{printf "%q" .Pattern}},
 		{{if .CompiledPattern.RejectsNonASCII}}patternvalidator.RejectNonASCII,{{end}}
 		{{if .CompiledPattern.UsesRE2}}patternvalidator.UseRE2,{{end}}
-	),{{end}}
-	{{if .CompiledFormat}}CompiledFormat: validation.MustCompileStringFormat({{printf "%q" .Format}}),{{end}}
+	),{{- $emitted = true}}{{- end}}
+{{- if .CompiledFormat}}{{if $emitted}}
+{{end}}
+	CompiledFormat: validation.MustCompileStringFormat({{printf "%q" .Format}}),{{- end}}
 }{{end}}
 
 {{define "arrayValidation"}}validation.ArrayValidation{
-	{{with .MinItems}}MinItems: {{template "countBound" .}},{{end}}
-	{{with .MaxItems}}MaxItems: {{template "countBound" .}},{{end}}
-	{{with .Items}}Items: {{template "validation" .}},{{end}}
-	{{if .UniqueItems}}UniqueItems: true,{{end}}
+{{- with .MinItems}}
+	MinItems: {{template "countBound" .}},{{- end}}
+{{- with .MaxItems}}
+	MaxItems: {{template "countBound" .}},{{- end}}
+{{- with .Items}}
+	Items: {{template "validation" .}},{{- end}}
 }{{end}}
 
 {{define "objectValidation"}}validation.ObjectValidation{
-	{{with .MinProperties}}MinProperties: {{template "countBound" .}},{{end}}
-	{{with .MaxProperties}}MaxProperties: {{template "countBound" .}},{{end}}
-	{{with .Required}}
+{{- $emitted := false}}
+{{- with .MinProperties}}
+	MinProperties: {{template "countBound" .}},{{- $emitted = true}}{{- end}}
+{{- with .MaxProperties}}
+	MaxProperties: {{template "countBound" .}},{{- $emitted = true}}{{- end}}
+{{- with .Required}}{{if $emitted}}
+{{end}}
 	Required: []string{ {{range .}}{{printf "%q" .}},{{end}} },
-	{{end}}
-	{{with .Properties}}
+	{{- $emitted = true}}{{- end}}
+{{- with .Properties}}{{if $emitted}}
+{{end}}
 	Properties: []validation.PropertyValidation{
 		{{range .}}{
 			Name: {{printf "%q" .Name}},
 			Validation: {{template "validation" .Validation}},
 		},{{end}}
 	},
-	{{end}}
-	{{if .AdditionalPropertiesAllowed}}AdditionalPropertiesAllowed: true,{{end}}
-	{{with .AdditionalPropertiesValidation}}
+	{{- $emitted = true}}{{- end}}
+{{- if .AdditionalPropertiesAllowed}}{{if $emitted}}
+{{end}}
+	AdditionalPropertiesAllowed: true,
+	{{- $emitted = true}}{{- end}}
+{{- with .AdditionalPropertiesValidation}}{{if $emitted}}
+{{end}}
 	AdditionalPropertiesValidation: {{template "validation" .}},
-	{{end}}
+{{- end}}
 }{{end}}
 
 {{define "jsonKind" -}}
@@ -96,7 +119,11 @@
 	},
 }{{end}}
 
-{{define "validation"}}&validation.Validation{
+{{define "validation"}}compiled[{{validationID .}}]{{end}}
+
+{{define "rootValidation"}}generatedValidations[{{validationID .}}]{{end}}
+
+{{define "validationFields" -}}
 	SchemaPointer: {{printf "%q" .SchemaPointer}},
 	{{if .BodyRequired}}BodyRequired: true,{{end}}
 
@@ -119,7 +146,7 @@
 	StringValidation: {{template "stringValidation" .StringValidation}},
 	{{end}}
 
-	{{if or .ArrayValidation.MinItems .ArrayValidation.MaxItems .ArrayValidation.Items .ArrayValidation.UniqueItems}}
+	{{if or .ArrayValidation.MinItems .ArrayValidation.MaxItems .ArrayValidation.Items}}
 	ArrayValidation: {{template "arrayValidation" .ArrayValidation}},
 	{{end}}
 
@@ -132,7 +159,13 @@
 		{{range .}}{{template "validation" .}},{{end}}
 	},
 	{{end}}
-}{{end}}
+
+	{{with .AnyOfValidations}}
+	AnyOfValidations: []*validation.Validation{
+		{{range .}}{{template "validation" .}},{{end}}
+	},
+	{{end}}
+{{end}}
 
 {{define "queryProperty"}}validation.QueryPropertyDefinition{
 	Name: {{printf "%q" .Name}},
@@ -140,13 +173,13 @@
 	{{if .Array}}Array: true,{{end}}
 }{{end}}
 
-{{define "queryParameter"}}validation.QueryParameterDefinition{
+{{define "queryParameter"}}{
 	Name: {{printf "%q" .Name}},
 	Wire: {{.Wire}},
 	{{with .Separator}}Separator: {{printf "%q" .}},{{end}}
 	{{if .Required}}Required: true,{{end}}
 	{{if .AllowEmpty}}AllowEmpty: true,{{end}}
-	Validation: {{template "validation" .Validation}},
+	Validation: {{template "rootValidation" .Validation}},
 	{{with .DefaultValue}}DefaultValue: json.RawMessage({{printf "%q" .}}),{{end}}
 	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
 	{{with .DynamicType}}DynamicType: {{printf "%q" .}},{{end}}
@@ -169,11 +202,11 @@
 	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
 }{{end}}
 
-{{define "pathParameter"}}validation.PathParameterDefinition{
+{{define "pathParameter"}}{
 	Name: {{printf "%q" .Name}},
 	Wire: {{.Wire}},
 	{{if .Explode}}Explode: true,{{end}}
-	Validation: {{template "validation" .Validation}},
+	Validation: {{template "rootValidation" .Validation}},
 	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
 	{{with .DynamicType}}DynamicType: {{printf "%q" .}},{{end}}
 	{{with .Properties}}
@@ -193,7 +226,7 @@
 
 {{define "validate.go.tmpl"}}// Package {{.Package}} contains generated request validations.
 //
-//nolint:dupl,godoclint,lll // Generated validation trees use operation IDs and may contain repeated schemas.
+//nolint:dupl,godoclint,lll,mnd // Generated validation trees use operation IDs and graph sizes.
 package {{.Package}}
 
 import (
@@ -204,17 +237,32 @@ import (
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
+var generatedValidations = func() []*validation.Validation {
+	compiled := make([]*validation.Validation, {{len .Validations}})
+	for index := range compiled {
+		compiled[index] = new(validation.Validation)
+	}
+
+	{{range $index, $item := .Validations}}
+	*compiled[{{$index}}] = validation.Validation{
+		{{template "validationFields" $item}}
+	}
+	{{end}}
+
+	return compiled
+}()
+
 {{range .Operations}}
 var {{.Name}} = validation.RequestValidation{
-	{{with .Body}}Body: {{template "validation" .}},{{end}}
-	{{with .Query}}Query: mustQueryDecoder({{template "queryDecoder" .Definition}}),{{end}}
-	{{with .Path}}Path: mustPathDecoder({{template "pathDecoder" .Definition}}),{{end}}
+	{{with .Body}}Body: {{template "rootValidation" .}},{{end}}
+	{{with .Query}}Query: mustQueryDecoder({{template "queryDecoder" .}}),{{end}}
+	{{with .Path}}Path: mustPathDecoder({{template "pathDecoder" .}}),{{end}}
 }
 {{end}}
 
 // RequestValidations contains every compiled request validation by exact operation ID.
 var RequestValidations = map[string]validation.RequestValidation{
-	{{range .Operations}}
+	{{- range .Operations}}
 	{{printf "%q" .OperationID}}: {{.Name}},
 	{{end}}
 }
@@ -225,6 +273,7 @@ func mustQueryDecoder(definition validation.QueryDecoderDefinition) *validation.
 	if err != nil {
 		panic(err)
 	}
+
 	return decoder
 }
 {{end}}
@@ -235,6 +284,7 @@ func mustPathDecoder(definition validation.PathDecoderDefinition) *validation.Pa
 	if err != nil {
 		panic(err)
 	}
+
 	return decoder
 }
 {{end}}

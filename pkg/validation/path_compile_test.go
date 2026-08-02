@@ -2,13 +2,58 @@
 package validation
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/stretchr/testify/require"
 )
+
+//nolint:nilnil // Deliberately simulates a malformed regexp compiler result.
+func nilRegexpCompiler(string) (*regexp.Regexp, error) {
+	return nil, nil
+}
+
+func pathDefinitionForTest(t *testing.T, decoder *PathDecoder) PathDecoderDefinition {
+	t.Helper()
+
+	definition, err := decoder.Definition()
+	require.NoError(t, err)
+
+	return definition
+}
+
+func TestNewPathDecoderReturnsRegexpCompilationErrors(t *testing.T) {
+	t.Parallel()
+
+	parameters := []pathParameter{{
+		name: "id", wire: pathWireSimplePrimitive, validation: &Validation{
+			SchemaPointer: "#/path/id", KindValidation: KindValidation{Type: "string"},
+		}, scalarType: "string",
+	}}
+
+	expected := errors.New("compile path regexp")
+	decoder, err := newPathDecoderWithRegexpCompiler(
+		"path",
+		"/{id}",
+		parameters,
+		func(string) (*regexp.Regexp, error) { return nil, expected },
+	)
+	require.ErrorIs(t, err, expected)
+	require.Nil(t, decoder)
+
+	for _, compileRegexp := range []func(string) (*regexp.Regexp, error){
+		nil,
+		nilRegexpCompiler,
+	} {
+		decoder, err = newPathDecoderWithRegexpCompiler("path", "/{id}", parameters, compileRegexp)
+		require.Error(t, err)
+		require.Nil(t, decoder)
+	}
+}
 
 func TestCompilePathDecoderBuildsSimpleStringMetadata(t *testing.T) {
 	t.Parallel()
@@ -25,7 +70,7 @@ func TestCompilePathDecoderBuildsSimpleStringMetadata(t *testing.T) {
 			Validation: decoder.parameters[0].validation, ScalarType: "string",
 			Properties: []PathPropertyDefinition{},
 		}},
-	}, decoder.Definition())
+	}, pathDefinitionForTest(t, decoder))
 
 	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/value"})
 	require.NoError(t, err)
@@ -77,7 +122,7 @@ func TestCompilePathDecoderDerivesStyleMetadataFromCompiledValidation(t *testing
 			decoder, err := compilePathDecoderForTest(t, "\n      parameters:\n        - "+test.parameter+"\n")
 			require.NoError(t, err)
 
-			definition := decoder.Definition().Parameters[0]
+			definition := pathDefinitionForTest(t, decoder).Parameters[0]
 			require.Equal(t, uint8(test.expectedWire), definition.Wire)
 			require.Equal(t, test.expectedExplode, definition.Explode)
 			require.Equal(t, test.expectedScalar, definition.ScalarType)
@@ -99,7 +144,7 @@ func TestCompilePathDecoderSupportsSchemaLessJSONContent(t *testing.T) {
         - {name: id, in: path, required: true, content: {application/json: {}}}
 `)
 	require.NoError(t, err)
-	require.Equal(t, uint8(pathWireJSONContent), decoder.Definition().Parameters[0].Wire)
+	require.Equal(t, uint8(pathWireJSONContent), pathDefinitionForTest(t, decoder).Parameters[0].Wire)
 
 	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/null"})
 	require.NoError(t, err)
@@ -299,7 +344,7 @@ func TestCompilePathDecoderUsesStringDynamicValuesForEveryAdditionalPropertiesFo
            schema: {type: object`+test.additionalProperties+`}}
 `)
 			require.NoError(t, err)
-			require.Equal(t, "string", decoder.Definition().Parameters[0].DynamicType)
+			require.Equal(t, "string", pathDefinitionForTest(t, decoder).Parameters[0].DynamicType)
 
 			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/other=value"})
 			if test.decodeError != "" {
@@ -348,8 +393,122 @@ func TestCompilePathDecoderMapsEverySchemaStyleAndShapeWire(t *testing.T) {
         - {name: id, in: path, required: true%s, explode: %t, schema: %s}
 `, style, test.explode, test.schema))
 			require.NoError(t, err)
-			require.Equal(t, uint8(test.wire), decoder.Definition().Parameters[0].Wire)
-			require.Equal(t, test.explode, decoder.Definition().Parameters[0].Explode)
+			definition := pathDefinitionForTest(t, decoder).Parameters[0]
+			require.Equal(t, uint8(test.wire), definition.Wire)
+			require.Equal(t, test.explode, definition.Explode)
+		})
+	}
+}
+
+func TestPathDecoderAnyOfUsesFirstWorkingBranchInSourceOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		schema   string
+		expected string
+	}{
+		{name: "integer first", schema: `{anyOf: [{type: integer}, {type: string}]}`, expected: `{"id":7}`},
+		{name: "string first", schema: `{anyOf: [{type: string}, {type: integer}]}`, expected: `{"id":"7"}`},
+		{
+			name:     "later branch after validation failure",
+			schema:   `{anyOf: [{type: integer, minimum: 10}, {type: string, pattern: '^7$'}]}`,
+			expected: `{"id":"7"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: `+test.schema+`}
+`)
+			require.NoError(t, err)
+
+			actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
+			require.NoError(t, err)
+			require.JSONEq(t, test.expected, string(actual))
+		})
+	}
+}
+
+func TestPathDecoderAnyOfSkipsUnsatisfiableWireBranches(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - {allOf: [{type: string}, {type: integer}]}
+              - {type: string}
+`)
+	require.NoError(t, err)
+
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/value"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"value"}`, string(actual))
+}
+
+func TestPathDecoderAnyOfKeepsParentAndAllOfConstraintsActive(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            enum: ['7']
+            allOf: [{minLength: 1}]
+            anyOf: [{type: integer}, {type: string, pattern: '^7$'}]
+`)
+	require.NoError(t, err)
+
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"7"}`, string(actual))
+}
+
+func TestPathDecoderAnyOfReturnsDeterministicAllFailError(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: {anyOf: [{type: boolean}, {type: integer, minimum: 10}]}}
+`)
+	require.NoError(t, err)
+
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/7"})
+	require.Nil(t, actual)
+	require.ErrorContains(t, err, "/anyOf/1")
+	require.ErrorContains(t, err, "minimum")
+}
+
+func TestPathDecoderRejectsUnsupportedStyleAnyOfAtSourcePointer(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{name: "nested under allOf", schema: `{allOf: [{anyOf: [{type: integer}, {type: string}]}]}`, want: "/allOf/0/anyOf"},
+		{name: "nested property", schema: `{type: object, properties: {value: {anyOf: [{type: integer}, {type: string}]}}}`, want: "/properties/value/anyOf"},
+		{name: "direct object", schema: `{anyOf: [{type: object}, {type: string}]}`, want: "/anyOf/0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - {name: id, in: path, required: true, schema: `+test.schema+`}
+`)
+			require.Nil(t, decoder)
+			require.ErrorContains(t, err, test.want)
+			require.ErrorContains(t, err, "unsupported")
 		})
 	}
 }

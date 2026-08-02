@@ -1,11 +1,11 @@
 ---
 title: Architecture
-description: How OpenAPI schemas become runtime validations and targeted random JSON tests.
+description: How OpenAPI schemas become runtime validations and generated Go data.
 ---
 
 ## Validation
 
-`validation.Parse` selects JSON request bodies and query parameters by `operationId`, resolves reachable local references, and compiles each schema into a `Validation` tree.
+`validation.Parse` selects JSON request bodies and path/query parameters by `operationId`, resolves reachable local references, and compiles each schema into a `Validation` tree.
 
 For example:
 
@@ -58,41 +58,10 @@ var createThing = &validation.Validation{
 
 Runtime parsing and generated literals produce the same compiled model. Generated source contains data, not generated validation functions. `Validate` walks that model while retaining raw JSON at every nested value.
 
-For runtime validation, `allOf` stays as separate child validations. Each branch checks the same raw value, matching OpenAPI's rule that its schemas are [validated independently but together](https://spec.openapis.org/oas/v3.0.3.html#composition-and-inheritance-polymorphism).
+For runtime validation, `allOf` stays as separate child validations. Each branch checks the same raw value, matching OpenAPI's rule that its schemas are [validated independently but together](https://spec.openapis.org/oas/v3.0.4.html#composition-and-inheritance-polymorphism). Request-body `anyOf` keeps authored alternatives as child validations and accepts when at least one succeeds, after local and `allOf` constraints pass.
 
-## Test generation
+Path and query decoders support the current direct/root primitive schema-style `anyOf` subset. They try alternatives in source order, validate before selecting one, and retain parent and `allOf` constraints. Nested, object, array, and content-based parameter `anyOf` remain unsupported.
 
-The test generator does more than draw arbitrary JSON:
+## Generated artifacts
 
-1. It compiles a schema into a constructive **Domain**: reachable JSON kinds plus exact constraints for numbers, strings, arrays, objects, and enums.
-2. It plans focused **cases** from that domain: an aggregate valid case, useful valid partitions such as boundaries, and rejected cases that fail one constraint while satisfying the others when possible.
-3. It attaches a Rapid generator to each case. The generator recursively draws random JSON values from that case's domain.
-4. Each case runs as a Rapid property. The value is marshalled as exact JSON and passed to the validator callback. The planned accepted or rejected result is checked against that callback.
-
-The cases provide coverage intent; Rapid provides variation and shrinking inside each case. For the object schema above, planned cases cover valid objects, a missing required `name`, a wrong type for `name`, and an unknown property. Each property can produce many concrete JSON bodies rather than one fixed fixture.
-
-Schema parsing is fuzzed too. A separate Rapid generator builds supported OpenAPI documents, then makes independently mutated invalid copies. This tests both successful compilation and precise rejection of malformed schemas.
-
-### Why `allOf` must merge before generating
-
-Consider a schema where neither branch describes the final valid values:
-
-```yaml
-allOf:
-  - type: integer
-    minimum: 4
-  - maximum: 10
-    multipleOf: 3
-```
-
-At the `allOf` level there is no ready-made value to draw. Choosing from either branch alone is unsafe: `4` satisfies the first branch but not `multipleOf: 3`; `3` satisfies the second branch but not `minimum: 4`.
-
-The generator handles it step by step:
-
-1. Compile the first branch as integers greater than or equal to `4`.
-2. Compile the second branch as all JSON kinds, with numbers no greater than `10` and restricted to multiples of `3`.
-3. Intersect both domains. The numeric result is integers from `4` through `10` that are multiples of `3`.
-4. Build the aggregate valid generator from that merged domain. It can draw `6` or `9`.
-5. Build isolated rejected cases from the same context. For example, `3` fails only the minimum, `12` fails only the maximum, and values such as `4` or `10` fail only `multipleOf`.
-
-The merge happens before Rapid generation. This is what lets random values remain meaningful: every accepted draw satisfies all branches, while rejected draws target a specific rule without accidentally failing unrelated siblings.
+Generation renders the same compiled validation trees used at runtime. `Generate` and `GenerateInMemory` produce only `validate.go`; they do not embed the source document or generate tests. The committed example keeps `validate_test.go` under human ownership, with deterministic operation and body tables.

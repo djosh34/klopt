@@ -2,7 +2,6 @@
 package stringlanguage_test
 
 import (
-	"encoding/base64"
 	"regexp"
 	"strings"
 	"testing"
@@ -10,6 +9,15 @@ import (
 	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Public-seam test of the required shared module.
 	"github.com/stretchr/testify/require"
 )
+
+func languageMatches(t *testing.T, language stringlanguage.Language, value string) bool {
+	t.Helper()
+
+	matches, err := language.Matches(value)
+	require.NoError(t, err)
+
+	return matches
+}
 
 func TestUUIDFormatsAreTheSameExactLanguage(t *testing.T) {
 	t.Parallel()
@@ -31,21 +39,12 @@ func TestUUIDFormatsAreTheSameExactLanguage(t *testing.T) {
 			language, err := stringlanguage.Format(name)
 			require.NoError(t, err)
 
-			set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-				Language: language, WantMatch: true,
-			}}, stringlanguage.Length{})
-			require.NoError(t, err)
-
 			for _, value := range valid {
-				require.True(t, set.Matches(value), value)
+				require.True(t, languageMatches(t, language, value), value)
 			}
 
 			for _, value := range invalid {
-				require.False(t, set.Matches(value), value)
-			}
-
-			for seed := range uint64(100) {
-				require.True(t, set.Matches(set.Generate(seed)))
+				require.False(t, languageMatches(t, language, value), value)
 			}
 		})
 	}
@@ -56,24 +55,13 @@ func TestByteIsStrictPaddedStandardBase64(t *testing.T) {
 
 	language, err := stringlanguage.Format("byte")
 	require.NoError(t, err)
-	set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-		Language: language, WantMatch: true,
-	}}, stringlanguage.Length{})
-	require.NoError(t, err)
 
 	for _, value := range []string{"", "YQ==", "YWI=", "YWJj", "+///"} {
-		require.True(t, set.Matches(value), value)
+		require.True(t, languageMatches(t, language, value), value)
 	}
 
 	for _, value := range []string{"%%%", "YQ", "YQ=", "YR==", "YWJ="} {
-		require.False(t, set.Matches(value), value)
-	}
-
-	for seed := range uint64(100) {
-		value := set.Generate(seed)
-		require.True(t, set.Matches(value))
-		_, err := base64.StdEncoding.Strict().DecodeString(value)
-		require.NoError(t, err, value)
+		require.False(t, languageMatches(t, language, value), value)
 	}
 }
 
@@ -83,21 +71,12 @@ func TestIPv4IsCanonicalDottedDecimal(t *testing.T) {
 	language, err := stringlanguage.Format("ipv4")
 	require.NoError(t, err)
 
-	set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-		Language: language, WantMatch: true,
-	}}, stringlanguage.Length{})
-	require.NoError(t, err)
-
 	for _, value := range []string{"0.0.0.0", "10.0.0.1", "255.255.255.255"} {
-		require.True(t, set.Matches(value), value)
+		require.True(t, languageMatches(t, language, value), value)
 	}
 
 	for _, value := range []string{"010.0.0.1", "256.0.0.1", "1.2.3", "1.2.3.4.5"} {
-		require.False(t, set.Matches(value), value)
-	}
-
-	for seed := range uint64(100) {
-		require.True(t, set.Matches(set.Generate(seed)))
+		require.False(t, languageMatches(t, language, value), value)
 	}
 }
 
@@ -111,17 +90,12 @@ func TestCIDRAliasesAcceptAddressWithPrefixWithoutNormalization(t *testing.T) {
 			language, err := stringlanguage.Format(name)
 			require.NoError(t, err)
 
-			set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-				Language: language, WantMatch: true,
-			}}, stringlanguage.Length{})
-			require.NoError(t, err)
-
 			for _, value := range []string{"0.0.0.0/0", "192.0.2.0/24", "192.0.2.7/24", "255.255.255.255/32"} {
-				require.True(t, set.Matches(value), value)
+				require.True(t, languageMatches(t, language, value), value)
 			}
 
 			for _, value := range []string{"192.0.2.7", "192.0.2.7/33", "192.0.02.7/24"} {
-				require.False(t, set.Matches(value), value)
+				require.False(t, languageMatches(t, language, value), value)
 			}
 		})
 	}
@@ -130,23 +104,8 @@ func TestCIDRAliasesAcceptAddressWithPrefixWithoutNormalization(t *testing.T) {
 	require.NoError(t, err)
 	pattern, err := stringlanguage.Pattern(`^192\.0\.2\.7/24$`)
 	require.NoError(t, err)
-
-	set, err := stringlanguage.Compile([]stringlanguage.Requirement{
-		{Language: format, WantMatch: true},
-		{Language: pattern, WantMatch: true},
-	}, stringlanguage.Length{})
-	require.NoError(t, err)
-	require.Equal(t, "192.0.2.7/24", set.Generate(0))
-
-	alias, err := stringlanguage.Format("ipv4-cidr")
-	require.NoError(t, err)
-	_, err = stringlanguage.Compile([]stringlanguage.Requirement{
-		{Language: format, WantMatch: false},
-		{Language: alias, WantMatch: true},
-	}, stringlanguage.Length{})
-
-	var empty *stringlanguage.EmptyError
-	require.ErrorAs(t, err, &empty)
+	require.True(t, languageMatches(t, format, "192.0.2.7/24"))
+	require.True(t, languageMatches(t, pattern, "192.0.2.7/24"))
 }
 
 func TestDateMatchesRealCalendarDatesAndIntersectsPatterns(t *testing.T) {
@@ -154,42 +113,23 @@ func TestDateMatchesRealCalendarDatesAndIntersectsPatterns(t *testing.T) {
 
 	format, err := stringlanguage.Format("date")
 	require.NoError(t, err)
-	set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-		Language: format, WantMatch: true,
-	}}, stringlanguage.Length{})
-	require.NoError(t, err)
 
 	for _, value := range []string{"0000-02-29", "1904-02-29", "2000-02-29", "2024-02-29", "2026-07-14"} {
-		require.True(t, set.Matches(value), value)
+		require.True(t, languageMatches(t, format, value), value)
 	}
 
 	for _, value := range []string{"1900-02-29", "2024-02-30", "2026-7-14", "2026-07-14Z"} {
-		require.False(t, set.Matches(value), value)
+		require.False(t, languageMatches(t, format, value), value)
 	}
 
 	pattern, err := stringlanguage.Pattern(`^2024-`)
 	require.NoError(t, err)
-	valid, err := stringlanguage.Compile([]stringlanguage.Requirement{
-		{Language: format, WantMatch: true},
-		{Language: pattern, WantMatch: true},
-	}, stringlanguage.Length{})
-	require.NoError(t, err)
-	formatInvalid, err := stringlanguage.Compile([]stringlanguage.Requirement{
-		{Language: format, WantMatch: false},
-		{Language: pattern, WantMatch: true},
-	}, stringlanguage.Length{})
-	require.NoError(t, err)
-	patternInvalid, err := stringlanguage.Compile([]stringlanguage.Requirement{
-		{Language: format, WantMatch: true},
-		{Language: pattern, WantMatch: false},
-	}, stringlanguage.Length{})
-	require.NoError(t, err)
-
-	for seed := range uint64(100) {
-		require.True(t, valid.Matches(valid.Generate(seed)))
-		require.True(t, formatInvalid.Matches(formatInvalid.Generate(seed)))
-		require.True(t, patternInvalid.Matches(patternInvalid.Generate(seed)))
-	}
+	require.True(t, languageMatches(t, format, "2024-02-29"))
+	require.True(t, languageMatches(t, pattern, "2024-02-29"))
+	require.False(t, languageMatches(t, format, "2024-not-a-date"))
+	require.True(t, languageMatches(t, pattern, "2024-not-a-date"))
+	require.True(t, languageMatches(t, format, "2026-07-14"))
+	require.False(t, languageMatches(t, pattern, "2026-07-14"))
 }
 
 func TestDateTimeMatchesSupportedRFC3339ProfileAndIntersectsPatterns(t *testing.T) {
@@ -197,44 +137,40 @@ func TestDateTimeMatchesSupportedRFC3339ProfileAndIntersectsPatterns(t *testing.
 
 	format, err := stringlanguage.Format("date-time")
 	require.NoError(t, err)
-	set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-		Language: format, WantMatch: true,
-	}}, stringlanguage.Length{})
-	require.NoError(t, err)
 
 	for _, value := range []string{
 		"2026-07-14T12:30:00Z",
 		"2024-02-29T23:59:59.123Z",
 	} {
-		require.True(t, set.Matches(value), value)
+		require.True(t, languageMatches(t, format, value), value)
 	}
 
 	for _, value := range []string{
 		"2026-07-14Z",
-		"2024-02-30T12:30:00Z",
+		"2024-02-30T12:00:00Z",
 		"2026-07-14t12:30:00z",
 		"2026-07-14T24:00:00Z",
 		"2026-07-14T12:30:00+24:00",
 		"2026-07-14T12:30:00+23:60",
 		"2026-07-14T12:30:00,5+02:30",
 	} {
-		require.False(t, set.Matches(value), value)
+		require.False(t, languageMatches(t, format, value), value)
 	}
 
 	pattern, err := stringlanguage.Pattern(`Z$`)
 	require.NoError(t, err)
 
-	for _, requirements := range [][]stringlanguage.Requirement{
-		{{Language: format, WantMatch: true}, {Language: pattern, WantMatch: true}},
-		{{Language: format, WantMatch: false}, {Language: pattern, WantMatch: true}},
-		{{Language: format, WantMatch: true}, {Language: pattern, WantMatch: false}},
+	for _, test := range []struct {
+		value        string
+		formatMatch  bool
+		patternMatch bool
+	}{
+		{value: "2026-07-14T12:30:00Z", formatMatch: true, patternMatch: true},
+		{value: "not-a-dateZ", patternMatch: true},
+		{value: "2026-07-14T12:30:00+02:00", formatMatch: true},
 	} {
-		signed, err := stringlanguage.Compile(requirements, stringlanguage.Length{})
-		require.NoError(t, err)
-
-		for seed := range uint64(100) {
-			require.True(t, signed.Matches(signed.Generate(seed)))
-		}
+		require.Equal(t, test.formatMatch, languageMatches(t, format, test.value), test.value)
+		require.Equal(t, test.patternMatch, languageMatches(t, pattern, test.value), test.value)
 	}
 }
 
@@ -242,10 +178,6 @@ func TestEmailMatchesTheStaticRFC5321MailboxGrammar(t *testing.T) {
 	t.Parallel()
 
 	language, err := stringlanguage.Format("email")
-	require.NoError(t, err)
-	set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-		Language: language, WantMatch: true,
-	}}, stringlanguage.Length{})
 	require.NoError(t, err)
 
 	valid := []string{
@@ -274,27 +206,18 @@ func TestEmailMatchesTheStaticRFC5321MailboxGrammar(t *testing.T) {
 	}
 
 	for _, value := range valid {
-		require.True(t, set.Matches(value), value)
+		require.True(t, languageMatches(t, language, value), value)
 	}
 
 	for _, value := range invalid {
-		require.False(t, set.Matches(value), value)
+		require.False(t, languageMatches(t, language, value), value)
 	}
 
 	for _, value := range valid {
 		pattern, patternErr := stringlanguage.Pattern(`^` + regexp.QuoteMeta(value) + `$`)
-		require.NoError(t, patternErr)
-
-		exact, compileErr := stringlanguage.Compile([]stringlanguage.Requirement{
-			{Language: language, WantMatch: true},
-			{Language: pattern, WantMatch: true},
-		}, stringlanguage.Length{})
-		require.NoError(t, compileErr, value)
-		require.Equal(t, value, exact.Generate(0))
-	}
-
-	for seed := range uint64(100) {
-		require.True(t, set.Matches(set.Generate(seed)))
+		require.NoError(t, patternErr, value)
+		require.True(t, languageMatches(t, language, value), value)
+		require.True(t, languageMatches(t, pattern, value), value)
 	}
 }
 
@@ -303,15 +226,11 @@ func TestEmailEnforcesRFC5321MailboxPartSizeLimits(t *testing.T) {
 
 	language, err := stringlanguage.Format("email")
 	require.NoError(t, err)
-	set, err := stringlanguage.Compile([]stringlanguage.Requirement{{
-		Language: language, WantMatch: true,
-	}}, stringlanguage.Length{})
-	require.NoError(t, err)
 
-	require.True(t, set.Matches(strings.Repeat("a", 64)+"@x"))
-	require.False(t, set.Matches(strings.Repeat("a", 65)+"@x"))
-	require.True(t, set.Matches("a@"+strings.Repeat("b", 63)))
-	require.False(t, set.Matches("a@"+strings.Repeat("b", 64)))
+	require.True(t, languageMatches(t, language, strings.Repeat("a", 64)+"@x"))
+	require.False(t, languageMatches(t, language, strings.Repeat("a", 65)+"@x"))
+	require.True(t, languageMatches(t, language, "a@"+strings.Repeat("b", 63)))
+	require.False(t, languageMatches(t, language, "a@"+strings.Repeat("b", 64)))
 
 	domain252 := strings.Join([]string{
 		strings.Repeat("a", 63),
@@ -322,6 +241,6 @@ func TestEmailEnforcesRFC5321MailboxPartSizeLimits(t *testing.T) {
 	domain253 := domain252 + "d"
 	require.Len(t, "a@"+domain252, 254)
 	require.Len(t, "a@"+domain253, 255)
-	require.True(t, set.Matches("a@"+domain252))
-	require.False(t, set.Matches("a@"+domain253))
+	require.True(t, languageMatches(t, language, "a@"+domain252))
+	require.False(t, languageMatches(t, language, "a@"+domain253))
 }
