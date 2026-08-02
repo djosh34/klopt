@@ -33,7 +33,7 @@ func parseInput(input Input) (*schemaModel, error) {
 
 	parser := oasParser{
 		document:  document,
-		parsed:    make(map[schemaTargetKey]*schemaNode),
+		parsed:    make(map[string]*schemaNode),
 		resolving: make(map[string]bool),
 	}
 
@@ -204,6 +204,12 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 		return nil, "", err
 	}
 
+	if examples, hasExamples := media["examples"]; hasExamples {
+		if _, examplesErr := requireJSONObject(examples, mediaPointer+"/examples"); examplesErr != nil {
+			return nil, "", examplesErr
+		}
+	}
+
 	if _, hasExample := media["example"]; hasExample {
 		if _, hasExamples := media["examples"]; hasExamples {
 			return nil, "", fmt.Errorf("%s/examples: example and examples are mutually exclusive", mediaPointer)
@@ -242,14 +248,9 @@ func validateRequestBodyFields(body map[string]*jsonValue, pointer string) error
 	return nil
 }
 
-type schemaTargetKey struct {
-	pointer          string
-	instanceTemplate string
-}
-
 type oasParser struct {
 	document  *jsonValue
-	parsed    map[schemaTargetKey]*schemaNode
+	parsed    map[string]*schemaNode
 	resolving map[string]bool
 }
 
@@ -278,7 +279,7 @@ func (parser *oasParser) parseSchemaOccurrence(
 			targetPointer:    authoredPointer,
 			instanceTemplate: instanceTemplate,
 		},
-		allowAdditionalProperties: true,
+		schemaShape: &schemaShape{allowAdditionalProperties: true},
 	}
 
 	if err := parser.parseSchemaObject(node, object, authoredPointer); err != nil {
@@ -303,12 +304,8 @@ func (parser *oasParser) parseSchemaReference(
 		return nil, err
 	}
 
-	key := schemaTargetKey{pointer: targetPointer, instanceTemplate: instanceTemplate}
-	if parsed, exists := parser.parsed[key]; exists {
-		occurrence := *parsed
-		occurrence.occurrence.usePointer = usePointer
-
-		return &occurrence, nil
+	if parsed, exists := parser.parsed[targetPointer]; exists {
+		return newSchemaReferenceOccurrence(parsed, usePointer, instanceTemplate), nil
 	}
 
 	if parser.resolving[targetPointer] {
@@ -322,17 +319,25 @@ func (parser *oasParser) parseSchemaReference(
 	parser.resolving[targetPointer] = true
 	defer delete(parser.resolving, targetPointer)
 
-	parsed, err := parser.parseSchemaOccurrence(target, targetPointer, targetPointer, instanceTemplate)
+	parsed, err := parser.parseSchemaOccurrence(target, targetPointer, targetPointer, "#")
 	if err != nil {
 		return nil, err
 	}
 
-	parser.parsed[key] = parsed
+	parser.parsed[targetPointer] = parsed
 
-	occurrence := *parsed
-	occurrence.occurrence.usePointer = usePointer
+	return newSchemaReferenceOccurrence(parsed, usePointer, instanceTemplate), nil
+}
 
-	return &occurrence, nil
+func newSchemaReferenceOccurrence(parsed *schemaNode, usePointer, instanceTemplate string) *schemaNode {
+	return &schemaNode{
+		occurrence: schemaOccurrence{
+			usePointer:       usePointer,
+			targetPointer:    parsed.occurrence.targetPointer,
+			instanceTemplate: instanceTemplate,
+		},
+		schemaShape: parsed.schemaShape,
+	}
 }
 
 func requireJSONObject(value *jsonValue, pointer string) (map[string]*jsonValue, error) {

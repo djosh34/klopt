@@ -227,25 +227,22 @@ func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue
 	}
 
 	members := make([]*jsonValue, 0, len(value.array))
+	seen := make(map[string]bool, len(value.array))
+
 	for index, candidate := range value.array {
-		duplicate := false
-
-		for _, member := range members {
-			equal, err := jsonSemanticEqual(candidate, member)
-			if err != nil {
-				return nil, fmt.Errorf("%s/enum/%d: compare enum member: %w", pointer, index, err)
-			}
-
-			if equal {
-				duplicate = true
-
-				break
-			}
+		canonical, err := marshalStrict(candidate)
+		if err != nil {
+			return nil, fmt.Errorf("%s/enum/%d: canonicalize enum member: %w", pointer, index, err)
 		}
 
-		if !duplicate {
-			members = append(members, candidate)
+		key := string(canonical)
+		if seen[key] {
+			continue
 		}
+
+		seen[key] = true
+
+		members = append(members, candidate)
 	}
 
 	return members, nil

@@ -4,6 +4,7 @@ package schematest
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -423,6 +424,35 @@ func TestParseInputSharesRepeatedReferenceTargetStructure(t *testing.T) {
 	require.Same(t, model.root.allOf[0].allOf[0], model.root.allOf[1].allOf[0])
 }
 
+func TestParseInputSharesReferenceTargetsAcrossInstanceTemplates(t *testing.T) {
+	t.Parallel()
+
+	document := `{
+		"openapi":"3.0.4",
+		"components":{"schemas":{
+			"A":{"type":"string"},
+			"B":{"type":"object","properties":{
+				"a":{"$ref":"#/components/schemas/A"},
+				"b":{"$ref":"#/components/schemas/A"}
+			}},
+			"C":{"type":"object","properties":{
+				"a":{"$ref":"#/components/schemas/B"},
+				"b":{"$ref":"#/components/schemas/B"}
+			}}
+		}},
+		"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
+			"$ref":"#/components/schemas/C"
+		}}}}}}}
+	}`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.NotSame(t, model.root.properties["a"], model.root.properties["b"])
+	require.Equal(t, "#/a", model.root.properties["a"].occurrence.instanceTemplate)
+	require.Equal(t, "#/b", model.root.properties["b"].occurrence.instanceTemplate)
+	require.Same(t, model.root.properties["a"].properties["a"], model.root.properties["b"].properties["a"])
+}
+
 func TestParseInputPreservesNestedReferenceUseTargetAndInstanceMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -574,6 +604,22 @@ paths:
 			requireExactNumberEqual(t, "1", model.root.defaultValue.number)
 		})
 	}
+}
+
+func TestParseInputDeduplicatesLargeEnumInLinearWork(t *testing.T) {
+	t.Parallel()
+
+	members := make([]string, 20_000)
+	for index := range members {
+		members[index] = fmt.Sprintf("%q", fmt.Sprintf("member-%d", index))
+	}
+
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"enum":[` + strings.Join(members, ",") + `]}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	require.Len(t, model.root.enum, len(members))
 }
 
 func TestParseInputModelsNullableOnlyWithSameObjectType(t *testing.T) {
@@ -1074,6 +1120,33 @@ paths:
 			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
 			require.ErrorContains(t, err, "/content/application~1json/examples")
 			require.ErrorContains(t, err, "mutually exclusive")
+		})
+	}
+}
+
+func TestParseInputRejectsMalformedMediaTypeExamplesMap(t *testing.T) {
+	t.Parallel()
+
+	for encoding, document := range map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{},"examples":[]}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+            examples: []
+`,
+	} {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.ErrorContains(t, err, "/content/application~1json/examples")
+			require.ErrorContains(t, err, "must be an object")
 		})
 	}
 }

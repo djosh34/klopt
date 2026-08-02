@@ -16,7 +16,8 @@ const (
 )
 
 // schemaOccurrence identifies where a schema is used, where a Reference Object
-// resolves, and which request instance location it describes.
+// resolves, and its canonical instance template. Templates inside a shared
+// referenced shape are relative to that reference occurrence.
 type schemaOccurrence struct {
 	usePointer       string
 	targetPointer    string
@@ -61,10 +62,15 @@ const (
 	schemaFormatPassword
 )
 
-// schemaNode is the private clean-room representation of one Schema Object
-// occurrence.
+// schemaNode is one Schema Object occurrence over an immutable, shareable shape.
 type schemaNode struct {
-	occurrence   schemaOccurrence
+	*schemaShape
+
+	occurrence schemaOccurrence
+}
+
+// schemaShape contains the semantics shared by references to one target.
+type schemaShape struct {
 	kind         schemaKind
 	nullable     bool
 	enum         []*jsonValue
