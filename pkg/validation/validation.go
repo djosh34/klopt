@@ -57,6 +57,8 @@ type NumberBound struct {
 
 	// ExactValue is the compiled numeric form of Value used by Validate.
 	ExactValue jsonvalue.Number
+
+	compiledValue *jsonvalue.CompiledNumber
 }
 
 // NumberValidation holds exact numeric constraints.
@@ -68,6 +70,8 @@ type NumberValidation struct {
 
 	// ExactMultipleOf is the compiled numeric form of MultipleOf used by Validate.
 	ExactMultipleOf *jsonvalue.Number
+
+	compiledMultipleOf *jsonvalue.CompiledNumber
 }
 
 // CountBound is one exact non-negative integer bound for a collection or string length.

@@ -607,16 +607,16 @@ func compilePrimitiveAnyOf(validation *Validation) ([]primitiveAnyOfCandidate, e
 			return nil, fmt.Errorf("schema at %s has unsupported nested anyOf", pointer)
 		}
 
-		types := make([]string, 0)
+		types := append([]string(nil), parentTypes...)
 		if err := collectCompiledValidationTypes(child, &types); err != nil {
 			return nil, err
 		}
 
-		if len(types) == 0 {
-			types = parentTypes
+		typeName := intersectQuerySchemaTypes(types)
+		if len(types) != 0 && typeName == "" {
+			continue
 		}
 
-		typeName := intersectQuerySchemaTypes(types)
 		if !isScalarType(typeName) {
 			return nil, fmt.Errorf(
 				"schema at %s has unsupported anyOf parameter wire type %q; only direct primitive alternatives are supported",
@@ -628,6 +628,13 @@ func compilePrimitiveAnyOf(validation *Validation) ([]primitiveAnyOfCandidate, e
 		branch := parent
 		branch.AllOfValidations = append(append([]*Validation(nil), parent.AllOfValidations...), child)
 		candidates = append(candidates, primitiveAnyOfCandidate{validation: &branch, scalarType: typeName})
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf(
+			"schema at %s/anyOf has no satisfiable direct primitive alternatives",
+			validation.SchemaPointer,
+		)
 	}
 
 	return candidates, nil

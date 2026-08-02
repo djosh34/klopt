@@ -98,6 +98,31 @@ func TestNumberExactOperationsWithArbitraryExponents(t *testing.T) {
 	}
 }
 
+// TestCompiledNumberOperationsReuseCheckedOperandsAndRejectZeroState covers the prepared-number API.
+func TestCompiledNumberOperationsReuseCheckedOperandsAndRejectZeroState(t *testing.T) {
+	t.Parallel()
+
+	one, err := ParseNumber("1")
+	require.NoError(t, err)
+	two, err := ParseNumber("2")
+	require.NoError(t, err)
+
+	compiledOne, err := one.Compile()
+	require.NoError(t, err)
+	comparison, err := two.CompareCompiled(compiledOne)
+	require.NoError(t, err)
+	require.Equal(t, 1, comparison)
+
+	multiple, err := two.IsMultipleOfCompiled(compiledOne)
+	require.NoError(t, err)
+	require.True(t, multiple)
+
+	_, err = two.CompareCompiled(CompiledNumber{})
+	require.Error(t, err)
+	_, err = two.IsMultipleOfCompiled(CompiledNumber{})
+	require.Error(t, err)
+}
+
 // TestMalformedNumberOperationsReturnErrors verifies every exact-number API rejects invalid public state.
 func TestMalformedNumberOperationsReturnErrors(t *testing.T) {
 	t.Parallel()

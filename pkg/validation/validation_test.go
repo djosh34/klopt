@@ -818,15 +818,6 @@ func TestParseRejectsUniqueItemsAcrossAuthoredSchemaLocations(t *testing.T) {
 		pointer string
 	}{
 		{
-			name: "raw reference sibling",
-			spec: string(openAPISpec(
-				`{"$ref":"#/components/schemas/Target","uniqueItems":false}`,
-				`,"components":{"schemas":{"Target":{"type":"array","items":{}}}}`,
-				false,
-			)),
-			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/uniqueItems",
-		},
-		{
 			name: "referenced schema",
 			spec: string(openAPISpec(
 				`{"$ref":"#/components/schemas/Target"}`,
@@ -1044,6 +1035,60 @@ func TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth(t *testing.
 	require.Less(t, deep, shallow*5/2)
 }
 
+// TestUniqueItemsTraversalReusesResolvedSchemaTargets bounds repeated-reference traversal costs.
+//
+//nolint:paralleltest // Per-process allocation counts must run without concurrent tests.
+func TestUniqueItemsTraversalReusesResolvedSchemaTargets(t *testing.T) {
+	document := func(references int) json.RawMessage {
+		schemas := make(map[string]any, references+1)
+		for index := range references {
+			schemas[fmt.Sprintf("Alias%02d", index)] = map[string]any{"$ref": "#/components/schemas/ZTarget"}
+		}
+
+		var target any = map[string]any{"type": "string"}
+		for range 256 {
+			target = map[string]any{"items": target}
+		}
+
+		schemas["ZTarget"] = target
+
+		raw, err := json.Marshal(map[string]any{"components": map[string]any{"schemas": schemas}})
+		require.NoError(t, err)
+
+		return raw
+	}
+
+	allocatedBytes := func(references int) int64 {
+		raw := document(references)
+		result := testing.Benchmark(func(benchmark *testing.B) {
+			for benchmark.Loop() {
+				if err := rejectAuthoredUniqueItems(raw); err != nil {
+					panic(err)
+				}
+			}
+		})
+
+		return result.AllocedBytesPerOp()
+	}
+
+	few := allocatedBytes(2)
+	many := allocatedBytes(16)
+	require.Less(t, many, few*5/2)
+}
+
+// TestParseIgnoresUniqueItemsSiblingOnReferenceObjects distinguishes Reference and Schema Objects.
+func TestParseIgnoresUniqueItemsSiblingOnReferenceObjects(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(openAPISpec(
+		`{"$ref":"#/components/schemas/Target","uniqueItems":false}`,
+		`,"components":{"schemas":{"Target":{"type":"array","items":{}}}}`,
+		false,
+	))
+	require.NoError(t, err)
+	require.Contains(t, parsed, "checkThing")
+}
+
 // TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword covers the fixed nested traversal order.
 func TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword(t *testing.T) {
 	t.Parallel()
@@ -1079,9 +1124,8 @@ func TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword(t *testing.T) {
 	}
 }
 
-// TestParseRejectsUniqueItemsBeforeReferenceResolutionDiscardsAnIntermediateSchema
-// locks reachable compilation order ahead of later schema failures.
-func TestParseRejectsUniqueItemsBeforeReferenceResolutionDiscardsAnIntermediateSchema(t *testing.T) {
+// TestParseIgnoresUniqueItemsOnIntermediateReferenceObjects covers resolved reference chains.
+func TestParseIgnoresUniqueItemsOnIntermediateReferenceObjects(t *testing.T) {
 	t.Parallel()
 
 	parsed, err := Parse([]byte(`{
@@ -1100,9 +1144,9 @@ func TestParseRejectsUniqueItemsBeforeReferenceResolutionDiscardsAnIntermediateS
 		}},
 		"x-chain":{"middle":{"$ref":"#/components/schemas/Final","uniqueItems":false}}
 	}`))
-	require.Nil(t, parsed)
-	require.ErrorContains(t, err, "#/x-chain/middle/uniqueItems")
-	require.NotContains(t, err.Error(), "#/paths/~1later")
+	require.NoError(t, err)
+	require.Contains(t, parsed, "alpha")
+	require.Contains(t, parsed, "beta")
 }
 
 // TestParsePreservesEarlierErrorsBeforeCompleteUniqueItemsTraversal locks ordinary Parse precedence.
@@ -1133,6 +1177,49 @@ func TestParseSelectsUniqueItemsDeterministically(t *testing.T) {
 	}`))
 	require.Nil(t, parsed)
 	require.ErrorContains(t, err, "#/components/schemas/Alpha/items/uniqueItems")
+}
+
+// TestNumericValidationReusesCompiledBoundsAcrossArrayItems bounds request-time bound parsing.
+//
+//nolint:paralleltest // Per-process allocation counts must run without concurrent tests.
+func TestNumericValidationReusesCompiledBoundsAcrossArrayItems(t *testing.T) {
+	digits := strings.Repeat("9", 1<<12)
+	minimum := "-" + digits
+	maximum := digits
+	multipleOf := "0." + strings.Repeat("0", 1<<12) + "1"
+	validation := mustParseSchema(t, `{"type":"array","items":{"type":"number","minimum":`+
+		minimum+`,"maximum":`+maximum+`,"multipleOf":`+multipleOf+`}}`, "")
+
+	allocatedBytes := func(items int) int64 {
+		body := json.RawMessage(`[` + strings.TrimSuffix(strings.Repeat("0,", items), ",") + `]`)
+		result := testing.Benchmark(func(benchmark *testing.B) {
+			for benchmark.Loop() {
+				if errs := validation.Validate(body); len(errs) != 0 {
+					panic(errors.Join(errs...))
+				}
+			}
+		})
+
+		return result.AllocedBytesPerOp()
+	}
+
+	many := allocatedBytes(16)
+	require.Less(t, many, int64((len(minimum)+len(maximum)+len(multipleOf))*64))
+}
+
+// TestParseAllowsEmptySchemaPropertyNames covers JSON's empty object member name.
+func TestParseAllowsEmptySchemaPropertyNames(t *testing.T) {
+	t.Parallel()
+
+	validation := mustParseSchema(t, `{
+		"type":"object",
+		"required":[""],
+		"properties":{"":{"type":"string"}},
+		"additionalProperties":false
+	}`, "")
+
+	require.Empty(t, validation.Validate(json.RawMessage(`{"":"value"}`)))
+	require.NotEmpty(t, validation.Validate(json.RawMessage(`{}`)))
 }
 
 // TestParseRejectsUnsupportedAndMalformedReachableSchemas covers every parse-time rejection.

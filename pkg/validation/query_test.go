@@ -752,11 +752,13 @@ func TestQueryDecoderDeepObjectDynamicWireContract(t *testing.T) {
 	}
 }
 
-func TestQueryDecoderRejectsDeclaredEmptyPropertyName(t *testing.T) {
+func TestQueryDecoderAllowsDeclaredEmptyPropertyName(t *testing.T) {
 	t.Parallel()
 
-	_, err := validation.Parse(querySpec(`- {name: filter, in: query, allowEmptyValue: true, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'': {type: string}}}}`))
-	require.ErrorContains(t, err, "empty name")
+	decoder := parseQueryDecoder(t, `{name: filter, in: query, allowEmptyValue: true, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'': {type: string}}}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5B%5D=value`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"filter":{"":"value"}}`, string(actual))
 }
 
 func TestQueryDecoderDynamicOwnershipOrder(t *testing.T) {
@@ -1276,6 +1278,29 @@ func TestQueryDecoderAnyOfUsesFirstWorkingBranchInSourceOrder(t *testing.T) {
 			require.JSONEq(t, test.expected, string(actual))
 		})
 	}
+}
+
+func TestQueryDecoderAnyOfSkipsUnsatisfiableWireBranches(t *testing.T) {
+	t.Parallel()
+
+	decoder := parseQueryDecoder(t, `{name: q, in: query, schema: {anyOf: [
+		{allOf: [{type: string}, {type: integer}]},
+		{type: string}
+	]}}`)
+	actual, err := decoder.Decode(&url.URL{RawQuery: `q=value`})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"q":"value"}`, string(actual))
+}
+
+func TestQueryDecoderAnyOfRejectsWhenEveryWireBranchIsUnsatisfiable(t *testing.T) {
+	t.Parallel()
+
+	_, err := validation.Parse(querySpec(`- {name: q, in: query, schema: {anyOf: [
+		{allOf: [{type: string}, {type: integer}]},
+		{allOf: [{type: boolean}, {type: number}]}
+	]}}`))
+	require.ErrorContains(t, err, "/anyOf")
+	require.ErrorContains(t, err, "no satisfiable direct primitive alternatives")
 }
 
 func TestQueryDecoderAnyOfKeepsParentAndAllOfConstraintsActive(t *testing.T) {

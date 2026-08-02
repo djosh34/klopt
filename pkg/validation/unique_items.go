@@ -384,9 +384,9 @@ func (walker *authoredSchemaWalker) schema(raw json.RawMessage, pointer string) 
 		return nil
 	}
 
-	value, ok := rawValue(raw)
-	if !ok {
-		return nil
+	value, err := rawValue(raw)
+	if err != nil {
+		return fmt.Errorf("decode schema at %s: %w", pointer, err)
 	}
 
 	members, object := value.(map[string]any)
@@ -406,12 +406,12 @@ func (walker *authoredSchemaWalker) schemaValue(value any, pointer *authoredSche
 		return nil
 	}
 
-	if _, present := members["uniqueItems"]; present {
-		return unsupportedUniqueItems(pointer.String())
-	}
-
 	if reference, present := members["$ref"]; present {
 		return walker.referencedSchema(reference, pointer)
+	}
+
+	if _, present := members["uniqueItems"]; present {
+		return unsupportedUniqueItems(pointer.String())
 	}
 
 	return walker.nestedSchemaValues(members, pointer)
@@ -424,6 +424,10 @@ func (walker *authoredSchemaWalker) referencedSchema(
 ) error {
 	pointerString := pointer.String()
 	if walker.seen("schema", pointerString) {
+		return nil
+	}
+
+	if referenceString, ok := reference.(string); ok && walker.seen("schema reference", referenceString) {
 		return nil
 	}
 
@@ -444,9 +448,13 @@ func (walker *authoredSchemaWalker) referencedSchema(
 		return err
 	}
 
-	value, ok := rawValue(resolved.Raw)
-	if !ok {
+	if walker.seen("resolved schema", resolved.Pointer) {
 		return nil
+	}
+
+	value, err := rawValue(resolved.Raw)
+	if err != nil {
+		return fmt.Errorf("decode schema at %s: %w", resolved.Pointer, err)
 	}
 
 	return walker.schemaValue(value, &authoredSchemaPointer{base: resolved.Pointer})
@@ -560,16 +568,16 @@ func appendPointerToken(result []byte, token string) []byte {
 }
 
 // rawValue decodes one complete raw subtree without converting exact numbers to float64.
-func rawValue(raw json.RawMessage) (any, bool) {
+func rawValue(raw json.RawMessage) (any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return nil, false
+		return nil, err
 	}
 
-	return value, true
+	return value, nil
 }
 
 // resolve follows a non-schema Reference Object while breaking traversal cycles.
@@ -617,10 +625,16 @@ func (walker *authoredSchemaWalker) markSeen(kind string, pointer string) {
 // rejectAuthoredSchemaUniqueItems rejects key presence without decoding its value.
 func rejectAuthoredSchemaUniqueItems(schema oas.LocatedSchema) error {
 	members, ok := rawObject(schema.Raw)
-	if ok {
-		if _, present := members["uniqueItems"]; present {
-			return unsupportedUniqueItems(schema.Pointer)
-		}
+	if !ok {
+		return nil
+	}
+
+	if _, reference := members["$ref"]; reference {
+		return nil
+	}
+
+	if _, present := members["uniqueItems"]; present {
+		return unsupportedUniqueItems(schema.Pointer)
 	}
 
 	return nil

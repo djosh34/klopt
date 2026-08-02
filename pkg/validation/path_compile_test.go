@@ -432,6 +432,26 @@ func TestPathDecoderAnyOfUsesFirstWorkingBranchInSourceOrder(t *testing.T) {
 	}
 }
 
+func TestPathDecoderAnyOfSkipsUnsatisfiableWireBranches(t *testing.T) {
+	t.Parallel()
+
+	decoder, err := compilePathDecoderForTest(t, `
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - {allOf: [{type: string}, {type: integer}]}
+              - {type: string}
+`)
+	require.NoError(t, err)
+
+	actual, err := decoder.DecodePathParams(&url.URL{Path: "/items/value"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"value"}`, string(actual))
+}
+
 func TestPathDecoderAnyOfKeepsParentAndAllOfConstraintsActive(t *testing.T) {
 	t.Parallel()
 

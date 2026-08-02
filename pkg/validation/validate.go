@@ -48,6 +48,7 @@ func (validation *Validation) Validate(body json.RawMessage) []error {
 	}
 
 	run := validationRun{
+		instances:    make(map[string]instance),
 		anyOfMatches: make(map[validationMemoKey]bool),
 		active:       make(map[validationMemoKey]struct{}),
 	}
@@ -155,7 +156,7 @@ func validateLocalCompiledState(validation *Validation) error {
 		}
 	}
 
-	if err := validateNumberCompiledState(validation.KindValidation, validation.NumberValidation); err != nil {
+	if err := validateNumberCompiledState(validation.KindValidation, &validation.NumberValidation); err != nil {
 		return err
 	}
 
@@ -179,10 +180,6 @@ func validateLocalCompiledState(validation *Validation) error {
 	}
 
 	for index, property := range validation.ObjectValidation.Properties {
-		if property.Name == "" {
-			return fmt.Errorf("object property %d has empty name", index)
-		}
-
 		if index > 0 && validation.ObjectValidation.Properties[index-1].Name >= property.Name {
 			return fmt.Errorf("object property %d name %q is not strictly increasing", index, property.Name)
 		}
@@ -227,7 +224,7 @@ func validateStringCompiledState(stringValidation StringValidation) error {
 // validateNumberCompiledState checks exact numeric source and compiled forms together.
 //
 //nolint:cyclop // Exact numeric source and compiled forms are checked together.
-func validateNumberCompiledState(kind KindValidation, number NumberValidation) error {
+func validateNumberCompiledState(kind KindValidation, number *NumberValidation) error {
 	switch number.Format {
 	case "":
 	case "int32", "int64":
@@ -267,6 +264,13 @@ func validateNumberCompiledState(kind KindValidation, number NumberValidation) e
 		if comparison != 0 {
 			return fmt.Errorf("%s source and exact value differ", name)
 		}
+
+		prepared, err := parsed.Compile()
+		if err != nil {
+			return fmt.Errorf("%s compiled value: %w", name, err)
+		}
+
+		bound.compiledValue = &prepared
 	}
 
 	if number.ExactMultipleOf == nil {
@@ -291,7 +295,18 @@ func validateNumberCompiledState(kind KindValidation, number NumberValidation) e
 		return errors.New("multipleOf source and exact value differ")
 	}
 
-	return validatePositiveNumber(parsed)
+	if positiveErr := validatePositiveNumber(parsed); positiveErr != nil {
+		return positiveErr
+	}
+
+	prepared, err := parsed.Compile()
+	if err != nil {
+		return fmt.Errorf("multipleOf compiled value: %w", err)
+	}
+
+	number.compiledMultipleOf = &prepared
+
+	return nil
 }
 
 // validateCountBound checks one exact non-negative integer compiled bound.
@@ -365,6 +380,7 @@ type validationMemoKey struct {
 
 // validationRun owns memoized anyOf verdicts and active recursion for one Validate request.
 type validationRun struct {
+	instances    map[string]instance
 	anyOfMatches map[validationMemoKey]bool
 	active       map[validationMemoKey]struct{}
 	graphErr     error
@@ -432,7 +448,7 @@ func validateLocalAndAllOf(
 	raw json.RawMessage,
 	pointer string,
 ) []error {
-	value, err := decodeInstance(raw)
+	value, err := run.decodeInstance(raw, pointer)
 	if err != nil {
 		return []error{newValidationError(validation, pointer, "body", err.Error())}
 	}
@@ -451,6 +467,22 @@ func validateLocalAndAllOf(
 	return errs
 }
 
+// decodeInstance returns the one decoded representation of an instance pointer in this request.
+func (run *validationRun) decodeInstance(raw json.RawMessage, pointer string) (instance, error) {
+	if value, ok := run.instances[pointer]; ok {
+		return value, nil
+	}
+
+	value, err := decodeInstance(raw)
+	if err != nil {
+		return instance{}, err
+	}
+
+	run.instances[pointer] = value
+
+	return value, nil
+}
+
 // decodeInstance classifies one already-strict raw JSON value.
 //
 //nolint:cyclop // JSON's six value kinds are clearest as one explicit dispatch.
@@ -460,7 +492,7 @@ func decodeInstance(raw json.RawMessage) (instance, error) {
 		return instance{}, errors.New("JSON value is empty")
 	}
 
-	result := instance{raw: append(json.RawMessage(nil), raw...)}
+	result := instance{raw: raw}
 
 	switch trimmed[0] {
 	case 'n':
@@ -635,7 +667,7 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 	var errs []error
 
 	if number.Minimum != nil {
-		comparison, err := value.number.Compare(number.Minimum.ExactValue)
+		comparison, err := number.Minimum.compare(value.number)
 		if err != nil {
 			errs = append(errs, newValidationError(validation, pointer, "minimum", err.Error()))
 		} else if comparison < 0 || comparison == 0 && number.Minimum.Exclusive {
@@ -652,7 +684,7 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 	}
 
 	if number.Maximum != nil {
-		comparison, err := value.number.Compare(number.Maximum.ExactValue)
+		comparison, err := number.Maximum.compare(value.number)
 		if err != nil {
 			errs = append(errs, newValidationError(validation, pointer, "maximum", err.Error()))
 		} else if comparison > 0 || comparison == 0 && number.Maximum.Exclusive {
@@ -669,7 +701,7 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 	}
 
 	if number.ExactMultipleOf != nil {
-		multiple, err := value.number.IsMultipleOf(*number.ExactMultipleOf)
+		multiple, err := number.isMultipleOf(value.number)
 		if err != nil {
 			errs = append(errs, newValidationError(validation, pointer, "multipleOf", err.Error()))
 		} else if !multiple {
@@ -687,6 +719,24 @@ func (number NumberValidation) validate(validation *Validation, value instance, 
 	}
 
 	return errs
+}
+
+// compare uses the construction-time representation when one is available.
+func (bound *NumberBound) compare(value jsonvalue.Number) (int, error) {
+	if bound.compiledValue != nil {
+		return value.CompareCompiled(*bound.compiledValue)
+	}
+
+	return value.Compare(bound.ExactValue)
+}
+
+// isMultipleOf uses the construction-time divisor when one is available.
+func (number NumberValidation) isMultipleOf(value jsonvalue.Number) (bool, error) {
+	if number.compiledMultipleOf != nil {
+		return value.IsMultipleOfCompiled(*number.compiledMultipleOf)
+	}
+
+	return value.IsMultipleOf(*number.ExactMultipleOf)
 }
 
 // validateNumberFormat applies one prevalidated numeric format.

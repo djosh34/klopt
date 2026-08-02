@@ -56,6 +56,21 @@ type Number struct {
 	Rational *big.Rat
 }
 
+// CompiledNumber stores a checked immutable Number for repeated exact operations.
+type CompiledNumber struct {
+	number Number
+}
+
+// Compile checks and prepares a Number for repeated exact operations.
+func (number Number) Compile() (CompiledNumber, error) {
+	checked, err := number.checked()
+	if err != nil {
+		return CompiledNumber{}, err
+	}
+
+	return CompiledNumber{number: checked}, nil
+}
+
 // Compare returns -1, 0, or 1 according to the exact mathematical ordering.
 func (number Number) Compare(other Number) (int, error) {
 	number, err := number.checked()
@@ -68,31 +83,21 @@ func (number Number) Compare(other Number) (int, error) {
 		return 0, err
 	}
 
-	if number.Rational != nil && other.Rational != nil {
-		return number.Rational.Cmp(other.Rational), nil
+	return number.comparePrevalidated(other), nil
+}
+
+// CompareCompiled compares a Number with one previously checked immutable Number.
+func (number Number) CompareCompiled(other CompiledNumber) (int, error) {
+	number, err := number.checked()
+	if err != nil {
+		return 0, err
 	}
 
-	negative, digits, exponent := decimalParts(number.Lexeme)
-	otherNegative, otherDigits, otherExponent := decimalParts(other.Lexeme)
-
-	if digits == "0" || otherDigits == "0" {
-		return compareZero(negative, digits, otherNegative, otherDigits), nil
+	if other.number.Lexeme == "" {
+		return 0, errors.New("compiled jsonvalue.Number is not initialized")
 	}
 
-	if negative != otherNegative {
-		if negative {
-			return -1, nil
-		}
-
-		return 1, nil
-	}
-
-	comparison := compareMagnitudes(digits, exponent, otherDigits, otherExponent)
-	if negative {
-		return -comparison, nil
-	}
-
-	return comparison, nil
+	return number.comparePrevalidated(other.number), nil
 }
 
 // IsInteger reports whether the exact mathematical value is an integer.
@@ -123,15 +128,63 @@ func (number Number) IsMultipleOf(divisor Number) (bool, error) {
 		return false, err
 	}
 
+	return number.isMultipleOfPrevalidated(divisor), nil
+}
+
+// IsMultipleOfCompiled checks divisibility by one previously checked immutable Number.
+func (number Number) IsMultipleOfCompiled(divisor CompiledNumber) (bool, error) {
+	number, err := number.checked()
+	if err != nil {
+		return false, err
+	}
+
+	if divisor.number.Lexeme == "" {
+		return false, errors.New("compiled jsonvalue.Number is not initialized")
+	}
+
+	return number.isMultipleOfPrevalidated(divisor.number), nil
+}
+
+// comparePrevalidated compares two Numbers already checked within this package.
+func (number Number) comparePrevalidated(other Number) int {
+	if number.Rational != nil && other.Rational != nil {
+		return number.Rational.Cmp(other.Rational)
+	}
+
+	negative, digits, exponent := decimalParts(number.Lexeme)
+	otherNegative, otherDigits, otherExponent := decimalParts(other.Lexeme)
+
+	if digits == "0" || otherDigits == "0" {
+		return compareZero(negative, digits, otherNegative, otherDigits)
+	}
+
+	if negative != otherNegative {
+		if negative {
+			return -1
+		}
+
+		return 1
+	}
+
+	comparison := compareMagnitudes(digits, exponent, otherDigits, otherExponent)
+	if negative {
+		return -comparison
+	}
+
+	return comparison
+}
+
+// isMultipleOfPrevalidated checks two Numbers already checked within this package.
+func (number Number) isMultipleOfPrevalidated(divisor Number) bool {
 	_, digits, exponent := decimalParts(number.Lexeme)
 	_, divisorDigits, divisorExponent := decimalParts(divisor.Lexeme)
 
 	if divisorDigits == "0" {
-		return false, nil
+		return false
 	}
 
 	if digits == "0" {
-		return true, nil
+		return true
 	}
 
 	coefficient := decimalInteger(digits)
@@ -145,7 +198,7 @@ func (number Number) IsMultipleOf(divisor Number) (bool, error) {
 
 	return factorBalance(coefficient, divisorCoefficient, delta, decimalFactorTwo) >= 0 &&
 		factorBalance(coefficient, divisorCoefficient, delta, decimalFactorFive) >= 0 &&
-		containsOnlyDecimalFactors(divisorCoefficient), nil
+		containsOnlyDecimalFactors(divisorCoefficient)
 }
 
 // checked validates and normalizes public Number state.

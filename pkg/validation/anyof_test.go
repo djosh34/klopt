@@ -4,7 +4,9 @@ package validation
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -74,6 +76,36 @@ func TestSharedFailingAnyOfGraphValidatesOncePerNode(t *testing.T) {
 	errs := shared.Validate(json.RawMessage(`false`))
 	require.Len(t, errs, 1)
 	require.ErrorContains(t, errs[0], "keyword anyOf")
+}
+
+//nolint:paralleltest // Per-process allocation counts must run without concurrent tests.
+func TestAnyOfDecodesEachLargeInstanceOnce(t *testing.T) {
+	body := json.RawMessage(`{"payload":"` + strings.Repeat("x", 1<<18) + `"}`)
+
+	allocatedBytes := func(branches int) int64 {
+		children := make([]*Validation, branches)
+		for index := range children {
+			children[index] = &Validation{KindValidation: KindValidation{Type: "string"}}
+		}
+
+		validation := &Validation{
+			ObjectValidation: ObjectValidation{AdditionalPropertiesAllowed: true},
+			AnyOfValidations: children,
+		}
+		result := testing.Benchmark(func(benchmark *testing.B) {
+			for benchmark.Loop() {
+				if errs := validation.Validate(body); len(errs) != 1 {
+					panic(fmt.Sprintf("got %d diagnostics, want 1", len(errs)))
+				}
+			}
+		})
+
+		return result.AllocedBytesPerOp()
+	}
+
+	single := allocatedBytes(1)
+	many := allocatedBytes(8)
+	require.Less(t, many, single*2)
 }
 
 func TestAnyOfMemoKeysDoNotRetainRawRequestValues(t *testing.T) {

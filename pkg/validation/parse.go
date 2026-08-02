@@ -1019,10 +1019,6 @@ func (compiler *schemaCompiler) compileObjectProperties(
 
 	validation.ObjectValidation.Properties = make([]PropertyValidation, 0, len(names))
 	for _, name := range names {
-		if name == "" {
-			return keywordError(schema.Pointer, "properties", errors.New("object property has empty name"))
-		}
-
 		child, err := compiler.source.Child(schema, "properties", name)
 		if err != nil {
 			return keywordError(schema.Pointer, "properties", err)

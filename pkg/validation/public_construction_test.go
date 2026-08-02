@@ -147,7 +147,29 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestValidationRejectsMalformedCompiledPropertyNames(t *testing.T) {
+func TestValidationAllowsEmptyCompiledPropertyNames(t *testing.T) {
+	t.Parallel()
+
+	compiled := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "object"},
+		ObjectValidation: validation.ObjectValidation{Properties: []validation.PropertyValidation{
+			{Name: "", Validation: &validation.Validation{KindValidation: validation.KindValidation{Type: "string"}}},
+			{Name: "a", Validation: &validation.Validation{KindValidation: validation.KindValidation{Type: "string"}}},
+		}},
+	}
+
+	decoder, err := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+		OperationID: "emptyPropertyName",
+		Parameters: []validation.QueryParameterDefinition{{
+			Name: "q", Wire: 7, Validation: compiled,
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, decoder)
+	require.Empty(t, compiled.Validate(json.RawMessage(`{"":"value","a":"value"}`)))
+}
+
+func TestValidationRejectsUnsortedOrDuplicateCompiledPropertyNames(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -155,10 +177,6 @@ func TestValidationRejectsMalformedCompiledPropertyNames(t *testing.T) {
 		properties    []validation.PropertyValidation
 		errorContains string
 	}{
-		{
-			name: "empty", properties: []validation.PropertyValidation{{Name: "", Validation: new(validation.Validation)}},
-			errorContains: "empty name",
-		},
 		{name: "unsorted", properties: []validation.PropertyValidation{
 			{Name: "z", Validation: new(validation.Validation)},
 			{Name: "a", Validation: new(validation.Validation)},
