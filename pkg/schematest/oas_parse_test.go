@@ -424,6 +424,29 @@ func TestParseInputSharesRepeatedReferenceTargetStructure(t *testing.T) {
 	require.Same(t, model.root.allOf[0].allOf[0], model.root.allOf[1].allOf[0])
 }
 
+func TestParseInputSharesInlineYAMLAliasSchemaShapes(t *testing.T) {
+	t.Parallel()
+
+	anchors := "x-schema-0: &s0 {type: string}\n"
+	for depth := 1; depth <= 24; depth++ {
+		anchors += fmt.Sprintf("x-schema-%d: &s%d {allOf: [*s%d, *s%d]}\n", depth, depth, depth-1, depth-1)
+	}
+
+	document := "openapi: 3.0.4\n" + anchors + `paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: *s24
+`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Same(t, model.root.allOf[0].schemaShape, model.root.allOf[1].schemaShape)
+}
+
 func TestParseInputSharesReferenceTargetsAcrossInstanceTemplates(t *testing.T) {
 	t.Parallel()
 
@@ -1198,6 +1221,55 @@ paths:
 			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
 			require.ErrorContains(t, err, "/content/application~1json/examples/bad")
 			require.ErrorContains(t, err, "must be an object")
+		})
+	}
+}
+
+func TestParseInputRejectsMalformedMediaTypeExampleObject(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		json    string
+		yaml    string
+		pointer string
+	}{
+		{name: "summary", json: `{"summary":1}`, yaml: `{summary: 1}`, pointer: "/summary"},
+		{name: "reference", json: `{"$ref":1}`, yaml: `{$ref: 1}`, pointer: "/$ref"},
+		{
+			name: "mutually exclusive value", json: `{"value":1,"externalValue":"example.json"}`,
+			yaml: `{value: 1, externalValue: example.json}`, pointer: "/externalValue",
+		},
+		{name: "unknown field", json: `{"unknown":1}`, yaml: `{unknown: 1}`, pointer: "/unknown"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			documents := map[string]string{
+				"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{},"examples":{"bad":` + test.json + `}}}}}}}}`,
+				"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+            examples:
+              bad: ` + test.yaml + "\n",
+			}
+
+			for encoding, document := range documents {
+				t.Run(encoding, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+					require.ErrorContains(t, err, "/content/application~1json/examples/bad"+test.pointer)
+				})
+			}
 		})
 	}
 }

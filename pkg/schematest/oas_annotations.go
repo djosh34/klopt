@@ -71,6 +71,74 @@ func validateExternalDocs(value *jsonValue, pointer string) error {
 	return nil
 }
 
+func validateMediaTypeExamples(value *jsonValue, pointer string) error {
+	examples, err := requireJSONObject(value, pointer)
+	if err != nil {
+		return err
+	}
+
+	for _, name := range sortedObjectNames(examples) {
+		if err := validateMediaTypeExample(examples[name], pointer+"/"+escapePointerToken(name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateMediaTypeExample(value *jsonValue, pointer string) error {
+	example, err := requireJSONObject(value, pointer)
+	if err != nil {
+		return err
+	}
+
+	if reference, referenced := example["$ref"]; referenced {
+		if reference.kind != jsonString {
+			return fmt.Errorf("%s/$ref: must be a string", pointer)
+		}
+
+		return nil
+	}
+
+	return validateExampleObject(example, pointer)
+}
+
+func validateExampleObject(example map[string]*jsonValue, pointer string) error {
+	for _, name := range sortedObjectNames(example) {
+		field := example[name]
+
+		switch name {
+		case "summary", "description", "externalValue":
+			if field.kind != jsonString {
+				return fmt.Errorf("%s/%s: must be a string", pointer, name)
+			}
+		case "value":
+		default:
+			if !strings.HasPrefix(name, "x-") {
+				return fmt.Errorf("%s/%s: unknown Example Object field", pointer, escapePointerToken(name))
+			}
+		}
+	}
+
+	if _, hasValue := example["value"]; hasValue {
+		if _, hasExternalValue := example["externalValue"]; hasExternalValue {
+			return fmt.Errorf("%s/externalValue: value and externalValue are mutually exclusive", pointer)
+		}
+	}
+
+	if externalValue, exists := example["externalValue"]; exists {
+		if externalValue.text == "" {
+			return fmt.Errorf("%s/externalValue: must be a non-empty URL", pointer)
+		}
+
+		if _, err := url.Parse(externalValue.text); err != nil {
+			return fmt.Errorf("%s/externalValue: must be a URL", pointer)
+		}
+	}
+
+	return nil
+}
+
 func validateXMLMetadata(value *jsonValue, pointer string) error {
 	object, err := requireJSONObject(value, pointer)
 	if err != nil {

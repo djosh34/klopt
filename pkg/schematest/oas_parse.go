@@ -35,6 +35,7 @@ func parseInput(input Input) (*schemaModel, error) {
 		document:  document,
 		parsed:    make(map[string]*schemaNode),
 		resolving: make(map[string]bool),
+		shapes:    make(map[*jsonValue]*schemaShape),
 	}
 
 	node, err := parser.parseSchemaNode(schema, pointer, "#")
@@ -205,18 +206,8 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 	}
 
 	if examples, hasExamples := media["examples"]; hasExamples {
-		examplesObject, examplesErr := requireJSONObject(examples, mediaPointer+"/examples")
-		if examplesErr != nil {
+		if examplesErr := validateMediaTypeExamples(examples, mediaPointer+"/examples"); examplesErr != nil {
 			return nil, "", examplesErr
-		}
-
-		for _, name := range sortedObjectNames(examplesObject) {
-			if _, exampleErr := requireJSONObject(
-				examplesObject[name],
-				mediaPointer+"/examples/"+escapePointerToken(name),
-			); exampleErr != nil {
-				return nil, "", exampleErr
-			}
 		}
 	}
 
@@ -262,6 +253,7 @@ type oasParser struct {
 	document  *jsonValue
 	parsed    map[string]*schemaNode
 	resolving map[string]bool
+	shapes    map[*jsonValue]*schemaShape
 }
 
 func (parser *oasParser) parseSchemaNode(value *jsonValue, usePointer, instanceTemplate string) (*schemaNode, error) {
@@ -283,6 +275,17 @@ func (parser *oasParser) parseSchemaOccurrence(
 		return parser.parseSchemaReference(referenceValue, usePointer, authoredPointer, instanceTemplate)
 	}
 
+	if shape, parsed := parser.shapes[value]; parsed {
+		return &schemaNode{
+			schemaShape: shape,
+			occurrence: schemaOccurrence{
+				usePointer:       usePointer,
+				targetPointer:    authoredPointer,
+				instanceTemplate: instanceTemplate,
+			},
+		}, nil
+	}
+
 	node := &schemaNode{
 		occurrence: schemaOccurrence{
 			usePointer:       usePointer,
@@ -295,6 +298,8 @@ func (parser *oasParser) parseSchemaOccurrence(
 	if err := parser.parseSchemaObject(node, object, authoredPointer); err != nil {
 		return nil, err
 	}
+
+	parser.shapes[value] = node.schemaShape
 
 	return node, nil
 }

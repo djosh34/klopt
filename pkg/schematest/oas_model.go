@@ -17,7 +17,7 @@ const (
 
 // schemaOccurrence identifies where a schema is used, where a Reference Object
 // resolves, and its canonical instance template. Templates inside a shared
-// referenced shape are relative to that reference occurrence.
+// shape are relative to that shape's enclosing occurrence.
 type schemaOccurrence struct {
 	usePointer       string
 	targetPointer    string
