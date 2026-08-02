@@ -31,7 +31,11 @@ func parseInput(input Input) (*schemaModel, error) {
 		return nil, err
 	}
 
-	parser := oasParser{document: document, resolving: make(map[string]bool)}
+	parser := oasParser{
+		document:  document,
+		parsed:    make(map[schemaTargetKey]*schemaNode),
+		resolving: make(map[string]bool),
+	}
 
 	node, err := parser.parseSchemaNode(schema, pointer, "#")
 	if err != nil {
@@ -200,6 +204,12 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 		return nil, "", err
 	}
 
+	if _, hasExample := media["example"]; hasExample {
+		if _, hasExamples := media["examples"]; hasExamples {
+			return nil, "", fmt.Errorf("%s/examples: example and examples are mutually exclusive", mediaPointer)
+		}
+	}
+
 	schema, exists := media["schema"]
 	if !exists {
 		return nil, "", fmt.Errorf("%s/schema: selected media type has no schema", mediaPointer)
@@ -232,8 +242,14 @@ func validateRequestBodyFields(body map[string]*jsonValue, pointer string) error
 	return nil
 }
 
+type schemaTargetKey struct {
+	pointer          string
+	instanceTemplate string
+}
+
 type oasParser struct {
 	document  *jsonValue
+	parsed    map[schemaTargetKey]*schemaNode
 	resolving map[string]bool
 }
 
@@ -253,31 +269,7 @@ func (parser *oasParser) parseSchemaOccurrence(
 	}
 
 	if referenceValue, referenced := object["$ref"]; referenced {
-		if referenceValue.kind != jsonString {
-			return nil, fmt.Errorf("%s/$ref: must be a string", authoredPointer)
-		}
-
-		target, targetPointer, resolveErr := resolveLocalReference(
-			parser.document,
-			referenceValue.text,
-			authoredPointer+"/$ref",
-		)
-		if resolveErr != nil {
-			return nil, resolveErr
-		}
-
-		if parser.resolving[targetPointer] {
-			return nil, fmt.Errorf(
-				"%s/$ref: recursive schema graph reaching %s is outside the schematest profile",
-				authoredPointer,
-				targetPointer,
-			)
-		}
-
-		parser.resolving[targetPointer] = true
-		defer delete(parser.resolving, targetPointer)
-
-		return parser.parseSchemaOccurrence(target, usePointer, targetPointer, instanceTemplate)
+		return parser.parseSchemaReference(referenceValue, usePointer, authoredPointer, instanceTemplate)
 	}
 
 	node := &schemaNode{
@@ -294,6 +286,53 @@ func (parser *oasParser) parseSchemaOccurrence(
 	}
 
 	return node, nil
+}
+
+func (parser *oasParser) parseSchemaReference(
+	referenceValue *jsonValue,
+	usePointer string,
+	authoredPointer string,
+	instanceTemplate string,
+) (*schemaNode, error) {
+	if referenceValue.kind != jsonString {
+		return nil, fmt.Errorf("%s/$ref: must be a string", authoredPointer)
+	}
+
+	target, targetPointer, err := resolveLocalReference(parser.document, referenceValue.text, authoredPointer+"/$ref")
+	if err != nil {
+		return nil, err
+	}
+
+	key := schemaTargetKey{pointer: targetPointer, instanceTemplate: instanceTemplate}
+	if parsed, exists := parser.parsed[key]; exists {
+		occurrence := *parsed
+		occurrence.occurrence.usePointer = usePointer
+
+		return &occurrence, nil
+	}
+
+	if parser.resolving[targetPointer] {
+		return nil, fmt.Errorf(
+			"%s/$ref: recursive schema graph reaching %s is outside the schematest profile",
+			authoredPointer,
+			targetPointer,
+		)
+	}
+
+	parser.resolving[targetPointer] = true
+	defer delete(parser.resolving, targetPointer)
+
+	parsed, err := parser.parseSchemaOccurrence(target, targetPointer, targetPointer, instanceTemplate)
+	if err != nil {
+		return nil, err
+	}
+
+	parser.parsed[key] = parsed
+
+	occurrence := *parsed
+	occurrence.occurrence.usePointer = usePointer
+
+	return &occurrence, nil
 }
 
 func requireJSONObject(value *jsonValue, pointer string) (map[string]*jsonValue, error) {

@@ -99,7 +99,12 @@ func resolveLocalReference(document *jsonValue, reference, authoredPointer strin
 		return nil, "", fmt.Errorf("%s: external reference %q is outside the schematest profile", authoredPointer, reference)
 	}
 
-	fragment, err := url.PathUnescape(strings.TrimPrefix(reference, "#"))
+	encodedFragment := strings.TrimPrefix(reference, "#")
+	if err := validateURIFragment(encodedFragment); err != nil {
+		return nil, "", fmt.Errorf("%s: malformed URI-reference: %w", authoredPointer, err)
+	}
+
+	fragment, err := url.PathUnescape(encodedFragment)
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: malformed local reference: %w", authoredPointer, err)
 	}
@@ -148,6 +153,37 @@ func resolveLocalReference(document *jsonValue, reference, authoredPointer strin
 	}
 
 	return current, canonical, nil
+}
+
+func validateURIFragment(fragment string) error {
+	for index := 0; index < len(fragment); index++ {
+		character := fragment[index]
+		if character == '%' {
+			if index+2 >= len(fragment) || !isHexDigit(fragment[index+1]) || !isHexDigit(fragment[index+2]) {
+				return errors.New("invalid percent encoding")
+			}
+
+			index += 2
+
+			continue
+		}
+
+		if !isURIFragmentCharacter(character) {
+			return fmt.Errorf("character %q must be percent-encoded", character)
+		}
+	}
+
+	return nil
+}
+
+func isURIFragmentCharacter(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9' || strings.ContainsRune("-._~!$&'()*+,;=:@/?", rune(character))
+}
+
+func isHexDigit(character byte) bool {
+	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f' ||
+		character >= 'A' && character <= 'F'
 }
 
 func unescapePointerToken(token string) (string, error) {

@@ -265,7 +265,12 @@ func yamlMappingKey(node ast.Node) (string, error) {
 			return "", errors.New("must be a scalar string")
 		}
 
-		return yamlString(tagged.Value)
+		scalar, ok := tagged.Value.(ast.ScalarNode)
+		if !ok {
+			return "", errors.New("must be a scalar string")
+		}
+
+		return scalar.GetToken().Value, nil
 	}
 
 	text, err := yamlString(node)

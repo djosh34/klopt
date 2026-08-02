@@ -118,6 +118,28 @@ paths: !!map
 	require.Equal(t, schemaInteger, model.root.kind)
 }
 
+func TestParseInputAcceptsExplicitStringTaggedScalarMappingKey(t *testing.T) {
+	t.Parallel()
+
+	document := `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                !!str 1: {type: string}
+`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Equal(t, schemaString, model.root.properties["1"].kind)
+}
+
 func TestParseInputRejectsYAMLOutsideJSONShape(t *testing.T) {
 	t.Parallel()
 
@@ -378,6 +400,27 @@ func TestParseInputResolvesLocalSchemaReferenceWithOccurrenceMetadata(t *testing
 	require.Equal(t, "#/paths/~1things/post/requestBody/content/application~1json/schema", model.root.occurrence.usePointer)
 	require.Equal(t, "#/components/schemas/Text", model.root.occurrence.targetPointer)
 	require.Equal(t, "#", model.root.occurrence.instanceTemplate)
+}
+
+func TestParseInputSharesRepeatedReferenceTargetStructure(t *testing.T) {
+	t.Parallel()
+
+	document := `{
+		"openapi":"3.0.4",
+		"components":{"schemas":{
+			"A":{"type":"string"},
+			"B":{"allOf":[{"$ref":"#/components/schemas/A"},{"$ref":"#/components/schemas/A"}]},
+			"C":{"allOf":[{"$ref":"#/components/schemas/B"},{"$ref":"#/components/schemas/B"}]}
+		}},
+		"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
+			"$ref":"#/components/schemas/C"
+		}}}}}}}
+	}`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.NotSame(t, model.root.allOf[0], model.root.allOf[1])
+	require.Same(t, model.root.allOf[0].allOf[0], model.root.allOf[1].allOf[0])
 }
 
 func TestParseInputPreservesNestedReferenceUseTargetAndInstanceMetadata(t *testing.T) {
@@ -1007,6 +1050,34 @@ func TestParseInputRejectsMalformedSelectedRequestBodyFields(t *testing.T) {
 	}
 }
 
+func TestParseInputRejectsMutuallyExclusiveMediaTypeExamples(t *testing.T) {
+	t.Parallel()
+
+	for encoding, document := range map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{},"example":1,"examples":{}}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+            example: 1
+            examples: {}
+`,
+	} {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.ErrorContains(t, err, "/content/application~1json/examples")
+			require.ErrorContains(t, err, "mutually exclusive")
+		})
+	}
+}
+
 func TestBuildParsesProfileBeforeConsideringMaxSteps(t *testing.T) {
 	t.Parallel()
 
@@ -1070,6 +1141,54 @@ func TestParseInputRejectsExternalMissingAndRecursiveReferences(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseInputRequiresURIEncodedLocalReferenceCharacters(t *testing.T) {
+	t.Parallel()
+
+	for encoding, document := range map[string]string{
+		"json": `{
+			"openapi":"3.0.4",
+			"components":{"schemas":{"a b":{"type":"string"}}},
+			"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
+				"$ref":"#/components/schemas/a b"
+			}}}}}}}
+		}`,
+		"yaml": `openapi: 3.0.4
+components:
+  schemas:
+    a b: {type: string}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/a b'}
+`,
+	} {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.ErrorContains(t, err, "/schema/$ref")
+			require.ErrorContains(t, err, "URI-reference")
+		})
+	}
+
+	model, err := parseInput(Input{
+		OpenAPI: []byte(`{
+			"openapi":"3.0.4",
+			"components":{"schemas":{"a b":{"type":"string"}}},
+			"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
+				"$ref":"#/components/schemas/a%20b"
+			}}}}}}}
+		}`),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	require.Equal(t, schemaString, model.root.kind)
 }
 
 func TestParseInputRejectsNonUTF8LocalReferenceFragment(t *testing.T) {
