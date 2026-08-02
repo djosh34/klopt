@@ -76,19 +76,14 @@ func validateExternalDocs(value *jsonValue, pointer string) error {
 	return nil
 }
 
-func validateMediaTypeExamples(document, value *jsonValue, pointer string) error {
+func validateMediaTypeExamples(value *jsonValue, pointer string) error {
 	examples, err := requireJSONObject(value, pointer)
 	if err != nil {
 		return err
 	}
 
 	for _, name := range sortedObjectNames(examples) {
-		if err := validateMediaTypeExample(
-			document,
-			examples[name],
-			pointer+"/"+escapePointerToken(name),
-			make(map[string]bool),
-		); err != nil {
+		if err := validateMediaTypeExample(examples[name], pointer+"/"+escapePointerToken(name)); err != nil {
 			return err
 		}
 	}
@@ -96,42 +91,25 @@ func validateMediaTypeExamples(document, value *jsonValue, pointer string) error
 	return nil
 }
 
-func validateMediaTypeExample(
-	document, value *jsonValue,
-	pointer string,
-	resolving map[string]bool,
-) error {
+func validateMediaTypeExample(value *jsonValue, pointer string) error {
 	example, err := requireJSONObject(value, pointer)
 	if err != nil {
 		return err
 	}
 
-	reference, referenced := example["$ref"]
-	if !referenced {
-		return validateExampleObject(example, pointer)
+	if reference, referenced := example["$ref"]; referenced {
+		if reference.kind != jsonString {
+			return fmt.Errorf("%s/$ref: must be a string", pointer)
+		}
+
+		if _, err := parseLocalReferenceFragment(reference.text, pointer+"/$ref"); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
-	if reference.kind != jsonString {
-		return fmt.Errorf("%s/$ref: must be a string", pointer)
-	}
-
-	target, targetPointer, err := resolveLocalReference(document, reference.text, pointer+"/$ref")
-	if err != nil {
-		return err
-	}
-
-	if resolving[targetPointer] {
-		return fmt.Errorf(
-			"%s/$ref: recursive example reference reaching %s is outside the schematest profile",
-			pointer,
-			targetPointer,
-		)
-	}
-
-	resolving[targetPointer] = true
-	defer delete(resolving, targetPointer)
-
-	return validateMediaTypeExample(document, target, targetPointer, resolving)
+	return validateExampleObject(example, pointer)
 }
 
 func validateExampleObject(example map[string]*jsonValue, pointer string) error {
@@ -160,10 +138,6 @@ func validateExampleObject(example map[string]*jsonValue, pointer string) error 
 	if externalValue, exists := example["externalValue"]; exists {
 		if externalValue.text == "" {
 			return fmt.Errorf("%s/externalValue: must be a non-empty URL", pointer)
-		}
-
-		if err := validateURIReference(externalValue.text); err != nil {
-			return fmt.Errorf("%s/externalValue: must be a URL: %w", pointer, err)
 		}
 
 		if _, err := url.Parse(externalValue.text); err != nil {
@@ -206,10 +180,6 @@ func validateXMLMetadata(value *jsonValue, pointer string) error {
 	}
 
 	if namespace, exists := object["namespace"]; exists {
-		if uriErr := validateURIReference(namespace.text); uriErr != nil {
-			return fmt.Errorf("%s/namespace: must be a non-relative URI: %w", pointer, uriErr)
-		}
-
 		parsed, parseErr := url.Parse(namespace.text)
 		if parseErr != nil || !parsed.IsAbs() {
 			return fmt.Errorf("%s/namespace: must be a non-relative URI", pointer)

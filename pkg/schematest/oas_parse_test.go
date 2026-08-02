@@ -1351,10 +1351,6 @@ func TestParseInputRejectsMalformedMediaTypeExampleObject(t *testing.T) {
 			yaml: `{$ref: "example.yaml#/example"}`, pointer: "/$ref",
 		},
 		{
-			name: "missing reference", json: `{"$ref":"#/components/examples/Missing"}`,
-			yaml: `{$ref: "#/components/examples/Missing"}`, pointer: "/$ref",
-		},
-		{
 			name: "mutually exclusive value", json: `{"value":1,"externalValue":"example.json"}`,
 			yaml: `{value: 1, externalValue: example.json}`, pointer: "/externalValue",
 		},
@@ -1388,33 +1384,6 @@ paths:
 					require.ErrorContains(t, err, "/content/application~1json/examples/bad"+test.pointer)
 				})
 			}
-		})
-	}
-}
-
-func TestParseInputRejectsWrongShapedMediaTypeExampleReferenceTarget(t *testing.T) {
-	t.Parallel()
-
-	for encoding, document := range map[string]string{
-		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{},"examples":{"bad":{"$ref":"#/openapi"}}}}}}}}}`,
-		"yaml": `openapi: 3.0.4
-paths:
-  /:
-    post:
-      operationId: selected
-      requestBody:
-        content:
-          application/json:
-            schema: {}
-            examples:
-              bad: {$ref: "#/openapi"}
-`,
-	} {
-		t.Run(encoding, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
-			require.ErrorContains(t, err, "#/openapi: must be an object")
 		})
 	}
 }

@@ -209,7 +209,7 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 	}
 
 	if examples, hasExamples := media["examples"]; hasExamples {
-		if examplesErr := validateMediaTypeExamples(document, examples, mediaPointer+"/examples"); examplesErr != nil {
+		if examplesErr := validateMediaTypeExamples(examples, mediaPointer+"/examples"); examplesErr != nil {
 			return nil, "", examplesErr
 		}
 	}
