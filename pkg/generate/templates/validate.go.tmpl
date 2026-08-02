@@ -119,13 +119,9 @@
 	},
 }{{end}}
 
-{{define "validation"}}&validation.Validation{
-{{template "validationFields" . -}}
-}{{end}}
+{{define "validation"}}compiled[{{validationID .}}]{{end}}
 
-{{define "validationElement"}}{
-{{template "validationFields" . -}}
-}{{end}}
+{{define "rootValidation"}}generatedValidations[{{validationID .}}]{{end}}
 
 {{define "validationFields" -}}
 	SchemaPointer: {{printf "%q" .SchemaPointer}},
@@ -160,13 +156,13 @@
 
 	{{with .AllOfValidations}}
 	AllOfValidations: []*validation.Validation{
-		{{range .}}{{template "validationElement" .}},{{end}}
+		{{range .}}{{template "validation" .}},{{end}}
 	},
 	{{end}}
 
 	{{with .AnyOfValidations}}
 	AnyOfValidations: []*validation.Validation{
-		{{range .}}{{template "validationElement" .}},{{end}}
+		{{range .}}{{template "validation" .}},{{end}}
 	},
 	{{end}}
 {{end}}
@@ -183,7 +179,7 @@
 	{{with .Separator}}Separator: {{printf "%q" .}},{{end}}
 	{{if .Required}}Required: true,{{end}}
 	{{if .AllowEmpty}}AllowEmpty: true,{{end}}
-	Validation: {{template "validation" .Validation}},
+	Validation: {{template "rootValidation" .Validation}},
 	{{with .DefaultValue}}DefaultValue: json.RawMessage({{printf "%q" .}}),{{end}}
 	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
 	{{with .DynamicType}}DynamicType: {{printf "%q" .}},{{end}}
@@ -210,7 +206,7 @@
 	Name: {{printf "%q" .Name}},
 	Wire: {{.Wire}},
 	{{if .Explode}}Explode: true,{{end}}
-	Validation: {{template "validation" .Validation}},
+	Validation: {{template "rootValidation" .Validation}},
 	{{with .ScalarType}}ScalarType: {{printf "%q" .}},{{end}}
 	{{with .DynamicType}}DynamicType: {{printf "%q" .}},{{end}}
 	{{with .Properties}}
@@ -230,7 +226,7 @@
 
 {{define "validate.go.tmpl"}}// Package {{.Package}} contains generated request validations.
 //
-//nolint:dupl,godoclint,lll // Generated validation trees use operation IDs and may contain repeated schemas.
+//nolint:dupl,godoclint,lll,mnd // Generated validation trees use operation IDs and graph sizes.
 package {{.Package}}
 
 import (
@@ -241,9 +237,24 @@ import (
 	"github.com/djosh34/klopt/pkg/validation"
 )
 
+var generatedValidations = func() []*validation.Validation {
+	compiled := make([]*validation.Validation, {{len .Validations}})
+	for index := range compiled {
+		compiled[index] = new(validation.Validation)
+	}
+
+	{{range $index, $item := .Validations}}
+	*compiled[{{$index}}] = validation.Validation{
+		{{template "validationFields" $item}}
+	}
+	{{end}}
+
+	return compiled
+}()
+
 {{range .Operations}}
 var {{.Name}} = validation.RequestValidation{
-	{{with .Body}}Body: {{template "validation" .}},{{end}}
+	{{with .Body}}Body: {{template "rootValidation" .}},{{end}}
 	{{with .Query}}Query: mustQueryDecoder({{template "queryDecoder" .}}),{{end}}
 	{{with .Path}}Path: mustPathDecoder({{template "pathDecoder" .}}),{{end}}
 }

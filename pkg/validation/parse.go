@@ -18,6 +18,8 @@ import (
 )
 
 // Parse compiles every request validation in one OpenAPI document.
+//
+//nolint:cyclop // Request body, query, path, and final graph checks are explicit construction stages.
 func Parse(
 	spec []byte,
 	patternOptions ...patternvalidator.Option,
@@ -79,6 +81,10 @@ func Parse(
 			requestValidation.Path = decoder
 		}
 
+		if err := validateRequestCompiledState(requestValidation); err != nil {
+			return nil, fmt.Errorf("compile operationId %q: %w", operationID, err)
+		}
+
 		requestValidations[operationID] = requestValidation
 	}
 
@@ -87,6 +93,32 @@ func Parse(
 	}
 
 	return requestValidations, nil
+}
+
+// validateRequestCompiledState checks every graph root once at the Parse boundary.
+func validateRequestCompiledState(request RequestValidation) error {
+	roots := make([]*Validation, 0, 1)
+	if request.Body != nil {
+		roots = append(roots, request.Body)
+	}
+
+	if request.Query != nil {
+		for _, parameter := range request.Query.parameters {
+			roots = append(roots, parameter.validation)
+		}
+	}
+
+	if request.Path != nil {
+		for _, parameter := range request.Path.parameters {
+			roots = append(roots, parameter.validation)
+		}
+	}
+
+	if len(roots) == 0 {
+		return nil
+	}
+
+	return validateCompiledState(&Validation{AllOfValidations: roots})
 }
 
 // validateRawParameter compiles one declaration before acquisition can override or ignore it.
@@ -491,13 +523,13 @@ func validateDiscriminator(pointer string, members map[string]json.RawMessage) e
 
 // validateDefault enforces OpenAPI's same-Schema-Object type rule for defaults.
 func validateDefault(raw json.RawMessage, kind KindValidation) error {
-	if kind.Type == "" {
-		return nil
-	}
-
 	value, err := jsonvalue.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("must be a valid value: %w", err)
+	}
+
+	if kind.Type == "" {
+		return nil
 	}
 
 	if value.Kind == jsonvalue.KindNull && kind.Nullable {
@@ -590,7 +622,9 @@ func validateExternalDocs(raw json.RawMessage) error {
 
 	documentationURL := ""
 
-	for name, value := range object {
+	for _, name := range slices.Sorted(maps.Keys(object)) {
+		value := object[name]
+
 		switch name {
 		case "description", "url":
 			decoded, decodeErr := decodeString(value, name)
@@ -767,10 +801,6 @@ func (compiler *schemaCompiler) compileString(
 
 		compiled, err := patternvalidator.Parse(pattern, compiler.patternOptions...)
 		if err != nil {
-			return keywordError(pointer, "pattern", err)
-		}
-
-		if _, err := stringlanguage.Pattern(pattern, compiler.patternOptions...); err != nil {
 			return keywordError(pointer, "pattern", err)
 		}
 
@@ -989,6 +1019,10 @@ func (compiler *schemaCompiler) compileObjectProperties(
 
 	validation.ObjectValidation.Properties = make([]PropertyValidation, 0, len(names))
 	for _, name := range names {
+		if name == "" {
+			return keywordError(schema.Pointer, "properties", errors.New("object property has empty name"))
+		}
+
 		child, err := compiler.source.Child(schema, "properties", name)
 		if err != nil {
 			return keywordError(schema.Pointer, "properties", err)

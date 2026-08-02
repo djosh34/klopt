@@ -867,20 +867,49 @@ func pathParameterFromGenerated(compiled PathParameterDefinition) (pathParameter
 		parameter.propertyByName[property.Name] = index
 	}
 
-	if len(parameter.validation.AnyOfValidations) != 0 {
-		candidates, err := compilePathAnyOfCandidates(parameter)
-		if err != nil {
-			return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
-		}
-
-		parameter.anyOf = candidates
-	}
-
 	if err := validatePathParameterMetadata(parameter); err != nil {
 		return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
 	}
 
+	parameter, err := validateGeneratedPathParameterConsistency(parameter)
+	if err != nil {
+		return pathParameter{}, fmt.Errorf("generated path parameter %q: %w", compiled.Name, err)
+	}
+
 	return parameter, nil
+}
+
+func validateGeneratedPathParameterConsistency(parameter pathParameter) (pathParameter, error) {
+	if parameter.wire == pathWireJSONContent {
+		return parameter, nil
+	}
+
+	styleOffset := parameter.wire - parameter.wire%pathWireKind(pathShapeCount)
+	expected := parameter
+	expected.wire = styleOffset
+	expected.scalarType = ""
+	expected.dynamicType = ""
+	expected.properties = nil
+	expected.propertyByName = nil
+	expected.anyOf = nil
+
+	var err error
+	if len(expected.validation.AnyOfValidations) != 0 {
+		expected, err = compileAnyOfPathParameter(expected.name, styleOffset, expected.explode, expected.validation)
+	} else {
+		expected, err = compileSchemaPathMetadata(expected.name, styleOffset, expected.explode, expected.validation)
+	}
+
+	if err != nil {
+		return pathParameter{}, err
+	}
+
+	if expected.wire != parameter.wire || expected.scalarType != parameter.scalarType ||
+		expected.dynamicType != parameter.dynamicType || !slices.Equal(expected.properties, parameter.properties) {
+		return pathParameter{}, errors.New("wire metadata is inconsistent with validation")
+	}
+
+	return expected, nil
 }
 
 //nolint:cyclop,gocognit // The finite wire/shape metadata table is clearest at one invariant boundary.

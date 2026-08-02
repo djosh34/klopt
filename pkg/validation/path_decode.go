@@ -427,8 +427,6 @@ func (parameter *pathParameter) encodePathObjectValue(rawPairs [][2]string) (jso
 		typeName := parameter.dynamicType
 		if propertyIndex, declared := parameter.propertyByName[name]; declared {
 			typeName = parameter.properties[propertyIndex].scalarType
-		} else if typeName == "" {
-			typeName = "string"
 		}
 
 		encoded, err := encodePathScalar(typeName, value)

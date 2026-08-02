@@ -1,1 +1,0 @@
-pkg/jsonvalue/value.go:579.16,581.3	1	encodeString	return fmt.Errorf("encode JSON string: %w", err)	encodeString rejects invalid UTF-8 first, and encoding/json does not return an error when marshaling a valid Go string; the error is still explicitly propagated.

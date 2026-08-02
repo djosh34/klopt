@@ -4,6 +4,7 @@ package generate
 import (
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -38,11 +39,6 @@ func renderWithTemplates(
 	packageName string,
 	parsed map[string]validation.RequestValidation,
 ) (map[string][]byte, error) {
-	validationTemplates, err := template.ParseFS(templateFS, "templates/*.go.tmpl")
-	if err != nil {
-		return nil, fmt.Errorf("parse validation templates: %w", err)
-	}
-
 	operations := make([]operationRender, 0, len(parsed))
 	hasQuery := false
 	hasPath := false
@@ -79,16 +75,34 @@ func renderWithTemplates(
 		operations = append(operations, operation)
 	}
 
+	validations, validationIDs := collectValidations(operations)
+
+	validationTemplates, err := template.New("").Funcs(template.FuncMap{
+		"validationID": func(compiled *validation.Validation) (int, error) {
+			id, ok := validationIDs[compiled]
+			if !ok {
+				return 0, errors.New("validation is outside rendered graph")
+			}
+
+			return id, nil
+		},
+	}).ParseFS(templateFS, "templates/*.go.tmpl")
+	if err != nil {
+		return nil, fmt.Errorf("parse validation templates: %w", err)
+	}
+
 	data := struct {
-		Package    string
-		Operations []operationRender
-		HasQuery   bool
-		HasPath    bool
+		Package     string
+		Operations  []operationRender
+		Validations []*validation.Validation
+		HasQuery    bool
+		HasPath     bool
 	}{
-		Package:    packageName,
-		Operations: operations,
-		HasQuery:   hasQuery,
-		HasPath:    hasPath,
+		Package:     packageName,
+		Operations:  operations,
+		Validations: validations,
+		HasQuery:    hasQuery,
+		HasPath:     hasPath,
 	}
 
 	validate, err := executeTemplate(validationTemplates, "validate.go.tmpl", data)
@@ -97,6 +111,63 @@ func renderWithTemplates(
 	}
 
 	return map[string][]byte{"validate.go": validate}, nil
+}
+
+// collectValidations assigns one stable generated slot to each shared graph node.
+//
+//nolint:cyclop // Each validation child family contributes roots to the same graph walk.
+func collectValidations(operations []operationRender) ([]*validation.Validation, map[*validation.Validation]int) {
+	ids := make(map[*validation.Validation]int)
+	validations := make([]*validation.Validation, 0)
+
+	var collect func(*validation.Validation)
+
+	collect = func(compiled *validation.Validation) {
+		if compiled == nil {
+			return
+		}
+
+		if _, exists := ids[compiled]; exists {
+			return
+		}
+
+		ids[compiled] = len(validations)
+		validations = append(validations, compiled)
+
+		collect(compiled.ArrayValidation.Items)
+
+		for _, property := range compiled.ObjectValidation.Properties {
+			collect(property.Validation)
+		}
+
+		collect(compiled.ObjectValidation.AdditionalPropertiesValidation)
+
+		for _, child := range compiled.AllOfValidations {
+			collect(child)
+		}
+
+		for _, child := range compiled.AnyOfValidations {
+			collect(child)
+		}
+	}
+
+	for _, operation := range operations {
+		collect(operation.Body)
+
+		if operation.Query != nil {
+			for _, parameter := range operation.Query.Parameters {
+				collect(parameter.Validation)
+			}
+		}
+
+		if operation.Path != nil {
+			for _, parameter := range operation.Path.Parameters {
+				collect(parameter.Validation)
+			}
+		}
+	}
+
+	return validations, ids
 }
 
 func executeTemplate(templates *template.Template, name string, data any) ([]byte, error) {

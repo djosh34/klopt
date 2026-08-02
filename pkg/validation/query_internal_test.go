@@ -31,7 +31,16 @@ func TestGeneratedQueryDecoderDefinitionRoundTripAndRejections(t *testing.T) {
 		OperationID: "query",
 		Parameters: []QueryParameterDefinition{{
 			Name: "filter", Wire: uint8(wireDeepObject), Required: true, AllowEmpty: true,
-			Validation:   &Validation{KindValidation: KindValidation{Type: "object"}},
+			Validation: &Validation{
+				KindValidation: KindValidation{Type: "object"},
+				ObjectValidation: ObjectValidation{Properties: []PropertyValidation{{
+					Name: "key",
+					Validation: &Validation{
+						KindValidation:  KindValidation{Type: "array"},
+						ArrayValidation: ArrayValidation{Items: &Validation{KindValidation: KindValidation{Type: "string"}}},
+					},
+				}}},
+			},
 			DefaultValue: json.RawMessage(`{"key":[]}`),
 			Properties:   []QueryPropertyDefinition{{Name: "key", ScalarType: "string", Array: true}},
 		}},

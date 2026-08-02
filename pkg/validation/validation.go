@@ -1,9 +1,8 @@
 // Package validation compiles OpenAPI 3.0.x request validations.
 //
-// Parse is the OpenAPI constructor. Callers may also construct a compiled graph
-// directly by populating every exported textual and exact field consistently.
-// Validate reports nil, cyclic, or malformed compiled state as validation errors.
-// Mutation concurrent with Validate has undefined behavior.
+// Parse is the OpenAPI constructor. Generated validation graphs are checked when
+// their query and path decoders are restored. Compiled graphs are immutable while
+// requests are being validated; concurrent mutation has undefined behavior.
 package validation
 
 import (

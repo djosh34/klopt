@@ -752,13 +752,11 @@ func TestQueryDecoderDeepObjectDynamicWireContract(t *testing.T) {
 	}
 }
 
-func TestQueryDecoderDeepObjectDeclaredEmptyChild(t *testing.T) {
+func TestQueryDecoderRejectsDeclaredEmptyPropertyName(t *testing.T) {
 	t.Parallel()
 
-	decoder := parseQueryDecoder(t, `{name: filter, in: query, allowEmptyValue: true, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'': {type: string}}}}`)
-	actual, err := decoder.Decode(&url.URL{RawQuery: `filter%5B%5D=x`})
-	require.NoError(t, err)
-	require.JSONEq(t, `{"filter":{"":"x"}}`, string(actual))
+	_, err := validation.Parse(querySpec(`- {name: filter, in: query, allowEmptyValue: true, style: deepObject, explode: true, schema: {type: object, additionalProperties: false, properties: {'': {type: string}}}}`))
+	require.ErrorContains(t, err, "empty name")
 }
 
 func TestQueryDecoderDynamicOwnershipOrder(t *testing.T) {

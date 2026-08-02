@@ -62,6 +62,19 @@ func TestAnyOfWorksRecursivelyAndThroughReferences(t *testing.T) {
 	require.Contains(t, errors.Join(errs...).Error(), "instance #/extra")
 }
 
+func TestSharedFailingAnyOfGraphValidatesOncePerNode(t *testing.T) {
+	t.Parallel()
+
+	shared := &Validation{KindValidation: KindValidation{Type: "string"}}
+	for range 24 {
+		shared = &Validation{AnyOfValidations: []*Validation{shared, shared}}
+	}
+
+	errs := shared.Validate(json.RawMessage(`false`))
+	require.Len(t, errs, 1)
+	require.ErrorContains(t, errs[0], "keyword anyOf")
+}
+
 func TestParseRejectsMalformedAnyOfAtExactPointer(t *testing.T) {
 	t.Parallel()
 

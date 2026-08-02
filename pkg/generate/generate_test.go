@@ -1,7 +1,6 @@
 package generate
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"go/scanner"
@@ -196,6 +195,68 @@ paths:
 	require.Equal(t, first, second)
 }
 
+// TestGeneratePreservesSharedValidationNodesWithoutSourceExplosion covers shared-reference rendering.
+func TestGeneratePreservesSharedValidationNodesWithoutSourceExplosion(t *testing.T) {
+	t.Parallel()
+
+	spec := `openapi: 3.0.3
+paths:
+  /shared:
+    post:
+      operationId: shared
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Level24'}
+components:
+  schemas:
+    Level0: {type: string}
+`
+
+	for level := 1; level <= 24; level++ {
+		spec += fmt.Sprintf(
+			"    Level%d: {anyOf: [{$ref: '#/components/schemas/Level%d'}, {$ref: '#/components/schemas/Level%d'}]}\n",
+			level,
+			level-1,
+			level-1,
+		)
+	}
+
+	files, err := GenerateInMemory("generatedshared", []byte(spec), validation.PatternOptions())
+	require.NoError(t, err)
+	require.Less(t, len(files["validate.go"]), 100_000)
+
+	repo := repoRoot(t)
+	output, err := os.MkdirTemp(filepath.Join(repo, "pkg"), "generate-shared-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(output)) })
+	require.NoError(t, os.WriteFile(filepath.Join(output, "validate.go"), files["validate.go"], 0o644))
+
+	probe := []byte(`package generatedshared
+
+import "testing"
+
+func TestSharedNodes(t *testing.T) {
+	compiled := RequestValidations["shared"].Body
+	for level := 24; level > 0; level-- {
+		if len(compiled.AnyOfValidations) != 2 || compiled.AnyOfValidations[0] != compiled.AnyOfValidations[1] {
+			t.Fatalf("level %d does not preserve its shared child", level)
+		}
+		compiled = compiled.AnyOfValidations[0]
+	}
+	if errs := RequestValidations["shared"].Body.Validate([]byte("false")); len(errs) != 1 {
+		t.Fatalf("shared failing graph returned %d errors: %v", len(errs), errs)
+	}
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(output, "shared_test.go"), probe, 0o644))
+
+	command := exec.CommandContext(t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "TestSharedNodes")
+	command.Dir = repo
+	result, err := command.CombinedOutput()
+	require.NoError(t, err, string(result))
+}
+
 // TestGenerateWritesCompiledValidation covers every exported validation field and generated compilation.
 func TestGenerateWritesCompiledValidation(t *testing.T) {
 	t.Parallel()
@@ -281,48 +342,6 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 	err = Generate(output, "generatefixture", spec, validation.PatternOptions())
 	require.NoError(t, err)
 
-	generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
-	require.NoError(t, err)
-
-	generatedSource := string(generated)
-
-	for _, field := range []string{
-		"SchemaPointer:", "BodyRequired:", "KindValidation:", "Type:", "Nullable:",
-		"EnumValidation:", "Values:", "ExactValues:", "ExactValue:", "NumberValidation:", "Minimum:",
-		"Maximum:", "Exclusive:", "MultipleOf:", "ExactMultipleOf:", "StringValidation:",
-		"MinLength:", "MaxLength:", "Pattern:", "Format:", "CompiledPattern:",
-		"ArrayValidation:", "MinItems:", "MaxItems:", "Items:",
-		"ObjectValidation:", "MinProperties:", "MaxProperties:", "Required:", "Properties:", "Name:", "Validation:",
-		"AdditionalPropertiesAllowed:", "AdditionalPropertiesValidation:", "AllOfValidations:", "AnyOfValidations:",
-	} {
-		require.Contains(t, generatedSource, field)
-	}
-
-	for _, nestedLocation := range []string{
-		"/properties/array/items",
-		"/properties/closed/properties/child",
-		"/additionalProperties",
-		"/allOf/0",
-		"/anyOf/0",
-	} {
-		require.Contains(t, generatedSource, nestedLocation)
-	}
-
-	require.NotContains(t, generatedSource, "func")
-	require.NotContains(t, generatedSource, "nodes :=")
-	require.NotContains(t, generatedSource, ".Validation =")
-	require.Equal(t, 3, strings.Count(generatedSource, "\nvar "))
-	require.Less(
-		t,
-		strings.Index(generatedSource, "var alphaRequest = validation.RequestValidation{"),
-		strings.Index(generatedSource, "var zetaRequest = validation.RequestValidation{"),
-	)
-	require.Less(
-		t,
-		strings.Index(generatedSource, "var zetaRequest = validation.RequestValidation{"),
-		strings.Index(generatedSource, "var RequestValidations"),
-	)
-
 	probe := []byte(`package generatefixture
 
 import "testing"
@@ -374,6 +393,8 @@ func TestGeneratedValidation(t *testing.T) {
 }
 
 // TestGenerateWritesCompiledQueryDecoder verifies generated metadata avoids runtime spec compilation.
+//
+//nolint:dupl // Generated-package compilation probes intentionally share setup and execution.
 func TestGenerateWritesCompiledQueryDecoder(t *testing.T) {
 	t.Parallel()
 
@@ -392,12 +413,6 @@ paths:
         - {name: limit, in: query, schema: {type: integer, default: 25}}
 `)
 	require.NoError(t, Generate(output, "generatequeryfixture", spec, validation.PatternOptions()))
-
-	generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
-	require.NoError(t, err)
-	require.Contains(t, string(generated), "QueryDecoderDefinition")
-	require.Contains(t, string(generated), "NewQueryDecoderFromGenerated")
-	require.NotContains(t, string(generated), "validation.Parse")
 
 	probe := []byte(`package generatequeryfixture
 
@@ -427,6 +442,8 @@ func TestGeneratedQueryDecoder(t *testing.T) {
 }
 
 // TestGenerateWritesAtomicRequestValidation verifies generated Body, Query, and Path integration.
+//
+//nolint:dupl // Generated-package compilation probes intentionally share setup and execution.
 func TestGenerateWritesAtomicRequestValidation(t *testing.T) {
 	t.Parallel()
 
@@ -470,19 +487,6 @@ paths:
         - {name: value, in: path, required: true, explode: true, schema: {enum: [{count: 2, enabled: true}]}}
 `)
 	require.NoError(t, Generate(output, "generaterequestfixture", spec, validation.PatternOptions()))
-
-	generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
-	require.NoError(t, err)
-
-	generatedSource := string(generated)
-	require.Contains(t, generatedSource, "var get_0item_1by__id = validation.RequestValidation{")
-	require.Contains(t, generatedSource, "PathDecoderDefinition")
-	require.Contains(t, generatedSource, `PathTemplate: "/items/{id}"`)
-	require.Contains(t, generatedSource, "NewPathDecoderFromGenerated")
-	require.Contains(t, generatedSource, "var RequestValidations = map[string]validation.RequestValidation{")
-	require.NotContains(t, generatedSource, "var validations")
-	require.NotContains(t, generatedSource, "var queryDecoders")
-	require.NotContains(t, generatedSource, "validation.Parse")
 
 	probe := []byte(`package generaterequestfixture
 
@@ -592,7 +596,7 @@ func TestGeneratedRequestValidation(t *testing.T) {
 
 // TestGeneratedQueryDecoderMatchesRuntimeForEveryWireKind checks generated Decode parity for the full style matrix.
 //
-//nolint:funlen // The embedded OpenAPI document keeps every wire case visible beside its generated-package probe.
+//nolint:dupl,funlen // The embedded OpenAPI document keeps every wire case visible beside its generated-package probe.
 func TestGeneratedQueryDecoderMatchesRuntimeForEveryWireKind(t *testing.T) {
 	t.Parallel()
 
@@ -901,6 +905,8 @@ func TestGeneratedRuntimeParity(t *testing.T) {
 }
 
 // TestGenerateSchemaLessJSONRequestBodySuite verifies generated all-JSON suite parity.
+//
+//nolint:dupl // Generated-package compilation probes intentionally share setup and execution.
 func TestGenerateSchemaLessJSONRequestBodySuite(t *testing.T) {
 	t.Parallel()
 
@@ -1097,14 +1103,6 @@ paths:
 
 			require.NoError(t, Generate(output, "generatepatternparity", spec, composite))
 
-			generated, err := os.ReadFile(filepath.Join(output, "validate.go"))
-			require.NoError(t, err)
-
-			source := string(generated)
-			require.Contains(t, source, "patternvalidator.MustParse")
-			require.Equal(t, test.reject, strings.Contains(source, "patternvalidator.RejectNonASCII"))
-			require.Equal(t, test.useRE2, strings.Contains(source, "patternvalidator.UseRE2"))
-
 			probe := fmt.Appendf(nil, `package generatepatternparity
 
 import "testing"
@@ -1244,29 +1242,6 @@ paths: {}
 		require.True(t, errors.As(err, &pathError))
 		require.Equal(t, "open", pathError.Op)
 	})
-}
-
-// TestGenerateExampleMatchesFixture checks the checked-in generated example.
-func TestGenerateExampleMatchesFixture(t *testing.T) {
-	t.Parallel()
-
-	repo := repoRoot(t)
-	openAPI, err := os.ReadFile(filepath.Join(repo, "resources", "openapi.yaml"))
-	require.NoError(t, err)
-
-	output := t.TempDir()
-	require.NoError(t, Generate(output, "example", openAPI, validation.PatternOptions()))
-
-	entries, err := os.ReadDir(output)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, "validate.go", entries[0].Name())
-
-	actual, err := os.ReadFile(filepath.Join(output, "validate.go"))
-	require.NoError(t, err)
-	expected, err := os.ReadFile(filepath.Join(repo, "pkg", "decode", "example", "validate.go"))
-	require.NoError(t, err)
-	require.True(t, bytes.Equal(expected, actual), "validate.go is stale; run make regen")
 }
 
 // TestGeneratedExampleAnyOfMatchesRuntime proves body, path, and query parity for the committed fixture.

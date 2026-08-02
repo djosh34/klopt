@@ -10,14 +10,14 @@ import (
 
 // Matches reports whether value belongs to one exact language.
 func (language Language) Matches(value string) (bool, error) {
-	if err := validateDFA(language.dfa); err != nil {
-		return false, err
-	}
-
 	return matchDFA(&language.dfa, value)
 }
 
 func matchDFA(machine *dfa, value string) (bool, error) {
+	if machine == nil || len(machine.states) == 0 {
+		return false, errors.New("DFA has no states")
+	}
+
 	state := uint32(0)
 
 	for _, scalar := range value {

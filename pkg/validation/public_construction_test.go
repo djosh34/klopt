@@ -1,4 +1,4 @@
-//nolint:godoclint // Public construction tests document the retained validation seam.
+//nolint:dupl,godoclint // Query and path malformed-definition matrices intentionally mirror the public seams.
 package validation_test
 
 import (
@@ -147,45 +147,43 @@ func TestPatternOptionsComposeAndPreserveSealing(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestValidationRejectsNilCyclesAndMalformedCompiledState(t *testing.T) {
+func TestValidationRejectsMalformedCompiledPropertyNames(t *testing.T) {
 	t.Parallel()
 
-	var nilValidation *validation.Validation
-	require.NotEmpty(t, nilValidation.Validate(json.RawMessage(`null`)))
-
-	nilChildren := []*validation.Validation{
-		{ArrayValidation: validation.ArrayValidation{Items: nil}, AllOfValidations: []*validation.Validation{nil}},
-		{ObjectValidation: validation.ObjectValidation{Properties: []validation.PropertyValidation{{Name: "value"}}}},
-		{AnyOfValidations: []*validation.Validation{nil}},
-	}
-	for _, compiled := range nilChildren {
-		require.NotEmpty(t, compiled.Validate(json.RawMessage(`null`)))
-	}
-
-	cycles := []func(*validation.Validation){
-		func(root *validation.Validation) { root.ArrayValidation.Items = root },
-		func(root *validation.Validation) {
-			root.ObjectValidation.Properties = []validation.PropertyValidation{{Name: "value", Validation: root}}
+	for _, test := range []struct {
+		name          string
+		properties    []validation.PropertyValidation
+		errorContains string
+	}{
+		{
+			name: "empty", properties: []validation.PropertyValidation{{Name: "", Validation: new(validation.Validation)}},
+			errorContains: "empty name",
 		},
-		func(root *validation.Validation) { root.ObjectValidation.AdditionalPropertiesValidation = root },
-		func(root *validation.Validation) { root.AllOfValidations = []*validation.Validation{root} },
-		func(root *validation.Validation) { root.AnyOfValidations = []*validation.Validation{root} },
-	}
-	for _, makeCycle := range cycles {
-		compiled := new(validation.Validation)
-		makeCycle(compiled)
-		require.NotEmpty(t, compiled.Validate(json.RawMessage(`null`)))
-	}
+		{name: "unsorted", properties: []validation.PropertyValidation{
+			{Name: "z", Validation: new(validation.Validation)},
+			{Name: "a", Validation: new(validation.Validation)},
+		}, errorContains: "not strictly increasing"},
+		{name: "duplicate", properties: []validation.PropertyValidation{
+			{Name: "a", Validation: new(validation.Validation)},
+			{Name: "a", Validation: new(validation.Validation)},
+		}, errorContains: "not strictly increasing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	malformed := []*validation.Validation{
-		{KindValidation: validation.KindValidation{Type: "unknown"}},
-		{EnumValidation: validation.EnumValidation{Values: []json.RawMessage{json.RawMessage(`1`)}}},
-		{NumberValidation: validation.NumberValidation{Minimum: &validation.NumberBound{Value: "1"}}},
-		{StringValidation: validation.StringValidation{MinLength: &validation.CountBound{Value: "1"}}},
-		{StringValidation: validation.StringValidation{Pattern: "a"}},
-	}
-	for _, compiled := range malformed {
-		require.NotEmpty(t, compiled.Validate(json.RawMessage(`null`)))
+			compiled := &validation.Validation{ObjectValidation: validation.ObjectValidation{
+				Properties: test.properties,
+			}}
+
+			decoder, err := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+				OperationID: "propertyNames",
+				Parameters: []validation.QueryParameterDefinition{{
+					Name: "q", Wire: 7, Validation: compiled,
+				}},
+			})
+			require.Nil(t, decoder)
+			require.ErrorContains(t, err, test.errorContains)
+		})
 	}
 }
 
@@ -230,6 +228,151 @@ func TestDecoderNilAndMalformedDefinitionFailuresReturnErrors(t *testing.T) {
 		}},
 	})
 	require.Error(t, err)
+}
+
+func TestGeneratedQueryDecoderRejectsMetadataInconsistentWithValidation(t *testing.T) {
+	t.Parallel()
+
+	stringValidation := &validation.Validation{KindValidation: validation.KindValidation{Type: "string"}}
+	arrayValidation := &validation.Validation{
+		KindValidation:  validation.KindValidation{Type: "array"},
+		ArrayValidation: validation.ArrayValidation{Items: stringValidation},
+	}
+	objectValidation := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "object"},
+		ObjectValidation: validation.ObjectValidation{
+			AdditionalPropertiesAllowed:    true,
+			AdditionalPropertiesValidation: &validation.Validation{KindValidation: validation.KindValidation{Type: "integer"}},
+			Properties:                     []validation.PropertyValidation{{Name: "known", Validation: stringValidation}},
+		},
+	}
+
+	for _, test := range []struct {
+		name      string
+		parameter validation.QueryParameterDefinition
+	}{
+		{
+			name: "primitive scalar type",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 0, Validation: stringValidation, ScalarType: "integer",
+			},
+		},
+		{
+			name: "array shape",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 0, Validation: arrayValidation, ScalarType: "string",
+			},
+		},
+		{
+			name: "array item type",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 1, Validation: arrayValidation, ScalarType: "integer",
+			},
+		},
+		{
+			name: "object shape",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 0, Validation: objectValidation, ScalarType: "string",
+			},
+		},
+		{
+			name: "object property",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 6, Validation: objectValidation, DynamicType: "integer",
+				Properties: []validation.QueryPropertyDefinition{{Name: "known", ScalarType: "boolean"}},
+			},
+		},
+		{
+			name: "object dynamic type",
+			parameter: validation.QueryParameterDefinition{
+				Name: "q", Wire: 6, Validation: objectValidation, DynamicType: "number",
+				Properties: []validation.QueryPropertyDefinition{{Name: "known", ScalarType: "string"}},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+				OperationID: "query", Parameters: []validation.QueryParameterDefinition{test.parameter},
+			})
+			require.Nil(t, decoder)
+			require.ErrorContains(t, err, "inconsistent with validation")
+		})
+	}
+}
+
+func TestGeneratedPathDecoderRejectsMetadataInconsistentWithValidation(t *testing.T) {
+	t.Parallel()
+
+	stringValidation := &validation.Validation{KindValidation: validation.KindValidation{Type: "string"}}
+	arrayValidation := &validation.Validation{
+		KindValidation:  validation.KindValidation{Type: "array"},
+		ArrayValidation: validation.ArrayValidation{Items: stringValidation},
+	}
+	objectValidation := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "object"},
+		ObjectValidation: validation.ObjectValidation{
+			AdditionalPropertiesAllowed:    true,
+			AdditionalPropertiesValidation: &validation.Validation{KindValidation: validation.KindValidation{Type: "integer"}},
+			Properties:                     []validation.PropertyValidation{{Name: "known", Validation: stringValidation}},
+		},
+	}
+
+	for _, test := range []struct {
+		name      string
+		parameter validation.PathParameterDefinition
+	}{
+		{
+			name: "primitive scalar type",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 0, Validation: stringValidation, ScalarType: "integer",
+			},
+		},
+		{
+			name: "array shape",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 0, Validation: arrayValidation, ScalarType: "string",
+			},
+		},
+		{
+			name: "array item type",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 1, Validation: arrayValidation, ScalarType: "integer",
+			},
+		},
+		{
+			name: "object shape",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 0, Validation: objectValidation, ScalarType: "string",
+			},
+		},
+		{
+			name: "object property",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 2, Validation: objectValidation, DynamicType: "integer",
+				Properties: []validation.PathPropertyDefinition{{Name: "known", ScalarType: "boolean"}},
+			},
+		},
+		{
+			name: "object dynamic type",
+			parameter: validation.PathParameterDefinition{
+				Name: "p", Wire: 2, Validation: objectValidation, DynamicType: "number",
+				Properties: []validation.PathPropertyDefinition{{Name: "known", ScalarType: "string"}},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder, err := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+				OperationID: "path", PathTemplate: "/{p}",
+				Parameters: []validation.PathParameterDefinition{test.parameter},
+			})
+			require.Nil(t, decoder)
+			require.ErrorContains(t, err, "inconsistent with validation")
+		})
+	}
 }
 
 func TestMustCompileStringFormatAdvertisesItsPanicBoundary(t *testing.T) {

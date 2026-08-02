@@ -35,10 +35,6 @@ var (
 
 // Validate validates one present or absent raw JSON request body.
 func (validation *Validation) Validate(body json.RawMessage) []error {
-	if err := validateCompiledState(validation); err != nil {
-		return []error{fmt.Errorf("invalid compiled validation: %w", err)}
-	}
-
 	if len(body) == 0 {
 		if validation.BodyRequired {
 			return []error{newValidationError(validation, "#", "requestBody", "required body is absent")}
@@ -51,10 +47,12 @@ func (validation *Validation) Validate(body json.RawMessage) []error {
 		return []error{newValidationError(validation, "#", "body", err.Error())}
 	}
 
-	return validateRaw(validation, body, "#")
+	run := validationRun{anyOfMatches: make(map[validationMemoKey]bool)}
+
+	return validateRaw(&run, validation, body, "#")
 }
 
-// validateCompiledState rejects malformed public validation graphs before traversal.
+// validateCompiledState rejects malformed validation graphs at construction boundaries.
 func validateCompiledState(root *Validation) error {
 	active := make(map[*Validation]struct{})
 	validated := make(map[*Validation]struct{})
@@ -162,6 +160,16 @@ func validateLocalCompiledState(validation *Validation) error {
 			if err := validateCountBound(bound); err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
+		}
+	}
+
+	for index, property := range validation.ObjectValidation.Properties {
+		if property.Name == "" {
+			return fmt.Errorf("object property %d has empty name", index)
+		}
+
+		if index > 0 && validation.ObjectValidation.Properties[index-1].Name >= property.Name {
+			return fmt.Errorf("object property %d name %q is not strictly increasing", index, property.Name)
 		}
 	}
 
@@ -299,15 +307,35 @@ type rawMember struct {
 	raw  json.RawMessage
 }
 
+// validationMemoKey identifies one shared schema evaluation against one request instance.
+type validationMemoKey struct {
+	validation *Validation
+	pointer    string
+	raw        string
+}
+
+// validationRun owns memoized anyOf verdicts for one Validate request.
+type validationRun struct {
+	anyOfMatches map[validationMemoKey]bool
+}
+
 // validateRaw applies one compiled schema node to one raw instance node.
-func validateRaw(validation *Validation, raw json.RawMessage, pointer string) []error {
-	errs := validateLocalAndAllOf(validation, raw, pointer)
+func validateRaw(run *validationRun, validation *Validation, raw json.RawMessage, pointer string) []error {
+	errs := validateLocalAndAllOf(run, validation, raw, pointer)
 	if len(validation.AnyOfValidations) == 0 {
 		return errs
 	}
 
 	for _, child := range validation.AnyOfValidations {
-		if len(validateRaw(child, raw, pointer)) == 0 {
+		key := validationMemoKey{validation: child, pointer: pointer, raw: string(raw)}
+
+		matches, cached := run.anyOfMatches[key]
+		if !cached {
+			matches = len(validateRaw(run, child, raw, pointer)) == 0
+			run.anyOfMatches[key] = matches
+		}
+
+		if matches {
 			return errs
 		}
 	}
@@ -321,7 +349,12 @@ func validateRaw(validation *Validation, raw json.RawMessage, pointer string) []
 }
 
 // validateLocalAndAllOf applies local rules and every conjunctive child.
-func validateLocalAndAllOf(validation *Validation, raw json.RawMessage, pointer string) []error {
+func validateLocalAndAllOf(
+	run *validationRun,
+	validation *Validation,
+	raw json.RawMessage,
+	pointer string,
+) []error {
 	value, err := decodeInstance(raw)
 	if err != nil {
 		return []error{newValidationError(validation, pointer, "body", err.Error())}
@@ -331,11 +364,11 @@ func validateLocalAndAllOf(validation *Validation, raw json.RawMessage, pointer 
 	errs = append(errs, validation.EnumValidation.validate(validation, value, pointer)...)
 	errs = append(errs, validation.NumberValidation.validate(validation, value, pointer)...)
 	errs = append(errs, validation.StringValidation.validate(validation, value, pointer)...)
-	errs = append(errs, validation.ArrayValidation.validate(validation, value, pointer)...)
-	errs = append(errs, validation.ObjectValidation.validate(validation, value, pointer)...)
+	errs = append(errs, validation.ArrayValidation.validate(run, validation, value, pointer)...)
+	errs = append(errs, validation.ObjectValidation.validate(run, validation, value, pointer)...)
 
 	for _, child := range validation.AllOfValidations {
-		errs = append(errs, validateRaw(child, raw, pointer)...)
+		errs = append(errs, validateRaw(run, child, raw, pointer)...)
 	}
 
 	return errs
@@ -697,7 +730,12 @@ func (stringValidation StringValidation) validate(
 }
 
 // validate applies array bounds and child schemas.
-func (array ArrayValidation) validate(validation *Validation, value instance, pointer string) []error {
+func (array ArrayValidation) validate(
+	run *validationRun,
+	validation *Validation,
+	value instance,
+	pointer string,
+) []error {
 	if value.kind != jsonvalue.KindArray {
 		return nil
 	}
@@ -729,7 +767,7 @@ func (array ArrayValidation) validate(validation *Validation, value instance, po
 	if array.Items != nil {
 		for index, child := range value.array {
 			errs = append(errs, validateRaw(
-				array.Items, child, appendInstancePointer(pointer, fmt.Sprintf("%d", index)),
+				run, array.Items, child, appendInstancePointer(pointer, fmt.Sprintf("%d", index)),
 			)...)
 		}
 	}
@@ -740,7 +778,12 @@ func (array ArrayValidation) validate(validation *Validation, value instance, po
 // validate applies object bounds, required names, properties, and additional properties.
 //
 //nolint:cyclop // Object keywords collect independent failures in fixed order.
-func (object ObjectValidation) validate(validation *Validation, value instance, pointer string) []error {
+func (object ObjectValidation) validate(
+	run *validationRun,
+	validation *Validation,
+	value instance,
+	pointer string,
+) []error {
 	if value.kind != jsonvalue.KindObject {
 		return nil
 	}
@@ -783,14 +826,14 @@ func (object ObjectValidation) validate(validation *Validation, value instance, 
 
 		memberPointer := appendInstancePointer(pointer, member.name)
 		if property != nil {
-			errs = append(errs, validateRaw(property.Validation, member.raw, memberPointer)...)
+			errs = append(errs, validateRaw(run, property.Validation, member.raw, memberPointer)...)
 
 			continue
 		}
 
 		if object.AdditionalPropertiesValidation != nil {
 			errs = append(errs, validateRaw(
-				object.AdditionalPropertiesValidation, member.raw, memberPointer,
+				run, object.AdditionalPropertiesValidation, member.raw, memberPointer,
 			)...)
 
 			continue

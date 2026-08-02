@@ -187,13 +187,9 @@ func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDeco
 			return nil, fmt.Errorf("generated query parameter %q: %w", compiled.Name, err)
 		}
 
-		if len(parameter.validation.AnyOfValidations) != 0 {
-			candidates, err := compileQueryAnyOfCandidates(parameter)
-			if err != nil {
-				return nil, fmt.Errorf("generated query parameter %q: %w", compiled.Name, err)
-			}
-
-			parameter.anyOf = candidates
+		parameter, err := validateGeneratedQueryParameterConsistency(parameter)
+		if err != nil {
+			return nil, fmt.Errorf("generated query parameter %q: %w", compiled.Name, err)
 		}
 
 		parameters[index] = parameter
@@ -233,7 +229,7 @@ func validateQueryParameterMetadata(parameter queryParameter) error {
 	case wireDelimitedObject:
 		propertiesAllowed = true
 
-		if parameter.scalarType != "" || parameter.separator != " " && parameter.separator != "|" {
+		if parameter.scalarType != "" || (parameter.separator != " " && parameter.separator != "|") {
 			return errors.New("delimited-object metadata is invalid")
 		}
 	case wireJSONContent:
@@ -254,12 +250,59 @@ func validateQueryParameterMetadata(parameter queryParameter) error {
 	}
 
 	for _, property := range parameter.properties {
-		if !isScalarType(property.scalarType) || property.array && parameter.wire != wireDeepObject {
+		if !isScalarType(property.scalarType) || (property.array && parameter.wire != wireDeepObject) {
 			return fmt.Errorf("property %q metadata is invalid", property.name)
 		}
 	}
 
 	return nil
+}
+
+//nolint:cyclop // Generated wire kinds form one finite reverse mapping to source styles.
+func validateGeneratedQueryParameterConsistency(parameter queryParameter) (queryParameter, error) {
+	style := "form"
+	explode := false
+
+	switch parameter.wire {
+	case wirePrimitive:
+	case wireFormArrayRepeated, wireFormObjectExploded:
+		explode = true
+	case wireFormObjectNamed:
+	case wireDelimitedArray, wireDelimitedObject:
+		switch parameter.separator {
+		case ",":
+		case " ":
+			style = "spaceDelimited"
+		case "|":
+			style = "pipeDelimited"
+		}
+	case wireDeepObject:
+		style, explode = "deepObject", true
+	case wireJSONContent:
+		return parameter, nil
+	}
+
+	expected := parameter
+	expected.wire = wirePrimitive
+	expected.separator = ""
+	expected.scalarType = ""
+	expected.dynamicType = ""
+	expected.properties = nil
+	expected.propertyByName = nil
+	expected.anyOf = nil
+
+	expected, err := compileQueryStyleMetadata(expected, style, explode)
+	if err != nil {
+		return queryParameter{}, err
+	}
+
+	if expected.wire != parameter.wire || expected.separator != parameter.separator ||
+		expected.scalarType != parameter.scalarType || expected.dynamicType != parameter.dynamicType ||
+		!slices.Equal(expected.properties, parameter.properties) {
+		return queryParameter{}, errors.New("wire metadata is inconsistent with validation")
+	}
+
+	return expected, nil
 }
 
 func compileQueryDecoder(operationID string, source oas.Source, compiler *schemaCompiler) (*QueryDecoder, error) {
@@ -418,7 +461,7 @@ func mediaTypeParameterSegments(parameters string) []string {
 	return segments
 }
 
-//nolint:cyclop,funlen,gocognit,gocyclo,maintidx,nestif // Parameter Object rules form one finite decision table.
+//nolint:cyclop,funlen,gocognit,nestif // Parameter Object rules form one finite decision table.
 func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) (queryParameter, error) {
 	members, err := parameterMembers(located)
 	if err != nil {
@@ -579,6 +622,13 @@ func compileQueryParameter(located oas.LocatedSchema, compiler *schemaCompiler) 
 			return queryParameter{}, fmt.Errorf("parameter %q at %s explode: %w", name, located.Pointer, err)
 		}
 	}
+
+	return compileQueryStyleMetadata(parameter, style, explode)
+}
+
+//nolint:cyclop,gocognit,gocyclo // Query style, shape, and explode combinations form one finite decision table.
+func compileQueryStyleMetadata(parameter queryParameter, style string, explode bool) (queryParameter, error) {
+	name := parameter.name
 
 	if len(parameter.validation.AnyOfValidations) != 0 {
 		if style != "form" {

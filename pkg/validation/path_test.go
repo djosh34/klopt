@@ -20,33 +20,34 @@ func TestGeneratedPathDecoderDecodesEveryStyleShapeCell(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		wire       uint8
-		explode    bool
-		path       string
-		validation *validation.Validation
-		scalarType string
-		properties []validation.PathPropertyDefinition
-		expected   string
+		name        string
+		wire        uint8
+		explode     bool
+		path        string
+		validation  *validation.Validation
+		scalarType  string
+		dynamicType string
+		properties  []validation.PathPropertyDefinition
+		expected    string
 	}{
 		{name: "simple primitive", wire: 0, path: "/blue", validation: pathStringValidation(), scalarType: "string", expected: `{"color":"blue"}`},
 		{name: "simple primitive explode", wire: 0, explode: true, path: "/blue", validation: pathStringValidation(), scalarType: "string", expected: `{"color":"blue"}`},
 		{name: "simple array", wire: 1, path: "/blue,black,brown", validation: pathArrayValidation(), scalarType: "string", expected: `{"color":["blue","black","brown"]}`},
 		{name: "simple array explode", wire: 1, explode: true, path: "/blue,black,brown", validation: pathArrayValidation(), scalarType: "string", expected: `{"color":["blue","black","brown"]}`},
-		{name: "simple object", wire: 2, path: "/R,100,G,200,B,150", validation: pathObjectValidation(), properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
-		{name: "simple object explode", wire: 2, explode: true, path: "/R=100,G=200,B=150", validation: pathObjectValidation(), properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
+		{name: "simple object", wire: 2, path: "/R,100,G,200,B,150", validation: pathObjectValidation(), dynamicType: "string", properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
+		{name: "simple object explode", wire: 2, explode: true, path: "/R=100,G=200,B=150", validation: pathObjectValidation(), dynamicType: "string", properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
 		{name: "label primitive", wire: 3, path: "/.blue", validation: pathStringValidation(), scalarType: "string", expected: `{"color":"blue"}`},
 		{name: "label primitive explode", wire: 3, explode: true, path: "/.blue", validation: pathStringValidation(), scalarType: "string", expected: `{"color":"blue"}`},
 		{name: "label array", wire: 4, path: "/.blue,black,brown", validation: pathArrayValidation(), scalarType: "string", expected: `{"color":["blue","black","brown"]}`},
 		{name: "label array explode", wire: 4, explode: true, path: "/.blue.black.brown", validation: pathArrayValidation(), scalarType: "string", expected: `{"color":["blue","black","brown"]}`},
-		{name: "label object", wire: 5, path: "/.R,100,G,200,B,150", validation: pathObjectValidation(), properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
-		{name: "label object explode", wire: 5, explode: true, path: "/.R=100.G=200.B=150", validation: pathObjectValidation(), properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
+		{name: "label object", wire: 5, path: "/.R,100,G,200,B,150", validation: pathObjectValidation(), dynamicType: "string", properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
+		{name: "label object explode", wire: 5, explode: true, path: "/.R=100.G=200.B=150", validation: pathObjectValidation(), dynamicType: "string", properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
 		{name: "matrix primitive", wire: 6, path: "/;color=blue", validation: pathStringValidation(), scalarType: "string", expected: `{"color":"blue"}`},
 		{name: "matrix primitive explode", wire: 6, explode: true, path: "/;color=blue", validation: pathStringValidation(), scalarType: "string", expected: `{"color":"blue"}`},
 		{name: "matrix array", wire: 7, path: "/;color=blue,black,brown", validation: pathArrayValidation(), scalarType: "string", expected: `{"color":["blue","black","brown"]}`},
 		{name: "matrix array explode", wire: 7, explode: true, path: "/;color=blue;color=black;color=brown", validation: pathArrayValidation(), scalarType: "string", expected: `{"color":["blue","black","brown"]}`},
-		{name: "matrix object", wire: 8, path: "/;color=R,100,G,200,B,150", validation: pathObjectValidation(), properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
-		{name: "matrix object explode", wire: 8, explode: true, path: "/;R=100;G=200;B=150", validation: pathObjectValidation(), properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
+		{name: "matrix object", wire: 8, path: "/;color=R,100,G,200,B,150", validation: pathObjectValidation(), dynamicType: "string", properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
+		{name: "matrix object explode", wire: 8, explode: true, path: "/;R=100;G=200;B=150", validation: pathObjectValidation(), dynamicType: "string", properties: pathObjectProperties(), expected: `{"color":{"R":100,"G":200,"B":150}}`},
 	}
 
 	for _, test := range tests {
@@ -57,7 +58,7 @@ func TestGeneratedPathDecoderDecodesEveryStyleShapeCell(t *testing.T) {
 				OperationID: "colors", PathTemplate: "/{color}",
 				Parameters: []validation.PathParameterDefinition{{
 					Name: "color", Wire: test.wire, Explode: test.explode, Validation: test.validation,
-					ScalarType: test.scalarType, Properties: test.properties,
+					ScalarType: test.scalarType, DynamicType: test.dynamicType, Properties: test.properties,
 				}},
 			})
 			require.NoError(t, err)
@@ -73,13 +74,14 @@ func TestGeneratedPathDecoderUsesDeclaredShapeForEmptyCaptures(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		wire       uint8
-		explode    bool
-		path       string
-		validation *validation.Validation
-		scalarType string
-		expected   string
+		name        string
+		wire        uint8
+		explode     bool
+		path        string
+		validation  *validation.Validation
+		scalarType  string
+		dynamicType string
+		expected    string
 	}{
 		{name: "simple empty string", wire: 0, path: "/", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 		{name: "simple exploded empty string", wire: 0, explode: true, path: "/", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
@@ -89,12 +91,12 @@ func TestGeneratedPathDecoderUsesDeclaredShapeForEmptyCaptures(t *testing.T) {
 		{name: "label exploded framed empty array", wire: 4, explode: true, path: "/.", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
 		{name: "matrix framed empty array", wire: 7, path: "/;p", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
 		{name: "matrix exploded framed empty array", wire: 7, explode: true, path: "/;p", validation: pathArrayValidation(), scalarType: "string", expected: `{"p":[]}`},
-		{name: "simple empty object", wire: 2, path: "/", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "simple exploded empty object", wire: 2, explode: true, path: "/", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "label framed empty object", wire: 5, path: "/.", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "label exploded framed empty object", wire: 5, explode: true, path: "/.", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "matrix framed empty object", wire: 8, path: "/;p", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
-		{name: "matrix exploded framed empty object", wire: 8, explode: true, path: "/;p", validation: pathOpenObjectValidation(), expected: `{"p":{}}`},
+		{name: "simple empty object", wire: 2, path: "/", validation: pathOpenObjectValidation(), dynamicType: "string", expected: `{"p":{}}`},
+		{name: "simple exploded empty object", wire: 2, explode: true, path: "/", validation: pathOpenObjectValidation(), dynamicType: "string", expected: `{"p":{}}`},
+		{name: "label framed empty object", wire: 5, path: "/.", validation: pathOpenObjectValidation(), dynamicType: "string", expected: `{"p":{}}`},
+		{name: "label exploded framed empty object", wire: 5, explode: true, path: "/.", validation: pathOpenObjectValidation(), dynamicType: "string", expected: `{"p":{}}`},
+		{name: "matrix framed empty object", wire: 8, path: "/;p", validation: pathOpenObjectValidation(), dynamicType: "string", expected: `{"p":{}}`},
+		{name: "matrix exploded framed empty object", wire: 8, explode: true, path: "/;p", validation: pathOpenObjectValidation(), dynamicType: "string", expected: `{"p":{}}`},
 		{name: "label framed empty string", wire: 3, path: "/.", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 		{name: "label exploded framed empty string", wire: 3, explode: true, path: "/.", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
 		{name: "matrix framed empty string", wire: 6, path: "/;p=", validation: pathStringValidation(), scalarType: "string", expected: `{"p":""}`},
@@ -111,7 +113,7 @@ func TestGeneratedPathDecoderUsesDeclaredShapeForEmptyCaptures(t *testing.T) {
 				OperationID: "empty", PathTemplate: "/{p}",
 				Parameters: []validation.PathParameterDefinition{{
 					Name: "p", Wire: test.wire, Explode: test.explode,
-					Validation: test.validation, ScalarType: test.scalarType,
+					Validation: test.validation, ScalarType: test.scalarType, DynamicType: test.dynamicType,
 				}},
 			})
 			require.NoError(t, err)
@@ -134,16 +136,19 @@ func TestGeneratedPathDecoderRequiresStyleFramingForEmptyAggregates(t *testing.T
 				parameterValidation := pathArrayValidation()
 				scalarType := "string"
 
+				dynamicType := ""
+
 				if wire == 5 || wire == 8 {
 					parameterValidation = pathOpenObjectValidation()
 					scalarType = ""
+					dynamicType = "string"
 				}
 
 				decoder, err := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
 					OperationID: "empty", PathTemplate: "/{p}",
 					Parameters: []validation.PathParameterDefinition{{
 						Name: "p", Wire: wire, Explode: explode,
-						Validation: parameterValidation, ScalarType: scalarType,
+						Validation: parameterValidation, ScalarType: scalarType, DynamicType: dynamicType,
 					}},
 				})
 				require.NoError(t, err)
@@ -160,21 +165,22 @@ func TestGeneratedPathDecoderMatchesEscapedMatrixParameterNames(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		wire       uint8
-		explode    bool
-		path       string
-		validation *validation.Validation
-		scalarType string
-		expected   string
+		name        string
+		wire        uint8
+		explode     bool
+		path        string
+		validation  *validation.Validation
+		scalarType  string
+		dynamicType string
+		expected    string
 	}{
 		{name: "primitive", wire: 6, path: "/;x%20y=blue", validation: pathStringValidation(), scalarType: "string", expected: `{"x y":"blue"}`},
 		{name: "array", wire: 7, path: "/;x%20y=blue,black", validation: pathArrayValidation(), scalarType: "string", expected: `{"x y":["blue","black"]}`},
 		{name: "exploded array", wire: 7, explode: true, path: "/;x%20y=blue;x%20y=black", validation: pathArrayValidation(), scalarType: "string", expected: `{"x y":["blue","black"]}`},
-		{name: "object", wire: 8, path: "/;x%20y=key,value", validation: pathOpenObjectValidation(), expected: `{"x y":{"key":"value"}}`},
+		{name: "object", wire: 8, path: "/;x%20y=key,value", validation: pathOpenObjectValidation(), dynamicType: "string", expected: `{"x y":{"key":"value"}}`},
 		{name: "undefined primitive", wire: 6, path: "/;x%20y", validation: pathStringValidation(), scalarType: "string", expected: `{"x y":""}`},
 		{name: "undefined array", wire: 7, path: "/;x%20y", validation: pathArrayValidation(), scalarType: "string", expected: `{"x y":[]}`},
-		{name: "undefined object", wire: 8, path: "/;x%20y", validation: pathOpenObjectValidation(), expected: `{"x y":{}}`},
+		{name: "undefined object", wire: 8, path: "/;x%20y", validation: pathOpenObjectValidation(), dynamicType: "string", expected: `{"x y":{}}`},
 	}
 
 	for _, test := range tests {
@@ -185,7 +191,7 @@ func TestGeneratedPathDecoderMatchesEscapedMatrixParameterNames(t *testing.T) {
 				OperationID: "escaped", PathTemplate: "/{x y}",
 				Parameters: []validation.PathParameterDefinition{{
 					Name: "x y", Wire: test.wire, Explode: test.explode,
-					Validation: test.validation, ScalarType: test.scalarType,
+					Validation: test.validation, ScalarType: test.scalarType, DynamicType: test.dynamicType,
 				}},
 			})
 			require.NoError(t, err)
@@ -336,7 +342,22 @@ func TestGeneratedPathDecoderDefinitionRoundTripAndCopiesMetadata(t *testing.T) 
 	definition := validation.PathDecoderDefinition{
 		OperationID: "roundTrip", PathTemplate: "/{object}",
 		Parameters: []validation.PathParameterDefinition{{
-			Name: "object", Wire: 8, Explode: true, Validation: pathOpenObjectValidation(),
+			Name: "object", Wire: 8, Explode: true,
+			Validation: &validation.Validation{
+				KindValidation: validation.KindValidation{Type: "object"},
+				ObjectValidation: validation.ObjectValidation{
+					AdditionalPropertiesAllowed: true,
+					AdditionalPropertiesValidation: &validation.Validation{
+						KindValidation: validation.KindValidation{Type: "number"},
+					},
+					Properties: []validation.PropertyValidation{{
+						Name: "known",
+						Validation: &validation.Validation{
+							KindValidation: validation.KindValidation{Type: "boolean"},
+						},
+					}},
+				},
+			},
 			DynamicType: "number",
 			Properties:  []validation.PathPropertyDefinition{{Name: "known", ScalarType: "boolean"}},
 		}},
@@ -599,7 +620,7 @@ func TestGeneratedPathDecoderValidatesOneCompleteObject(t *testing.T) {
 		{
 			name: "empty object does not retry", keyword: "minProperties",
 			parameter: validation.PathParameterDefinition{
-				Name: "p", Wire: 2,
+				Name: "p", Wire: 2, DynamicType: "string",
 				Validation: &validation.Validation{
 					KindValidation: validation.KindValidation{Type: "object"},
 					ObjectValidation: validation.ObjectValidation{
@@ -636,7 +657,7 @@ func TestGeneratedPathDecoderValidatesOneCompleteObject(t *testing.T) {
 
 	closedObject := &validation.Validation{KindValidation: validation.KindValidation{Type: "object"}}
 	decoder := mustGeneratedPathDecoder(t, "closed", "/{p}", validation.PathParameterDefinition{
-		Name: "p", Wire: 2, Validation: closedObject,
+		Name: "p", Wire: 2, Validation: closedObject, DynamicType: "string",
 	})
 	actual, err := decoder.DecodePathParams(&url.URL{Path: "/extra,value"})
 	require.Nil(t, actual)
@@ -645,8 +666,28 @@ func TestGeneratedPathDecoderValidatesOneCompleteObject(t *testing.T) {
 	joined, err := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
 		OperationID: "joined", PathTemplate: "/{z}/{a}",
 		Parameters: []validation.PathParameterDefinition{
-			{Name: "z", Wire: 0, Validation: &validation.Validation{KindValidation: validation.KindValidation{Type: "number"}}, ScalarType: "string"},
-			{Name: "a", Wire: 0, Validation: &validation.Validation{KindValidation: validation.KindValidation{Type: "boolean"}}, ScalarType: "string"},
+			{
+				Name: "z", Wire: 0, ScalarType: "string",
+				Validation: &validation.Validation{
+					KindValidation: validation.KindValidation{Type: "string"},
+					StringValidation: validation.StringValidation{
+						MinLength: &validation.CountBound{
+							Value: "10", ExactValue: jsonvalue.Number{Lexeme: "10"},
+						},
+					},
+				},
+			},
+			{
+				Name: "a", Wire: 0, ScalarType: "string",
+				Validation: &validation.Validation{
+					KindValidation: validation.KindValidation{Type: "string"},
+					StringValidation: validation.StringValidation{
+						MinLength: &validation.CountBound{
+							Value: "10", ExactValue: jsonvalue.Number{Lexeme: "10"},
+						},
+					},
+				},
+			},
 		},
 	})
 	require.NoError(t, err)
@@ -836,7 +877,7 @@ func pathArrayValidation() *validation.Validation {
 
 func pathObjectValidation() *validation.Validation {
 	properties := make([]validation.PropertyValidation, 0, 3)
-	for _, name := range []string{"R", "G", "B"} {
+	for _, name := range []string{"B", "G", "R"} {
 		properties = append(properties, validation.PropertyValidation{
 			Name: name, Validation: &validation.Validation{KindValidation: validation.KindValidation{Type: "integer"}},
 		})
@@ -859,8 +900,8 @@ func pathOpenObjectValidation() *validation.Validation {
 
 func pathObjectProperties() []validation.PathPropertyDefinition {
 	return []validation.PathPropertyDefinition{
-		{Name: "R", ScalarType: "integer"},
-		{Name: "G", ScalarType: "integer"},
 		{Name: "B", ScalarType: "integer"},
+		{Name: "G", ScalarType: "integer"},
+		{Name: "R", ScalarType: "integer"},
 	}
 }

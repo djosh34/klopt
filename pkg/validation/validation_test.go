@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
+	"github.com/djosh34/klopt/pkg/patternvalidator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -111,6 +112,35 @@ func TestValidationSupportedKeywordsAtRootNestedAndAllOf(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseAppliesPatternOptionOncePerPattern preserves caller-owned option state.
+func TestParseAppliesPatternOptionOncePerPattern(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	option := func(*patternvalidator.PatternValidation) error {
+		calls++
+
+		return nil
+	}
+
+	parsed, err := Parse(openAPISpec(`{"type":"string","pattern":"^a$"}`, "", false), option)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Empty(t, parsed["checkThing"].Body.Validate(json.RawMessage(`"a"`)))
+}
+
+// TestParseRetainsLeadingLookaheadPattern covers the authoritative pattern matcher seam.
+func TestParseRetainsLeadingLookaheadPattern(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(openAPISpec(`{"type":"string","pattern":"^(?=a)a"}`, "", false))
+	require.NoError(t, err)
+
+	validation := parsed["checkThing"].Body
+	require.Empty(t, validation.Validate(json.RawMessage(`"ab"`)))
+	require.ErrorContains(t, errors.Join(validation.Validate(json.RawMessage(`"ba"`))...), "keyword pattern")
 }
 
 // TestParseExposesCompiledGraphAndCopiesInput covers the supported construction seam.
@@ -739,6 +769,27 @@ func TestValidationNestedAndAllOf(t *testing.T) {
 	require.Contains(t, errors.Join(errs...).Error(), "/allOf/1")
 }
 
+// TestValidateDefaultRejectsMalformedUntypedValue keeps syntax validation independent of a declared type.
+func TestValidateDefaultRejectsMalformedUntypedValue(t *testing.T) {
+	t.Parallel()
+
+	require.ErrorContains(t, validateDefault(json.RawMessage(`invalid`), KindValidation{}), "must be a valid value")
+	require.NoError(t, validateDefault(json.RawMessage(`null`), KindValidation{}))
+}
+
+// TestParseSelectsExternalDocsErrorsDeterministically fixes lexical error precedence.
+func TestParseSelectsExternalDocsErrorsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	spec := openAPISpec(`{
+		"externalDocs":{"url":"/docs","description":1,"other":true}
+	}`, "", false)
+	for range 100 {
+		_, err := Parse(spec)
+		require.ErrorContains(t, err, "description must be a string")
+	}
+}
+
 // TestParseRejectsUniqueItemsAtItsSourcePointer covers every authored value shape.
 func TestParseRejectsUniqueItemsAtItsSourcePointer(t *testing.T) {
 	t.Parallel()
@@ -862,7 +913,7 @@ func TestParseRejectsUniqueItemsBeforeReferenceResolutionDiscardsAnIntermediateS
 				"schema":{"$ref":"#/components/schemas/First"}
 			}}}}},
 			"/later":{"post":{"operationId":"beta","requestBody":{"content":{"application/json":{
-				"schema":{"type":1}
+				"schema":{}
 			}}}}}
 		},
 		"components":{"schemas":{
