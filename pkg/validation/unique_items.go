@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -370,36 +371,69 @@ func (walker *authoredSchemaWalker) callback(raw json.RawMessage, pointer string
 	return nil
 }
 
-// schema inspects one authored Schema Object and then traverses its nested schemas.
+// authoredSchemaPointer retains path tokens without copying every ancestor path.
+type authoredSchemaPointer struct {
+	base   string
+	parent *authoredSchemaPointer
+	token  string
+}
+
+// schema decodes one complete inline schema tree before traversing it.
 func (walker *authoredSchemaWalker) schema(raw json.RawMessage, pointer string) error {
-	if walker.seen("schema", pointer) {
+	if _, seen := walker.visited["schema\x00"+pointer]; seen {
 		return nil
 	}
 
-	if _, ok := rawObject(raw); !ok {
-		return nil
-	}
-
-	resolved, err := walker.resolveSchema(raw, pointer)
-	if err != nil {
-		return err
-	}
-
-	members, ok := rawObject(resolved.Raw)
+	value, ok := rawValue(raw)
 	if !ok {
 		return nil
 	}
 
-	return walker.nestedSchemas(members, resolved.Pointer)
+	members, object := value.(map[string]any)
+	if object {
+		if _, reference := members["$ref"]; !reference {
+			walker.markSeen("schema", pointer)
+		}
+	}
+
+	return walker.schemaValue(value, &authoredSchemaPointer{base: pointer})
 }
 
-// resolveSchema inspects every raw schema in a reference chain before resolution discards siblings.
-func (walker *authoredSchemaWalker) resolveSchema(
-	raw json.RawMessage,
-	pointer string,
-) (oas.LocatedSchema, error) {
+// schemaValue inspects one decoded Schema Object and traverses its decoded children.
+func (walker *authoredSchemaWalker) schemaValue(value any, pointer *authoredSchemaPointer) error {
+	members, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	if _, present := members["uniqueItems"]; present {
+		return unsupportedUniqueItems(pointer.String())
+	}
+
+	if reference, present := members["$ref"]; present {
+		return walker.referencedSchema(reference, pointer)
+	}
+
+	return walker.nestedSchemaValues(members, pointer)
+}
+
+// referencedSchema preserves reference diagnostics while decoding only the resolved target tree.
+func (walker *authoredSchemaWalker) referencedSchema(
+	reference any,
+	pointer *authoredSchemaPointer,
+) error {
+	pointerString := pointer.String()
+	if walker.seen("schema", pointerString) {
+		return nil
+	}
+
+	raw, err := json.Marshal(map[string]any{"$ref": reference})
+	if err != nil {
+		return fmt.Errorf("encode schema reference at %s: %w", pointerString, err)
+	}
+
 	resolved, err := walker.source.ResolveAndInspect(
-		oas.LocatedSchema{Raw: raw, Pointer: pointer},
+		oas.LocatedSchema{Raw: raw, Pointer: pointerString},
 		func(authored oas.LocatedSchema) error {
 			walker.markSeen("schema", authored.Pointer)
 
@@ -407,67 +441,135 @@ func (walker *authoredSchemaWalker) resolveSchema(
 		},
 	)
 	if err != nil {
-		return oas.LocatedSchema{}, err
+		return err
 	}
 
-	return resolved, nil
+	value, ok := rawValue(resolved.Raw)
+	if !ok {
+		return nil
+	}
+
+	return walker.schemaValue(value, &authoredSchemaPointer{base: resolved.Pointer})
 }
 
-// nestedSchemas traverses nested Schema Object keywords in one fixed order.
-func (walker *authoredSchemaWalker) nestedSchemas(
-	members map[string]json.RawMessage,
-	pointer string,
+// nestedSchemaValues traverses nested Schema Object keywords in one fixed order.
+func (walker *authoredSchemaWalker) nestedSchemaValues(
+	members map[string]any,
+	pointer *authoredSchemaPointer,
 ) error {
 	// Arrays retain source order and the properties map is lexical.
-	if rawItems, present := members["items"]; present {
-		if err := walker.schema(rawItems, appendSchemaPointer(pointer, "items")); err != nil {
+	if items, present := members["items"]; present {
+		if err := walker.schemaValue(items, pointer.Append("items")); err != nil {
 			return err
 		}
 	}
 
-	properties, _ := rawObject(members["properties"])
+	properties, propertiesObject := members["properties"].(map[string]any)
+	if !propertiesObject {
+		properties = nil
+	}
+
 	for _, name := range slices.Sorted(maps.Keys(properties)) {
-		if err := walker.schema(properties[name], appendSchemaPointer(pointer, "properties", name)); err != nil {
+		if err := walker.schemaValue(properties[name], pointer.Append("properties", name)); err != nil {
 			return err
 		}
 	}
 
 	if additional, present := members["additionalProperties"]; present {
-		if err := walker.schema(additional, appendSchemaPointer(pointer, "additionalProperties")); err != nil {
+		if err := walker.schemaValue(additional, pointer.Append("additionalProperties")); err != nil {
 			return err
 		}
 	}
 
-	if err := walker.schemaArrays(members, pointer); err != nil {
+	if err := walker.schemaValueArrays(members, pointer); err != nil {
 		return err
 	}
 
-	if rawNot, present := members["not"]; present {
-		return walker.schema(rawNot, appendSchemaPointer(pointer, "not"))
+	if not, present := members["not"]; present {
+		return walker.schemaValue(not, pointer.Append("not"))
 	}
 
 	return nil
 }
 
-// schemaArrays traverses array-valued composition keywords in fixed order.
-func (walker *authoredSchemaWalker) schemaArrays(
-	members map[string]json.RawMessage,
-	pointer string,
+// schemaValueArrays traverses array-valued composition keywords in fixed order.
+func (walker *authoredSchemaWalker) schemaValueArrays(
+	members map[string]any,
+	pointer *authoredSchemaPointer,
 ) error {
 	for _, keyword := range []string{"allOf", "anyOf", "oneOf"} {
-		children, ok := rawArray(members[keyword])
+		children, ok := members[keyword].([]any)
 		if !ok {
 			continue
 		}
 
 		for index, child := range children {
-			if err := walker.schema(child, appendSchemaPointer(pointer, keyword, strconv.Itoa(index))); err != nil {
+			if err := walker.schemaValue(child, pointer.Append(keyword, strconv.Itoa(index))); err != nil {
 				return err
 			}
 		}
 	}
 
 	return nil
+}
+
+// Append returns a linked child pointer without copying ancestor bytes.
+func (pointer *authoredSchemaPointer) Append(tokens ...string) *authoredSchemaPointer {
+	for _, token := range tokens {
+		pointer = &authoredSchemaPointer{parent: pointer, token: token}
+	}
+
+	return pointer
+}
+
+// String materializes one RFC 6901 pointer only when diagnostics or resolution need it.
+func (pointer *authoredSchemaPointer) String() string {
+	tokens := make([]string, 0)
+	for current := pointer; current != nil && current.parent != nil; current = current.parent {
+		tokens = append(tokens, current.token)
+	}
+
+	root := pointer
+	for root.parent != nil {
+		root = root.parent
+	}
+
+	result := append([]byte(nil), root.base...)
+	for index := len(tokens) - 1; index >= 0; index-- {
+		result = append(result, '/')
+		result = appendPointerToken(result, tokens[index])
+	}
+
+	return string(result)
+}
+
+// appendPointerToken appends one RFC 6901-escaped token.
+func appendPointerToken(result []byte, token string) []byte {
+	for index := range len(token) {
+		switch token[index] {
+		case '~':
+			result = append(result, "~0"...)
+		case '/':
+			result = append(result, "~1"...)
+		default:
+			result = append(result, token[index])
+		}
+	}
+
+	return result
+}
+
+// rawValue decodes one complete raw subtree without converting exact numbers to float64.
+func rawValue(raw json.RawMessage) (any, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, false
+	}
+
+	return value, true
 }
 
 // resolve follows a non-schema Reference Object while breaking traversal cycles.

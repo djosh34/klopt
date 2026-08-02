@@ -718,10 +718,9 @@ func decimalParts(lexeme string) (bool, string, *big.Int) {
 
 // decimalInteger parses known decimal digits.
 func decimalInteger(digits string) *big.Int {
-	integer := new(big.Int)
-	for _, digit := range digits {
-		integer.Mul(integer, big.NewInt(decimalRadix))
-		integer.Add(integer, big.NewInt(int64(digit-'0')))
+	integer, ok := new(big.Int).SetString(digits, decimalRadix)
+	if !ok {
+		panic("jsonvalue: invalid known decimal digits")
 	}
 
 	return integer

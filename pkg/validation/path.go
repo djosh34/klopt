@@ -830,8 +830,10 @@ func NewPathDecoderFromGenerated(definition PathDecoderDefinition) (*PathDecoder
 	}
 
 	parameters := make([]pathParameter, len(definition.Parameters))
+
+	stateValidator := newCompiledStateValidator()
 	for index, compiled := range definition.Parameters {
-		parameter, err := pathParameterFromGenerated(compiled)
+		parameter, err := pathParameterFromGenerated(compiled, &stateValidator)
 		if err != nil {
 			return nil, err
 		}
@@ -842,12 +844,15 @@ func NewPathDecoderFromGenerated(definition PathDecoderDefinition) (*PathDecoder
 	return newPathDecoder(definition.OperationID, definition.PathTemplate, parameters)
 }
 
-func pathParameterFromGenerated(compiled PathParameterDefinition) (pathParameter, error) {
+func pathParameterFromGenerated(
+	compiled PathParameterDefinition,
+	stateValidator *compiledStateValidator,
+) (pathParameter, error) {
 	if compiled.Name == "" || strings.ContainsRune(compiled.Name, '/') || compiled.Validation == nil {
 		return pathParameter{}, fmt.Errorf("generated path parameter %q is invalid", compiled.Name)
 	}
 
-	if err := validateCompiledState(compiled.Validation); err != nil {
+	if err := stateValidator.validate(compiled.Validation); err != nil {
 		return pathParameter{}, fmt.Errorf("generated path parameter %q validation: %w", compiled.Name, err)
 	}
 

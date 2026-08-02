@@ -363,6 +363,21 @@ func TestMalformedJSONDecoderPathsReturnErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDecimalIntegerParsesLongCoefficientExactly(t *testing.T) {
+	t.Parallel()
+
+	digits := strings.Repeat("1234567890", 10_000)
+	require.Equal(t, digits, decimalInteger(digits).String())
+}
+
+func BenchmarkDecimalIntegerLongCoefficient(b *testing.B) {
+	digits := strings.Repeat("1234567890", 10_000)
+
+	for b.Loop() {
+		decimalInteger(digits)
+	}
+}
+
 func TestNumberFormattingAndEscapeHelpers(t *testing.T) {
 	t.Parallel()
 

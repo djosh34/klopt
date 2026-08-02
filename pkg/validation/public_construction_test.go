@@ -281,6 +281,35 @@ func TestGeneratedDecodersRejectMalformedNumericFormats(t *testing.T) {
 	}
 }
 
+func TestGeneratedDecodersRejectFormatWithMismatchedCompiledLanguage(t *testing.T) {
+	t.Parallel()
+
+	compiled := &validation.Validation{
+		KindValidation: validation.KindValidation{Type: "string"},
+		StringValidation: validation.StringValidation{
+			Format: "date", CompiledFormat: validation.MustCompileStringFormat("email"),
+		},
+	}
+
+	query, queryErr := validation.NewQueryDecoderFromGenerated(validation.QueryDecoderDefinition{
+		OperationID: "query",
+		Parameters: []validation.QueryParameterDefinition{{
+			Name: "q", Wire: 7, Validation: compiled,
+		}},
+	})
+	require.Nil(t, query)
+	require.ErrorContains(t, queryErr, "compiled language does not match")
+
+	path, pathErr := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
+		OperationID: "path", PathTemplate: "/{p}",
+		Parameters: []validation.PathParameterDefinition{{
+			Name: "p", Wire: 9, Validation: compiled,
+		}},
+	})
+	require.Nil(t, path)
+	require.ErrorContains(t, pathErr, "compiled language does not match")
+}
+
 func TestGeneratedQueryDecoderRejectsMetadataInconsistentWithValidation(t *testing.T) {
 	t.Parallel()
 

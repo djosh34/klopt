@@ -55,62 +55,74 @@ func (validation *Validation) Validate(body json.RawMessage) []error {
 	return validateRaw(&run, validation, body, "#")
 }
 
-// validateCompiledState rejects malformed validation graphs at construction boundaries.
+// compiledStateValidator memoizes graph validation across every root at one construction boundary.
+type compiledStateValidator struct {
+	active    map[*Validation]struct{}
+	validated map[*Validation]struct{}
+}
+
+// validateCompiledState rejects one malformed validation graph at a construction boundary.
 func validateCompiledState(root *Validation) error {
-	active := make(map[*Validation]struct{})
-	validated := make(map[*Validation]struct{})
+	validator := newCompiledStateValidator()
 
-	var validateNode func(*Validation) error
+	return validator.validate(root)
+}
 
-	validateNode = func(validation *Validation) error {
-		if validation == nil {
-			return errors.New("validation node is nil")
-		}
+// newCompiledStateValidator creates one empty construction-boundary graph validator.
+func newCompiledStateValidator() compiledStateValidator {
+	return compiledStateValidator{
+		active:    make(map[*Validation]struct{}),
+		validated: make(map[*Validation]struct{}),
+	}
+}
 
-		if _, cyclic := active[validation]; cyclic {
-			return fmt.Errorf("validation cycle reaches schema %q", validation.SchemaPointer)
-		}
+// validate rejects malformed state while reusing verdicts from earlier roots.
+func (validator *compiledStateValidator) validate(validation *Validation) error {
+	if validation == nil {
+		return errors.New("validation node is nil")
+	}
 
-		if _, done := validated[validation]; done {
-			return nil
-		}
+	if _, cyclic := validator.active[validation]; cyclic {
+		return fmt.Errorf("validation cycle reaches schema %q", validation.SchemaPointer)
+	}
 
-		active[validation] = struct{}{}
-		defer delete(active, validation)
-
-		if err := validateLocalCompiledState(validation); err != nil {
-			return fmt.Errorf("schema %q: %w", validation.SchemaPointer, err)
-		}
-
-		children := make([]*Validation, 0, 3+len(validation.ObjectValidation.Properties)+
-			len(validation.AllOfValidations)+len(validation.AnyOfValidations))
-		if validation.ArrayValidation.Items != nil {
-			children = append(children, validation.ArrayValidation.Items)
-		}
-
-		for _, property := range validation.ObjectValidation.Properties {
-			children = append(children, property.Validation)
-		}
-
-		if validation.ObjectValidation.AdditionalPropertiesValidation != nil {
-			children = append(children, validation.ObjectValidation.AdditionalPropertiesValidation)
-		}
-
-		children = append(children, validation.AllOfValidations...)
-		children = append(children, validation.AnyOfValidations...)
-
-		for _, child := range children {
-			if err := validateNode(child); err != nil {
-				return err
-			}
-		}
-
-		validated[validation] = struct{}{}
-
+	if _, done := validator.validated[validation]; done {
 		return nil
 	}
 
-	return validateNode(root)
+	validator.active[validation] = struct{}{}
+	defer delete(validator.active, validation)
+
+	if err := validateLocalCompiledState(validation); err != nil {
+		return fmt.Errorf("schema %q: %w", validation.SchemaPointer, err)
+	}
+
+	children := make([]*Validation, 0, 3+len(validation.ObjectValidation.Properties)+
+		len(validation.AllOfValidations)+len(validation.AnyOfValidations))
+	if validation.ArrayValidation.Items != nil {
+		children = append(children, validation.ArrayValidation.Items)
+	}
+
+	for _, property := range validation.ObjectValidation.Properties {
+		children = append(children, property.Validation)
+	}
+
+	if validation.ObjectValidation.AdditionalPropertiesValidation != nil {
+		children = append(children, validation.ObjectValidation.AdditionalPropertiesValidation)
+	}
+
+	children = append(children, validation.AllOfValidations...)
+	children = append(children, validation.AnyOfValidations...)
+
+	for _, child := range children {
+		if err := validator.validate(child); err != nil {
+			return err
+		}
+	}
+
+	validator.validated[validation] = struct{}{}
+
+	return nil
 }
 
 // validateLocalCompiledState checks every exported keyword family at one validation node.
@@ -176,16 +188,37 @@ func validateLocalCompiledState(validation *Validation) error {
 		}
 	}
 
-	if validation.StringValidation.Pattern != "" && validation.StringValidation.CompiledPattern == nil {
+	return validateStringCompiledState(validation.StringValidation)
+}
+
+// validateStringCompiledState checks string source and compiled forms together.
+func validateStringCompiledState(stringValidation StringValidation) error {
+	if stringValidation.Pattern != "" && stringValidation.CompiledPattern == nil {
 		return errors.New("pattern has no compiled validation")
 	}
 
-	if validation.StringValidation.CompiledFormat != nil {
-		if _, err := validation.StringValidation.CompiledFormat.Matches(""); err != nil {
-			return fmt.Errorf("format: %w", err)
+	if stringValidation.CompiledFormat == nil {
+		if format := stringValidation.Format; format != "" && format != "password" {
+			return fmt.Errorf("format %q has no compiled language", format)
 		}
-	} else if format := validation.StringValidation.Format; format != "" && format != "password" {
-		return fmt.Errorf("format %q has no compiled language", format)
+
+		return nil
+	}
+
+	if _, err := stringValidation.CompiledFormat.Matches(""); err != nil {
+		return fmt.Errorf("format: %w", err)
+	}
+
+	canonical, err := compileStringFormat(stringValidation.Format)
+	if err != nil {
+		return fmt.Errorf("format: %w", err)
+	}
+
+	if !stringValidation.CompiledFormat.Equal(*canonical) {
+		return fmt.Errorf(
+			"format %q compiled language does not match its canonical language",
+			stringValidation.Format,
+		)
 	}
 
 	return nil

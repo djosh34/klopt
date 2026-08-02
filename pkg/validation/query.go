@@ -145,12 +145,14 @@ func NewQueryDecoderFromGenerated(definition QueryDecoderDefinition) (*QueryDeco
 	}
 
 	parameters := make([]queryParameter, len(definition.Parameters))
+	stateValidator := newCompiledStateValidator()
+
 	for index, compiled := range definition.Parameters {
 		if compiled.Name == "" || compiled.Validation == nil || wireKind(compiled.Wire) > wireJSONContent {
 			return nil, fmt.Errorf("generated query parameter %q is invalid", compiled.Name)
 		}
 
-		if err := validateCompiledState(compiled.Validation); err != nil {
+		if err := stateValidator.validate(compiled.Validation); err != nil {
 			return nil, fmt.Errorf("generated query parameter %q validation: %w", compiled.Name, err)
 		}
 

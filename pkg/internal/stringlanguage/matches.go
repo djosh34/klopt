@@ -13,6 +13,22 @@ func (language Language) Matches(value string) (bool, error) {
 	return matchDFA(&language.dfa, value)
 }
 
+// Equal reports whether two compiled languages have the same canonical DFA.
+func (language Language) Equal(other Language) bool {
+	if language.dfa.utf16 != other.dfa.utf16 || len(language.dfa.states) != len(other.dfa.states) {
+		return false
+	}
+
+	for index, state := range language.dfa.states {
+		otherState := other.dfa.states[index]
+		if state.accepting != otherState.accepting || !slices.Equal(state.edges, otherState.edges) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func matchDFA(machine *dfa, value string) (bool, error) {
 	if machine == nil || len(machine.states) == 0 {
 		return false, errors.New("DFA has no states")

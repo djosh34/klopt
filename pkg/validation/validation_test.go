@@ -1014,6 +1014,36 @@ func TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce(t *testing.T) {
 	require.Equal(t, 1, resolutionCount)
 }
 
+// TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth bounds whole-tree decoding costs.
+//
+//nolint:paralleltest // Per-process allocation counts must run without concurrent tests.
+func TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth(t *testing.T) {
+	document := func(depth int) json.RawMessage {
+		return json.RawMessage(
+			`{"components":{"schemas":{"Deep":` +
+				strings.Repeat(`{"items":`, depth) + `{}` + strings.Repeat(`}`, depth) +
+				`}}}`,
+		)
+	}
+
+	allocatedBytes := func(depth int) int64 {
+		raw := document(depth)
+		result := testing.Benchmark(func(benchmark *testing.B) {
+			for benchmark.Loop() {
+				if err := rejectAuthoredUniqueItems(raw); err != nil {
+					panic(err)
+				}
+			}
+		})
+
+		return result.AllocedBytesPerOp()
+	}
+
+	shallow := allocatedBytes(64)
+	deep := allocatedBytes(128)
+	require.Less(t, deep, shallow*5/2)
+}
+
 // TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword covers the fixed nested traversal order.
 func TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword(t *testing.T) {
 	t.Parallel()
