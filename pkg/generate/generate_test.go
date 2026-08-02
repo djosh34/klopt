@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"testing/fstest"
 	"text/template"
@@ -268,76 +267,8 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 		require.NoError(t, os.RemoveAll(output))
 	})
 
-	spec := []byte(strings.Join([]string{
-		"openapi: 3.0.3",
-		"info: {title: generated, version: \"1\"}",
-		"paths:",
-		"  /zeta:",
-		"    post:",
-		"      operationId: zetaRequest",
-		"      requestBody:",
-		"        content:",
-		"          application/json:",
-		"            schema: {type: boolean, anyOf: [{enum: [true]}, {enum: [false]}]}",
-		"      responses:",
-		"        '204': {description: empty}",
-		"  /alpha:",
-		"    post:",
-		"      operationId: alphaRequest",
-		"      requestBody:",
-		"        required: true",
-		"        content:",
-		"          application/json:",
-		"            schema:",
-		"              type: object",
-		"              nullable: true",
-		"              minProperties: 4",
-		"              maxProperties: 6",
-		"              required: [array, enum, number, text]",
-		"              additionalProperties: {type: string, minLength: 1}",
-		"              properties:",
-		"                array:",
-		"                  type: array",
-		"                  nullable: true",
-		"                  minItems: 1",
-		"                  maxItems: 3",
-		"                  items: {type: integer, minimum: 1, maximum: 5, multipleOf: 1}",
-		"                enum:",
-		"                  enum:",
-		"                    - null",
-		"                    - false",
-		"                    - true",
-		"                    - 0",
-		"                    - ''",
-		"                    - []",
-		"                    - {}",
-		"                    - [{nested: [false, 2, x]}]",
-		"                    - {nested: [null, {x: []}]}",
-		"                number:",
-		"                  type: number",
-		"                  minimum: 1",
-		"                  exclusiveMinimum: true",
-		"                  maximum: 10",
-		"                  exclusiveMaximum: true",
-		"                  multipleOf: 0.5",
-		"                text:",
-		"                  type: string",
-		"                  minLength: 3",
-		"                  maxLength: 30",
-		"                  pattern: '^[^@]+@[^@]+$'",
-		"                  format: email",
-		"                closed:",
-		"                  type: object",
-		"                  additionalProperties: false",
-		"                  properties:",
-		"                    child: {type: string}",
-		"              allOf:",
-		"                - {minProperties: 4}",
-		"                - properties:",
-		"                    flag: {type: boolean}",
-		"      responses:",
-		"        '204': {description: empty}",
-	}, "\n"))
+	spec, err := os.ReadFile(filepath.Join(repo, "pkg", "schematest", "testdata", "alpha_zeta.yaml"))
+	require.NoError(t, err)
 
 	err = Generate(output, "generatefixture", spec, validation.PatternOptions())
 	require.NoError(t, err)

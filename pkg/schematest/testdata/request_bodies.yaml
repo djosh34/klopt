@@ -1,0 +1,38 @@
+openapi: 3.0.4
+info:
+  title: Request body selection corpus
+  version: "1"
+paths:
+  /referenced:
+    post:
+      operationId: referencedRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Request'
+      responses:
+        '204': {description: empty}
+  /bodyless:
+    get:
+      operationId: bodylessRequest
+      responses:
+        '204': {description: empty}
+  /plain:
+    post:
+      operationId: plainRequest
+      requestBody:
+        content:
+          text/plain:
+            schema: {type: string}
+      responses:
+        '204': {description: empty}
+components:
+  schemas:
+    Request:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: {type: string}
