@@ -1,0 +1,358 @@
+//nolint:cyclop,godoclint // Private inert annotation shape checks keep the fixed OAS fields explicit.
+package schematest
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+func validateInertAnnotations(object map[string]*jsonValue, pointer string) error {
+	for _, name := range []string{"title", "description"} {
+		if value, exists := object[name]; exists && value.kind != jsonString {
+			return fmt.Errorf("%s/%s: must be a string", pointer, name)
+		}
+	}
+
+	if value, exists := object["deprecated"]; exists && value.kind != jsonBoolean {
+		return fmt.Errorf("%s/deprecated: must be a boolean", pointer)
+	}
+
+	if value, exists := object["externalDocs"]; exists {
+		if err := validateExternalDocs(value, pointer+"/externalDocs"); err != nil {
+			return err
+		}
+	}
+
+	if value, exists := object["xml"]; exists {
+		if err := validateXMLMetadata(value, pointer+"/xml"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateExternalDocs(value *jsonValue, pointer string) error {
+	object, err := requireJSONObject(value, pointer)
+	if err != nil {
+		return err
+	}
+
+	for _, name := range sortedObjectNames(object) {
+		if name == "description" || name == "url" || strings.HasPrefix(name, "x-") {
+			continue
+		}
+
+		return fmt.Errorf("%s/%s: unknown External Documentation Object field", pointer, escapePointerToken(name))
+	}
+
+	if description, exists := object["description"]; exists && description.kind != jsonString {
+		return fmt.Errorf("%s/description: must be a string", pointer)
+	}
+
+	address, exists := object["url"]
+	if !exists {
+		return fmt.Errorf("%s/url: required field is missing", pointer)
+	}
+
+	if address.kind != jsonString {
+		return fmt.Errorf("%s/url: must be a string", pointer)
+	}
+
+	if address.text == "" {
+		return fmt.Errorf("%s/url: must be a non-empty URL", pointer)
+	}
+
+	if err := validateURIReference(address.text); err != nil {
+		return fmt.Errorf("%s/url: must be a URL: %w", pointer, err)
+	}
+
+	if _, err := url.Parse(address.text); err != nil {
+		return fmt.Errorf("%s/url: must be a URL", pointer)
+	}
+
+	return nil
+}
+
+func validateMediaTypeExamples(value *jsonValue, pointer string) error {
+	examples, err := requireJSONObject(value, pointer)
+	if err != nil {
+		return err
+	}
+
+	for _, name := range sortedObjectNames(examples) {
+		if err := validateMediaTypeExample(examples[name], pointer+"/"+escapePointerToken(name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateMediaTypeExample(value *jsonValue, pointer string) error {
+	example, err := requireJSONObject(value, pointer)
+	if err != nil {
+		return err
+	}
+
+	if reference, referenced := example["$ref"]; referenced {
+		if reference.kind != jsonString {
+			return fmt.Errorf("%s/$ref: must be a string", pointer)
+		}
+
+		if _, err := parseLocalReferenceFragment(reference.text, pointer+"/$ref"); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	return validateExampleObject(example, pointer)
+}
+
+func validateExampleObject(example map[string]*jsonValue, pointer string) error {
+	for _, name := range sortedObjectNames(example) {
+		field := example[name]
+
+		switch name {
+		case "summary", "description", "externalValue":
+			if field.kind != jsonString {
+				return fmt.Errorf("%s/%s: must be a string", pointer, name)
+			}
+		case "value":
+		default:
+			if !strings.HasPrefix(name, "x-") {
+				return fmt.Errorf("%s/%s: unknown Example Object field", pointer, escapePointerToken(name))
+			}
+		}
+	}
+
+	if _, hasValue := example["value"]; hasValue {
+		if _, hasExternalValue := example["externalValue"]; hasExternalValue {
+			return fmt.Errorf("%s/externalValue: value and externalValue are mutually exclusive", pointer)
+		}
+	}
+
+	if externalValue, exists := example["externalValue"]; exists {
+		if externalValue.text == "" {
+			return fmt.Errorf("%s/externalValue: must be a non-empty URL", pointer)
+		}
+
+		if err := validateURIReference(externalValue.text); err != nil {
+			return fmt.Errorf("%s/externalValue: must be a URL: %w", pointer, err)
+		}
+
+		if _, err := url.Parse(externalValue.text); err != nil {
+			return fmt.Errorf("%s/externalValue: must be a URL", pointer)
+		}
+	}
+
+	return nil
+}
+
+func validateXMLMetadata(value *jsonValue, pointer string) error {
+	object, err := requireJSONObject(value, pointer)
+	if err != nil {
+		return err
+	}
+
+	for _, name := range sortedObjectNames(object) {
+		switch name {
+		case "name", "namespace", "prefix", "attribute", "wrapped":
+			continue
+		default:
+			if strings.HasPrefix(name, "x-") {
+				continue
+			}
+
+			return fmt.Errorf("%s/%s: unknown XML Object field", pointer, escapePointerToken(name))
+		}
+	}
+
+	for _, name := range []string{"name", "namespace", "prefix"} {
+		if field, exists := object[name]; exists && field.kind != jsonString {
+			return fmt.Errorf("%s/%s: must be a string", pointer, name)
+		}
+	}
+
+	for _, name := range []string{"attribute", "wrapped"} {
+		if field, exists := object[name]; exists && field.kind != jsonBoolean {
+			return fmt.Errorf("%s/%s: must be a boolean", pointer, name)
+		}
+	}
+
+	if namespace, exists := object["namespace"]; exists {
+		if err := validateURIReference(namespace.text); err != nil {
+			return fmt.Errorf("%s/namespace: must be a non-relative URI: %w", pointer, err)
+		}
+
+		parsed, parseErr := url.Parse(namespace.text)
+		if parseErr != nil || !parsed.IsAbs() {
+			return fmt.Errorf("%s/namespace: must be a non-relative URI", pointer)
+		}
+	}
+
+	return nil
+}
+
+func validateURIReference(value string) error {
+	reference, fragment, hasFragment := strings.Cut(value, "#")
+	if hasFragment {
+		if err := validateURIComponent(fragment, "-._~!$&'()*+,;=:@/?"); err != nil {
+			return fmt.Errorf("invalid fragment: %w", err)
+		}
+	}
+
+	hierarchical, query, hasQuery := strings.Cut(reference, "?")
+	if hasQuery {
+		if err := validateURIComponent(query, "-._~!$&'()*+,;=:@/?"); err != nil {
+			return fmt.Errorf("invalid query: %w", err)
+		}
+	}
+
+	colon := strings.IndexByte(hierarchical, ':')
+
+	slash := strings.IndexByte(hierarchical, '/')
+	if colon >= 0 && (slash < 0 || colon < slash) {
+		if !validURIScheme(hierarchical[:colon]) {
+			return errors.New("invalid URI scheme")
+		}
+
+		hierarchical = hierarchical[colon+1:]
+	}
+
+	path := hierarchical
+	if strings.HasPrefix(hierarchical, "//") {
+		authorityAndPath := hierarchical[2:]
+		if separator := strings.IndexByte(authorityAndPath, '/'); separator >= 0 {
+			path = authorityAndPath[separator:]
+			authorityAndPath = authorityAndPath[:separator]
+		} else {
+			path = ""
+		}
+
+		if err := validateURIAuthority(authorityAndPath); err != nil {
+			return fmt.Errorf("invalid authority: %w", err)
+		}
+	}
+
+	if err := validateURIComponent(path, "-._~!$&'()*+,;=:@/"); err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+
+	return nil
+}
+
+func validateURIAuthority(authority string) error {
+	hostAndPort := authority
+	if separator := strings.LastIndexByte(authority, '@'); separator >= 0 {
+		userInfo := authority[:separator]
+		if strings.ContainsRune(userInfo, '@') {
+			return errors.New("multiple user-information delimiters")
+		}
+
+		if err := validateURIComponent(userInfo, "-._~!$&'()*+,;=:"); err != nil {
+			return fmt.Errorf("invalid user information: %w", err)
+		}
+
+		hostAndPort = authority[separator+1:]
+	}
+
+	if strings.HasPrefix(hostAndPort, "[") {
+		closingBracket := strings.IndexByte(hostAndPort, ']')
+		if closingBracket < 0 {
+			return errors.New("unterminated IP literal")
+		}
+
+		if err := validateURIComponent(hostAndPort[1:closingBracket], "-._~!$&'()*+,;=:"); err != nil {
+			return fmt.Errorf("invalid IP literal: %w", err)
+		}
+
+		return validateURIPortSuffix(hostAndPort[closingBracket+1:])
+	}
+
+	if strings.ContainsAny(hostAndPort, "[]") {
+		return errors.New("brackets are only allowed around an IP literal")
+	}
+
+	host := hostAndPort
+	if separator := strings.LastIndexByte(hostAndPort, ':'); separator >= 0 {
+		host = hostAndPort[:separator]
+		if err := validateURIPortSuffix(hostAndPort[separator:]); err != nil {
+			return err
+		}
+	}
+
+	if err := validateURIComponent(host, "-._~!$&'()*+,;="); err != nil {
+		return fmt.Errorf("invalid host: %w", err)
+	}
+
+	return nil
+}
+
+func validateURIPortSuffix(suffix string) error {
+	if suffix == "" {
+		return nil
+	}
+
+	if suffix[0] != ':' {
+		return errors.New("unexpected characters after host")
+	}
+
+	for index := 1; index < len(suffix); index++ {
+		if suffix[index] < '0' || suffix[index] > '9' {
+			return errors.New("port must contain only digits")
+		}
+	}
+
+	return nil
+}
+
+func validURIScheme(scheme string) bool {
+	if scheme == "" {
+		return false
+	}
+
+	first := scheme[0]
+	if (first < 'A' || first > 'Z') && (first < 'a' || first > 'z') {
+		return false
+	}
+
+	for index := 1; index < len(scheme); index++ {
+		character := scheme[index]
+		if character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune("+-.", rune(character)) {
+			continue
+		}
+
+		return false
+	}
+
+	return true
+}
+
+func validateURIComponent(value, allowedPunctuation string) error {
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if character == '%' {
+			if index+2 >= len(value) || !isHexDigit(value[index+1]) || !isHexDigit(value[index+2]) {
+				return errors.New("invalid percent encoding")
+			}
+
+			index += 2
+
+			continue
+		}
+
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune(allowedPunctuation, rune(character)) {
+			continue
+		}
+
+		return fmt.Errorf("character %q must be percent-encoded", character)
+	}
+
+	return nil
+}
