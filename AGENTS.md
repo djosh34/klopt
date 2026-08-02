@@ -25,7 +25,7 @@ Follow these rules ONLY when your prompt does NOT contain smth like 'Do not crea
     - Orchastrate subagents. Use them according to these rules:
         - Dont use them, do yourself when:
             - You have (almost) all context to do it
-            - Quicker if you do it yourself, rather than rereading skills/files/facts
+            - Quicker if you do it yourself, rather than letting subagents do rereading of skills/files/facts
             - Simple actions and edits
         - Always use subagents:
             - Investigations that require reading many files/docs
