@@ -984,6 +984,8 @@ func TestGenerateUsesSharedOperationNames(t *testing.T) {
 		"init":                 "_xinit",
 		"validation":           "_x" + "validation",
 		"generatedValidations": "_xgeneratedValidations",
+		"make":                 "_xmake",
+		"new":                  "_xnew",
 		"request/path":         "request_1path",
 		"get-pet":              "get_0pet",
 		"get_pet":              "get__pet",

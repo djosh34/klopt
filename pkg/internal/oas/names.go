@@ -13,7 +13,7 @@ var requestValidationConflicts = map[string]struct{}{
 	"switch": {}, "type": {}, "var": {}, "init": {}, "RequestValidations": {}, "mustQueryDecoder": {},
 	"mustPathDecoder": {}, "generatedValidations": {}, "json": {}, "jsonvalue": {},
 	"patternvalidator": {}, "validation": {}, "string": {}, "error": {}, "byte": {}, "int": {}, "nil": {},
-	"true": {}, "panic": {},
+	"true": {}, "panic": {}, "make": {}, "new": {},
 }
 
 // ErrInvalidOperationID reports an operation ID outside the supported grammar.

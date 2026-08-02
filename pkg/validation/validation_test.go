@@ -866,19 +866,21 @@ func TestParseRejectsUniqueItemsAcrossAuthoredSchemaLocations(t *testing.T) {
 	}
 }
 
-// TestParsePropagatesUnreachableSchemaReferenceErrors covers complete traversal resolution failures.
-func TestParsePropagatesUnreachableSchemaReferenceErrors(t *testing.T) {
+// TestParsePropagatesUnreachableReferenceErrors covers complete traversal resolution failures.
+func TestParsePropagatesUnreachableReferenceErrors(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
 		name string
 		spec string
+		want string
 	}{
 		{
 			name: "schema component",
 			spec: `{"openapi":"3.0.3","paths":{},"components":{"schemas":{
 				"Broken":{"$ref":"#/components/schemas/Missing"}
 			}}}`,
+			want: "#/components/schemas/Missing",
 		},
 		{
 			name: "response schema",
@@ -887,6 +889,42 @@ func TestParsePropagatesUnreachableSchemaReferenceErrors(t *testing.T) {
 					"schema":{"$ref":"#/components/schemas/Missing"}
 				}}}
 			}}}`,
+			want: "#/components/schemas/Missing",
+		},
+		{
+			name: "parameter component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"parameters":{
+				"Broken":{"$ref":"#/components/parameters/Missing"}
+			}}}`,
+			want: "#/components/parameters/Missing",
+		},
+		{
+			name: "request body component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"requestBodies":{
+				"Broken":{"$ref":"#/components/requestBodies/Missing"}
+			}}}`,
+			want: "#/components/requestBodies/Missing",
+		},
+		{
+			name: "response component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"responses":{
+				"Broken":{"$ref":"#/components/responses/Missing"}
+			}}}`,
+			want: "#/components/responses/Missing",
+		},
+		{
+			name: "header component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"headers":{
+				"Broken":{"$ref":"#/components/headers/Missing"}
+			}}}`,
+			want: "#/components/headers/Missing",
+		},
+		{
+			name: "callback component",
+			spec: `{"openapi":"3.0.3","paths":{},"components":{"callbacks":{
+				"Broken":{"$ref":"#/components/callbacks/Missing"}
+			}}}`,
+			want: "#/components/callbacks/Missing",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -897,7 +935,7 @@ func TestParsePropagatesUnreachableSchemaReferenceErrors(t *testing.T) {
 
 			var referenceErr *oas.ReferenceError
 			require.ErrorAs(t, err, &referenceErr)
-			require.ErrorContains(t, err, `#/components/schemas/Missing`)
+			require.ErrorContains(t, err, test.want)
 		})
 	}
 }
@@ -927,6 +965,53 @@ func TestUniqueItemsTraversalMarksEveryResolvedSchema(t *testing.T) {
 		_, visited := walker.visited["schema\x00"+pointer]
 		require.True(t, visited, pointer)
 	}
+}
+
+// TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce prevents quadratic suffix traversal.
+func TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce(t *testing.T) {
+	t.Parallel()
+
+	const chainLength = 64
+
+	responses := make(map[string]any, chainLength)
+	for index := range chainLength {
+		name := fmt.Sprintf("R%02d", index)
+		if index == chainLength-1 {
+			responses[name] = map[string]any{"description": "terminal"}
+
+			continue
+		}
+
+		responses[name] = map[string]any{
+			"$ref": fmt.Sprintf("#/components/responses/R%02d", index+1),
+		}
+	}
+
+	document, err := json.Marshal(map[string]any{
+		"components": map[string]any{"responses": responses},
+	})
+	require.NoError(t, err)
+
+	walker := authoredSchemaWalker{
+		source:  oas.Source{Document: document},
+		visited: make(map[string]struct{}),
+	}
+	resolutionCount := 0
+
+	for index := range chainLength {
+		pointer := fmt.Sprintf("#/components/responses/R%02d", index)
+		response, atErr := walker.source.At(pointer)
+		require.NoError(t, atErr)
+
+		_, _, resolved, resolveErr := walker.resolve("response", response.Raw, response.Pointer)
+		require.NoError(t, resolveErr)
+
+		if resolved {
+			resolutionCount++
+		}
+	}
+
+	require.Equal(t, 1, resolutionCount)
 }
 
 // TestParseRejectsUniqueItemsInEveryNestedSchemaKeyword covers the fixed nested traversal order.

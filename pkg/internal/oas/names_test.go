@@ -68,9 +68,9 @@ func TestRequestValidationNamePrefixesEveryCompilationConflict(t *testing.T) {
 		"func", "go", "goto", "if", "import", "interface", "map", "package", "range", "return", "select",
 		"struct", "switch", "type", "var", "init", "RequestValidations", "mustQueryDecoder", "mustPathDecoder",
 		"generatedValidations", "json", "jsonvalue", "patternvalidator", "validation",
-		"string", "error", "byte", "int", "nil", "true", "panic",
+		"string", "error", "byte", "int", "nil", "true", "panic", "make", "new",
 	}
-	require.Len(t, conflicts, 41)
+	require.Len(t, conflicts, 43)
 
 	for _, operationID := range conflicts {
 		actual, err := RequestValidationName(operationID)

@@ -94,7 +94,11 @@ func (walker *authoredSchemaWalker) components(raw json.RawMessage, pointer stri
 
 // pathItem traverses path-level parameters and operations.
 func (walker *authoredSchemaWalker) pathItem(raw json.RawMessage, pointer string) error {
-	raw, pointer, ok := walker.resolve("path item", raw, pointer)
+	raw, pointer, ok, err := walker.resolve("path item", raw, pointer)
+	if err != nil {
+		return err
+	}
+
 	if !ok {
 		return nil
 	}
@@ -172,7 +176,11 @@ func (walker *authoredSchemaWalker) parameters(raw json.RawMessage, pointer stri
 
 // parameter traverses one resolved Parameter Object.
 func (walker *authoredSchemaWalker) parameter(raw json.RawMessage, pointer string) error {
-	raw, pointer, ok := walker.resolve("parameter", raw, pointer)
+	raw, pointer, ok, err := walker.resolve("parameter", raw, pointer)
+	if err != nil {
+		return err
+	}
+
 	if !ok {
 		return nil
 	}
@@ -187,7 +195,11 @@ func (walker *authoredSchemaWalker) parameter(raw json.RawMessage, pointer strin
 
 // header traverses one resolved Header Object.
 func (walker *authoredSchemaWalker) header(raw json.RawMessage, pointer string) error {
-	raw, pointer, ok := walker.resolve("header", raw, pointer)
+	raw, pointer, ok, err := walker.resolve("header", raw, pointer)
+	if err != nil {
+		return err
+	}
+
 	if !ok {
 		return nil
 	}
@@ -216,7 +228,11 @@ func (walker *authoredSchemaWalker) schemaOrContent(
 
 // requestBody traverses one resolved Request Body Object.
 func (walker *authoredSchemaWalker) requestBody(raw json.RawMessage, pointer string) error {
-	raw, pointer, ok := walker.resolve("request body", raw, pointer)
+	raw, pointer, ok, err := walker.resolve("request body", raw, pointer)
+	if err != nil {
+		return err
+	}
+
 	if !ok {
 		return nil
 	}
@@ -251,7 +267,11 @@ func (walker *authoredSchemaWalker) responses(raw json.RawMessage, pointer strin
 
 // response traverses one resolved Response Object.
 func (walker *authoredSchemaWalker) response(raw json.RawMessage, pointer string) error {
-	raw, pointer, ok := walker.resolve("response", raw, pointer)
+	raw, pointer, ok, err := walker.resolve("response", raw, pointer)
+	if err != nil {
+		return err
+	}
+
 	if !ok {
 		return nil
 	}
@@ -323,7 +343,11 @@ func (walker *authoredSchemaWalker) mediaType(raw json.RawMessage, pointer strin
 
 // callback traverses callback Path Item Objects in lexical expression order.
 func (walker *authoredSchemaWalker) callback(raw json.RawMessage, pointer string) error {
-	raw, pointer, ok := walker.resolve("callback", raw, pointer)
+	raw, pointer, ok, err := walker.resolve("callback", raw, pointer)
+	if err != nil {
+		return err
+	}
+
 	if !ok {
 		return nil
 	}
@@ -451,17 +475,24 @@ func (walker *authoredSchemaWalker) resolve(
 	kind string,
 	raw json.RawMessage,
 	pointer string,
-) (json.RawMessage, string, bool) {
+) (json.RawMessage, string, bool, error) {
 	if walker.seen(kind, pointer) {
-		return nil, "", false
+		return nil, "", false, nil
 	}
 
-	resolved, err := walker.source.Resolve(oas.LocatedSchema{Raw: raw, Pointer: pointer})
+	resolved, err := walker.source.ResolveAndInspect(
+		oas.LocatedSchema{Raw: raw, Pointer: pointer},
+		func(authored oas.LocatedSchema) error {
+			walker.markSeen(kind, authored.Pointer)
+
+			return nil
+		},
+	)
 	if err != nil {
-		return nil, "", false
+		return nil, "", false, err
 	}
 
-	return resolved.Raw, resolved.Pointer, true
+	return resolved.Raw, resolved.Pointer, true, nil
 }
 
 // seen records one typed object pointer and reports whether it was already traversed.
