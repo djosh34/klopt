@@ -267,6 +267,28 @@ func TestParseInputRejectsUnsupportedPathItemReferenceForms(t *testing.T) {
 	}
 }
 
+func TestParseInputRejectsEquivalentTemplatedPaths(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/pets/{id}":{},"/pets/{name}":{}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /pets/{id}: {}
+  /pets/{name}: {}
+`,
+	}
+
+	for encoding, document := range documents {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.ErrorContains(t, err, "#/paths/~1pets~1{name}: templated path is identical to #/paths/~1pets~1{id}")
+		})
+	}
+}
+
 func TestParseInputSelectsJSONRequestSchema(t *testing.T) {
 	t.Parallel()
 
@@ -362,6 +384,45 @@ paths:
 			require.Equal(t, schemaBoolean, model.root.kind)
 			require.Contains(t, model.root.occurrence.usePointer, "Application~1JSON; charset=utf-8")
 		})
+	}
+}
+
+func TestParseInputRejectsInvalidContentMediaTypeKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		json string
+		yaml string
+	}{
+		{name: "missing subtype", json: `"application"`, yaml: `application`},
+		{name: "invalid wildcard placement", json: `"*/json"`, yaml: `"*/json"`},
+	}
+
+	for _, test := range tests {
+		for encoding, document := range map[string]string{
+			"json": fmt.Sprintf(
+				`{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{%s:{},"application/json":{"schema":{}}}}}}}}`,
+				test.json,
+			),
+			"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          ` + test.yaml + `: {}
+          application/json: {schema: {}}
+`,
+		} {
+			t.Run(test.name+"/"+encoding, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+				require.ErrorContains(t, err, "must be a valid media type or media range")
+			})
+		}
 	}
 }
 

@@ -82,6 +82,7 @@ func selectRequestSchema(document *jsonValue, root map[string]*jsonValue, operat
 	}
 
 	seenOperationIDs := make(map[string]string)
+	seenPaths := make(map[string]string)
 
 	var selected map[string]*jsonValue
 
@@ -97,6 +98,17 @@ func selectRequestSchema(document *jsonValue, root map[string]*jsonValue, operat
 		if !strings.HasPrefix(pathName, "/") {
 			return nil, "", fmt.Errorf("%s: path field must begin with '/'", pathPointer)
 		}
+
+		pathIdentity, identityErr := templatedPathIdentity(pathName)
+		if identityErr != nil {
+			return nil, "", fmt.Errorf("%s: %w", pathPointer, identityErr)
+		}
+
+		if firstPointer, duplicate := seenPaths[pathIdentity]; duplicate {
+			return nil, "", fmt.Errorf("%s: templated path is identical to %s", pathPointer, firstPointer)
+		}
+
+		seenPaths[pathIdentity] = pathPointer
 
 		pathItemValue, resolvedPathPointer, referenceErr := resolvePathItemReference(
 			document,
@@ -158,6 +170,37 @@ func selectRequestSchema(document *jsonValue, root map[string]*jsonValue, operat
 	}
 
 	return requestSchema(document, selected, selectedPointer)
+}
+
+func templatedPathIdentity(path string) (string, error) {
+	identity := make([]byte, 0, len(path))
+
+	for position := 0; position < len(path); {
+		switch path[position] {
+		case '}':
+			return "", errors.New("path template has an unmatched '}'")
+		case '{':
+			relativeEnd := strings.IndexByte(path[position+1:], '}')
+			if relativeEnd < 0 {
+				return "", errors.New("path template has an unmatched '{'")
+			}
+
+			end := position + 1 + relativeEnd
+
+			name := path[position+1 : end]
+			if name == "" || strings.ContainsRune(name, '{') {
+				return "", errors.New("path template has an invalid expression")
+			}
+
+			identity = append(identity, '{', '}')
+			position = end + 1
+		default:
+			identity = append(identity, path[position])
+			position++
+		}
+	}
+
+	return string(identity), nil
 }
 
 func requestSchema(document *jsonValue, operation map[string]*jsonValue, operationPointer string) (*jsonValue, string, error) {
@@ -236,7 +279,7 @@ func selectJSONMediaType(content map[string]*jsonValue, pointer string) (*jsonVa
 
 	for _, name := range sortedObjectNames(content) {
 		mediaType, _, err := mime.ParseMediaType(name)
-		if err != nil {
+		if err != nil || !validMediaTypeOrRange(mediaType) {
 			return nil, "", fmt.Errorf("%s/%s: must be a valid media type or media range", pointer, escapePointerToken(name))
 		}
 
@@ -270,6 +313,19 @@ func selectJSONMediaType(content map[string]*jsonValue, pointer string) (*jsonVa
 	}
 
 	return selected, selectedPointer, nil
+}
+
+func validMediaTypeOrRange(mediaType string) bool {
+	typeName, subtype, found := strings.Cut(mediaType, "/")
+	if !found || typeName == "" || subtype == "" {
+		return false
+	}
+
+	if strings.ContainsRune(typeName, '*') {
+		return typeName == "*" && subtype == "*"
+	}
+
+	return !strings.ContainsRune(subtype, '*') || subtype == "*"
 }
 
 func validateMediaTypeFields(media map[string]*jsonValue, pointer string) error {
