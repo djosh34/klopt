@@ -1063,10 +1063,12 @@ func TestParseInputShapeChecksInertMetadata(t *testing.T) {
 		{name: "externalDocs_missing_url", schema: `{"externalDocs":{"description":"missing"}}`, pointer: "/externalDocs/url"},
 		{name: "externalDocs_empty_url", schema: `{"externalDocs":{"url":""}}`, pointer: "/externalDocs/url"},
 		{name: "externalDocs_invalid_url", schema: `{"externalDocs":{"url":"https://example.test/a|b"}}`, pointer: "/externalDocs/url"},
+		{name: "externalDocs_invalid_path_character", schema: `{"externalDocs":{"url":"https://example.test/a[b"}}`, pointer: "/externalDocs/url"},
 		{name: "xml_object", schema: `{"xml":"item"}`, pointer: "/xml"},
 		{name: "xml_field", schema: `{"xml":{"wrapped":"yes"}}`, pointer: "/xml/wrapped"},
 		{name: "xml_namespace", schema: `{"xml":{"namespace":"relative/path"}}`, pointer: "/xml/namespace"},
 		{name: "xml_namespace_invalid_URI", schema: `{"xml":{"namespace":"https://example.test/a|b"}}`, pointer: "/xml/namespace"},
+		{name: "xml_namespace_invalid_path_character", schema: `{"xml":{"namespace":"https://example.test/a[b"}}`, pointer: "/xml/namespace"},
 		{name: "xml_unknown", schema: `{"xml":{"role":"semantic"}}`, pointer: "/xml/role"},
 	}
 
@@ -1419,6 +1421,10 @@ func TestParseInputRejectsMalformedMediaTypeExampleObject(t *testing.T) {
 		{
 			name: "external value invalid URI", json: `{"externalValue":"https://example.test/a|b"}`,
 			yaml: `{externalValue: "https://example.test/a|b"}`, pointer: "/externalValue",
+		},
+		{
+			name: "external value invalid path character", json: `{"externalValue":"https://example.test/a[b"}`,
+			yaml: `{externalValue: "https://example.test/a[b"}`, pointer: "/externalValue",
 		},
 		{name: "unknown field", json: `{"unknown":1}`, yaml: `{unknown: 1}`, pointer: "/unknown"},
 	}
