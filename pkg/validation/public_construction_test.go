@@ -385,8 +385,13 @@ func TestMustCompileStringFormatAdvertisesItsPanicBoundary(t *testing.T) {
 func TestParseReturnsMalformedPatternErrors(t *testing.T) {
 	t.Parallel()
 
-	for _, spec := range []string{
-		`openapi: 3.0.3
+	for _, test := range []struct {
+		name string
+		spec string
+	}{
+		{
+			name: "body",
+			spec: `openapi: 3.0.3
 paths:
   /body:
     post:
@@ -396,7 +401,10 @@ paths:
           application/json:
             schema: {type: string, pattern: '['}
 `,
-		`openapi: 3.0.3
+		},
+		{
+			name: "path",
+			spec: `openapi: 3.0.3
 paths:
   /{id}:
     get:
@@ -404,7 +412,10 @@ paths:
       parameters:
         - {name: id, in: path, required: true, schema: {type: string, pattern: '['}}
 `,
-		`openapi: 3.0.3
+		},
+		{
+			name: "query",
+			spec: `openapi: 3.0.3
 paths:
   /query:
     get:
@@ -412,10 +423,15 @@ paths:
       parameters:
         - {name: q, in: query, schema: {type: string, pattern: '['}}
 `,
+		},
 	} {
-		parsed, err := validation.Parse([]byte(spec))
-		require.Error(t, err)
-		require.Nil(t, parsed)
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := validation.Parse([]byte(test.spec))
+			require.Error(t, err)
+			require.Nil(t, parsed)
+		})
 	}
 }
 

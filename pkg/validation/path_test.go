@@ -663,6 +663,9 @@ func TestGeneratedPathDecoderValidatesOneCompleteObject(t *testing.T) {
 	require.Nil(t, actual)
 	require.ErrorContains(t, err, "additionalProperties")
 
+	minimumTen, err := jsonvalue.ParseNumber("10")
+	require.NoError(t, err)
+
 	joined, err := validation.NewPathDecoderFromGenerated(validation.PathDecoderDefinition{
 		OperationID: "joined", PathTemplate: "/{z}/{a}",
 		Parameters: []validation.PathParameterDefinition{
@@ -672,7 +675,7 @@ func TestGeneratedPathDecoderValidatesOneCompleteObject(t *testing.T) {
 					KindValidation: validation.KindValidation{Type: "string"},
 					StringValidation: validation.StringValidation{
 						MinLength: &validation.CountBound{
-							Value: "10", ExactValue: jsonvalue.Number{Lexeme: "10"},
+							Value: "10", ExactValue: minimumTen,
 						},
 					},
 				},
@@ -683,7 +686,7 @@ func TestGeneratedPathDecoderValidatesOneCompleteObject(t *testing.T) {
 					KindValidation: validation.KindValidation{Type: "string"},
 					StringValidation: validation.StringValidation{
 						MinLength: &validation.CountBound{
-							Value: "10", ExactValue: jsonvalue.Number{Lexeme: "10"},
+							Value: "10", ExactValue: minimumTen,
 						},
 					},
 				},
