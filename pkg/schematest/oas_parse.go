@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"mime"
 	"sort"
 	"strings"
 )
@@ -193,12 +194,10 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 		return nil, "", err
 	}
 
-	mediaValue, exists := content["application/json"]
-	if !exists {
-		return nil, "", fmt.Errorf("%s/content/application~1json: selected request body has no application/json media type", bodyPointer)
+	mediaValue, mediaPointer, err := selectJSONMediaType(content, bodyPointer+"/content")
+	if err != nil {
+		return nil, "", err
 	}
-
-	mediaPointer := bodyPointer + "/content/application~1json"
 
 	media, err := requireJSONObject(mediaValue, mediaPointer)
 	if err != nil {
@@ -210,7 +209,7 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 	}
 
 	if examples, hasExamples := media["examples"]; hasExamples {
-		if examplesErr := validateMediaTypeExamples(examples, mediaPointer+"/examples"); examplesErr != nil {
+		if examplesErr := validateMediaTypeExamples(document, examples, mediaPointer+"/examples"); examplesErr != nil {
 			return nil, "", examplesErr
 		}
 	}
@@ -227,6 +226,50 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 	}
 
 	return schema, mediaPointer + "/schema", nil
+}
+
+func selectJSONMediaType(content map[string]*jsonValue, pointer string) (*jsonValue, string, error) {
+	var selected *jsonValue
+
+	selectedPointer := ""
+	selectedSpecificity := -1
+
+	for _, name := range sortedObjectNames(content) {
+		mediaType, _, err := mime.ParseMediaType(name)
+		if err != nil {
+			return nil, "", fmt.Errorf("%s/%s: must be a valid media type or media range", pointer, escapePointerToken(name))
+		}
+
+		specificity := -1
+
+		switch mediaType {
+		case "application/json":
+			specificity = 2
+		case "application/*":
+			specificity = 1
+		case "*/*":
+			specificity = 0
+		}
+
+		if specificity < 0 || specificity < selectedSpecificity {
+			continue
+		}
+
+		mediaPointer := pointer + "/" + escapePointerToken(name)
+		if specificity == selectedSpecificity {
+			return nil, "", fmt.Errorf("%s: multiple equally specific media types match application/json", mediaPointer)
+		}
+
+		selected = content[name]
+		selectedPointer = mediaPointer
+		selectedSpecificity = specificity
+	}
+
+	if selected == nil {
+		return nil, "", fmt.Errorf("%s/application~1json: selected request body has no application/json media type", pointer)
+	}
+
+	return selected, selectedPointer, nil
 }
 
 func validateMediaTypeFields(media map[string]*jsonValue, pointer string) error {

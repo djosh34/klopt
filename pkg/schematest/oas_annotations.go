@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -64,6 +65,10 @@ func validateExternalDocs(value *jsonValue, pointer string) error {
 		return fmt.Errorf("%s/url: must be a non-empty URL", pointer)
 	}
 
+	if err := validateURIReference(address.text); err != nil {
+		return fmt.Errorf("%s/url: must be a URL: %w", pointer, err)
+	}
+
 	if _, err := url.Parse(address.text); err != nil {
 		return fmt.Errorf("%s/url: must be a URL", pointer)
 	}
@@ -71,14 +76,19 @@ func validateExternalDocs(value *jsonValue, pointer string) error {
 	return nil
 }
 
-func validateMediaTypeExamples(value *jsonValue, pointer string) error {
+func validateMediaTypeExamples(document, value *jsonValue, pointer string) error {
 	examples, err := requireJSONObject(value, pointer)
 	if err != nil {
 		return err
 	}
 
 	for _, name := range sortedObjectNames(examples) {
-		if err := validateMediaTypeExample(examples[name], pointer+"/"+escapePointerToken(name)); err != nil {
+		if err := validateMediaTypeExample(
+			document,
+			examples[name],
+			pointer+"/"+escapePointerToken(name),
+			make(map[string]bool),
+		); err != nil {
 			return err
 		}
 	}
@@ -86,25 +96,42 @@ func validateMediaTypeExamples(value *jsonValue, pointer string) error {
 	return nil
 }
 
-func validateMediaTypeExample(value *jsonValue, pointer string) error {
+func validateMediaTypeExample(
+	document, value *jsonValue,
+	pointer string,
+	resolving map[string]bool,
+) error {
 	example, err := requireJSONObject(value, pointer)
 	if err != nil {
 		return err
 	}
 
-	if reference, referenced := example["$ref"]; referenced {
-		if reference.kind != jsonString {
-			return fmt.Errorf("%s/$ref: must be a string", pointer)
-		}
-
-		if _, err := parseLocalReferenceFragment(reference.text, pointer+"/$ref"); err != nil {
-			return err
-		}
-
-		return nil
+	reference, referenced := example["$ref"]
+	if !referenced {
+		return validateExampleObject(example, pointer)
 	}
 
-	return validateExampleObject(example, pointer)
+	if reference.kind != jsonString {
+		return fmt.Errorf("%s/$ref: must be a string", pointer)
+	}
+
+	target, targetPointer, err := resolveLocalReference(document, reference.text, pointer+"/$ref")
+	if err != nil {
+		return err
+	}
+
+	if resolving[targetPointer] {
+		return fmt.Errorf(
+			"%s/$ref: recursive example reference reaching %s is outside the schematest profile",
+			pointer,
+			targetPointer,
+		)
+	}
+
+	resolving[targetPointer] = true
+	defer delete(resolving, targetPointer)
+
+	return validateMediaTypeExample(document, target, targetPointer, resolving)
 }
 
 func validateExampleObject(example map[string]*jsonValue, pointer string) error {
@@ -133,6 +160,10 @@ func validateExampleObject(example map[string]*jsonValue, pointer string) error 
 	if externalValue, exists := example["externalValue"]; exists {
 		if externalValue.text == "" {
 			return fmt.Errorf("%s/externalValue: must be a non-empty URL", pointer)
+		}
+
+		if err := validateURIReference(externalValue.text); err != nil {
+			return fmt.Errorf("%s/externalValue: must be a URL: %w", pointer, err)
 		}
 
 		if _, err := url.Parse(externalValue.text); err != nil {
@@ -175,10 +206,38 @@ func validateXMLMetadata(value *jsonValue, pointer string) error {
 	}
 
 	if namespace, exists := object["namespace"]; exists {
+		if uriErr := validateURIReference(namespace.text); uriErr != nil {
+			return fmt.Errorf("%s/namespace: must be a non-relative URI: %w", pointer, uriErr)
+		}
+
 		parsed, parseErr := url.Parse(namespace.text)
 		if parseErr != nil || !parsed.IsAbs() {
 			return fmt.Errorf("%s/namespace: must be a non-relative URI", pointer)
 		}
+	}
+
+	return nil
+}
+
+func validateURIReference(value string) error {
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if character == '%' {
+			if index+2 >= len(value) || !isHexDigit(value[index+1]) || !isHexDigit(value[index+2]) {
+				return errors.New("invalid percent encoding")
+			}
+
+			index += 2
+
+			continue
+		}
+
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune("-._~:/?#[]@!$&'()*+,;=", rune(character)) {
+			continue
+		}
+
+		return fmt.Errorf("character %q must be percent-encoded", character)
 	}
 
 	return nil

@@ -335,6 +335,36 @@ paths:
 	}
 }
 
+func TestParseInputSelectsMostSpecificJSONMediaType(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"*/*":{"schema":{"type":"string"}},"application/*":{"schema":{"type":"number"}},"Application/JSON; charset=utf-8":{"schema":{"type":"boolean"}}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          "*/*": {schema: {type: string}}
+          "application/*": {schema: {type: number}}
+          "Application/JSON; charset=utf-8": {schema: {type: boolean}}
+`,
+	}
+
+	for encoding, document := range documents {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.NoError(t, err)
+			require.Equal(t, schemaBoolean, model.root.kind)
+			require.Contains(t, model.root.occurrence.usePointer, "Application~1JSON; charset=utf-8")
+		})
+	}
+}
+
 func TestParseInputModelsEveryAdmittedKindWithJSONYAMLParity(t *testing.T) {
 	t.Parallel()
 
@@ -971,6 +1001,7 @@ func TestParseInputShapeChecksInertMetadata(t *testing.T) {
 		{name: "deprecated", schema: `{"deprecated":"yes"}`, pointer: "/deprecated"},
 		{name: "externalDocs_missing_url", schema: `{"externalDocs":{"description":"missing"}}`, pointer: "/externalDocs/url"},
 		{name: "externalDocs_empty_url", schema: `{"externalDocs":{"url":""}}`, pointer: "/externalDocs/url"},
+		{name: "externalDocs_invalid_url", schema: `{"externalDocs":{"url":"https://example.test/a|b"}}`, pointer: "/externalDocs/url"},
 		{name: "xml_object", schema: `{"xml":"item"}`, pointer: "/xml"},
 		{name: "xml_field", schema: `{"xml":{"wrapped":"yes"}}`, pointer: "/xml/wrapped"},
 		{name: "xml_namespace", schema: `{"xml":{"namespace":"relative/path"}}`, pointer: "/xml/namespace"},
@@ -1320,6 +1351,10 @@ func TestParseInputRejectsMalformedMediaTypeExampleObject(t *testing.T) {
 			yaml: `{$ref: "example.yaml#/example"}`, pointer: "/$ref",
 		},
 		{
+			name: "missing reference", json: `{"$ref":"#/components/examples/Missing"}`,
+			yaml: `{$ref: "#/components/examples/Missing"}`, pointer: "/$ref",
+		},
+		{
 			name: "mutually exclusive value", json: `{"value":1,"externalValue":"example.json"}`,
 			yaml: `{value: 1, externalValue: example.json}`, pointer: "/externalValue",
 		},
@@ -1353,6 +1388,33 @@ paths:
 					require.ErrorContains(t, err, "/content/application~1json/examples/bad"+test.pointer)
 				})
 			}
+		})
+	}
+}
+
+func TestParseInputRejectsWrongShapedMediaTypeExampleReferenceTarget(t *testing.T) {
+	t.Parallel()
+
+	for encoding, document := range map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{},"examples":{"bad":{"$ref":"#/openapi"}}}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+            examples:
+              bad: {$ref: "#/openapi"}
+`,
+	} {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.ErrorContains(t, err, "#/openapi: must be an object")
 		})
 	}
 }
