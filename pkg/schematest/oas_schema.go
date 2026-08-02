@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -227,25 +228,126 @@ func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue
 	}
 
 	members := make([]*jsonValue, 0, len(value.array))
-	seen := make(map[string]bool, len(value.array))
+	seen := make(map[int]bool, len(value.array))
+	interner := jsonValueInterner{
+		valueIDs: make(map[*jsonValue]int),
+		shapeIDs: make(map[string]int),
+		visiting: make(map[*jsonValue]bool),
+	}
 
 	for index, candidate := range value.array {
-		canonical, err := marshalStrict(candidate)
+		identifier, err := interner.intern(candidate)
 		if err != nil {
 			return nil, fmt.Errorf("%s/enum/%d: canonicalize enum member: %w", pointer, index, err)
 		}
 
-		key := string(canonical)
-		if seen[key] {
+		if seen[identifier] {
 			continue
 		}
 
-		seen[key] = true
+		seen[identifier] = true
 
 		members = append(members, candidate)
 	}
 
 	return members, nil
+}
+
+type jsonValueInterner struct {
+	valueIDs map[*jsonValue]int
+	shapeIDs map[string]int
+	visiting map[*jsonValue]bool
+}
+
+func (interner *jsonValueInterner) intern(value *jsonValue) (int, error) {
+	if value == nil {
+		return 0, errors.New("JSON value is nil")
+	}
+
+	if identifier, exists := interner.valueIDs[value]; exists {
+		return identifier, nil
+	}
+
+	if interner.visiting[value] {
+		return 0, errors.New("JSON value contains a cycle")
+	}
+
+	interner.visiting[value] = true
+	defer delete(interner.visiting, value)
+
+	signature, err := interner.signature(value)
+	if err != nil {
+		return 0, err
+	}
+
+	key := string(signature)
+
+	identifier, exists := interner.shapeIDs[key]
+	if !exists {
+		identifier = len(interner.shapeIDs) + 1
+		interner.shapeIDs[key] = identifier
+	}
+
+	interner.valueIDs[value] = identifier
+
+	return identifier, nil
+}
+
+func (interner *jsonValueInterner) signature(value *jsonValue) ([]byte, error) {
+	signature := []byte{byte(value.kind)}
+
+	switch value.kind {
+	case jsonNull:
+	case jsonBoolean:
+		if value.boolean {
+			signature = append(signature, 1)
+		}
+	case jsonNumber:
+		if value.number == nil {
+			return nil, errors.New("JSON number is nil")
+		}
+
+		decimal, err := value.number.canonicalDecimal()
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize JSON number: %w", err)
+		}
+
+		signature = appendCanonicalString(signature, decimal)
+	case jsonString:
+		signature = appendCanonicalString(signature, value.text)
+	case jsonArray:
+		for _, child := range value.array {
+			identifier, err := interner.intern(child)
+			if err != nil {
+				return nil, err
+			}
+
+			signature = strconv.AppendInt(signature, int64(identifier), decimalRadix)
+			signature = append(signature, ';')
+		}
+	case jsonObject:
+		for _, name := range sortedObjectNames(value.object) {
+			identifier, err := interner.intern(value.object[name])
+			if err != nil {
+				return nil, err
+			}
+
+			signature = appendCanonicalString(signature, name)
+			signature = strconv.AppendInt(signature, int64(identifier), decimalRadix)
+			signature = append(signature, ';')
+		}
+	default:
+		return nil, fmt.Errorf("unknown JSON kind %d", value.kind)
+	}
+
+	return signature, nil
+}
+
+func appendCanonicalString(destination []byte, value string) []byte {
+	destination = strconv.AppendInt(destination, int64(len(value)), decimalRadix)
+	destination = append(destination, ':')
+
+	return append(destination, value...)
 }
 
 func optionalExactNumber(object map[string]*jsonValue, name, pointer string) (*exactNumber, error) {

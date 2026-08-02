@@ -562,7 +562,7 @@ func TestParseInputModelsExactNumberEnumAndNullable(t *testing.T) {
 	t.Parallel()
 
 	documents := map[string]string{
-		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{"type":"number","nullable":true,"enum":[1,1.0,null],"minimum":0.10,"exclusiveMinimum":true,"maximum":2e0,"exclusiveMaximum":false,"multipleOf":0.05,"format":"double","default":1}}}}}}}}`,
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{"type":"number","nullable":true,"enum":[1,1.0,null,{"a":1,"b":[true]},{"b":[true],"a":1.0}],"minimum":0.10,"exclusiveMinimum":true,"maximum":2e0,"exclusiveMaximum":false,"multipleOf":0.05,"format":"double","default":1}}}}}}}}`,
 		"yaml": `openapi: 3.0.4
 paths:
   /:
@@ -574,7 +574,7 @@ paths:
             schema:
               type: number
               nullable: true
-              enum: [1, 1.0, null]
+              enum: [1, 1.0, null, {a: 1, b: [true]}, {b: [true], a: 1.0}]
               minimum: 0.10
               exclusiveMinimum: true
               maximum: 2e0
@@ -593,7 +593,7 @@ paths:
 			require.NoError(t, err)
 			require.Equal(t, schemaNumber, model.root.kind)
 			require.True(t, model.root.nullable)
-			require.Len(t, model.root.enum, 2)
+			require.Len(t, model.root.enum, 3)
 			require.Equal(t, schemaFormatDouble, model.root.format)
 			require.True(t, model.root.exclusiveMinimum)
 			require.False(t, model.root.exclusiveMaximum)
@@ -620,6 +620,30 @@ func TestParseInputDeduplicatesLargeEnumInLinearWork(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, model.root.enum, len(members))
+}
+
+func TestParseInputDeduplicatesEnumAliasDAGWithoutExpansion(t *testing.T) {
+	t.Parallel()
+
+	anchors := "x-anchor-0: &a0 [0]\n"
+	for depth := 1; depth <= 24; depth++ {
+		anchors += fmt.Sprintf("x-anchor-%d: &a%d [*a%d, *a%d]\n", depth, depth, depth-1, depth-1)
+	}
+
+	document := "openapi: 3.0.4\n" + anchors + `paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              enum: [*a24, *a24]
+`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Len(t, model.root.enum, 1)
 }
 
 func TestParseInputModelsNullableOnlyWithSameObjectType(t *testing.T) {
@@ -1146,6 +1170,33 @@ paths:
 
 			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
 			require.ErrorContains(t, err, "/content/application~1json/examples")
+			require.ErrorContains(t, err, "must be an object")
+		})
+	}
+}
+
+func TestParseInputRejectsMalformedMediaTypeExampleEntry(t *testing.T) {
+	t.Parallel()
+
+	for encoding, document := range map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{},"examples":{"bad":1}}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+            examples: {bad: 1}
+`,
+	} {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.ErrorContains(t, err, "/content/application~1json/examples/bad")
 			require.ErrorContains(t, err, "must be an object")
 		})
 	}

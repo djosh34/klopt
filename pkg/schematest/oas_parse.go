@@ -205,8 +205,18 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 	}
 
 	if examples, hasExamples := media["examples"]; hasExamples {
-		if _, examplesErr := requireJSONObject(examples, mediaPointer+"/examples"); examplesErr != nil {
+		examplesObject, examplesErr := requireJSONObject(examples, mediaPointer+"/examples")
+		if examplesErr != nil {
 			return nil, "", examplesErr
+		}
+
+		for _, name := range sortedObjectNames(examplesObject) {
+			if _, exampleErr := requireJSONObject(
+				examplesObject[name],
+				mediaPointer+"/examples/"+escapePointerToken(name),
+			); exampleErr != nil {
+				return nil, "", exampleErr
+			}
 		}
 	}
 
