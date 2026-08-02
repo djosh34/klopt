@@ -50,7 +50,6 @@ func (validation *Validation) Validate(body json.RawMessage) []error {
 	run := validationRun{
 		instances:    make(map[string]instance),
 		anyOfMatches: make(map[validationMemoKey]bool),
-		active:       make(map[validationMemoKey]struct{}),
 	}
 
 	return validateRaw(&run, validation, body, "#")
@@ -378,40 +377,16 @@ type validationMemoKey struct {
 	pointer    string
 }
 
-// validationRun owns memoized anyOf verdicts and active recursion for one Validate request.
+// validationRun owns request-scoped instance and anyOf verdict memoization.
 type validationRun struct {
 	instances    map[string]instance
 	anyOfMatches map[validationMemoKey]bool
-	active       map[validationMemoKey]struct{}
-	graphErr     error
 }
 
 // validateRaw applies one compiled schema node to one raw instance node.
 func validateRaw(run *validationRun, validation *Validation, raw json.RawMessage, pointer string) []error {
-	if run.graphErr != nil {
-		return nil
-	}
-
-	if validation == nil {
-		run.graphErr = fmt.Errorf("instance %s: validation node is nil", pointer)
-
-		return []error{run.graphErr}
-	}
-
-	key := validationMemoKey{validation: validation, pointer: pointer}
-	if _, cyclic := run.active[key]; cyclic {
-		run.graphErr = fmt.Errorf(
-			"instance %s schema %q: validation cycle", pointer, validation.SchemaPointer,
-		)
-
-		return []error{run.graphErr}
-	}
-
-	run.active[key] = struct{}{}
-	defer delete(run.active, key)
-
 	errs := validateLocalAndAllOf(run, validation, raw, pointer)
-	if run.graphErr != nil || len(validation.AnyOfValidations) == 0 {
+	if len(validation.AnyOfValidations) == 0 {
 		return errs
 	}
 
@@ -421,10 +396,6 @@ func validateRaw(run *validationRun, validation *Validation, raw json.RawMessage
 		matches, cached := run.anyOfMatches[key]
 		if !cached {
 			matches = len(validateRaw(run, child, raw, pointer)) == 0
-			if run.graphErr != nil {
-				return append(errs, run.graphErr)
-			}
-
 			run.anyOfMatches[key] = matches
 		}
 

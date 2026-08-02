@@ -115,30 +115,6 @@ func TestAnyOfMemoKeysDoNotRetainRawRequestValues(t *testing.T) {
 	require.False(t, retainsRaw)
 }
 
-func TestDirectAnyOfNilValidationReturnsAnError(t *testing.T) {
-	t.Parallel()
-
-	compiled := &Validation{AnyOfValidations: []*Validation{
-		nil,
-		{KindValidation: KindValidation{Type: "string"}},
-	}}
-
-	require.NotPanics(t, func() {
-		errs := compiled.Validate(json.RawMessage(`"valid alternative"`))
-		require.ErrorContains(t, errors.Join(errs...), "nil")
-	})
-}
-
-func TestDirectAnyOfCycleReturnsAnError(t *testing.T) {
-	t.Parallel()
-
-	compiled := new(Validation)
-	compiled.AnyOfValidations = []*Validation{compiled}
-
-	errs := compiled.Validate(json.RawMessage(`true`))
-	require.ErrorContains(t, errors.Join(errs...), "cycle")
-}
-
 func TestParseRejectsMalformedAnyOfAtExactPointer(t *testing.T) {
 	t.Parallel()
 
