@@ -39,7 +39,10 @@ type Report struct {
 
 // Build streams test cases for one OpenAPI request body.
 func Build(input Input, yield func(Case) error) (Report, error) {
-	_ = input
+	if _, err := parseInput(input); err != nil {
+		return Report{}, err
+	}
+
 	_ = yield
 
 	return Report{}, errBuildNotImplemented

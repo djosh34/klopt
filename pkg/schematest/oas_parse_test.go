@@ -1,0 +1,956 @@
+//nolint:godoclint,lll // Complete JSON/YAML fixtures keep authored pointers visible beside expectations.
+package schematest
+
+import (
+	"fmt"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestParseInputAdmitsRepresentativeCorpus(t *testing.T) {
+	t.Parallel()
+
+	fixtures := []struct {
+		path       string
+		operations []string
+	}{
+		{path: "testdata/alpha_zeta.yaml", operations: []string{"alphaRequest", "zetaRequest"}},
+		{path: "testdata/request_bodies.yaml", operations: []string{"referencedRequest"}},
+		{path: "../../resources/openapi.yaml", operations: []string{
+			"allOfObject",
+			"anyOfBodyAndParameters",
+			"arrayNotNullable",
+			"arrayNullable",
+			"compositeObject",
+			"nullableObjectKeysAdditionalPropertiesFalse",
+			"objectKeysAdditionalPropertiesFalse",
+			"optionalArrayNullable",
+			"refObject",
+			"refStressObject",
+			"refStressObjectPut",
+			"stringNoFormatNotNullable",
+			"stringNoFormatNullable",
+		}},
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.path, func(t *testing.T) {
+			t.Parallel()
+
+			document, err := os.ReadFile(fixture.path)
+			require.NoError(t, err)
+
+			for _, operation := range fixture.operations {
+				model, parseErr := parseInput(Input{OpenAPI: document, OperationID: operation})
+				require.NoError(t, parseErr, operation)
+				require.NotNil(t, model.root)
+			}
+		})
+	}
+}
+
+func TestParseInputRejectsMalformedJSONDocument(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"duplicate decoded key": `{
+			"openapi":"3.0.4",
+			"\\u006fpenapi":"3.0.4",
+			"paths":{}
+		}`,
+		"unpaired surrogate": `{
+			"openapi":"3.0.4",
+			"paths":{},
+			"x-bad":"\\uD800"
+		}`,
+		"trailing value": `{"openapi":"3.0.4","paths":{}} {}`,
+	}
+
+	for name, document := range documents {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestParseInputAdmitsYAMLJSONSchemaPrimitivesAndAliases(t *testing.T) {
+	t.Parallel()
+
+	document := `
+openapi: !!str 3.0.4
+components:
+  schemas:
+    First: &shape {type: string}
+    Second: &shape {type: integer}
+    Selected: *shape
+paths: !!map
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Selected'}
+`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Equal(t, schemaInteger, model.root.kind)
+}
+
+func TestParseInputRejectsYAMLOutsideJSONShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		document string
+		message  string
+	}{
+		{
+			name: "non JSON null spelling",
+			document: `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {default: ~}
+`,
+			message: "outside the YAML JSON schema",
+		},
+		{
+			name: "custom tag",
+			document: `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {default: !custom value}
+`,
+			message: "outside the YAML JSON schema",
+		},
+		{
+			name: "non string mapping key",
+			document: `openapi: 3.0.4
+paths:
+  1: {}
+`,
+			message: "must be a scalar string",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(test.document), OperationID: "selected"})
+			require.ErrorContains(t, err, test.message)
+		})
+	}
+}
+
+func TestParseInputSelectsJSONRequestSchema(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI: []byte(`{
+			"openapi":"3.0.4",
+			"paths":{
+				"/things":{
+					"post":{
+						"operationId":"createThing",
+						"requestBody":{"content":{"application/json":{"schema":{"type":"string"}}}}
+					}
+				}
+			}
+		}`),
+		OperationID: "createThing",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, model)
+	require.NotNil(t, model.root)
+	require.Equal(t, schemaString, model.root.kind)
+	require.Equal(t, "#/paths/~1things/post/requestBody/content/application~1json/schema", model.root.occurrence.usePointer)
+	require.Equal(t, model.root.occurrence.usePointer, model.root.occurrence.targetPointer)
+	require.Equal(t, "#", model.root.occurrence.instanceTemplate)
+}
+
+func TestParseInputAcceptsFlowStyleYAML(t *testing.T) {
+	t.Parallel()
+
+	document := `{openapi: 3.0.4, paths: {/: {post: {operationId: selected, requestBody: {content: {
+  application/json: {schema: {type: string}}
+}}}}}}`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Equal(t, schemaString, model.root.kind)
+}
+
+func TestParseInputJSONYAMLSelectionParity(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/things":{"post":{"operationId":"createThing","requestBody":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /things:
+    post:
+      operationId: createThing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: string
+`,
+	}
+
+	for name, document := range documents {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "createThing"})
+			require.NoError(t, err)
+			require.Equal(t, schemaString, model.root.kind)
+			require.Equal(t, "#/paths/~1things/post/requestBody/content/application~1json/schema", model.root.occurrence.usePointer)
+		})
+	}
+}
+
+func TestParseInputModelsEveryAdmittedKindWithJSONYAMLParity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		json string
+		yaml string
+		kind schemaKind
+	}{
+		{name: "typeless", json: `{}`, yaml: `{}`, kind: schemaAny},
+		{name: "boolean", json: `{"type":"boolean"}`, yaml: `type: boolean`, kind: schemaBoolean},
+		{name: "integer", json: `{"type":"integer"}`, yaml: `type: integer`, kind: schemaInteger},
+		{name: "number", json: `{"type":"number"}`, yaml: `type: number`, kind: schemaNumber},
+		{name: "string", json: `{"type":"string"}`, yaml: `type: string`, kind: schemaString},
+		{
+			name: "array",
+			json: `{"type":"array","items":{}}`,
+			yaml: "type: array\nitems: {}",
+			kind: schemaArray,
+		},
+		{name: "object", json: `{"type":"object"}`, yaml: `type: object`, kind: schemaObject},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for encoding, document := range map[string]string{
+				"json": documentWithJSONSchema(test.json),
+				"yaml": documentWithYAMLSchema(test.yaml),
+			} {
+				t.Run(encoding, func(t *testing.T) {
+					t.Parallel()
+
+					model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+					require.NoError(t, err)
+					require.Equal(t, test.kind, model.root.kind)
+				})
+			}
+		})
+	}
+}
+
+func TestParseInputResolvesLocalSchemaReferenceWithOccurrenceMetadata(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI: []byte(`{
+			"openapi":"3.0.4",
+			"components":{"schemas":{"Text":{"type":"string"}}},
+			"paths":{"/things":{"post":{
+				"operationId":"createThing",
+				"requestBody":{"content":{"application/json":{"schema":{
+					"$ref":"#/components/schemas/Text",
+					"type":"number",
+					"discriminator":{"propertyName":"ignoredReferenceSibling"}
+				}}}}
+			}}}
+		}`),
+		OperationID: "createThing",
+	})
+	require.NoError(t, err)
+	require.Equal(t, schemaString, model.root.kind)
+	require.Equal(t, "#/paths/~1things/post/requestBody/content/application~1json/schema", model.root.occurrence.usePointer)
+	require.Equal(t, "#/components/schemas/Text", model.root.occurrence.targetPointer)
+	require.Equal(t, "#", model.root.occurrence.instanceTemplate)
+}
+
+func TestParseInputPreservesNestedReferenceUseTargetAndInstanceMetadata(t *testing.T) {
+	t.Parallel()
+
+	document := `{
+		"openapi":"3.0.4",
+		"components":{"schemas":{"Value":{"type":"integer"}}},
+		"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
+			"type":"object",
+			"properties":{"a/b":{"$ref":"#/components/schemas/Value"}}
+		}}}}}}}
+	}`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+
+	property := model.root.properties["a/b"]
+	require.Equal(t, "#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b", property.occurrence.usePointer)
+	require.Equal(t, "#/components/schemas/Value", property.occurrence.targetPointer)
+	require.Equal(t, "#/a~1b", property.occurrence.instanceTemplate)
+}
+
+func TestParseInputResolvesReferencedRequestBody(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"json": `{
+			"openapi":"3.0.4",
+			"components":{"requestBodies":{"Payload":{"content":{"application/json":{"schema":{"type":"string"}}}}}},
+			"paths":{"/things":{"post":{
+				"operationId":"createThing",
+				"requestBody":{"$ref":"#/components/requestBodies/Payload","content":"ignored sibling"}
+			}}}
+		}`,
+		"yaml": `openapi: 3.0.4
+components:
+  requestBodies:
+    Payload:
+      content:
+        application/json:
+          schema: {type: string}
+paths:
+  /things:
+    post:
+      operationId: createThing
+      requestBody:
+        $ref: '#/components/requestBodies/Payload'
+        content: ignored sibling
+`,
+	}
+
+	for encoding, document := range documents {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "createThing"})
+			require.NoError(t, err)
+			require.Equal(t, schemaString, model.root.kind)
+			require.Equal(
+				t,
+				"#/components/requestBodies/Payload/content/application~1json/schema",
+				model.root.occurrence.usePointer,
+			)
+		})
+	}
+}
+
+func TestParseInputRejectsRecursiveRequestBodyReferences(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"json": `{
+			"openapi":"3.0.4",
+			"components":{"requestBodies":{
+				"A":{"$ref":"#/components/requestBodies/B"},
+				"B":{"$ref":"#/components/requestBodies/A"}
+			}},
+			"paths":{"/":{"post":{
+				"operationId":"selected",
+				"requestBody":{"$ref":"#/components/requestBodies/A"}
+			}}}
+		}`,
+		"yaml": `openapi: 3.0.4
+components:
+  requestBodies:
+    A: {$ref: '#/components/requestBodies/B'}
+    B: {$ref: '#/components/requestBodies/A'}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody: {$ref: '#/components/requestBodies/A'}
+`,
+	}
+
+	for encoding, document := range documents {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.ErrorContains(t, err, "#/components/requestBodies/B/$ref")
+			require.ErrorContains(t, err, "outside the schematest profile")
+		})
+	}
+}
+
+func TestParseInputModelsExactNumberEnumAndNullable(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{"type":"number","nullable":true,"enum":[1,1.0,null],"minimum":0.10,"exclusiveMinimum":true,"maximum":2e0,"exclusiveMaximum":false,"multipleOf":0.05,"format":"double","default":1}}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: number
+              nullable: true
+              enum: [1, 1.0, null]
+              minimum: 0.10
+              exclusiveMinimum: true
+              maximum: 2e0
+              exclusiveMaximum: false
+              multipleOf: 0.05
+              format: double
+              default: 1
+`,
+	}
+
+	for name, document := range documents {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.NoError(t, err)
+			require.Equal(t, schemaNumber, model.root.kind)
+			require.True(t, model.root.nullable)
+			require.Len(t, model.root.enum, 2)
+			require.Equal(t, schemaFormatDouble, model.root.format)
+			require.True(t, model.root.exclusiveMinimum)
+			require.False(t, model.root.exclusiveMaximum)
+			requireExactNumberEqual(t, "0.1", model.root.minimum)
+			requireExactNumberEqual(t, "2", model.root.maximum)
+			requireExactNumberEqual(t, "0.05", model.root.multipleOf)
+			require.Equal(t, jsonNumber, model.root.defaultValue.kind)
+			requireExactNumberEqual(t, "1", model.root.defaultValue.number)
+		})
+	}
+}
+
+func TestParseInputPreservesExactAuthoredNumberScale(t *testing.T) {
+	t.Parallel()
+
+	for encoding, document := range map[string]string{
+		"json": documentWithJSONSchema(`{"type":"number","minimum":1e-100001}`),
+		"yaml": documentWithYAMLSchema("type: number\nminimum: 1e-100001"),
+	} {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.NoError(t, err)
+			requireExactNumberEqual(t, "1e-100001", model.root.minimum)
+		})
+	}
+}
+
+func TestParseInputModelsLockedFormatMatrix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		typeName string
+		format   string
+		expected schemaFormat
+	}{
+		{name: "typeless int32", format: "int32", expected: schemaFormatInt32},
+		{name: "typeless float", format: "float", expected: schemaFormatFloat},
+		{name: "typeless email", format: "email", expected: schemaFormatEmail},
+		{name: "integer int32", typeName: "integer", format: "int32", expected: schemaFormatInt32},
+		{name: "integer int64", typeName: "integer", format: "int64", expected: schemaFormatInt64},
+		{name: "number int32", typeName: "number", format: "int32", expected: schemaFormatInt32},
+		{name: "number int64", typeName: "number", format: "int64", expected: schemaFormatInt64},
+		{name: "number float", typeName: "number", format: "float", expected: schemaFormatFloat},
+		{name: "number double", typeName: "number", format: "double", expected: schemaFormatDouble},
+		{name: "string byte", typeName: "string", format: "byte", expected: schemaFormatByte},
+		{name: "string date", typeName: "string", format: "date", expected: schemaFormatDate},
+		{name: "string date-time", typeName: "string", format: "date-time", expected: schemaFormatDateTime},
+		{name: "string email", typeName: "string", format: "email", expected: schemaFormatEmail},
+		{name: "string ipv4", typeName: "string", format: "ipv4", expected: schemaFormatIPv4},
+		{name: "string uuid", typeName: "string", format: "uuid", expected: schemaFormatUUID},
+		{name: "string uuidv4", typeName: "string", format: "uuidv4", expected: schemaFormatUUIDv4},
+		{name: "string uuid-v4", typeName: "string", format: "uuid-v4", expected: schemaFormatUUIDDashV4},
+		{name: "string cidr", typeName: "string", format: "cidr", expected: schemaFormatCIDR},
+		{name: "string ipv4-cidr", typeName: "string", format: "ipv4-cidr", expected: schemaFormatIPv4CIDR},
+		{name: "string password", typeName: "string", format: "password", expected: schemaFormatPassword},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			typeJSON := ""
+			typeYAML := ""
+
+			if test.typeName != "" {
+				typeJSON = `"type":"` + test.typeName + `",`
+				typeYAML = "type: " + test.typeName + "\n"
+			}
+
+			for encoding, document := range map[string]string{
+				"json": documentWithJSONSchema(`{` + typeJSON + `"format":"` + test.format + `"}`),
+				"yaml": documentWithYAMLSchema(typeYAML + "format: " + test.format),
+			} {
+				t.Run(encoding, func(t *testing.T) {
+					t.Parallel()
+
+					model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+					require.NoError(t, err)
+					require.Equal(t, test.expected, model.root.format)
+				})
+			}
+		})
+	}
+}
+
+func TestParseInputModelsArraysObjectsCompositionAndRequestDirection(t *testing.T) {
+	t.Parallel()
+
+	documents := map[string]string{
+		"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{"type":"object","minProperties":1,"maxProperties":5,"required":["visible","server"],"properties":{"visible":{"type":"array","minItems":1,"maxItems":2,"items":{"type":"string"}},"server":{"type":"string","readOnly":true},"secret":{"type":"string","writeOnly":true}},"additionalProperties":{"type":"integer"},"allOf":[{"nullable":false}],"anyOf":[{"type":"object"},{"type":"object"}]}}}}}}}}`,
+		"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              maxProperties: 5
+              required: [visible, server]
+              properties:
+                visible:
+                  type: array
+                  minItems: 1
+                  maxItems: 2
+                  items: {type: string}
+                server: {type: string, readOnly: true}
+                secret: {type: string, writeOnly: true}
+              additionalProperties: {type: integer}
+              allOf: [{nullable: false}]
+              anyOf: [{type: object}, {type: object}]
+`,
+	}
+
+	for name, document := range documents {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.NoError(t, err)
+			require.Equal(t, schemaObject, model.root.kind)
+			require.Equal(t, []string{"visible"}, model.root.required)
+			require.Len(t, model.root.properties, 3)
+			require.True(t, model.root.properties["server"].readOnly)
+			require.True(t, model.root.properties["secret"].writeOnly)
+			require.Equal(t, "#/visible", model.root.properties["visible"].occurrence.instanceTemplate)
+			require.Equal(t, schemaArray, model.root.properties["visible"].kind)
+			require.Equal(t, "#/visible/*", model.root.properties["visible"].items.occurrence.instanceTemplate)
+			require.NotNil(t, model.root.additionalProperties)
+			require.True(t, model.root.allowAdditionalProperties)
+			require.Len(t, model.root.allOf, 1)
+			require.Len(t, model.root.anyOf, 2)
+			requireBigIntEqual(t, "1", model.root.minProperties)
+			requireBigIntEqual(t, "5", model.root.maxProperties)
+			requireBigIntEqual(t, "1", model.root.properties["visible"].minItems)
+			requireBigIntEqual(t, "2", model.root.properties["visible"].maxItems)
+		})
+	}
+}
+
+func TestParseInputAcceptsRelativeExternalDocumentationURL(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"externalDocs":{"url":"../schema-docs"}}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, model.root)
+}
+
+func TestParseInputIgnoresPathsSpecificationExtensions(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI: []byte(`{
+			"openapi":"3.0.4",
+			"paths":{
+				"x-paths-note":"inert",
+				"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{}}}}}}
+			}
+		}`),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, model.root)
+}
+
+func TestParseInputAcceptsAndDiscardsWellFormedInertMetadata(t *testing.T) {
+	t.Parallel()
+
+	document := `{
+		"openapi":"3.0.4",
+		"components":{"schemas":{"Unused":{"discriminator":{"propertyName":"kind"}}}},
+		"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
+			"title":"Title",
+			"description":"Description",
+			"default":{"exact":0.100},
+			"example":[1],
+			"deprecated":true,
+			"externalDocs":{"description":"Docs","url":"https://example.test/docs","x-note":1},
+			"xml":{"name":"item","namespace":"https://example.test/xml#namespace","prefix":"e","attribute":false,"wrapped":true,"x-note":1},
+			"x-extension":{"anything":true}
+		}}}}}}}
+	}`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Equal(t, schemaAny, model.root.kind)
+}
+
+func TestParseInputRejectsMalformedSchemaShapes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		schema  string
+		pointer string
+	}{
+		{name: "type", schema: `{"type":1}`, pointer: "/type"},
+		{name: "nullable", schema: `{"nullable":1}`, pointer: "/nullable"},
+		{name: "minimum", schema: `{"minimum":"0"}`, pointer: "/minimum"},
+		{name: "exclusive", schema: `{"exclusiveMaximum":1}`, pointer: "/exclusiveMaximum"},
+		{name: "multiple zero", schema: `{"multipleOf":0}`, pointer: "/multipleOf"},
+		{name: "length fractional", schema: `{"minLength":1.5}`, pointer: "/minLength"},
+		{name: "pattern", schema: `{"pattern":true}`, pointer: "/pattern"},
+		{name: "array items missing", schema: `{"type":"array"}`, pointer: "/items"},
+		{name: "array items shape", schema: `{"items":[]}`, pointer: "/items"},
+		{name: "negative item count", schema: `{"minItems":-1}`, pointer: "/minItems"},
+		{name: "properties", schema: `{"properties":[]}`, pointer: "/properties"},
+		{name: "required empty", schema: `{"required":[]}`, pointer: "/required"},
+		{name: "required duplicate", schema: `{"required":["x","x"]}`, pointer: "/required/1"},
+		{name: "additionalProperties", schema: `{"additionalProperties":1}`, pointer: "/additionalProperties"},
+		{name: "allOf empty", schema: `{"allOf":[]}`, pointer: "/allOf"},
+		{name: "anyOf shape", schema: `{"anyOf":{}}`, pointer: "/anyOf"},
+		{name: "default type", schema: `{"type":"string","default":1}`, pointer: "/default"},
+		{name: "request direction", schema: `{"properties":{"x":{"readOnly":true,"writeOnly":true}}}`, pointer: "/properties/x/writeOnly"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected"})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "#/paths/~1/post/requestBody/content/application~1json/schema"+test.pointer)
+		})
+	}
+}
+
+func TestParseInputShapeChecksInertMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		schema  string
+		pointer string
+	}{
+		{name: "title", schema: `{"title":1}`, pointer: "/title"},
+		{name: "deprecated", schema: `{"deprecated":"yes"}`, pointer: "/deprecated"},
+		{name: "externalDocs_missing_url", schema: `{"externalDocs":{"description":"missing"}}`, pointer: "/externalDocs/url"},
+		{name: "xml_object", schema: `{"xml":"item"}`, pointer: "/xml"},
+		{name: "xml_field", schema: `{"xml":{"wrapped":"yes"}}`, pointer: "/xml/wrapped"},
+		{name: "xml_namespace", schema: `{"xml":{"namespace":"relative/path"}}`, pointer: "/xml/namespace"},
+		{name: "xml_unknown", schema: `{"xml":{"role":"semantic"}}`, pointer: "/xml/role"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected"})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "#/paths/~1/post/requestBody/content/application~1json/schema"+test.pointer)
+		})
+	}
+}
+
+func TestParseInputRejectsExcludedSchemaCapabilitiesAtAuthoredPointers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		json    string
+		yaml    string
+		pointer string
+	}{
+		{name: "oneOf", json: `{"oneOf":[{}]}`, yaml: "oneOf: [{}]", pointer: "/oneOf"},
+		{name: "not", json: `{"not":{}}`, yaml: "not: {}", pointer: "/not"},
+		{name: "discriminator", json: `{"discriminator":{"propertyName":"kind"}}`, yaml: "discriminator: {propertyName: kind}", pointer: "/discriminator"},
+		{name: "uniqueItems_false", json: `{"uniqueItems":false}`, yaml: "uniqueItems: false", pointer: "/uniqueItems"},
+		{name: "empty_enum", json: `{"enum":[]}`, yaml: "enum: []", pointer: "/enum"},
+		{name: "unknown_keyword", json: `{"const":1}`, yaml: "const: 1", pointer: "/const"},
+		{name: "unknown_format", json: `{"type":"string","format":"hostname"}`, yaml: "type: string\nformat: hostname", pointer: "/format"},
+		{name: "excluded_OAS_binary_format", json: `{"type":"string","format":"binary"}`, yaml: "type: string\nformat: binary", pointer: "/format"},
+		{name: "boolean_string_format", json: `{"type":"boolean","format":"email"}`, yaml: "type: boolean\nformat: email", pointer: "/format"},
+		{name: "string_numeric_format", json: `{"type":"string","format":"int32"}`, yaml: "type: string\nformat: int32", pointer: "/format"},
+		{name: "integer_float_format", json: `{"type":"integer","format":"double"}`, yaml: "type: integer\nformat: double", pointer: "/format"},
+		{name: "number_string_format", json: `{"type":"number","format":"uuid"}`, yaml: "type: number\nformat: uuid", pointer: "/format"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for encoding, document := range map[string]string{
+				"json": documentWithJSONSchema(test.json),
+				"yaml": documentWithYAMLSchema(test.yaml),
+			} {
+				t.Run(encoding, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+					require.Error(t, err)
+					require.Contains(t, err.Error(), "#/paths/~1/post/requestBody/content/application~1json/schema"+test.pointer)
+				})
+			}
+		})
+	}
+}
+
+func documentWithJSONSchema(schema string) string {
+	return `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":` + schema + `}}}}}}}`
+}
+
+func documentWithYAMLSchema(schema string) string {
+	return "openapi: 3.0.4\npaths:\n  /:\n    post:\n      operationId: selected\n      requestBody:\n        content:\n          application/json:\n            schema:\n" + indentLines(schema, "              ") + "\n"
+}
+
+func indentLines(source, prefix string) string {
+	result := prefix
+	for _, character := range source {
+		result += string(character)
+		if character == '\n' {
+			result += prefix
+		}
+	}
+
+	return result
+}
+
+func requireExactNumberEqual(t *testing.T, expected string, actual *exactNumber) {
+	t.Helper()
+
+	number, err := parseExactNumber(expected)
+	require.NoError(t, err)
+
+	comparison, err := number.compare(actual)
+	require.NoError(t, err)
+	require.Zero(t, comparison)
+}
+
+func requireBigIntEqual(t *testing.T, expected string, actual interface{ String() string }) {
+	t.Helper()
+	require.NotNil(t, actual)
+	require.Equal(t, expected, actual.String())
+}
+
+func TestParseInputReportsOperationAndBodySelectionErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		document  string
+		operation string
+		message   string
+	}{
+		{
+			name:      "missing operation",
+			document:  `{"openapi":"3.0.4","paths":{}}`,
+			operation: "missing",
+			message:   `operationId "missing" was not found`,
+		},
+		{
+			name:      "missing body",
+			document:  `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected"}}}}`,
+			operation: "selected",
+			message:   "/requestBody",
+		},
+		{
+			name:      "missing JSON media",
+			document:  `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"text/plain":{}}}}}}}`,
+			operation: "selected",
+			message:   "/application~1json",
+		},
+		{
+			name:      "missing schema",
+			document:  `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{}}}}}}}`,
+			operation: "selected",
+			message:   "/schema",
+		},
+		{
+			name: "duplicate operation ID",
+			document: `{"openapi":"3.0.4","paths":{
+				"/a":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{}}}}}},
+				"/b":{"put":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{}}}}}}
+			}}`,
+			operation: "selected",
+			message:   "must be unique",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(test.document), OperationID: test.operation})
+			require.ErrorContains(t, err, test.message)
+		})
+	}
+}
+
+func TestBuildParsesProfileBeforeConsideringMaxSteps(t *testing.T) {
+	t.Parallel()
+
+	report, err := Build(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"oneOf":[{}]}`)),
+		OperationID: "selected",
+		MaxSteps:    0,
+	}, func(Case) error { return nil })
+	require.Error(t, err)
+	require.ErrorContains(t, err, "/oneOf")
+	require.NotErrorIs(t, err, errBuildNotImplemented)
+	require.Zero(t, report)
+}
+
+func TestParseInputRejectsExternalMissingAndRecursiveReferences(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		json    string
+		yaml    string
+		pointer string
+	}{
+		{
+			name: "external", json: `{"$ref":"other.yaml#/Thing"}`,
+			yaml: `$ref: 'other.yaml#/Thing'`, pointer: "/$ref",
+		},
+		{
+			name: "missing", json: `{"$ref":"#/components/schemas/Missing"}`,
+			yaml: `$ref: '#/components/schemas/Missing'`, pointer: "/$ref",
+		},
+		{
+			name: "malformed pointer", json: `{"$ref":"#/components/schemas/Bad~2Token"}`,
+			yaml: `$ref: '#/components/schemas/Bad~2Token'`, pointer: "/$ref",
+		},
+		{
+			name: "self cycle", json: `{"$ref":"#/paths/~1/post/requestBody/content/application~1json/schema"}`,
+			yaml: `$ref: '#/paths/~1/post/requestBody/content/application~1json/schema'`, pointer: "/$ref",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for encoding, document := range map[string]string{
+				"json": documentWithJSONSchema(test.json),
+				"yaml": documentWithYAMLSchema(test.yaml),
+			} {
+				t.Run(encoding, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+					require.Error(t, err)
+					require.Contains(
+						t,
+						err.Error(),
+						"#/paths/~1/post/requestBody/content/application~1json/schema"+test.pointer,
+					)
+				})
+			}
+		})
+	}
+}
+
+func TestParseInputRejectsNonUTF8LocalReferenceFragment(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"$ref":"#/%FF"}`)),
+		OperationID: "selected",
+	})
+	require.ErrorContains(t, err, "#/paths/~1/post/requestBody/content/application~1json/schema/$ref")
+	require.ErrorContains(t, err, "valid UTF-8")
+}
+
+func TestParseInputOpenAPIVersionProfile(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []string{
+		"3.0.0",
+		"3.0.999",
+		"3.0.4-alpha.1",
+		"3.0.4+build.9",
+		"3.0.4-alpha.1+build.9",
+	} {
+		t.Run("accept_"+version, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(fmt.Sprintf(`{
+				"openapi":%q,
+				"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{}}}}}}}
+			}`, version)), OperationID: "selected"})
+			require.NoError(t, err)
+		})
+	}
+
+	for _, version := range []string{
+		"3.0",
+		"03.0.1",
+		"3.0.01",
+		"3.0.0-",
+		"3.0.0-01",
+		"3.0.0+",
+		"3.0.0+bad_meta",
+		"2.0.0",
+		"3.1.0",
+		"4.0.0",
+	} {
+		t.Run("reject_"+version, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(fmt.Sprintf(`{
+				"openapi":%q,
+				"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{}}}}}}}
+			}`, version)), OperationID: "selected"})
+			require.ErrorContains(t, err, "#/openapi")
+		})
+	}
+}

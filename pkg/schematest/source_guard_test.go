@@ -21,6 +21,7 @@ func TestProductionImportsStayCleanRoom(t *testing.T) {
 	t.Parallel()
 
 	forbidden := []string{
+		"regexp",
 		modulePath + "/pkg/internal/oas",
 		modulePath + "/pkg/validation",
 		modulePath + "/pkg/jsonvalue",
