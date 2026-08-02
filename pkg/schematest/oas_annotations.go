@@ -60,6 +60,10 @@ func validateExternalDocs(value *jsonValue, pointer string) error {
 		return fmt.Errorf("%s/url: must be a string", pointer)
 	}
 
+	if address.text == "" {
+		return fmt.Errorf("%s/url: must be a non-empty URL", pointer)
+	}
+
 	if _, err := url.Parse(address.text); err != nil {
 		return fmt.Errorf("%s/url: must be a URL", pointer)
 	}

@@ -10,6 +10,52 @@ import (
 	"unicode/utf8"
 )
 
+func resolvePathItemReference(document, value *jsonValue, pointer string) (*jsonValue, string, error) {
+	visited := make(map[string]bool)
+
+	for {
+		object, err := requireJSONObject(value, pointer)
+		if err != nil {
+			return nil, "", err
+		}
+
+		reference, referenced := object["$ref"]
+		if !referenced {
+			return value, pointer, nil
+		}
+
+		if reference.kind != jsonString {
+			return nil, "", fmt.Errorf("%s/$ref: must be a string", pointer)
+		}
+
+		for _, name := range sortedObjectNames(object) {
+			if name != "$ref" && !strings.HasPrefix(name, "x-") {
+				return nil, "", fmt.Errorf(
+					"%s/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+					pointer,
+				)
+			}
+		}
+
+		resolved, targetPointer, err := resolveLocalReference(document, reference.text, pointer+"/$ref")
+		if err != nil {
+			return nil, "", err
+		}
+
+		if visited[targetPointer] {
+			return nil, "", fmt.Errorf(
+				"%s/$ref: recursive path item reference reaching %s is outside the schematest profile",
+				pointer,
+				targetPointer,
+			)
+		}
+
+		visited[targetPointer] = true
+		value = resolved
+		pointer = targetPointer
+	}
+}
+
 func resolveReferenceChain(document, value *jsonValue, pointer, objectName string) (*jsonValue, string, error) {
 	visited := make(map[string]bool)
 

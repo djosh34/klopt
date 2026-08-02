@@ -665,19 +665,16 @@ func (parser *ecmaPatternParser) parseEscape(inClass bool) (*patternAtom, bool, 
 }
 
 func (parser *ecmaPatternParser) literalEscape(unit uint16) (*patternAtom, bool, uint64, error) {
+	if unit >= 0xd800 && unit <= 0xdfff {
+		return nil, false, 0, errors.New("surrogate escapes are outside the pattern profile")
+	}
+
 	atom, err := parser.newAtom(patternLiteral)
 	if err != nil {
 		return nil, false, 0, err
 	}
 
 	atom.literal = unit
-	if unit >= 0xd800 && unit <= 0xdfff {
-		return nil, false, 0, errors.New("surrogate escapes are outside the pattern profile")
-	}
-
-	if parser.nesting > 0 && parser.position > len(parser.units) {
-		return nil, false, 0, errors.New("invalid pattern state")
-	}
 
 	return atom, false, 1, nil
 }
@@ -897,6 +894,8 @@ func predefinedClass(escaped uint16) patternClassPart {
 		}
 		part.negated = escaped == 'W'
 	case 's', 'S':
+		// The confirmed ES5.1 profile intentionally retains U+180E and U+200B
+		// and does not include the later U+205F classification.
 		part.ranges = []patternRange{
 			{low: 0x0009, high: 0x000d},
 			{low: 0x0020, high: 0x0020},

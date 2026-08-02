@@ -19,15 +19,24 @@ func decodeOpenAPIDocument(source []byte) (*jsonValue, error) {
 	}
 
 	trimmed := bytes.TrimSpace(source)
+
+	var jsonErr error
+
 	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
-		value, jsonErr := parseStrictJSON(source)
-		if jsonErr == nil {
+		value, parseErr := parseStrictJSON(source)
+		if parseErr == nil {
 			return value, nil
 		}
+
+		jsonErr = parseErr
 	}
 
 	file, err := parser.ParseBytes(source, 0)
 	if err != nil {
+		if jsonErr != nil {
+			return nil, fmt.Errorf("parse strict JSON: %w; parse YAML: %w", jsonErr, err)
+		}
+
 		return nil, fmt.Errorf("parse YAML: %w", err)
 	}
 
@@ -41,6 +50,7 @@ func decodeOpenAPIDocument(source []byte) (*jsonValue, error) {
 
 	decoder := yamlJSONDecoder{
 		anchors:   make(map[string]ast.Node),
+		decoded:   make(map[ast.Node]*jsonValue),
 		resolving: make(map[ast.Node]bool),
 	}
 
@@ -49,6 +59,7 @@ func decodeOpenAPIDocument(source []byte) (*jsonValue, error) {
 
 type yamlJSONDecoder struct {
 	anchors   map[string]ast.Node
+	decoded   map[ast.Node]*jsonValue
 	resolving map[ast.Node]bool
 }
 
@@ -159,10 +170,7 @@ func (decoder *yamlJSONDecoder) decodeAnchor(node *ast.AnchorNode) (*jsonValue, 
 
 	decoder.anchors[name] = node.Value
 
-	decoder.resolving[node.Value] = true
-	defer delete(decoder.resolving, node.Value)
-
-	return decoder.decodeNode(node.Value)
+	return decoder.decodeAnchorValue(name, node.Value)
 }
 
 func (decoder *yamlJSONDecoder) decodeAlias(node *ast.AliasNode) (*jsonValue, error) {
@@ -176,6 +184,14 @@ func (decoder *yamlJSONDecoder) decodeAlias(node *ast.AliasNode) (*jsonValue, er
 		return nil, fmt.Errorf("YAML alias %q has no preceding anchor", name)
 	}
 
+	return decoder.decodeAnchorValue(name, target)
+}
+
+func (decoder *yamlJSONDecoder) decodeAnchorValue(name string, target ast.Node) (*jsonValue, error) {
+	if value, decoded := decoder.decoded[target]; decoded {
+		return value, nil
+	}
+
 	if decoder.resolving[target] {
 		return nil, fmt.Errorf("YAML alias %q creates a cycle", name)
 	}
@@ -183,7 +199,14 @@ func (decoder *yamlJSONDecoder) decodeAlias(node *ast.AliasNode) (*jsonValue, er
 	decoder.resolving[target] = true
 	defer delete(decoder.resolving, target)
 
-	return decoder.decodeNode(target)
+	value, err := decoder.decodeNode(target)
+	if err != nil {
+		return nil, err
+	}
+
+	decoder.decoded[target] = value
+
+	return value, nil
 }
 
 func (decoder *yamlJSONDecoder) decodeTag(node *ast.TagNode) (*jsonValue, error) {
@@ -242,7 +265,7 @@ func yamlMappingKey(node ast.Node) (string, error) {
 			return "", errors.New("must be a scalar string")
 		}
 
-		return tagged.Value.GetToken().Value, nil
+		return yamlString(tagged.Value)
 	}
 
 	text, err := yamlString(node)

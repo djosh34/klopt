@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var schemaKinds = map[string]schemaKind{
@@ -118,7 +119,7 @@ func validateSchemaKeywords(object map[string]*jsonValue, pointer string) error 
 			return fmt.Errorf("%s/%s: authored %s is outside the schematest profile", pointer, name, name)
 		}
 
-		if schemaKeywords[name] || len(name) > 2 && name[:2] == "x-" {
+		if schemaKeywords[name] || strings.HasPrefix(name, "x-") {
 			continue
 		}
 

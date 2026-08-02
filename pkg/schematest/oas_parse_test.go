@@ -54,26 +54,41 @@ func TestParseInputAdmitsRepresentativeCorpus(t *testing.T) {
 func TestParseInputRejectsMalformedJSONDocument(t *testing.T) {
 	t.Parallel()
 
-	documents := map[string]string{
-		"duplicate decoded key": `{
-			"openapi":"3.0.4",
-			"\\u006fpenapi":"3.0.4",
-			"paths":{}
-		}`,
-		"unpaired surrogate": `{
-			"openapi":"3.0.4",
-			"paths":{},
-			"x-bad":"\\uD800"
-		}`,
-		"trailing value": `{"openapi":"3.0.4","paths":{}} {}`,
+	tests := []struct {
+		name     string
+		document string
+		message  string
+	}{
+		{
+			name: "duplicate decoded key",
+			document: `{
+				"openapi":"3.0.4",
+				"\u006fpenapi":"3.0.4",
+				"paths":{}
+			}`,
+			message: "duplicate object member",
+		},
+		{
+			name: "unpaired surrogate",
+			document: `{
+				"openapi":"3.0.4",
+				"paths":{},
+				"x-bad":"\uD800"
+			}`,
+			message: "surrogate",
+		},
+		{
+			name: "trailing value", document: `{"openapi":"3.0.4","paths":{}} {}`,
+			message: "trailing data",
+		},
 	}
 
-	for name, document := range documents {
-		t.Run(name, func(t *testing.T) {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
-			require.Error(t, err)
+			_, err := parseInput(Input{OpenAPI: []byte(test.document), OperationID: "selected"})
+			require.ErrorContains(t, err, test.message)
 		})
 	}
 }
@@ -147,6 +162,14 @@ paths:
 `,
 			message: "must be a scalar string",
 		},
+		{
+			name: "tagged non scalar mapping key",
+			document: `? !!str [openapi]
+: 3.0.4
+paths: {}
+`,
+			message: "invalid key",
+		},
 	}
 
 	for _, test := range tests {
@@ -155,6 +178,68 @@ paths:
 
 			_, err := parseInput(Input{OpenAPI: []byte(test.document), OperationID: "selected"})
 			require.ErrorContains(t, err, test.message)
+		})
+	}
+}
+
+func TestParseInputResolvesLocalPathItemReference(t *testing.T) {
+	t.Parallel()
+
+	document := `{
+		"openapi":"3.0.4",
+		"x-path-item":{"post":{
+			"operationId":"selected",
+			"requestBody":{"content":{"application/json":{"schema":{"type":"string"}}}}
+		}},
+		"paths":{"/things":{"$ref":"#/x-path-item"}}
+	}`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Equal(t, schemaString, model.root.kind)
+	require.Equal(t, "#/x-path-item/post/requestBody/content/application~1json/schema", model.root.occurrence.usePointer)
+}
+
+func TestParseInputRejectsUnsupportedPathItemReferenceForms(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		document string
+		pointer  string
+	}{
+		{
+			name:     "external",
+			document: `{"openapi":"3.0.4","paths":{"/":{"$ref":"other.yaml"}}}`,
+			pointer:  "#/paths/~1/$ref",
+		},
+		{
+			name: "active sibling",
+			document: `{
+				"openapi":"3.0.4",
+				"x-path-item":{},
+				"paths":{"/":{"$ref":"#/x-path-item","post":{}}}
+			}`,
+			pointer: "#/paths/~1/$ref",
+		},
+		{
+			name: "cycle",
+			document: `{
+				"openapi":"3.0.4",
+				"x-a":{"$ref":"#/x-b"},
+				"x-b":{"$ref":"#/x-a"},
+				"paths":{"/":{"$ref":"#/x-a"}}
+			}`,
+			pointer: "#/x-b/$ref",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseInput(Input{OpenAPI: []byte(test.document), OperationID: "selected"})
+			require.ErrorContains(t, err, test.pointer)
 		})
 	}
 }
@@ -574,10 +659,10 @@ paths:
 			require.True(t, model.root.allowAdditionalProperties)
 			require.Len(t, model.root.allOf, 1)
 			require.Len(t, model.root.anyOf, 2)
-			requireBigIntEqual(t, "1", model.root.minProperties)
-			requireBigIntEqual(t, "5", model.root.maxProperties)
-			requireBigIntEqual(t, "1", model.root.properties["visible"].minItems)
-			requireBigIntEqual(t, "2", model.root.properties["visible"].maxItems)
+			requireCountEqual(t, "1", model.root.minProperties)
+			requireCountEqual(t, "5", model.root.maxProperties)
+			requireCountEqual(t, "1", model.root.properties["visible"].minItems)
+			requireCountEqual(t, "2", model.root.properties["visible"].maxItems)
 		})
 	}
 }
@@ -683,6 +768,7 @@ func TestParseInputShapeChecksInertMetadata(t *testing.T) {
 		{name: "title", schema: `{"title":1}`, pointer: "/title"},
 		{name: "deprecated", schema: `{"deprecated":"yes"}`, pointer: "/deprecated"},
 		{name: "externalDocs_missing_url", schema: `{"externalDocs":{"description":"missing"}}`, pointer: "/externalDocs/url"},
+		{name: "externalDocs_empty_url", schema: `{"externalDocs":{"url":""}}`, pointer: "/externalDocs/url"},
 		{name: "xml_object", schema: `{"xml":"item"}`, pointer: "/xml"},
 		{name: "xml_field", schema: `{"xml":{"wrapped":"yes"}}`, pointer: "/xml/wrapped"},
 		{name: "xml_namespace", schema: `{"xml":{"namespace":"relative/path"}}`, pointer: "/xml/namespace"},
@@ -774,7 +860,7 @@ func requireExactNumberEqual(t *testing.T, expected string, actual *exactNumber)
 	require.Zero(t, comparison)
 }
 
-func requireBigIntEqual(t *testing.T, expected string, actual interface{ String() string }) {
+func requireCountEqual(t *testing.T, expected string, actual *exactCount) {
 	t.Helper()
 	require.NotNil(t, actual)
 	require.Equal(t, expected, actual.String())
@@ -830,6 +916,57 @@ func TestParseInputReportsOperationAndBodySelectionErrors(t *testing.T) {
 
 			_, err := parseInput(Input{OpenAPI: []byte(test.document), OperationID: test.operation})
 			require.ErrorContains(t, err, test.message)
+		})
+	}
+}
+
+func TestParseInputRejectsNonPathPathsField(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseInput(Input{
+		OpenAPI: []byte(`{
+			"openapi":"3.0.4",
+			"paths":{"things":{"post":{
+				"operationId":"selected",
+				"requestBody":{"content":{"application/json":{"schema":{}}}}
+			}}}
+		}`),
+		OperationID: "selected",
+	})
+	require.ErrorContains(t, err, "#/paths/things")
+	require.ErrorContains(t, err, "must begin with '/'")
+}
+
+func TestParseInputRejectsMalformedSelectedRequestBodyFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		body    string
+		pointer string
+	}{
+		{
+			name: "description", body: `{"description":1,"content":{"application/json":{"schema":{}}}}`,
+			pointer: "/description",
+		},
+		{
+			name: "required", body: `{"required":"yes","content":{"application/json":{"schema":{}}}}`,
+			pointer: "/required",
+		},
+		{
+			name: "unknown field", body: `{"unknown":true,"content":{"application/json":{"schema":{}}}}`,
+			pointer: "/unknown",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			document := `{"openapi":"3.0.4","paths":{"/":{"post":{` +
+				`"operationId":"selected","requestBody":` + test.body + `}}}}`
+			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.ErrorContains(t, err, "#/paths/~1/post/requestBody"+test.pointer)
 		})
 	}
 }

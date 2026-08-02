@@ -63,6 +63,7 @@ func validateOpenAPIVersion(root map[string]*jsonValue) error {
 	return nil
 }
 
+//nolint:gocognit // One deterministic pass must validate uniqueness while selecting the exact operation.
 func selectRequestSchema(document *jsonValue, root map[string]*jsonValue, operationID string) (*jsonValue, string, error) {
 	pathsValue, exists := root["paths"]
 	if !exists {
@@ -87,8 +88,22 @@ func selectRequestSchema(document *jsonValue, root map[string]*jsonValue, operat
 		}
 
 		pathPointer := "#/paths/" + escapePointerToken(pathName)
+		if !strings.HasPrefix(pathName, "/") {
+			return nil, "", fmt.Errorf("%s: path field must begin with '/'", pathPointer)
+		}
 
-		pathItem, objectErr := requireJSONObject(paths[pathName], pathPointer)
+		pathItemValue, resolvedPathPointer, referenceErr := resolvePathItemReference(
+			document,
+			paths[pathName],
+			pathPointer,
+		)
+		if referenceErr != nil {
+			return nil, "", referenceErr
+		}
+
+		pathPointer = resolvedPathPointer
+
+		pathItem, objectErr := requireJSONObject(pathItemValue, pathPointer)
 		if objectErr != nil {
 			return nil, "", objectErr
 		}
@@ -159,6 +174,10 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 		return nil, "", err
 	}
 
+	if bodyErr := validateRequestBodyFields(body, bodyPointer); bodyErr != nil {
+		return nil, "", bodyErr
+	}
+
 	contentValue, exists := body["content"]
 	if !exists {
 		return nil, "", fmt.Errorf("%s/content: required field is missing", bodyPointer)
@@ -187,6 +206,30 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 	}
 
 	return schema, mediaPointer + "/schema", nil
+}
+
+func validateRequestBodyFields(body map[string]*jsonValue, pointer string) error {
+	for _, name := range sortedObjectNames(body) {
+		value := body[name]
+
+		switch name {
+		case "content":
+		case "description":
+			if value.kind != jsonString {
+				return fmt.Errorf("%s/description: must be a string", pointer)
+			}
+		case "required":
+			if value.kind != jsonBoolean {
+				return fmt.Errorf("%s/required: must be a boolean", pointer)
+			}
+		default:
+			if !strings.HasPrefix(name, "x-") {
+				return fmt.Errorf("%s/%s: unknown Request Body Object field", pointer, escapePointerToken(name))
+			}
+		}
+	}
+
+	return nil
 }
 
 type oasParser struct {
