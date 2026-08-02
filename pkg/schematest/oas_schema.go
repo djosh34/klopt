@@ -134,10 +134,12 @@ func parseScalarSchemaFields(node *schemaNode, object map[string]*jsonValue, poi
 		return err
 	}
 
-	var err error
-	if node.nullable, err = optionalBoolean(object, "nullable", pointer); err != nil {
+	nullable, err := optionalBoolean(object, "nullable", pointer)
+	if err != nil {
 		return err
 	}
+
+	node.nullable = node.kind != schemaAny && nullable
 
 	if node.enum, err = parseSchemaEnum(object, pointer); err != nil {
 		return err

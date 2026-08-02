@@ -533,6 +533,42 @@ paths:
 	}
 }
 
+func TestParseInputModelsNullableOnlyWithSameObjectType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		json     string
+		yaml     string
+		nullable bool
+	}{
+		{name: "typeless", json: `{"nullable":true}`, yaml: "nullable: true"},
+		{
+			name: "explicit type", json: `{"type":"string","nullable":true}`,
+			yaml: "type: string\nnullable: true", nullable: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for encoding, document := range map[string]string{
+				"json": documentWithJSONSchema(test.json),
+				"yaml": documentWithYAMLSchema(test.yaml),
+			} {
+				t.Run(encoding, func(t *testing.T) {
+					t.Parallel()
+
+					model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+					require.NoError(t, err)
+					require.Equal(t, test.nullable, model.root.nullable)
+				})
+			}
+		})
+	}
+}
+
 func TestParseInputPreservesExactAuthoredNumberScale(t *testing.T) {
 	t.Parallel()
 
