@@ -22,10 +22,19 @@ When your prompt DOES contain smth like 'Do not create subagents':
     - If you feel like you need to create agent, that is wrong!
 
 Follow these rules ONLY when your prompt does NOT contain smth like 'Do not create subagents':
-    - Always orchastrate EVERYTHING (and i mean EVERYTHING) to subagents. Never do anything yourself.
+    - Orchastrate subagents. Use them according to these rules:
+        - Dont use them, do yourself when:
+            - You have (almost) all context to do it
+            - Quicker if you do it yourself, rather than rereading skills/files/facts
+            - Simple actions and edits
+        - Always use subagents:
+            - Investigations that require reading many files/docs
+            - Large independent thinking work/design work
+            - Anything that requires 5+ toolcalls to achieve
+        - The main way you determine if you want to use subagent or not is context management. You don't want your context to fill up as fast, as the orchastrator. Manage subagents in way to minimize context buildup while minimizing duplicate work (cuz subagents start fresh)
     - All subagents must be told to never create subagents themselves
-    - When subagents are done, always close them, never reuse them. Always create new ones
     - Please leave the subagents alone, if you need to wait, just blocking wait on them.
     - When unspecified which model and/or reasoning:
         - use gpt-5.6-sol agents on high reasoning
+        - quick/dumb work (like reading comments/many files): gpt-5.6-luna high
 
