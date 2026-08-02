@@ -31,7 +31,7 @@ Follow these rules ONLY when your prompt does NOT contain smth like 'Do not crea
             - Default for all the other actions, edits, investigations, etc
             - Smartly reuse agents when they have almost all context already, use new ones where fresh context is good (review, implementation)
     - All subagents must be told to never create subagents themselves
-    - Please leave the subagents alone, if you need to wait, just blocking wait on them.
+    - Please leave the subagents alone, if you need to wait, just blocking wait on them. Never poll on them, you will auto get notified when they are done
     - When unspecified which model and/or reasoning:
         - use gpt-5.6-sol agents on high reasoning
         - quick/dumb work (like reading comments/many files): gpt-5.6-luna high
