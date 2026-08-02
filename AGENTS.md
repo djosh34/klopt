@@ -22,15 +22,15 @@ When your prompt DOES contain smth like 'Do not create subagents':
     - If you feel like you need to create agent, that is wrong!
 
 Follow these rules ONLY when your prompt does NOT contain smth like 'Do not create subagents':
-    - Orchastrate subagents. Use them according to these rules:
-        - Dont use them, do yourself when:
-            - You have (almost) all context to do it
-            - Quicker if you do it yourself, rather than letting subagents do rereading of skills/files/facts
-            - Simple actions and edits
+    - Orchastrate subagents. Use them very often. Use them according to these rules:
         - Always use subagents:
             - Investigations that require reading many files/docs
             - Large independent thinking work/design work
-            - Anything that requires 5+ toolcalls to achieve
+            - Anything that requires 5+ toolcalls to achieve (e.g. you reading more than 5 files? use subagent)
+        - Dont use them, do yourself when:
+            - You have (almost) all context to do it
+            - Reading skills
+            - ultra short and simple actions (reading 1 file, or git commit + push)
         - The main way you determine if you want to use subagent or not is context management. You don't want your context to fill up as fast, as the orchastrator. Manage subagents in way to minimize context buildup while minimizing duplicate work (cuz subagents start fresh)
     - All subagents must be told to never create subagents themselves
     - Please leave the subagents alone, if you need to wait, just blocking wait on them.
