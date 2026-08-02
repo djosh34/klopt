@@ -506,7 +506,7 @@ func (parser *oasParser) parseArrayFields(
 		return nil
 	}
 
-	node.items, err = parser.parseSchemaNode(items, pointer+"/items", appendInstanceToken(node.occurrence.instanceTemplate, "*"))
+	node.items, err = parser.parseSchemaNode(items, pointer+"/items", appendInstanceToken("#", "*"))
 
 	return err
 }
@@ -530,7 +530,7 @@ func (parser *oasParser) parseObjectFields(
 		return err
 	}
 
-	node.properties, err = parser.parseProperties(object, pointer, node.occurrence.instanceTemplate)
+	node.properties, err = parser.parseProperties(object, pointer)
 	if err != nil {
 		return err
 	}
@@ -550,7 +550,6 @@ func (parser *oasParser) parseObjectFields(
 func (parser *oasParser) parseProperties(
 	object map[string]*jsonValue,
 	pointer string,
-	instanceTemplate string,
 ) (map[string]*schemaNode, error) {
 	value, exists := object["properties"]
 	if !exists {
@@ -569,7 +568,7 @@ func (parser *oasParser) parseProperties(
 		property, parseErr := parser.parseSchemaNode(
 			properties[name],
 			propertyPointer,
-			appendInstanceToken(instanceTemplate, name),
+			appendInstanceToken("#", name),
 		)
 		if parseErr != nil {
 			return nil, parseErr
@@ -604,7 +603,7 @@ func (parser *oasParser) parseAdditionalProperties(
 	additional, err := parser.parseSchemaNode(
 		value,
 		pointer+"/additionalProperties",
-		appendInstanceToken(node.occurrence.instanceTemplate, "*"),
+		appendInstanceToken("#", "*"),
 	)
 	if err != nil {
 		return err
@@ -622,11 +621,11 @@ func (parser *oasParser) parseCompositionFields(
 	pointer string,
 ) error {
 	var err error
-	if node.allOf, err = parser.parseSchemaArray(object, "allOf", pointer, node.occurrence.instanceTemplate); err != nil {
+	if node.allOf, err = parser.parseSchemaArray(object, "allOf", pointer); err != nil {
 		return err
 	}
 
-	if node.anyOf, err = parser.parseSchemaArray(object, "anyOf", pointer, node.occurrence.instanceTemplate); err != nil {
+	if node.anyOf, err = parser.parseSchemaArray(object, "anyOf", pointer); err != nil {
 		return err
 	}
 
@@ -637,7 +636,6 @@ func (parser *oasParser) parseSchemaArray(
 	object map[string]*jsonValue,
 	name string,
 	pointer string,
-	instanceTemplate string,
 ) ([]*schemaNode, error) {
 	value, exists := object[name]
 	if !exists {
@@ -657,7 +655,7 @@ func (parser *oasParser) parseSchemaArray(
 	for index, childValue := range value.array {
 		childPointer := fmt.Sprintf("%s/%d", fieldPointer, index)
 
-		child, err := parser.parseSchemaNode(childValue, childPointer, instanceTemplate)
+		child, err := parser.parseSchemaNode(childValue, childPointer, "#")
 		if err != nil {
 			return nil, err
 		}

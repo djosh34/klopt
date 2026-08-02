@@ -205,6 +205,10 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 		return nil, "", err
 	}
 
+	if mediaErr := validateMediaTypeFields(media, mediaPointer); mediaErr != nil {
+		return nil, "", mediaErr
+	}
+
 	if examples, hasExamples := media["examples"]; hasExamples {
 		if examplesErr := validateMediaTypeExamples(examples, mediaPointer+"/examples"); examplesErr != nil {
 			return nil, "", examplesErr
@@ -223,6 +227,24 @@ func requestSchema(document *jsonValue, operation map[string]*jsonValue, operati
 	}
 
 	return schema, mediaPointer + "/schema", nil
+}
+
+func validateMediaTypeFields(media map[string]*jsonValue, pointer string) error {
+	for _, name := range sortedObjectNames(media) {
+		switch name {
+		case "schema", "example", "examples":
+		case "encoding":
+			if _, err := requireJSONObject(media[name], pointer+"/encoding"); err != nil {
+				return err
+			}
+		default:
+			if !strings.HasPrefix(name, "x-") {
+				return fmt.Errorf("%s/%s: unknown Media Type Object field", pointer, escapePointerToken(name))
+			}
+		}
+	}
+
+	return nil
 }
 
 func validateRequestBodyFields(body map[string]*jsonValue, pointer string) error {

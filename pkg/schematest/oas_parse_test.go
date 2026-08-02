@@ -447,6 +447,36 @@ func TestParseInputSharesInlineYAMLAliasSchemaShapes(t *testing.T) {
 	require.Same(t, model.root.allOf[0].schemaShape, model.root.allOf[1].schemaShape)
 }
 
+func TestParseInputKeepsAliasedSchemaDescendantTemplatesRelative(t *testing.T) {
+	t.Parallel()
+
+	document := `openapi: 3.0.4
+x-shared: &shared
+  type: object
+  properties:
+    child: {type: string}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                a: *shared
+                b: *shared
+`
+
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Equal(t, "#/a", model.root.properties["a"].occurrence.instanceTemplate)
+	require.Equal(t, "#/b", model.root.properties["b"].occurrence.instanceTemplate)
+	require.Same(t, model.root.properties["a"].schemaShape, model.root.properties["b"].schemaShape)
+	require.Equal(t, "#/child", model.root.properties["a"].properties["child"].occurrence.instanceTemplate)
+}
+
 func TestParseInputSharesReferenceTargetsAcrossInstanceTemplates(t *testing.T) {
 	t.Parallel()
 
@@ -826,7 +856,7 @@ paths:
 			require.True(t, model.root.properties["secret"].writeOnly)
 			require.Equal(t, "#/visible", model.root.properties["visible"].occurrence.instanceTemplate)
 			require.Equal(t, schemaArray, model.root.properties["visible"].kind)
-			require.Equal(t, "#/visible/*", model.root.properties["visible"].items.occurrence.instanceTemplate)
+			require.Equal(t, "#/*", model.root.properties["visible"].items.occurrence.instanceTemplate)
 			require.NotNil(t, model.root.additionalProperties)
 			require.True(t, model.root.allowAdditionalProperties)
 			require.Len(t, model.root.allOf, 1)
@@ -1143,6 +1173,47 @@ func TestParseInputRejectsMalformedSelectedRequestBodyFields(t *testing.T) {
 	}
 }
 
+func TestParseInputRejectsMalformedSelectedMediaTypeFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		json    string
+		yaml    string
+		pointer string
+	}{
+		{name: "unknown", json: `"bogus":1`, yaml: "bogus: 1", pointer: "/bogus"},
+		{name: "encoding", json: `"encoding":1`, yaml: "encoding: 1", pointer: "/encoding"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for encoding, document := range map[string]string{
+				"json": `{"openapi":"3.0.4","paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{},` + test.json + `}}}}}}}`,
+				"yaml": `openapi: 3.0.4
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+            ` + test.yaml + "\n",
+			} {
+				t.Run(encoding, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+					require.ErrorContains(t, err, "/content/application~1json"+test.pointer)
+				})
+			}
+		})
+	}
+}
+
 func TestParseInputRejectsMutuallyExclusiveMediaTypeExamples(t *testing.T) {
 	t.Parallel()
 
@@ -1236,6 +1307,18 @@ func TestParseInputRejectsMalformedMediaTypeExampleObject(t *testing.T) {
 	}{
 		{name: "summary", json: `{"summary":1}`, yaml: `{summary: 1}`, pointer: "/summary"},
 		{name: "reference", json: `{"$ref":1}`, yaml: `{$ref: 1}`, pointer: "/$ref"},
+		{
+			name: "reference raw space", json: `{"$ref":"#/components/examples/a b"}`,
+			yaml: `{$ref: "#/components/examples/a b"}`, pointer: "/$ref",
+		},
+		{
+			name: "reference malformed percent", json: `{"$ref":"#/components/examples/a%2"}`,
+			yaml: `{$ref: "#/components/examples/a%2"}`, pointer: "/$ref",
+		},
+		{
+			name: "external reference", json: `{"$ref":"example.yaml#/example"}`,
+			yaml: `{$ref: "example.yaml#/example"}`, pointer: "/$ref",
+		},
 		{
 			name: "mutually exclusive value", json: `{"value":1,"externalValue":"example.json"}`,
 			yaml: `{value: 1, externalValue: example.json}`, pointer: "/externalValue",

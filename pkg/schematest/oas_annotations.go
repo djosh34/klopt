@@ -97,6 +97,10 @@ func validateMediaTypeExample(value *jsonValue, pointer string) error {
 			return fmt.Errorf("%s/$ref: must be a string", pointer)
 		}
 
+		if _, err := parseLocalReferenceFragment(reference.text, pointer+"/$ref"); err != nil {
+			return err
+		}
+
 		return nil
 	}
 

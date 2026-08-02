@@ -1,4 +1,4 @@
-//nolint:cyclop,godoclint // Private RFC 6901 traversal keeps each container and escape failure explicit.
+//nolint:godoclint // Private RFC 6901 traversal keeps each container and escape failure explicit.
 package schematest
 
 import (
@@ -95,30 +95,13 @@ func resolveReferenceChain(document, value *jsonValue, pointer, objectName strin
 }
 
 func resolveLocalReference(document *jsonValue, reference, authoredPointer string) (*jsonValue, string, error) {
-	if !strings.HasPrefix(reference, "#") {
-		return nil, "", fmt.Errorf("%s: external reference %q is outside the schematest profile", authoredPointer, reference)
-	}
-
-	encodedFragment := strings.TrimPrefix(reference, "#")
-	if err := validateURIFragment(encodedFragment); err != nil {
-		return nil, "", fmt.Errorf("%s: malformed URI-reference: %w", authoredPointer, err)
-	}
-
-	fragment, err := url.PathUnescape(encodedFragment)
+	fragment, err := parseLocalReferenceFragment(reference, authoredPointer)
 	if err != nil {
-		return nil, "", fmt.Errorf("%s: malformed local reference: %w", authoredPointer, err)
-	}
-
-	if !utf8.ValidString(fragment) {
-		return nil, "", fmt.Errorf("%s: local reference fragment must be valid UTF-8", authoredPointer)
+		return nil, "", err
 	}
 
 	if fragment == "" {
 		return document, "#", nil
-	}
-
-	if !strings.HasPrefix(fragment, "/") {
-		return nil, "", fmt.Errorf("%s: local reference fragment must be a JSON Pointer", authoredPointer)
 	}
 
 	current := document
@@ -153,6 +136,32 @@ func resolveLocalReference(document *jsonValue, reference, authoredPointer strin
 	}
 
 	return current, canonical, nil
+}
+
+func parseLocalReferenceFragment(reference, authoredPointer string) (string, error) {
+	if !strings.HasPrefix(reference, "#") {
+		return "", fmt.Errorf("%s: external reference %q is outside the schematest profile", authoredPointer, reference)
+	}
+
+	encodedFragment := strings.TrimPrefix(reference, "#")
+	if err := validateURIFragment(encodedFragment); err != nil {
+		return "", fmt.Errorf("%s: malformed URI-reference: %w", authoredPointer, err)
+	}
+
+	fragment, err := url.PathUnescape(encodedFragment)
+	if err != nil {
+		return "", fmt.Errorf("%s: malformed local reference: %w", authoredPointer, err)
+	}
+
+	if !utf8.ValidString(fragment) {
+		return "", fmt.Errorf("%s: local reference fragment must be valid UTF-8", authoredPointer)
+	}
+
+	if fragment != "" && !strings.HasPrefix(fragment, "/") {
+		return "", fmt.Errorf("%s: local reference fragment must be a JSON Pointer", authoredPointer)
+	}
+
+	return fragment, nil
 }
 
 func validateURIFragment(fragment string) error {
