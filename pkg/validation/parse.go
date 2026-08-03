@@ -88,7 +88,7 @@ func Parse(
 		requestValidations[operationID] = requestValidation
 	}
 
-	if err := rejectAuthoredUniqueItems(document); err != nil {
+	if err := rejectAuthoredSchemaExclusions(document); err != nil {
 		return nil, err
 	}
 
@@ -362,6 +362,10 @@ func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessag
 		}
 	}
 
+	if _, ok := members["discriminator"]; ok {
+		return unsupportedAuthoredDiscriminator(pointer)
+	}
+
 	supported := map[string]struct{}{
 		"$ref": {}, "type": {}, "nullable": {}, "enum": {},
 		"minimum": {}, "maximum": {}, "exclusiveMinimum": {}, "exclusiveMaximum": {}, "multipleOf": {},
@@ -369,7 +373,7 @@ func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessag
 		"minItems": {}, "maxItems": {}, "items": {},
 		"minProperties": {}, "maxProperties": {}, "required": {}, "properties": {}, "additionalProperties": {},
 		"allOf": {}, "anyOf": {}, "title": {}, "description": {}, "default": {}, "example": {}, "deprecated": {},
-		"readOnly": {}, "writeOnly": {}, "discriminator": {}, "xml": {}, "externalDocs": {},
+		"readOnly": {}, "writeOnly": {}, "xml": {}, "externalDocs": {},
 	}
 
 	for keyword := range members {
@@ -463,58 +467,6 @@ func compileDocumentation(validation *Validation, pointer string, members map[st
 	if raw, ok := members["externalDocs"]; ok {
 		if err := validateExternalDocs(raw); err != nil {
 			return keywordError(pointer, "externalDocs", err)
-		}
-	}
-
-	if err := validateDiscriminator(pointer, members); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// validateDiscriminator shape-checks an inert hint. Klopt intentionally accepts
-// it without oneOf, anyOf, or allOf and does not store or apply its values.
-//
-//nolint:cyclop // Discriminator Object fixed fields and mapping values have distinct diagnostics.
-func validateDiscriminator(pointer string, members map[string]json.RawMessage) error {
-	raw, ok := members["discriminator"]
-	if !ok {
-		return nil
-	}
-
-	discriminatorPointer := pointer + "/discriminator"
-
-	var discriminator map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &discriminator); err != nil || discriminator == nil {
-		return fmt.Errorf("compile schema at %s: must be an object", discriminatorPointer)
-	}
-
-	propertyName, ok := discriminator["propertyName"]
-	if !ok {
-		return fmt.Errorf("compile schema at %s/propertyName: is required", discriminatorPointer)
-	}
-
-	if _, err := decodeString(propertyName, "propertyName"); err != nil {
-		return fmt.Errorf("compile schema at %s/propertyName: %w", discriminatorPointer, err)
-	}
-
-	mappingRaw, ok := discriminator["mapping"]
-	if !ok {
-		return nil
-	}
-
-	var mapping map[string]json.RawMessage
-	if err := json.Unmarshal(mappingRaw, &mapping); err != nil || mapping == nil {
-		return fmt.Errorf("compile schema at %s/mapping: must be an object", discriminatorPointer)
-	}
-
-	for _, name := range slices.Sorted(maps.Keys(mapping)) {
-		if _, err := decodeString(mapping[name], "mapping value"); err != nil {
-			escaped := strings.ReplaceAll(name, "~", "~0")
-			escaped = strings.ReplaceAll(escaped, "/", "~1")
-
-			return fmt.Errorf("compile schema at %s/mapping/%s: %w", discriminatorPointer, escaped, err)
 		}
 	}
 

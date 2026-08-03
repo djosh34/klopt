@@ -12,9 +12,9 @@ import (
 	"github.com/djosh34/klopt/pkg/internal/oas"
 )
 
-// rejectAuthoredUniqueItems walks every OpenAPI 3.0 Schema Object slot after
+// rejectAuthoredSchemaExclusions walks every OpenAPI 3.0 Schema Object slot after
 // ordinary request acquisition and compilation have succeeded.
-func rejectAuthoredUniqueItems(document json.RawMessage) error {
+func rejectAuthoredSchemaExclusions(document json.RawMessage) error {
 	root, ok := rawObject(document)
 	if !ok {
 		return nil
@@ -414,6 +414,10 @@ func (walker *authoredSchemaWalker) schemaValue(value any, pointer *authoredSche
 		return unsupportedUniqueItems(pointer.String())
 	}
 
+	if _, present := members["discriminator"]; present {
+		return unsupportedAuthoredDiscriminator(pointer.String())
+	}
+
 	return walker.nestedSchemaValues(members, pointer)
 }
 
@@ -441,7 +445,7 @@ func (walker *authoredSchemaWalker) referencedSchema(
 		func(authored oas.LocatedSchema) error {
 			walker.markSeen("schema", authored.Pointer)
 
-			return rejectAuthoredSchemaUniqueItems(authored)
+			return rejectAuthoredSchemaKeywords(authored)
 		},
 	)
 	if err != nil {
@@ -622,7 +626,7 @@ func (walker *authoredSchemaWalker) markSeen(kind string, pointer string) {
 	walker.visited[kind+"\x00"+pointer] = struct{}{}
 }
 
-// rejectAuthoredSchemaUniqueItems rejects key presence without decoding its value.
+// rejectAuthoredSchemaUniqueItems rejects the uniqueItems exclusion without decoding its value.
 func rejectAuthoredSchemaUniqueItems(schema oas.LocatedSchema) error {
 	members, ok := rawObject(schema.Raw)
 	if !ok {
@@ -640,9 +644,39 @@ func rejectAuthoredSchemaUniqueItems(schema oas.LocatedSchema) error {
 	return nil
 }
 
+// rejectAuthoredSchemaKeywords rejects excluded authored keywords without decoding their values.
+func rejectAuthoredSchemaKeywords(schema oas.LocatedSchema) error {
+	if err := rejectAuthoredSchemaUniqueItems(schema); err != nil {
+		return err
+	}
+
+	members, ok := rawObject(schema.Raw)
+	if !ok {
+		return nil
+	}
+
+	if _, reference := members["$ref"]; reference {
+		return nil
+	}
+
+	if _, present := members["discriminator"]; present {
+		return unsupportedAuthoredDiscriminator(schema.Pointer)
+	}
+
+	return nil
+}
+
 // unsupportedUniqueItems reports the exact authored keyword pointer.
 func unsupportedUniqueItems(pointer string) error {
 	return fmt.Errorf("compile schema at %s/uniqueItems: unsupported keyword", pointer)
+}
+
+// unsupportedAuthoredDiscriminator reports the deliberate profile exclusion at its authored pointer.
+func unsupportedAuthoredDiscriminator(pointer string) error {
+	return fmt.Errorf(
+		"compile schema at %s/discriminator: authored discriminator is outside the Klopt profile",
+		pointer,
+	)
 }
 
 // rawObject decodes a non-null JSON object.

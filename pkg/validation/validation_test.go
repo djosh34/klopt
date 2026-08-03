@@ -1021,7 +1021,7 @@ func TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth(t *testing.
 		raw := document(depth)
 		result := testing.Benchmark(func(benchmark *testing.B) {
 			for benchmark.Loop() {
-				if err := rejectAuthoredUniqueItems(raw); err != nil {
+				if err := rejectAuthoredSchemaExclusions(raw); err != nil {
 					panic(err)
 				}
 			}
@@ -1062,7 +1062,7 @@ func TestUniqueItemsTraversalReusesResolvedSchemaTargets(t *testing.T) {
 		raw := document(references)
 		result := testing.Benchmark(func(benchmark *testing.B) {
 			for benchmark.Loop() {
-				if err := rejectAuthoredUniqueItems(raw); err != nil {
+				if err := rejectAuthoredSchemaExclusions(raw); err != nil {
 					panic(err)
 				}
 			}
@@ -1275,85 +1275,6 @@ func TestParseRejectsUnsupportedAndMalformedReachableSchemas(t *testing.T) {
 	parsed, err := Parse([]byte(`{"openapi":"3.0.3","paths":{"/a":{"post":{"operationId":"unused"}}}}`))
 	require.NoError(t, err)
 	require.Equal(t, map[string]RequestValidation{"unused": {}}, parsed)
-}
-
-// TestValidationAcceptsDiscriminatorAsAnInertHint verifies the intentional permissive
-// placement deviation and ensures discriminator metadata does not affect validation.
-func TestValidationAcceptsDiscriminatorAsAnInertHint(t *testing.T) {
-	t.Parallel()
-
-	for _, discriminator := range []string{
-		`{"propertyName":"kind"}`,
-		`{"propertyName":""}`,
-		`{"propertyName":"kind","mapping":{"cat":"#/components/schemas/Cat"}}`,
-	} {
-		t.Run(discriminator, func(t *testing.T) {
-			t.Parallel()
-
-			validation := mustParseSchema(t, `{
-				"type":"object",
-				"properties":{"name":{"type":"string"}},
-				"discriminator":`+discriminator+`
-			}`, `,"components":{"schemas":{"Cat":{"oneOf":[{}]}}}`)
-			require.Empty(t, validation.Validate(json.RawMessage(`{}`)))
-			require.Empty(t, validation.Validate(json.RawMessage(`{"kind":"unknown"}`)))
-		})
-	}
-
-	validation := mustParseSchema(t, `{
-		"allOf":[{"type":"string","minLength":2}],
-		"discriminator":{"propertyName":"kind"}
-	}`, "")
-	require.Empty(t, validation.Validate(json.RawMessage(`"ok"`)))
-	require.NotEmpty(t, validation.Validate(json.RawMessage(`"x"`)))
-}
-
-// TestParseRejectsMalformedDiscriminatorAtExactPointers verifies discriminator
-// metadata is shape-checked even though its placement and values are otherwise inert.
-func TestParseRejectsMalformedDiscriminatorAtExactPointers(t *testing.T) {
-	t.Parallel()
-
-	const root = "#/paths/~1things/post/requestBody/content/application~1json/schema/discriminator"
-
-	tests := []struct {
-		name       string
-		schema     string
-		components string
-		pointer    string
-	}{
-		{name: "null", schema: `{"discriminator":null}`, pointer: root},
-		{name: "array", schema: `{"discriminator":[]}`, pointer: root},
-		{name: "missing propertyName", schema: `{"discriminator":{}}`, pointer: root + "/propertyName"},
-		{name: "null propertyName", schema: `{"discriminator":{"propertyName":null}}`, pointer: root + "/propertyName"},
-		{name: "non-string propertyName", schema: `{"discriminator":{"propertyName":1}}`, pointer: root + "/propertyName"},
-		{
-			name: "null mapping", schema: `{"discriminator":{"propertyName":"kind","mapping":null}}`,
-			pointer: root + "/mapping",
-		},
-		{
-			name: "non-object mapping", schema: `{"discriminator":{"propertyName":"kind","mapping":[]}}`,
-			pointer: root + "/mapping",
-		},
-		{
-			name: "non-string mapping value", schema: `{"discriminator":{"propertyName":"kind","mapping":{"a/b~c":1}}}`,
-			pointer: root + "/mapping/a~1b~0c",
-		},
-		{
-			name: "resolved reference", schema: `{"$ref":"#/components/schemas/Bad"}`,
-			components: `,"components":{"schemas":{"Bad":{"discriminator":{"propertyName":false}}}}`,
-			pointer:    "#/components/schemas/Bad/discriminator/propertyName",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := Parse(openAPISpec(test.schema, test.components, false))
-			require.Error(t, err)
-			require.ErrorContains(t, err, "compile schema at "+test.pointer)
-		})
-	}
 }
 
 // TestParseAcceptsBooleanReadOnlyAndWriteOnlyAtTheRoot verifies annotation shape without property semantics.
