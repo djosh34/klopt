@@ -234,6 +234,82 @@ func TestValidationLocksNullabilityAndTypeSpecificApplicability(t *testing.T) {
 	}
 }
 
+// TestValidationLocksSemanticEnumEquality verifies JSON Schema enum equality at the runtime seam.
+func TestValidationLocksSemanticEnumEquality(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		schema  string
+		valid   string
+		invalid string
+	}{
+		{
+			name:    "exact decimal and exponent numbers",
+			schema:  `{"enum":[9007199254740993.00]}`,
+			valid:   `90071992547409930e-1`,
+			invalid: `9007199254740992`,
+		},
+		{
+			name:    "decoded strings",
+			schema:  `{"enum":["\u0061"]}`,
+			valid:   `"a"`,
+			invalid: `"b"`,
+		},
+		{
+			name:    "ordered arrays",
+			schema:  `{"enum":[[1.0,{"name":"\u0061"}]]}`,
+			valid:   `[1e0,{"name":"a"}]`,
+			invalid: `[{"name":"a"},1]`,
+		},
+		{
+			name:    "unordered nested objects",
+			schema:  `{"enum":[{"z":{"b":2,"a":"\u0061"},"items":[1,2]}]}`,
+			valid:   `{"items":[1.0,2e0],"z":{"a":"a","b":2}}`,
+			invalid: `{"z":{"a":"a","b":2},"items":[2,1]}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed := mustParseSchema(t, test.schema, "")
+			require.Empty(t, parsed.Validate(json.RawMessage(test.valid)))
+			require.Equal(t, []string{"enum"}, validationErrorKeywords(
+				parsed.Validate(json.RawMessage(test.invalid)),
+			))
+		})
+	}
+}
+
+// TestParseDeduplicatesSemanticEnumMembersPreservingFirstAuthoredValue locks enum order.
+func TestParseDeduplicatesSemanticEnumMembersPreservingFirstAuthoredValue(t *testing.T) {
+	t.Parallel()
+
+	parsed := mustParseSchema(t, `{"enum":[1.0,1,{"first":true,"second":2},{"second":2,"first":true},null,null]}`, "")
+
+	require.Equal(t, []string{
+		`1.0`,
+		`{"first":true,"second":2}`,
+		`null`,
+	}, rawMessages(parsed.EnumValidation.Values))
+
+	for _, body := range []string{`1e0`, `{"second":2,"first":true}`, `null`} {
+		require.Empty(t, parsed.Validate(json.RawMessage(body)))
+	}
+}
+
+// rawMessages makes compiled enum source values readable in assertions.
+func rawMessages(values []json.RawMessage) []string {
+	messages := make([]string, len(values))
+	for index, value := range values {
+		messages[index] = string(value)
+	}
+
+	return messages
+}
+
 // TestValidationReportsSiblingFailuresInStableRuleOrder locks public error identity and order.
 func TestValidationReportsSiblingFailuresInStableRuleOrder(t *testing.T) {
 	t.Parallel()
