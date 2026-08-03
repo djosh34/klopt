@@ -1555,9 +1555,12 @@ func TestParseAcceptsCompatibleOpenAPIVersions(t *testing.T) {
 		"3.0.0",
 		"3.0.4",
 		"3.0.10",
+		"3.0.999",
 		"3.0.4-rc.1",
+		"3.0.4-0.3.7+001",
 		"3.0.4+vendor",
 		"3.0.4-rc.1+vendor",
+		"3.0.4-x-y-z.--+exp.sha.5114f85",
 	} {
 		t.Run(version, func(t *testing.T) {
 			t.Parallel()
@@ -1575,22 +1578,27 @@ func TestParseRejectsUnsupportedOpenAPIVersions(t *testing.T) {
 
 	valid := openAPISpec(`{}`, "", false)
 
+	const (
+		versionSyntaxError = "#/openapi: OpenAPI document version must be a Semantic Versioning 2.0.0 version"
+		featureSetError    = "#/openapi: OpenAPI document feature set must be 3.0"
+	)
+
 	for _, test := range []struct {
 		name        string
 		replacement string
 		wantError   string
 	}{
-		{name: "leading zero major", replacement: `"03.0.4"`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "leading zero minor", replacement: `"3.00.4"`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "leading zero", replacement: `"3.0.04"`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "missing patch", replacement: `"3.0"`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "leading version marker", replacement: `"v3.0.4"`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "leading zero prerelease", replacement: `"3.0.4-01"`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "empty prerelease", replacement: `"3.0.4-"`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "empty build", replacement: `"3.0.4+"`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "unsupported feature set", replacement: `"3.1.0"`, wantError: "feature set must be 3.0"},
-		{name: "number", replacement: `3.0`, wantError: "Semantic Versioning 2.0.0"},
-		{name: "null", replacement: `null`, wantError: "Semantic Versioning 2.0.0"},
+		{name: "leading zero major", replacement: `"03.0.4"`, wantError: versionSyntaxError},
+		{name: "leading zero minor", replacement: `"3.00.4"`, wantError: versionSyntaxError},
+		{name: "leading zero", replacement: `"3.0.04"`, wantError: versionSyntaxError},
+		{name: "missing patch", replacement: `"3.0"`, wantError: versionSyntaxError},
+		{name: "leading version marker", replacement: `"v3.0.4"`, wantError: versionSyntaxError},
+		{name: "leading zero prerelease", replacement: `"3.0.4-01"`, wantError: versionSyntaxError},
+		{name: "empty prerelease", replacement: `"3.0.4-"`, wantError: versionSyntaxError},
+		{name: "empty build", replacement: `"3.0.4+"`, wantError: versionSyntaxError},
+		{name: "unsupported feature set", replacement: `"3.1.0"`, wantError: featureSetError},
+		{name: "number", replacement: `3.0`, wantError: versionSyntaxError},
+		{name: "null", replacement: `null`, wantError: versionSyntaxError},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -1603,7 +1611,7 @@ func TestParseRejectsUnsupportedOpenAPIVersions(t *testing.T) {
 
 	missing := strings.Replace(string(valid), `"openapi":"3.0.3",`, "", 1)
 	_, err := Parse([]byte(missing))
-	require.ErrorContains(t, err, "Semantic Versioning 2.0.0")
+	require.ErrorContains(t, err, versionSyntaxError)
 }
 
 // TestParsePreservesOpenAPIVersionDecodeError keeps invalid field-type context available to callers.
