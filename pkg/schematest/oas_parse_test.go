@@ -1616,10 +1616,13 @@ func TestParseInputOpenAPIVersionProfile(t *testing.T) {
 
 	for _, version := range []string{
 		"3.0.0",
+		"3.0.4",
 		"3.0.999",
 		"3.0.4-alpha.1",
+		"3.0.4-0.3.7+001",
 		"3.0.4+build.9",
 		"3.0.4-alpha.1+build.9",
+		"3.0.4-x-y-z.--+exp.sha.5114f85",
 	} {
 		t.Run("accept_"+version, func(t *testing.T) {
 			t.Parallel()
@@ -1632,26 +1635,38 @@ func TestParseInputOpenAPIVersionProfile(t *testing.T) {
 		})
 	}
 
-	for _, version := range []string{
-		"3.0",
-		"03.0.1",
-		"3.0.01",
-		"3.0.0-",
-		"3.0.0-01",
-		"3.0.0+",
-		"3.0.0+bad_meta",
-		"2.0.0",
-		"3.1.0",
-		"4.0.0",
+	for _, test := range []struct {
+		version   string
+		wantError string
+	}{
+		{version: "3.0", wantError: "must be a valid Semantic Version"},
+		{version: "03.0.1", wantError: "must be a valid Semantic Version"},
+		{version: "3.0.01", wantError: "must be a valid Semantic Version"},
+		{version: "3.0.0-", wantError: "must be a valid Semantic Version"},
+		{version: "3.0.0-01", wantError: "must be a valid Semantic Version"},
+		{version: "3.0.0+", wantError: "must be a valid Semantic Version"},
+		{version: "3.0.0+bad_meta", wantError: "must be a valid Semantic Version"},
+		{version: "2.0.0", wantError: "feature set 2.0 is outside the supported 3.0 profile"},
+		{version: "3.1.0", wantError: "feature set 3.1 is outside the supported 3.0 profile"},
+		{version: "4.0.0", wantError: "feature set 4.0 is outside the supported 3.0 profile"},
 	} {
-		t.Run("reject_"+version, func(t *testing.T) {
+		t.Run("reject_"+test.version, func(t *testing.T) {
 			t.Parallel()
 
 			_, err := parseInput(Input{OpenAPI: []byte(fmt.Sprintf(`{
 				"openapi":%q,
 				"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{}}}}}}}
-			}`, version)), OperationID: "selected"})
+			}`, test.version)), OperationID: "selected"})
 			require.ErrorContains(t, err, "#/openapi")
+			require.ErrorContains(t, err, test.wantError)
 		})
 	}
+}
+
+func TestParseInputRejectsOpenAPIVersionBeforeRequestSelection(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseInput(Input{OpenAPI: []byte(`{"openapi":"3.1.0"}`), OperationID: "missing"})
+	require.ErrorContains(t, err, "#/openapi: feature set 3.1 is outside the supported 3.0 profile")
+	require.NotContains(t, err.Error(), "operationId")
 }

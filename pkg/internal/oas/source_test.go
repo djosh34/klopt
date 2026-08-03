@@ -632,3 +632,64 @@ components:
 	require.NoError(t, err)
 	require.Contains(t, sources, "getPets")
 }
+
+// TestParseClassifiesOpenAPIVersionErrorsAtAuthoredLocation keeps syntax and profile failures distinct.
+func TestParseClassifiesOpenAPIVersionErrorsAtAuthoredLocation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		version   string
+		wantError string
+	}{
+		{
+			name:      "malformed core",
+			version:   `"3.0"`,
+			wantError: "#/openapi: OpenAPI document version must be a Semantic Versioning 2.0.0 version",
+		},
+		{
+			name:      "malformed prerelease",
+			version:   `"3.0.4-01"`,
+			wantError: "#/openapi: OpenAPI document version must be a Semantic Versioning 2.0.0 version",
+		},
+		{
+			name:      "unsupported feature set",
+			version:   `"3.1.0"`,
+			wantError: "#/openapi: OpenAPI document feature set must be 3.0",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			sources, err := Parse([]byte(`{"openapi":` + test.version + `,"paths":{}}`))
+			require.Nil(t, sources)
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
+// TestParseRejectsOpenAPIVersionBeforeRequestAcquisition keeps invalid documents ahead of parameter use.
+func TestParseRejectsOpenAPIVersionBeforeRequestAcquisition(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	sources, _, err := ParseWithParameterValidation([]byte(`{
+		"openapi":"3.1.0",
+		"paths":{
+			"/things":{
+				"parameters":[{"name":"id","in":"query","schema":{}}],
+				"get":{"operationId":"getThings"}
+			}
+		}
+	}`), func(Source, LocatedSchema) error {
+		called = true
+
+		return errors.New("parameter validator must not run")
+	})
+
+	require.Nil(t, sources)
+	require.ErrorContains(t, err, "#/openapi: OpenAPI document feature set must be 3.0")
+	require.False(t, called)
+}

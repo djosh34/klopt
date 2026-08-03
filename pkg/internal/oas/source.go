@@ -131,10 +131,13 @@ func parseWithSemanticVersionPattern(
 		return nil, nil, errors.New("OpenAPI document must be an object")
 	}
 
+	const versionPointer = "#/openapi"
+
 	var version string
 	if err := json.Unmarshal(root["openapi"], &version); err != nil {
 		return nil, nil, fmt.Errorf(
-			"OpenAPI document version must be a Semantic Versioning 2.0.0 version: %w",
+			"%s: OpenAPI document version must be a Semantic Versioning 2.0.0 version: %w",
+			versionPointer,
 			err,
 		)
 	}
@@ -146,11 +149,14 @@ func parseWithSemanticVersionPattern(
 
 	versionParts := compiledVersionPattern.FindStringSubmatch(version)
 	if len(versionParts) == 0 {
-		return nil, nil, errors.New("OpenAPI document version must be a Semantic Versioning 2.0.0 version")
+		return nil, nil, fmt.Errorf(
+			"%s: OpenAPI document version must be a Semantic Versioning 2.0.0 version",
+			versionPointer,
+		)
 	}
 
 	if versionParts[1] != "3" || versionParts[2] != "0" {
-		return nil, nil, errors.New("OpenAPI document feature set must be 3.0")
+		return nil, nil, fmt.Errorf("%s: OpenAPI document feature set must be 3.0", versionPointer)
 	}
 
 	normalized := append(json.RawMessage(nil), document...)
