@@ -88,7 +88,7 @@ func Parse(
 		requestValidations[operationID] = requestValidation
 	}
 
-	if err := rejectAuthoredUniqueItems(document); err != nil {
+	if err := rejectAuthoredSchemaExclusions(document); err != nil {
 		return nil, err
 	}
 
@@ -363,10 +363,7 @@ func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessag
 	}
 
 	if _, ok := members["discriminator"]; ok {
-		return fmt.Errorf(
-			"compile schema at %s/discriminator: authored discriminator is outside the Klopt profile",
-			pointer,
-		)
+		return unsupportedAuthoredDiscriminator(pointer)
 	}
 
 	supported := map[string]struct{}{

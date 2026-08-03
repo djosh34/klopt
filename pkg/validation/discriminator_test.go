@@ -78,6 +78,50 @@ func TestParseRejectsAuthoredDiscriminatorAtEveryCompositionShape(t *testing.T) 
 	}
 }
 
+func TestParseRejectsAuthoredDiscriminatorOutsideSelectedRequests(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		json    string
+		yaml    string
+		pointer string
+	}{
+		{
+			name:    "unused component schema",
+			json:    `{"openapi":"3.0.3","paths":{},"components":{"schemas":{"Unused":{"type":"object","discriminator":{"propertyName":"kind"}}}}}`,
+			yaml:    "openapi: 3.0.3\npaths: {}\ncomponents:\n  schemas:\n    Unused:\n      type: object\n      discriminator:\n        propertyName: kind\n",
+			pointer: "#/components/schemas/Unused/discriminator",
+		},
+		{
+			name:    "response schema",
+			json:    `{"openapi":"3.0.3","paths":{"/things":{"get":{"operationId":"things","responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","discriminator":{"propertyName":"kind"}}}}}}}}}}`,
+			yaml:    "openapi: 3.0.3\npaths:\n  /things:\n    get:\n      operationId: things\n      responses:\n        \"200\":\n          description: ok\n          content:\n            application/json:\n              schema:\n                type: object\n                discriminator:\n                  propertyName: kind\n",
+			pointer: "#/paths/~1things/get/responses/200/content/application~1json/schema/discriminator",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for encoding, document := range map[string]string{
+				"JSON": test.json,
+				"YAML": test.yaml,
+			} {
+				t.Run(encoding, func(t *testing.T) {
+					t.Parallel()
+
+					parsed, err := validation.Parse([]byte(document))
+					require.Nil(t, parsed)
+					require.ErrorContains(t, err, "compile schema at "+test.pointer)
+					require.ErrorContains(t, err, "authored discriminator is outside the Klopt profile")
+				})
+			}
+		})
+	}
+}
+
 func TestParseKeepsOneOfRejectionAtItsOwnPointer(t *testing.T) {
 	t.Parallel()
 

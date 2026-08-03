@@ -1021,7 +1021,7 @@ func TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth(t *testing.
 		raw := document(depth)
 		result := testing.Benchmark(func(benchmark *testing.B) {
 			for benchmark.Loop() {
-				if err := rejectAuthoredUniqueItems(raw); err != nil {
+				if err := rejectAuthoredSchemaExclusions(raw); err != nil {
 					panic(err)
 				}
 			}
@@ -1062,7 +1062,7 @@ func TestUniqueItemsTraversalReusesResolvedSchemaTargets(t *testing.T) {
 		raw := document(references)
 		result := testing.Benchmark(func(benchmark *testing.B) {
 			for benchmark.Loop() {
-				if err := rejectAuthoredUniqueItems(raw); err != nil {
+				if err := rejectAuthoredSchemaExclusions(raw); err != nil {
 					panic(err)
 				}
 			}
