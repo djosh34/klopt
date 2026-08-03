@@ -301,7 +301,7 @@ func TestParseValidatesDefaultsBySameObjectTypeAndLeavesThemRuntimeInert(t *test
 		})
 	}
 
-	parsed := mustParseSchema(t, `{"type":"string","default":"fallback","minLength":2}`, "")
+	parsed := mustParseSchema(t, `{"type":"string","default":"x","minLength":2}`, "")
 	require.Empty(t, parsed.Validate(nil))
 	require.Empty(t, parsed.Validate(json.RawMessage(`"ok"`)))
 	require.Equal(t, []string{"minLength"}, validationErrorKeywords(parsed.Validate(json.RawMessage(`"x"`))))
