@@ -114,6 +114,219 @@ func TestValidationSupportedKeywordsAtRootNestedAndAllOf(t *testing.T) {
 	}
 }
 
+// TestValidationLocksNullabilityAndTypeSpecificApplicability names every null rule outcome.
+func TestValidationLocksNullabilityAndTypeSpecificApplicability(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		schema       string
+		body         string
+		valid        bool
+		wantType     string
+		wantNullable bool
+		wantKeywords []string
+	}{
+		{name: "typeless nullable absent admits null", schema: `{}`, body: `null`, valid: true},
+		{name: "typeless nullable false admits null", schema: `{"nullable":false}`, body: `null`, valid: true},
+		{name: "typeless nullable true admits null", schema: `{"nullable":true}`, body: `null`, valid: true},
+		{
+			name: "typeless enum containing null admits null", schema: `{"enum":[null,false]}`,
+			body: `null`, valid: true,
+		},
+		{
+			name: "typeless enum excluding null rejects by enum", schema: `{"enum":[false]}`,
+			body: `null`, wantKeywords: []string{"enum"},
+		},
+		{
+			name: "explicit nonnullable boolean rejects by type", schema: `{"type":"boolean"}`,
+			body: `null`, wantType: "boolean", wantKeywords: []string{"type"},
+		},
+		{
+			name: "explicit nonnullable integer rejects by type", schema: `{"type":"integer"}`,
+			body: `null`, wantType: "integer", wantKeywords: []string{"type"},
+		},
+		{
+			name: "explicit nonnullable number rejects by type", schema: `{"type":"number"}`,
+			body: `null`, wantType: "number", wantKeywords: []string{"type"},
+		},
+		{
+			name: "explicit nonnullable string rejects by type", schema: `{"type":"string"}`,
+			body: `null`, wantType: "string", wantKeywords: []string{"type"},
+		},
+		{
+			name: "explicit nonnullable array rejects by type", schema: `{"type":"array","items":{}}`,
+			body: `null`, wantType: "array", wantKeywords: []string{"type"},
+		},
+		{
+			name: "explicit nonnullable object rejects by type", schema: `{"type":"object"}`,
+			body: `null`, wantType: "object", wantKeywords: []string{"type"},
+		},
+		{
+			name: "explicit nullable boolean admits null", schema: `{"type":"boolean","nullable":true}`,
+			body: `null`, valid: true, wantType: "boolean", wantNullable: true,
+		},
+		{
+			name: "explicit nullable integer admits null", schema: `{"type":"integer","nullable":true}`,
+			body: `null`, valid: true, wantType: "integer", wantNullable: true,
+		},
+		{
+			name: "explicit nullable number admits null", schema: `{"type":"number","nullable":true}`,
+			body: `null`, valid: true, wantType: "number", wantNullable: true,
+		},
+		{
+			name: "explicit nullable string admits null", schema: `{"type":"string","nullable":true}`,
+			body: `null`, valid: true, wantType: "string", wantNullable: true,
+		},
+		{
+			name: "explicit nullable array admits null", schema: `{"type":"array","items":{},"nullable":true}`,
+			body: `null`, valid: true, wantType: "array", wantNullable: true,
+		},
+		{
+			name: "explicit nullable object admits null", schema: `{"type":"object","nullable":true}`,
+			body: `null`, valid: true, wantType: "object", wantNullable: true,
+		},
+		{
+			name: "nullable keeps enum active", schema: `{"type":"string","nullable":true,"enum":["x"]}`,
+			body: `null`, wantType: "string", wantNullable: true, wantKeywords: []string{"enum"},
+		},
+		{
+			name: "nullable does not infer type", schema: `{"nullable":true,"minLength":2}`,
+			body: `1`, valid: true,
+		},
+		{
+			name: "string rules ignore numbers", schema: `{"minLength":2,"pattern":"^x+$","format":"date"}`,
+			body: `1`, valid: true,
+		},
+		{
+			name: "number rules ignore strings", schema: `{"minimum":2,"multipleOf":2,"format":"int32"}`,
+			body: `"not a number"`, valid: true,
+		},
+		{
+			name: "array rules ignore booleans", schema: `{"minItems":2,"items":{"type":"string"}}`,
+			body: `true`, valid: true,
+		},
+		{
+			name: "object rules ignore null",
+			schema: `{"minProperties":1,"required":["value"],` +
+				`"properties":{"value":{"type":"string"}}}`,
+			body: `null`, valid: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed := mustParseSchema(t, test.schema, "")
+			require.Equal(t, test.wantType, parsed.KindValidation.Type)
+			require.Equal(t, test.wantNullable, parsed.KindValidation.Nullable)
+
+			errs := parsed.Validate(json.RawMessage(test.body))
+			if test.valid {
+				require.Empty(t, errs)
+
+				return
+			}
+
+			require.Equal(t, test.wantKeywords, validationErrorKeywords(errs))
+		})
+	}
+}
+
+// TestValidationReportsSiblingFailuresInStableRuleOrder locks public error identity and order.
+func TestValidationReportsSiblingFailuresInStableRuleOrder(t *testing.T) {
+	t.Parallel()
+
+	parsed := mustParseSchema(t, `{
+		"type":"string",
+		"enum":["x"],
+		"minLength":2,
+		"pattern":"^x+$"
+	}`, "")
+
+	errs := parsed.Validate(json.RawMessage(`null`))
+	require.Equal(t, []string{"type", "enum"}, validationErrorKeywords(errs))
+	require.Equal(t, []string{
+		"instance # schema #/paths/~1things/post/requestBody/content/application~1json/schema " +
+			"keyword type: got null, want string",
+		"instance # schema #/paths/~1things/post/requestBody/content/application~1json/schema " +
+			"keyword enum: value is not an allowed member",
+	}, errorStrings(errs))
+}
+
+// TestParseValidatesDefaultsBySameObjectTypeAndLeavesThemRuntimeInert locks default semantics.
+func TestParseValidatesDefaultsBySameObjectTypeAndLeavesThemRuntimeInert(t *testing.T) {
+	t.Parallel()
+
+	validDefaults := []struct {
+		name   string
+		schema string
+	}{
+		{name: "boolean", schema: `{"type":"boolean","default":false}`},
+		{name: "integer", schema: `{"type":"integer","default":1.0}`},
+		{name: "number", schema: `{"type":"number","default":1.5}`},
+		{name: "string", schema: `{"type":"string","default":"fallback"}`},
+		{name: "array", schema: `{"type":"array","items":{},"default":[]}`},
+		{name: "object", schema: `{"type":"object","default":{}}`},
+		{name: "nullable null", schema: `{"type":"string","nullable":true,"default":null}`},
+	}
+	for _, test := range validDefaults {
+		t.Run("accepts "+test.name, func(t *testing.T) {
+			t.Parallel()
+
+			mustParseSchema(t, test.schema, "")
+		})
+	}
+
+	invalidDefaults := []struct {
+		name   string
+		schema string
+	}{
+		{name: "boolean", schema: `{"type":"boolean","default":0}`},
+		{name: "integer", schema: `{"type":"integer","default":1.5}`},
+		{name: "number", schema: `{"type":"number","default":"1"}`},
+		{name: "string", schema: `{"type":"string","default":null}`},
+		{name: "array", schema: `{"type":"array","items":{},"default":{}}`},
+		{name: "object", schema: `{"type":"object","default":[]}`},
+	}
+	for _, test := range invalidDefaults {
+		t.Run("rejects "+test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse(openAPISpec(test.schema, "", false))
+			require.Nil(t, parsed)
+			require.ErrorContains(t, err, "/default")
+			require.ErrorContains(t, err, "must conform to type")
+		})
+	}
+
+	parsed := mustParseSchema(t, `{"type":"string","default":"x","minLength":2}`, "")
+	require.Empty(t, parsed.Validate(nil))
+	require.Empty(t, parsed.Validate(json.RawMessage(`"ok"`)))
+	require.Equal(t, []string{"minLength"}, validationErrorKeywords(parsed.Validate(json.RawMessage(`"x"`))))
+
+	required := mustParseSchemaWithRequired(t, `{"type":"string","default":"fallback"}`, "", true)
+	require.Equal(t, []string{"requestBody"}, validationErrorKeywords(required.Validate(nil)))
+}
+
+// validationErrorKeywords returns the stable keyword identity of each validation error.
+func validationErrorKeywords(errs []error) []string {
+	keywords := make([]string, len(errs))
+	for index, err := range errs {
+		parts := strings.SplitN(err.Error(), " keyword ", 2)
+		if len(parts) != 2 {
+			keywords[index] = err.Error()
+
+			continue
+		}
+
+		keywords[index] = strings.SplitN(parts[1], ":", 2)[0]
+	}
+
+	return keywords
+}
+
 // TestParseAppliesPatternOptionOncePerPattern preserves caller-owned option state.
 func TestParseAppliesPatternOptionOncePerPattern(t *testing.T) {
 	t.Parallel()
