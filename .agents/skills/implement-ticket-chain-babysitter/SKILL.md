@@ -7,7 +7,10 @@ description: Babysits the repository's implementation-ticket chain in a named tr
 
 GOAL
 
-Keep the implementation-ticket train rolling until every ticket in [`issues.txt`](issues.txt) is handled to completion. You are the babysitter: start the workflow, watch it, and make the smallest safe intervention needed to keep it moving. Be hands-off while normal work is running; do not continuously inspect GitHub or interfere with healthy agents. Diagnose only after the systemd service exits or after the same ticket has remained active across four consecutive 20-minute checks. Do not merely report the first failure. Do not create subagents.
+Keep the implementation-ticket train rolling until every ticket in [`issues.txt`](issues.txt) is handled to completion. 
+You are the babysitter: start the workflow, watch it, and make the smallest safe intervention needed to keep it moving. 
+Be hands-off while normal work is running; do not continuously inspect GitHub or interfere with healthy agents. 
+Diagnose only after the systemd service exits or after no log changes since 15+ min ago or when the same issue takes longer than 90 minutes.
 
 INPUTS
 
@@ -42,7 +45,7 @@ First inspect whether the service is already running:
 "$STATUS_SCRIPT"
 ```
 
-If it is active, do not launch another workflow. Begin the 20-minute monitoring cycle. If it is inactive, failed, or no longer loaded, inspect its latest logs before deciding whether to start or recover it:
+If it is active, do not launch another workflow. Begin the 5-minute monitoring cycle. If it is inactive, failed, or no longer loaded, inspect its latest logs before deciding whether to start or recover it:
 
 ```bash
 "$LOGS_SCRIPT" --no-pager -n 20
@@ -63,26 +66,38 @@ After every launch or recovery attempt, wait with a direct command:
 sleep 1200
 ```
 
-At every 20-minute check, always inspect service status first, then read the last 20 log lines:
+At every 5-minute check, always inspect service status first, then read the last 20 log lines:
 
 ```bash
 "$STATUS_SCRIPT"
 "$LOGS_SCRIPT" --no-pager -n 20
 ```
 
-Do not combine the sleep, status, or logs commands into a polling script. Repeat every 20 minutes while work is actively progressing.
+Do not combine the sleep, status, or logs commands into a polling script. Repeat every 5 minutes while work is actively progressing.
+
+Make sure to archive agents when the n+2th issue is busy. For instance if issue 92 is busy, archive all agents from issue 90 or less.
+Find agents using:
+
+```bash
+paseo ls --json | jq -r '.[] | select(.status != "closed") | [.id] | @tsv'
+```
+
+Archive agent with:
+```bash
+paseo archive --force "$id"
+```
 
 ARBITRATION AND KEEPING IT MOVING
 
-Normally, each 20-minute check is systemd-only. Use `status.sh`, read only the last 20 lines through `logs.sh`, identify the active ticket, and otherwise leave the workflow alone. Do not run `gh`, inspect repository state, or message agents merely because work is taking time.
+Normally, each 5-minute check is systemd-only. Use `status.sh`, read only the last 20 lines through `logs.sh`, identify the active ticket, and otherwise leave the workflow alone. Do not run `gh`, inspect repository state, or message agents merely because work is taking time.
 
-Track in your reasoning how many consecutive 20-minute checks have shown the same active ticket. Movement to another ticket resets that count. Only when the service exits or the same ticket remains active for four consecutive checks (about 80 minutes) may you inspect read-only `git`, `gh`, and `paseo inspect` evidence and judge whether intervention is needed.
+Track in your reasoning how many consecutive 5-minute checks have shown the same active ticket. Movement to another ticket resets that count. Only when the service exits or the same ticket remains active for four consecutive checks (about 80 minutes) may you inspect read-only `git`, `gh`, and `paseo inspect` evidence and judge whether intervention is needed.
 
 Progress includes a new commit or push, a new PR, an advanced workflow stage, a completed review/check/fix cycle, a merge, a closed ticket, or movement to the next ticket. Normal long review/manager work is not automatically a stall.
 
 If the service is still active:
-- Before the fourth consecutive check on the same ticket, always sleep another 20 minutes without further investigation.
-- At the fourth check, inspect GitHub, Git, and relevant Paseo agents. Make a judgment: healthy work may simply need more time, in which case wait another 20 minutes. Intervene only for a concrete blocker or genuine lack of progress.
+- Before the fourth consecutive check on the same ticket, always sleep another round without further investigation.
+- At the fourth check, inspect GitHub, Git, and relevant Paseo agents. Make a judgment: healthy work may simply need more time, wait max 15 min of no logs moving. Intervene only for a concrete blocker or genuine lack of progress.
 - You may message an existing agent directly when, after that investigation, it is the smallest safe intervention. Do not edit code yourself.
 - Do not stop or restart healthy long-running work. When stopping is actually required, always use `"$STOP_SCRIPT"`.
 
@@ -91,7 +106,7 @@ If the service exits nonzero:
 2. Inspect current Git, GitHub, and Paseo state.
 3. Determine the actual failed boundary instead of blindly repeating the workflow.
 4. Choose the smallest resume step and a targeted babysitter prompt.
-5. Relaunch through `start.sh`, then return to the 20-minute checks.
+5. Relaunch through `start.sh`, then return to the 5-minute checks.
 
 Resume-step meanings:
 - `ticket`: start the selected ticket from the beginning.
@@ -136,9 +151,9 @@ NO-PROGRESS RULE
 Track this only in your own reasoning; do not create a counter file or add logic to the workflow script.
 
 - Before retrying, explain to yourself why the prior attempt got stuck and change the prompt or resume point accordingly. Never repeat blindly.
-- Allow at most two recovery attempts at the same state when neither attempt makes observable progress.
+- Allow at most three recovery attempts at the same state when neither attempt makes observable progress.
 - Any observable progress resets the no-progress count to zero, even if a later failure occurs.
-- After two no-progress recovery attempts, stop. Report the attempted interventions, diagnosis, relevant systemd journal evidence, current ticket/stage/agent IDs, and what needs user judgment.
+- After three no-progress recovery attempts, stop. Report the attempted interventions, diagnosis, relevant systemd journal evidence, current ticket/stage/agent IDs, and what needs user judgment.
 
 COMPLETION
 
