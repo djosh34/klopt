@@ -226,8 +226,8 @@ func TestEvaluateStringFormatBoundariesRemainDeterministic(t *testing.T) {
 		},
 		{
 			name: "email", format: "email",
-			valid:   []string{"first.last@example.com", `"John Doe"@example.com`, "postmaster@[192.0.2.1]", "postmaster@[IPv6:2001:db8::1]", "postmaster@[TAG:value]", "postmaster@[ABCD:value]"},
-			invalid: []string{"a..b@example.com", ".a@example.com", "a@-example.com", "a@[256.0.0.1]", "a@[IPv6:2001:::1]", `"a".example.com`},
+			valid:   []string{"first.last@example.com", `"John Doe"@example.com`, "postmaster@[192.0.2.1]", "postmaster@[IPv6:2001:db8::1]", "postmaster@[IPv6:::192.0.2.1]", "postmaster@[IPv6:1::192.0.2.1]", "postmaster@[IPv6:1:db8::192.0.2.1]", "postmaster@[TAG:value]", "postmaster@[ABCD:value]"},
+			invalid: []string{"a..b@example.com", ".a@example.com", "a@-example.com", "a@[256.0.0.1]", "a@[IPv6:2001:::1]", "postmaster@[IPv6:2001:db8:::192.0.2.1]", `"a".example.com`},
 		},
 		{
 			name: "ipv4", format: "ipv4",

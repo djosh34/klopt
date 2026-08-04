@@ -376,6 +376,13 @@ func cleanEmailIPv6(value string) bool {
 		}
 
 		hexPart := value[:separator]
+		switch {
+		case strings.HasSuffix(hexPart, "::"):
+			return false
+		case strings.HasSuffix(hexPart, ":"):
+			hexPart += ":"
+		}
+
 		if strings.Contains(hexPart, "::") {
 			return cleanCompressedIPv6(hexPart, 4)
 		}
