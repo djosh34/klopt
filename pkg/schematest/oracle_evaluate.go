@@ -21,8 +21,14 @@ const (
 	oracleRuleExclusiveMaximum = "exclusiveMaximum"
 	// oracleRuleMultipleOf identifies exact numeric divisibility.
 	oracleRuleMultipleOf = "multipleOf"
-	// oracleRuleFormat identifies a numeric format constraint.
+	// oracleRuleFormat identifies a format constraint.
 	oracleRuleFormat = "format"
+	// oracleRuleMinLength identifies a string lower-length bound.
+	oracleRuleMinLength = "minLength"
+	// oracleRuleMaxLength identifies a string upper-length bound.
+	oracleRuleMaxLength = "maxLength"
+	// oracleRulePattern identifies a string pattern constraint.
+	oracleRulePattern = "pattern"
 
 	// oracleLevelPrefix separates a rule identity from an observed level.
 	oracleLevelPrefix = "level:"
@@ -114,6 +120,11 @@ func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrenc
 	}
 
 	evaluateNumberRules(&result, node, occurrence, value)
+
+	if result.err == nil {
+		evaluateStringRules(&result, node, occurrence, value)
+	}
+
 	result.valid = result.err == nil && len(result.failures) == 0
 
 	return result
