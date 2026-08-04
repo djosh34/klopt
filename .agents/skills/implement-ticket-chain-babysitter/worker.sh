@@ -431,6 +431,7 @@ After completing the entire review, post exactly one top-level GitHub pull-reque
 $marker
 Include the complete actionable findings with ticket/specification basis, or an explicit no-findings result. Post the comment even when there are no findings. Do not post any other GitHub comment or review. Never message any agent or fixer. Do not edit code.
 
+Never read host plan urls, or https://lima-opencode-vm.tail2fc05a.ts.net/* urls, only use the issue urls as guidance
 Never ignore errors. Do not create subagents.
 EOF
 )" )
@@ -499,6 +500,7 @@ Do not create subagents.
 
 The pull request must target $default_branch, link the leaf with the documented syntax 'Closes #$leaf_number', and reference the applicable wayfinder context at $wayfinder_issue.
 
+Never read host plan urls, or https://lima-opencode-vm.tail2fc05a.ts.net/* urls, only use the issue urls as guidance
 Never ignore errors.
 EOF
 }
