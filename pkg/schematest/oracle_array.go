@@ -109,6 +109,8 @@ func evaluateArrayCountRule(
 func mergeEvaluation(result *evaluation, child evaluation) {
 	result.applicable = append(result.applicable, child.applicable...)
 	result.observed = append(result.observed, child.observed...)
+	result.allOf = append(result.allOf, child.allOf...)
+	result.anyOf = append(result.anyOf, child.anyOf...)
 
 	result.failures = append(result.failures, child.failures...)
 	if child.err != nil {

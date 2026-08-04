@@ -29,6 +29,10 @@ const (
 	oracleRuleMaxLength = "maxLength"
 	// oracleRulePattern identifies a string pattern constraint.
 	oracleRulePattern = "pattern"
+	// oracleRuleAllOf identifies an allOf composition occurrence.
+	oracleRuleAllOf = "allOf"
+	// oracleRuleAnyOf identifies an anyOf composition occurrence and aggregate failure.
+	oracleRuleAnyOf = "anyOf"
 
 	// oracleLevelPrefix separates a rule identity from an observed level.
 	oracleLevelPrefix = "level:"
@@ -52,11 +56,20 @@ type levelIdentity struct {
 	level string
 }
 
+// compositionTruth records the authored branch verdicts for one composition occurrence.
+type compositionTruth struct {
+	ruleIdentity
+
+	branches []bool
+}
+
 // evaluation is the complete clean evaluation of one JSON value.
 type evaluation struct {
 	valid      bool
 	applicable []ruleIdentity
 	observed   []levelIdentity
+	allOf      []compositionTruth
+	anyOf      []compositionTruth
 	failures   []failureIdentity
 	err        error
 }
@@ -98,7 +111,7 @@ func evaluate(model *schemaModel, value *jsonValue) evaluation {
 	return result
 }
 
-// evaluateNode evaluates the primitive rules in their canonical order.
+// evaluateNode evaluates one schema occurrence and its compositions in canonical order.
 func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrence) evaluation {
 	result := evaluation{}
 	if node == nil || node.schemaShape == nil {
@@ -131,6 +144,10 @@ func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrenc
 
 	if result.err == nil {
 		evaluateObjectRules(&result, node, occurrence, value)
+	}
+
+	if result.err == nil {
+		evaluateCompositionRules(&result, node, occurrence, value)
 	}
 
 	result.valid = result.err == nil && len(result.failures) == 0
