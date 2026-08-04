@@ -432,6 +432,137 @@ func TestParseRetainsLeadingLookaheadPattern(t *testing.T) {
 	require.ErrorContains(t, errors.Join(validation.Validate(json.RawMessage(`"ba"`))...), "keyword pattern")
 }
 
+// TestParseAdmitsNamedECMAScript51PatternFamilies pins the production Parse seam.
+func TestParseAdmitsNamedECMAScript51PatternFamilies(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pattern string
+		valid   string
+		invalid string
+	}{
+		{name: "literal", pattern: `^é$`, valid: "é", invalid: "e"},
+		{name: "UTF-16 literal units", pattern: `^..$`, valid: "😀", invalid: "x"},
+		{name: "dot", pattern: `^.$`, valid: "x", invalid: "\n"},
+		{name: "anchors", pattern: `^a$`, valid: "a", invalid: "aa"},
+		{name: "alternation", pattern: `^(?:cat|dog)$`, valid: "dog", invalid: "cow"},
+		{name: "groups", pattern: `^(a)(?:b)$`, valid: "ab", invalid: "a"},
+		{name: "classes", pattern: `^[^a-c][a-z-]$`, valid: "z-", invalid: "ab"},
+		{name: "empty and universal classes", pattern: `^(?:[]|[^])$`, valid: "x", invalid: "xx"},
+		{
+			name:    "shorthand classes and ES5 whitespace",
+			pattern: `^\d\D\w\W\s\S$`,
+			valid:   "7a_-\u180ex",
+			invalid: "7a_-\u205fx",
+		},
+		{name: "word boundaries", pattern: `^\bcat\Bdog$`, valid: "catdog", invalid: "scatterdog"},
+		{name: "class backspace", pattern: `^[\b]$`, valid: "\b", invalid: "x"},
+		{
+			name:    "escapes",
+			pattern: `^\f\n\r\t\v\0\x41\u0042\cC\ca\/\-\#\,$`,
+			valid:   "\f\n\r\t\v\x00AB\x03\x01/-#,",
+			invalid: "\f\n\r\t\v\x00AB\x03\x01/-#.",
+		},
+		{
+			name:    "greedy and lazy quantifiers",
+			pattern: `^a*?b+?c??d{0}e{1,}f{2,3}?$`,
+			valid:   "beff",
+			invalid: "bef",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse(openAPISpec(
+				`{"type":"string","pattern":`+strconv.Quote(test.pattern)+`}`,
+				"",
+				false,
+			))
+			require.NoError(t, err)
+
+			validation := parsed["checkThing"].Body
+			validBody, err := json.Marshal(test.valid)
+			require.NoError(t, err)
+			invalidBody, err := json.Marshal(test.invalid)
+			require.NoError(t, err)
+			require.Empty(t, validation.Validate(validBody))
+			require.NotEmpty(t, validation.Validate(invalidBody))
+		})
+	}
+}
+
+// TestParseRejectsNamedOutsideProfileECMAScript51Patterns pins Parse failures at /pattern.
+func TestParseRejectsNamedOutsideProfileECMAScript51Patterns(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pattern string
+	}{
+		{name: "backreferences", pattern: `(a)\1`},
+		{name: "surrogate escapes", pattern: `\uD800`},
+		{name: "lookbehind", pattern: `(?<=a)b`},
+		{name: "named groups", pattern: `(?<name>a)`},
+		{name: "named references", pattern: `\k<name>`},
+		{name: "inline modes", pattern: `(?i:a)`},
+		{name: "atomic groups", pattern: `(?>a)`},
+		{name: "control verbs", pattern: `(*FAIL)`},
+		{name: "Unicode property escapes", pattern: `\p{L}`},
+		{name: "Unicode code-point escapes", pattern: `\u{41}`},
+		{name: "POSIX classes", pattern: `[[:alpha:]]`},
+		{name: "character-class set operations", pattern: `[a&&b]`},
+		{name: "possessive quantifiers", pattern: `a*+`},
+		{name: "malformed range", pattern: `[z-a]`},
+		{name: "malformed group", pattern: `(`},
+		{name: "unmatched group close", pattern: `)`},
+		{name: "malformed class", pattern: `[`},
+		{name: "malformed escape", pattern: `\x0g`},
+		{name: "decimal escape after zero", pattern: `\01`},
+		{name: "malformed quantifier", pattern: `a{2,1}`},
+		{name: "malformed repeated quantifier", pattern: `a**`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Parse(openAPISpec(
+				`{"type":"string","pattern":`+strconv.Quote(test.pattern)+`}`,
+				"",
+				false,
+			))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "/pattern")
+		})
+	}
+
+	t.Run("malformed UTF-8", func(t *testing.T) {
+		t.Parallel()
+
+		pattern := string([]byte{'a', 0xff})
+		_, err := Parse(openAPISpec(
+			`{"type":"string","pattern":"`+pattern+`"}`,
+			"",
+			false,
+		))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "UTF-8")
+		require.ErrorContains(t, err, "/pattern")
+	})
+
+	t.Run("unpaired JSON surrogate escape", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := Parse(openAPISpec(`{"type":"string","pattern":"\ud800"}`, "", false))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "surrogate")
+		require.ErrorContains(t, err, "/pattern")
+	})
+}
+
 // TestParseExposesCompiledGraphAndCopiesInput covers the supported construction seam.
 func TestParseExposesCompiledGraphAndCopiesInput(t *testing.T) {
 	t.Parallel()

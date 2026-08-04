@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/djosh34/klopt/pkg/internal/oas"
 	"github.com/djosh34/klopt/pkg/internal/stringlanguage" //nolint:depguard // Required shared module; the plan forbids changing lint config.
@@ -762,6 +763,14 @@ func (compiler *schemaCompiler) compileString(
 	validation.StringValidation.MaxLength = maximum
 
 	if raw, ok := members["pattern"]; ok {
+		if !utf8.Valid(raw) {
+			return keywordError(pointer, "pattern", errors.New("source is not valid UTF-8"))
+		}
+
+		if _, err := jsonvalue.Parse(raw); err != nil {
+			return keywordError(pointer, "pattern", err)
+		}
+
 		pattern, err := decodeString(raw, "pattern")
 		if err != nil {
 			return keywordError(pointer, "pattern", err)
