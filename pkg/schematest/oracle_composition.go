@@ -7,22 +7,24 @@ import (
 
 // evaluateCompositionRules evaluates all conjunctive and alternative compositions.
 func evaluateCompositionRules(
+	context *evaluationContext,
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	value *jsonValue,
 ) {
-	evaluateAllOfRules(result, node, occurrence, value)
+	evaluateAllOfRules(context, result, node, occurrence, value)
 
 	if result.err != nil {
 		return
 	}
 
-	evaluateAnyOfRules(result, node, occurrence, value)
+	evaluateAnyOfRules(context, result, node, occurrence, value)
 }
 
 // evaluateAllOfRules evaluates every allOf branch against the same complete value.
 func evaluateAllOfRules(
+	context *evaluationContext,
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -33,14 +35,14 @@ func evaluateAllOfRules(
 	}
 
 	truthIndex := len(result.allOf)
-	result.allOf = append(result.allOf, compositionTruth{
+	appendAllOfTruth(result, compositionTruth{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleAllOf),
 		branches:     make([]bool, len(node.allOf)),
 	})
 
 	for index, child := range node.allOf {
-		childOccurrence := rebaseCompositionOccurrence(node, child, occurrence, "allOf", index)
-		childResult := evaluateNode(child, value, childOccurrence)
+		childOccurrence := rebaseCompositionOccurrence(child, occurrence, "allOf", index)
+		childResult := context.evaluateNode(child, value, childOccurrence)
 
 		if childResult.err != nil {
 			result.err = fmt.Errorf("%s branch %d: %w", occurrence.usePointer+"/allOf", index, childResult.err)
@@ -55,6 +57,7 @@ func evaluateAllOfRules(
 
 // evaluateAnyOfRules evaluates every anyOf branch and applies the aggregate failure closure.
 func evaluateAnyOfRules(
+	context *evaluationContext,
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -65,17 +68,19 @@ func evaluateAnyOfRules(
 	}
 
 	truthIndex := len(result.anyOf)
-	result.anyOf = append(result.anyOf, compositionTruth{
+	appendAnyOfTruth(result, compositionTruth{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleAnyOf),
 		branches:     make([]bool, len(node.anyOf)),
 	})
 
 	branchFailures := make([]failureIdentity, 0)
+	branchFailureRecords := &evaluationRecordList[failureIdentity]{}
+	branchFailureCount := 0
 	anyBranchValid := false
 
 	for index, child := range node.anyOf {
-		childOccurrence := rebaseCompositionOccurrence(node, child, occurrence, "anyOf", index)
-		childResult := evaluateNode(child, value, childOccurrence)
+		childOccurrence := rebaseCompositionOccurrence(child, occurrence, "anyOf", index)
+		childResult := context.evaluateNode(child, value, childOccurrence)
 
 		if childResult.err != nil {
 			result.err = fmt.Errorf("%s branch %d: %w", occurrence.usePointer+"/anyOf", index, childResult.err)
@@ -84,10 +89,7 @@ func evaluateAnyOfRules(
 		}
 
 		result.anyOf[truthIndex].branches[index] = childResult.valid
-		result.applicable = append(result.applicable, childResult.applicable...)
-		result.observed = append(result.observed, childResult.observed...)
-		result.allOf = append(result.allOf, childResult.allOf...)
-		result.anyOf = append(result.anyOf, childResult.anyOf...)
+		mergeEvaluationRecords(result, childResult)
 
 		if childResult.valid {
 			anyBranchValid = true
@@ -95,30 +97,33 @@ func evaluateAnyOfRules(
 			continue
 		}
 
-		branchFailures = append(branchFailures, childResult.failures...)
+		branchFailureCount += childResult.failureCount
+		branchFailureRecords.appendList(&childResult.records.failures, occurrenceTransform{})
+
+		if !childResult.fromCache || childResult.materialized {
+			branchFailures = append(branchFailures, childResult.failures...)
+		}
 	}
 
 	if anyBranchValid {
 		return
 	}
 
+	result.failureCount += branchFailureCount
+	ensureEvaluationRecords(result)
+	result.records.failures.appendList(branchFailureRecords, occurrenceTransform{})
 	result.failures = append(result.failures, branchFailures...)
-	result.failures = append(
-		result.failures,
-		makeRuleIdentity(occurrence, oracleRuleAnyOf),
-	)
+	appendFailure(result, makeRuleIdentity(occurrence, oracleRuleAnyOf))
 }
 
 // rebaseCompositionOccurrence assigns a composition branch's use site and current instance.
 func rebaseCompositionOccurrence(
-	parent *schemaNode,
 	child *schemaNode,
 	occurrence schemaOccurrence,
 	composition string,
 	index int,
 ) schemaOccurrence {
 	return rebaseChildOccurrence(
-		parent,
 		child,
 		occurrence.usePointer+"/"+composition+"/"+strconv.Itoa(index),
 		occurrence.instanceTemplate,

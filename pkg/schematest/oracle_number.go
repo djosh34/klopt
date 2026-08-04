@@ -86,7 +86,7 @@ func evaluateNumberBoundRule(
 	}
 
 	identity := makeRuleIdentity(occurrence, rule)
-	result.applicable = append(result.applicable, identity)
+	appendApplicable(result, identity)
 
 	comparison, err := bound.compare(value)
 	if err != nil {
@@ -101,7 +101,7 @@ func evaluateNumberBoundRule(
 	}
 
 	if violated {
-		result.failures = append(result.failures, identity)
+		appendFailure(result, identity)
 	} else {
 		appendNumericObservation(result, identity)
 	}
@@ -116,7 +116,7 @@ func evaluateNumberMultipleOfRule(
 	value, divisor *exactNumber,
 ) error {
 	identity := makeRuleIdentity(occurrence, oracleRuleMultipleOf)
-	result.applicable = append(result.applicable, identity)
+	appendApplicable(result, identity)
 
 	multiple, err := value.isMultipleOf(divisor)
 	if err != nil {
@@ -126,7 +126,7 @@ func evaluateNumberMultipleOfRule(
 	if multiple {
 		appendNumericObservation(result, identity)
 	} else {
-		result.failures = append(result.failures, identity)
+		appendFailure(result, identity)
 	}
 
 	return nil
@@ -140,7 +140,7 @@ func evaluateNumberFormatRule(
 	format schemaFormat,
 ) error {
 	identity := makeRuleIdentity(occurrence, oracleRuleFormat)
-	result.applicable = append(result.applicable, identity)
+	appendApplicable(result, identity)
 
 	matches, err := numericFormatMatches(value, format)
 	if err != nil {
@@ -150,7 +150,7 @@ func evaluateNumberFormatRule(
 	if matches {
 		appendNumericObservation(result, identity)
 	} else {
-		result.failures = append(result.failures, identity)
+		appendFailure(result, identity)
 	}
 
 	return nil
@@ -158,7 +158,7 @@ func evaluateNumberFormatRule(
 
 // appendNumericObservation records one successful numeric rule at its stable level.
 func appendNumericObservation(result *evaluation, identity ruleIdentity) {
-	result.observed = append(result.observed, levelIdentity{
+	appendObserved(result, levelIdentity{
 		ruleIdentity: identity,
 		level:        oracleNumericValidLevel,
 	})

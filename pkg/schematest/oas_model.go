@@ -22,6 +22,7 @@ type schemaOccurrence struct {
 	usePointer       string
 	targetPointer    string
 	instanceTemplate string
+	reference        bool // This occurrence is a Reference Object use site.
 }
 
 type exactCount struct {

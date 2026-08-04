@@ -65,13 +65,35 @@ type compositionTruth struct {
 
 // evaluation is the complete clean evaluation of one JSON value.
 type evaluation struct {
-	valid      bool
-	applicable []ruleIdentity
-	observed   []levelIdentity
-	allOf      []compositionTruth
-	anyOf      []compositionTruth
-	failures   []failureIdentity
-	err        error
+	valid        bool
+	applicable   []ruleIdentity
+	observed     []levelIdentity
+	allOf        []compositionTruth
+	anyOf        []compositionTruth
+	failures     []failureIdentity
+	failureCount int
+	fromCache    bool
+	materialized bool
+	records      *evaluationRecords
+	err          error
+}
+
+// evaluationCacheKey identifies one shared shape/value/instance evaluation.
+type evaluationCacheKey struct {
+	shape            *schemaShape
+	value            *jsonValue
+	instanceTemplate string
+}
+
+// evaluationCacheEntry retains a result and the occurrence that authored its paths.
+type evaluationCacheEntry struct {
+	occurrence schemaOccurrence
+	result     evaluation
+}
+
+// evaluationContext carries one complete evaluation's shared-shape cache.
+type evaluationContext struct {
+	cache map[evaluationCacheKey]evaluationCacheEntry
 }
 
 // String renders the stable rule portion of an obligation identity.
@@ -105,17 +127,48 @@ func evaluate(model *schemaModel, value *jsonValue) evaluation {
 		return result
 	}
 
-	result = evaluateNode(model.root, value, model.root.occurrence)
-	result.valid = result.err == nil && len(result.failures) == 0
+	context := evaluationContext{cache: make(map[evaluationCacheKey]evaluationCacheEntry)}
+	result = context.evaluateNode(model.root, value, model.root.occurrence)
+	result.valid = result.err == nil && result.failureCount == 0
 
 	return result
 }
 
 // evaluateNode evaluates one schema occurrence and its compositions in canonical order.
 func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrence) evaluation {
-	result := evaluation{}
+	context := evaluationContext{cache: make(map[evaluationCacheKey]evaluationCacheEntry)}
+
+	return context.evaluateNode(node, value, occurrence)
+}
+
+// evaluateNode evaluates one schema occurrence with one evaluation-local cache.
+//
+//nolint:cyclop // Canonical rule phases intentionally remain explicit and ordered.
+func (context *evaluationContext) evaluateNode(
+	node *schemaNode,
+	value *jsonValue,
+	occurrence schemaOccurrence,
+) evaluation {
+	result := evaluation{records: newEvaluationRecords()}
 	if node == nil || node.schemaShape == nil {
 		result.err = errors.New("schema occurrence has no shape")
+
+		return result
+	}
+
+	key := evaluationCacheKey{
+		shape:            node.schemaShape,
+		value:            value,
+		instanceTemplate: occurrence.instanceTemplate,
+	}
+	if cached, exists := context.cache[key]; exists {
+		result = cached.result
+		result.records = result.records.rebased(cached.occurrence, occurrence)
+
+		result.fromCache = true
+		if occurrence.reference && result.recordsMaterialized() {
+			result.materializeRecords()
+		}
 
 		return result
 	}
@@ -139,34 +192,38 @@ func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrenc
 	}
 
 	if result.err == nil {
-		evaluateArrayRules(&result, node, occurrence, value)
+		evaluateArrayRules(context, &result, node, occurrence, value)
 	}
 
 	if result.err == nil {
-		evaluateObjectRules(&result, node, occurrence, value)
+		evaluateObjectRules(context, &result, node, occurrence, value)
 	}
 
 	if result.err == nil {
-		evaluateCompositionRules(&result, node, occurrence, value)
+		evaluateCompositionRules(context, &result, node, occurrence, value)
 	}
 
-	result.valid = result.err == nil && len(result.failures) == 0
+	result.valid = result.err == nil && result.failureCount == 0
+
+	if result.err == nil {
+		result.fromCache = false
+		context.cache[key] = evaluationCacheEntry{
+			occurrence: occurrence,
+			result:     result,
+		}
+	}
 
 	return result
 }
 
 // rebaseChildOccurrence carries a direct schema shape's evaluated use site and instance path to a child.
 func rebaseChildOccurrence(
-	parent *schemaNode,
 	child *schemaNode,
 	usePointer string,
 	instanceTemplate string,
 ) schemaOccurrence {
 	childOccurrence := child.occurrence
-	if parent.occurrence.usePointer == parent.occurrence.targetPointer {
-		childOccurrence.usePointer = usePointer
-	}
-
+	childOccurrence.usePointer = usePointer
 	childOccurrence.instanceTemplate = instanceTemplate
 
 	return childOccurrence
@@ -177,7 +234,7 @@ func rebaseChildOccurrence(
 // JSON kind while admitting every kind, including null.
 func evaluateTypeRule(result *evaluation, node *schemaNode, occurrence schemaOccurrence, value *jsonValue) {
 	identity := makeRuleIdentity(occurrence, oracleRuleType)
-	result.applicable = append(result.applicable, identity)
+	appendApplicable(result, identity)
 
 	matches, err := valueMatchesNodeKind(value, node.kind, node.nullable)
 	if err != nil {
@@ -187,12 +244,12 @@ func evaluateTypeRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 	}
 
 	if !matches {
-		result.failures = append(result.failures, identity)
+		appendFailure(result, identity)
 
 		return
 	}
 
-	result.observed = append(result.observed, levelIdentity{
+	appendObserved(result, levelIdentity{
 		ruleIdentity: identity,
 		level:        jsonKindName(value.kind),
 	})
@@ -246,7 +303,7 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 	}
 
 	identity := makeRuleIdentity(occurrence, oracleRuleEnum)
-	result.applicable = append(result.applicable, identity)
+	appendApplicable(result, identity)
 
 	for index, member := range node.enum {
 		equal, err := jsonSemanticEqual(value, member)
@@ -257,7 +314,7 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 		}
 
 		if equal {
-			result.observed = append(result.observed, levelIdentity{
+			appendObserved(result, levelIdentity{
 				ruleIdentity: identity,
 				level:        fmt.Sprintf("%s%d", oracleEnumLevelPrefix, index),
 			})
@@ -266,7 +323,15 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 		}
 	}
 
+	appendFailure(result, identity)
+}
+
+// appendFailure records one exact failure and its validity contribution.
+func appendFailure(result *evaluation, identity failureIdentity) {
 	result.failures = append(result.failures, identity)
+	ensureEvaluationRecords(result)
+	result.records.failures.append(identity)
+	result.failureCount++
 }
 
 // makeRuleIdentity creates a stable clean occurrence/rule identity.

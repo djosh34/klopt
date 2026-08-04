@@ -469,6 +469,7 @@ func newSchemaReferenceOccurrence(parsed *schemaNode, usePointer, instanceTempla
 			usePointer:       usePointer,
 			targetPointer:    parsed.occurrence.targetPointer,
 			instanceTemplate: instanceTemplate,
+			reference:        true,
 		},
 		schemaShape: parsed.schemaShape,
 	}

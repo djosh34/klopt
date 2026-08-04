@@ -24,6 +24,7 @@ const (
 
 // evaluateObjectRules applies object counts, requiredness, properties, and additional properties.
 func evaluateObjectRules(
+	context *evaluationContext,
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -46,13 +47,13 @@ func evaluateObjectRules(
 	}
 
 	memberNames := sortedObjectNames(value.object)
-	evaluateDeclaredProperties(result, node, occurrence, value.object, memberNames)
+	evaluateDeclaredProperties(context, result, node, occurrence, value.object, memberNames)
 
 	if result.err != nil {
 		return
 	}
 
-	evaluateAdditionalProperties(result, node, occurrence, value.object, memberNames)
+	evaluateAdditionalProperties(context, result, node, occurrence, value.object, memberNames)
 }
 
 // evaluateObjectCounts evaluates object member-count constraints in rule order.
@@ -96,15 +97,15 @@ func evaluateRequiredMembers(
 			appendObjectMemberOccurrence(occurrence, name),
 			oracleRuleRequired,
 		)
-		result.applicable = append(result.applicable, identity)
+		appendApplicable(result, identity)
 
 		if _, supplied := members[name]; !supplied {
-			result.failures = append(result.failures, identity)
+			appendFailure(result, identity)
 
 			continue
 		}
 
-		result.observed = append(result.observed, levelIdentity{
+		appendObserved(result, levelIdentity{
 			ruleIdentity: identity,
 			level:        oracleRequiredPresentLevel,
 		})
@@ -113,6 +114,7 @@ func evaluateRequiredMembers(
 
 // evaluateDeclaredProperties evaluates only supplied declared properties.
 func evaluateDeclaredProperties(
+	context *evaluationContext,
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -126,12 +128,11 @@ func evaluateDeclaredProperties(
 		}
 
 		propertyOccurrence := rebaseChildOccurrence(
-			node,
 			property,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)
-		propertyResult := evaluateNode(property, members[name], propertyOccurrence)
+		propertyResult := context.evaluateNode(property, members[name], propertyOccurrence)
 		mergeEvaluation(result, propertyResult)
 
 		if result.err != nil {
@@ -142,6 +143,7 @@ func evaluateDeclaredProperties(
 
 // evaluateAdditionalProperties evaluates supplied undeclared members.
 func evaluateAdditionalProperties(
+	context *evaluationContext,
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -155,12 +157,13 @@ func evaluateAdditionalProperties(
 
 		if node.additionalProperties != nil {
 			additionalOccurrence := rebaseChildOccurrence(
-				node,
 				node.additionalProperties,
 				occurrence.usePointer+"/additionalProperties",
 				appendInstanceToken(occurrence.instanceTemplate, name),
 			)
-			additionalResult := evaluateNode(node.additionalProperties, members[name], additionalOccurrence)
+			additionalResult := context.evaluateNode(
+				node.additionalProperties, members[name], additionalOccurrence,
+			)
 			mergeEvaluation(result, additionalResult)
 
 			if result.err != nil {
@@ -178,8 +181,8 @@ func evaluateAdditionalProperties(
 			appendObjectMemberOccurrence(occurrence, name),
 			oracleRuleAdditionalProperties,
 		)
-		result.applicable = append(result.applicable, identity)
-		result.failures = append(result.failures, identity)
+		appendApplicable(result, identity)
+		appendFailure(result, identity)
 	}
 }
 
@@ -193,7 +196,7 @@ func evaluateObjectCountRule(
 	minimum bool,
 ) error {
 	identity := makeRuleIdentity(occurrence, rule)
-	result.applicable = append(result.applicable, identity)
+	appendApplicable(result, identity)
 
 	actual, err := parseExactNumber(strconv.Itoa(count))
 	if err != nil {
@@ -211,9 +214,9 @@ func evaluateObjectCountRule(
 	}
 
 	if violated {
-		result.failures = append(result.failures, identity)
+		appendFailure(result, identity)
 	} else {
-		result.observed = append(result.observed, levelIdentity{
+		appendObserved(result, levelIdentity{
 			ruleIdentity: identity,
 			level:        oracleObjectValidLevel,
 		})

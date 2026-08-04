@@ -42,7 +42,7 @@ func evaluateStringRules(
 
 	if node.pattern != nil {
 		identity := makeRuleIdentity(occurrence, oracleRulePattern)
-		result.applicable = append(result.applicable, identity)
+		appendApplicable(result, identity)
 
 		matches, err := cleanPatternMatches(node.pattern, value.text)
 		if err != nil {
@@ -54,13 +54,13 @@ func evaluateStringRules(
 		if matches {
 			appendStringObservation(result, identity)
 		} else {
-			result.failures = append(result.failures, identity)
+			appendFailure(result, identity)
 		}
 	}
 
 	if isStringSchemaFormat(node.format) {
 		identity := makeRuleIdentity(occurrence, oracleRuleFormat)
-		result.applicable = append(result.applicable, identity)
+		appendApplicable(result, identity)
 
 		matches, err := cleanStringFormatMatches(value.text, node.format)
 		if err != nil {
@@ -72,7 +72,7 @@ func evaluateStringRules(
 		if matches {
 			appendStringObservation(result, identity)
 		} else {
-			result.failures = append(result.failures, identity)
+			appendFailure(result, identity)
 		}
 	}
 }
@@ -87,7 +87,7 @@ func evaluateStringLengthRule(
 	minimum bool,
 ) error {
 	identity := makeRuleIdentity(occurrence, rule)
-	result.applicable = append(result.applicable, identity)
+	appendApplicable(result, identity)
 
 	actual, err := parseExactNumber(strconv.Itoa(length))
 	if err != nil {
@@ -105,7 +105,7 @@ func evaluateStringLengthRule(
 	}
 
 	if violated {
-		result.failures = append(result.failures, identity)
+		appendFailure(result, identity)
 	} else {
 		appendStringObservation(result, identity)
 	}
@@ -115,7 +115,7 @@ func evaluateStringLengthRule(
 
 // appendStringObservation records one successful string rule at its stable level.
 func appendStringObservation(result *evaluation, identity ruleIdentity) {
-	result.observed = append(result.observed, levelIdentity{
+	appendObserved(result, levelIdentity{
 		ruleIdentity: identity,
 		level:        oracleStringValidLevel,
 	})

@@ -16,6 +16,7 @@ const (
 
 // evaluateArrayRules applies array counts and evaluates each existing item.
 func evaluateArrayRules(
+	context *evaluationContext,
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -51,13 +52,12 @@ func evaluateArrayRules(
 
 	for index, item := range value.array {
 		itemOccurrence := rebaseChildOccurrence(
-			node,
 			node.items,
 			occurrence.usePointer+"/items",
 			appendInstanceToken(occurrence.instanceTemplate, strconv.Itoa(index)),
 		)
 
-		itemResult := evaluateNode(node.items, item, itemOccurrence)
+		itemResult := context.evaluateNode(node.items, item, itemOccurrence)
 		mergeEvaluation(result, itemResult)
 
 		if result.err != nil {
@@ -76,7 +76,7 @@ func evaluateArrayCountRule(
 	minimum bool,
 ) error {
 	identity := makeRuleIdentity(occurrence, rule)
-	result.applicable = append(result.applicable, identity)
+	appendApplicable(result, identity)
 
 	actual, err := parseExactNumber(strconv.Itoa(count))
 	if err != nil {
@@ -94,9 +94,9 @@ func evaluateArrayCountRule(
 	}
 
 	if violated {
-		result.failures = append(result.failures, identity)
+		appendFailure(result, identity)
 	} else {
-		result.observed = append(result.observed, levelIdentity{
+		appendObserved(result, levelIdentity{
 			ruleIdentity: identity,
 			level:        oracleArrayValidLevel,
 		})
@@ -105,15 +105,34 @@ func evaluateArrayCountRule(
 	return nil
 }
 
-// mergeEvaluation appends a child evaluation in traversal order.
-func mergeEvaluation(result *evaluation, child evaluation) {
+// mergeEvaluationRecords appends non-failure child records in traversal order.
+func mergeEvaluationRecords(result *evaluation, child evaluation) {
+	ensureEvaluationRecords(result)
+	result.records.appendNonFailures(child.records)
+
+	if child.fromCache && !child.materialized {
+		return
+	}
+
 	result.applicable = append(result.applicable, child.applicable...)
 	result.observed = append(result.observed, child.observed...)
 	result.allOf = append(result.allOf, child.allOf...)
 	result.anyOf = append(result.anyOf, child.anyOf...)
+}
 
-	result.failures = append(result.failures, child.failures...)
+// mergeEvaluation appends a child evaluation in traversal order.
+func mergeEvaluation(result *evaluation, child evaluation) {
+	mergeEvaluationRecords(result, child)
+	result.records.failures.appendList(&child.records.failures, occurrenceTransform{})
+	result.failureCount += child.failureCount
+
 	if child.err != nil {
 		result.err = child.err
 	}
+
+	if child.fromCache && !child.materialized {
+		return
+	}
+
+	result.failures = append(result.failures, child.failures...)
 }
