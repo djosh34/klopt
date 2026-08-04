@@ -82,8 +82,6 @@ func TestValidateECMAScript51Semantics(t *testing.T) {
 		{name: "negative lookahead", pattern: `^(?!ab)a`, value: "ac", want: true},
 		{name: "negative lookahead miss", pattern: `^(?!ab)a`, value: "ab", want: false},
 		{name: "multiple lookaheads", pattern: `^(?=a)(?!ab)a`, value: "ax", want: true},
-		{name: "lookahead only accepts empty", pattern: `^(?!a)`, value: "", want: true},
-		{name: "lookahead only rejects", pattern: `^(?!a)`, value: "a", want: false},
 		{name: "capture not exposed", pattern: `^(a)+$`, value: "aaa", want: true},
 		{name: "non-ASCII best effort literal", pattern: "^é$", value: "é", want: true},
 	}

@@ -18,7 +18,7 @@ func TestParseAcceptsClosedGrammar(t *testing.T) {
 		`\f\n\r\t\v\0\x41\u0061\cA\ca`, `\/\-\#\,\.\$`,
 		`\d\D\s\S\w\W`, "[]", "[^]", "[-a]", "[a-]", `[a-z]`, `[a-b-c]`, `[A-Za-z0-9-_.]+`,
 		`[^\d\sA-Z]`, `[\b\x41\u0062\cC\cz]`, "[^^]",
-		"^(?=a)(?!ab)a", "^(?=a|b)",
+		"^(?=a)(?!ab)a", "^(?=a|b)a",
 		"é", `\é`,
 	}
 
@@ -59,6 +59,12 @@ func TestParseClassifiesRejectionsAtOriginalByte(t *testing.T) {
 		{name: "out of range decimal", pattern: `\2(a)`, kind: ErrorInvalidSyntax, offset: 0},
 		{name: "class decimal out of range", pattern: `[\2](a)`, kind: ErrorInvalidSyntax, offset: 1},
 		{name: "lookahead placement", pattern: `x(?=a)`, kind: ErrorUnsupported, offset: 1},
+		{name: "positive assertion only", pattern: `^(?=a)`, kind: ErrorUnsupported, offset: 1},
+		{name: "negative assertion only", pattern: `^(?!a)`, kind: ErrorUnsupported, offset: 1},
+		{name: "end assertion remainder", pattern: `^(?=a)$`, kind: ErrorUnsupported, offset: 1},
+		{name: "word boundary remainder", pattern: `^(?=a)\b`, kind: ErrorUnsupported, offset: 1},
+		{name: "empty group remainder", pattern: `^(?=a)(?:)`, kind: ErrorUnsupported, offset: 1},
+		{name: "zero repeat remainder", pattern: `^(?=a)a{0}`, kind: ErrorUnsupported, offset: 1},
 		{name: "lookahead branch", pattern: `^(?=a)a|b`, kind: ErrorUnsupported, offset: 1},
 		{name: "nested lookahead", pattern: `^(?=(?=a))`, kind: ErrorUnsupported, offset: 1},
 		{name: "lookahead quantifier", pattern: `(?=a)*`, kind: ErrorInvalidSyntax, offset: 5},
@@ -125,9 +131,9 @@ func TestParseEnforcesEveryLimitBoundary(t *testing.T) {
 		},
 		{
 			name:    "leading assertions",
-			below:   "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions-1),
-			atLimit: "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions),
-			over:    "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions+1),
+			below:   "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions-1) + "a",
+			atLimit: "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions) + "a",
+			over:    "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions+1) + "a",
 			limit:   "leading assertions",
 		},
 		{

@@ -803,7 +803,47 @@ func (state *parser) validateLookaheadPlacement() error {
 		return unsupportedError(firstLookahead, "lookaheads must be consecutive top-level assertions after ^")
 	}
 
+	if state.sequenceNullable(alternative.Children[1+prefixCount:]) {
+		return unsupportedError(firstLookahead, "leading assertions require a consuming remainder")
+	}
+
 	return nil
+}
+
+func (state *parser) sequenceNullable(nodes []NodeID) bool {
+	for _, nodeID := range nodes {
+		if !state.nodeNullable(nodeID) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (state *parser) nodeNullable(nodeID NodeID) bool {
+	node := state.tree.Nodes[nodeID]
+
+	switch node.Kind {
+	case KindExpression:
+		for _, child := range node.Children {
+			if state.nodeNullable(child) {
+				return true
+			}
+		}
+
+		return false
+	case KindAlternative:
+		return state.sequenceNullable(node.Children)
+	case KindCapture, KindGroup:
+		return state.nodeNullable(node.Children[0])
+	case KindRepeat:
+		return node.Repeat.Minimum == 0 || state.nodeNullable(node.Children[0])
+	case KindBeginInput, KindEndInput, KindWordBoundary, KindNotWordBoundary,
+		KindPositiveLookahead, KindNegativeLookahead:
+		return true
+	default:
+		return false
+	}
 }
 
 func (state *parser) addNode(node Node) (NodeID, error) {

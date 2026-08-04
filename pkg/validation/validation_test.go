@@ -432,6 +432,82 @@ func TestParseRetainsLeadingLookaheadPattern(t *testing.T) {
 	require.ErrorContains(t, errors.Join(validation.Validate(json.RawMessage(`"ba"`))...), "keyword pattern")
 }
 
+// TestParseAdmitsRestrictedLeadingAssertionsWithConsumingRemainders pins both assertion polarities.
+func TestParseAdmitsRestrictedLeadingAssertionsWithConsumingRemainders(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pattern string
+		valid   string
+		invalid string
+	}{
+		{name: "positive", pattern: `^(?=ab)a`, valid: "ab", invalid: "ac"},
+		{name: "negative", pattern: `^(?!ab)a`, valid: "ac", invalid: "ab"},
+		{name: "positive remainder mismatch", pattern: `^(?=a)ab`, valid: "ab", invalid: "aa"},
+		{name: "negative remainder mismatch", pattern: `^(?!ab)ac`, valid: "ac", invalid: "ad"},
+		{name: "consecutive mixed assertions", pattern: `^(?=a)(?!ab)a`, valid: "ac", invalid: "ab"},
+		{name: "negative then positive", pattern: `^(?!ab)(?=a)a`, valid: "ac", invalid: "ab"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse(openAPISpec(
+				`{"type":"string","pattern":`+strconv.Quote(test.pattern)+`}`,
+				"",
+				false,
+			))
+			require.NoError(t, err)
+
+			validation := parsed["checkThing"].Body
+			for range 3 {
+				require.Empty(t, validation.Validate(json.RawMessage(strconv.Quote(test.valid))))
+				require.ErrorContains(
+					t,
+					errors.Join(validation.Validate(json.RawMessage(strconv.Quote(test.invalid)))...),
+					"keyword pattern",
+				)
+			}
+		})
+	}
+}
+
+// TestParseRejectsUnsupportedLeadingAssertionPlacement keeps lookahead admission narrow.
+func TestParseRejectsUnsupportedLeadingAssertionPlacement(t *testing.T) {
+	t.Parallel()
+
+	patterns := []string{
+		`^(?=(?=a))a`,
+		`^(?=a)`,
+		`^(?!a)`,
+		`^(?=a)$`,
+		`^(?=a)\b`,
+		`^(?=a)(?:)`,
+		`^(?=a)a{0}`,
+		`^(?=a)+a`,
+		`a(?=b)b`,
+		`(?=a)a`,
+		`^(?=a)a|b`,
+		`^(?=a)(?:b(?=c))`,
+	}
+
+	for _, pattern := range patterns {
+		t.Run(pattern, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Parse(openAPISpec(
+				`{"type":"string","pattern":`+strconv.Quote(pattern)+`}`,
+				"",
+				false,
+			))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "/pattern")
+		})
+	}
+}
+
 // TestParseAdmitsNamedECMAScript51PatternFamilies pins the production Parse seam.
 func TestParseAdmitsNamedECMAScript51PatternFamilies(t *testing.T) {
 	t.Parallel()
