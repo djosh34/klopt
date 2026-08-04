@@ -125,6 +125,10 @@ func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrenc
 		evaluateStringRules(&result, node, occurrence, value)
 	}
 
+	if result.err == nil {
+		evaluateArrayRules(&result, node, occurrence, value)
+	}
+
 	result.valid = result.err == nil && len(result.failures) == 0
 
 	return result
