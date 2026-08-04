@@ -138,6 +138,23 @@ func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrenc
 	return result
 }
 
+// rebaseChildOccurrence carries a direct schema shape's evaluated use site and instance path to a child.
+func rebaseChildOccurrence(
+	parent *schemaNode,
+	child *schemaNode,
+	usePointer string,
+	instanceTemplate string,
+) schemaOccurrence {
+	childOccurrence := child.occurrence
+	if parent.occurrence.usePointer == parent.occurrence.targetPointer {
+		childOccurrence.usePointer = usePointer
+	}
+
+	childOccurrence.instanceTemplate = instanceTemplate
+
+	return childOccurrence
+}
+
 // evaluateTypeRule applies the explicit kind and same-object nullable contract.
 // A typeless schema still has an applicable type rule: it observes the actual
 // JSON kind while admitting every kind, including null.

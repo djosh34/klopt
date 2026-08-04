@@ -787,6 +787,46 @@ func TestEvaluateObjectRulesValidateSuppliedReadOnlyWriteOnlyAndNestedValues(t *
 	)
 }
 
+func TestEvaluateAliasedObjectPropertiesRebaseNestedIdentities(t *testing.T) {
+	t.Parallel()
+
+	document := `openapi: 3.0.4
+x-shared: &shared
+  type: object
+  properties:
+    child: {type: string}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                a: *shared
+                b: *shared
+`
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+
+	value, err := parseStrictJSON([]byte(`{"a":{"child":1},"b":{"child":2}}`))
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(
+		t,
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a/properties/child|#/a/child|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/b/properties/child|#/b/child|type",
+		},
+		identityStrings(result.failures),
+	)
+}
+
 func TestEvaluateObjectAdditionalSchemaUsesOnlySuppliedMembers(t *testing.T) {
 	t.Parallel()
 

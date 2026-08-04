@@ -125,8 +125,12 @@ func evaluateDeclaredProperties(
 			continue
 		}
 
-		propertyOccurrence := property.occurrence
-		propertyOccurrence.instanceTemplate = appendInstanceToken(occurrence.instanceTemplate, name)
+		propertyOccurrence := rebaseChildOccurrence(
+			node,
+			property,
+			occurrence.usePointer+"/properties/"+escapePointerToken(name),
+			appendInstanceToken(occurrence.instanceTemplate, name),
+		)
 		propertyResult := evaluateNode(property, members[name], propertyOccurrence)
 		mergeEvaluation(result, propertyResult)
 
@@ -150,8 +154,12 @@ func evaluateAdditionalProperties(
 		}
 
 		if node.additionalProperties != nil {
-			additionalOccurrence := node.additionalProperties.occurrence
-			additionalOccurrence.instanceTemplate = appendInstanceToken(occurrence.instanceTemplate, name)
+			additionalOccurrence := rebaseChildOccurrence(
+				node,
+				node.additionalProperties,
+				occurrence.usePointer+"/additionalProperties",
+				appendInstanceToken(occurrence.instanceTemplate, name),
+			)
 			additionalResult := evaluateNode(node.additionalProperties, members[name], additionalOccurrence)
 			mergeEvaluation(result, additionalResult)
 
