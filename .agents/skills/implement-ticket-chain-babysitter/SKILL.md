@@ -75,6 +75,8 @@ At every 5-minute check, always inspect service status first, then read the last
 
 Do not combine the sleep, status, or logs commands into a polling script. Repeat every 5 minutes while work is actively progressing.
 
+CLEAN UP OLD SUBAGENTS:
+
 Make sure to archive agents when the n+2th issue is busy. For instance if issue 92 is busy, archive all agents from issue 90 or less.
 Find agents using:
 
