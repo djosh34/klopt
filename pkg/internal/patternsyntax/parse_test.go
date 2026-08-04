@@ -100,19 +100,26 @@ func TestParseClassifiesRejectionsAtOriginalByte(t *testing.T) {
 func TestParseEnforcesEveryLimitBoundary(t *testing.T) {
 	t.Parallel()
 
+	// Source counts UTF-8 bytes; nesting counts simultaneously open groups; and
+	// AST nodes count every appended expression, alternative, atom, group,
+	// lookahead, or repeat node. Leading assertions count top-level lookahead
+	// nodes after ^. Counted endpoints use their decimal value, while
+	// nested-repeat product uses bounded maxima or unbounded minima on one path.
 	tests := []struct {
-		name    string
-		below   string
-		atLimit string
-		over    string
-		limit   string
+		name     string
+		below    string
+		atLimit  string
+		over     string
+		limit    string
+		observed int
 	}{
 		{
-			name:    "source",
-			below:   "[" + strings.Repeat("a", MaximumSourceBytes-3) + "]",
-			atLimit: "[" + strings.Repeat("a", MaximumSourceBytes-2) + "]",
-			over:    "[" + strings.Repeat("a", MaximumSourceBytes-1) + "]",
-			limit:   "source bytes",
+			name:     "source",
+			below:    "[" + strings.Repeat("a", MaximumSourceBytes-3) + "]",
+			atLimit:  "[" + strings.Repeat("a", MaximumSourceBytes-2) + "]",
+			over:     "[" + strings.Repeat("a", MaximumSourceBytes-1) + "]",
+			limit:    "source bytes",
+			observed: MaximumSourceBytes + 1,
 		},
 		{
 			name: "depth",
@@ -122,28 +129,31 @@ func TestParseEnforcesEveryLimitBoundary(t *testing.T) {
 				strings.Repeat(")", MaximumNestingDepth),
 			over: strings.Repeat("(", MaximumNestingDepth+1) + "a" +
 				strings.Repeat(")", MaximumNestingDepth+1),
-			limit: "nesting depth",
+			limit:    "nesting depth",
+			observed: MaximumNestingDepth + 1,
 		},
 		{
 			name: "nodes", below: strings.Repeat("a", MaximumNodes-3),
 			atLimit: strings.Repeat("a", MaximumNodes-2),
 			over:    strings.Repeat("a", MaximumNodes-1), limit: "AST nodes",
+			observed: MaximumNodes + 1,
 		},
 		{
-			name:    "leading assertions",
-			below:   "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions-1) + "a",
-			atLimit: "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions) + "a",
-			over:    "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions+1) + "a",
-			limit:   "leading assertions",
+			name:     "leading assertions",
+			below:    "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions-1) + "a",
+			atLimit:  "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions) + "a",
+			over:     "^" + strings.Repeat("(?=a)", MaximumLeadingAssertions+1) + "a",
+			limit:    "leading assertions",
+			observed: MaximumLeadingAssertions + 1,
 		},
 		{
 			name: "repeat endpoint", below: "a{999}", atLimit: "a{1000}", over: "a{1001}",
-			limit: "repeat endpoint",
+			limit: "repeat endpoint", observed: 1_001,
 		},
 		{
 			name: "nested repeat product", below: "(a{10}){99}",
 			atLimit: "(a{10}){100}", over: "(a{10}){101}",
-			limit: "cumulative nested repeat product",
+			limit: "cumulative nested repeat product", observed: 1_010,
 		},
 	}
 
@@ -164,7 +174,7 @@ func TestParseEnforcesEveryLimitBoundary(t *testing.T) {
 			require.True(t, errors.As(err, &complexity))
 			require.Equal(t, ErrorTooComplex, complexity.Kind)
 			require.Equal(t, test.limit, complexity.Limit)
-			require.Greater(t, complexity.Observed, complexity.Maximum)
+			require.Equal(t, uint64(test.observed), complexity.Observed)
 		})
 	}
 }
