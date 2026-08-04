@@ -550,6 +550,7 @@ func TestParseRejectsNamedOutsideProfileECMAScript51Patterns(t *testing.T) {
 		))
 		require.Error(t, err)
 		require.ErrorContains(t, err, "UTF-8")
+		require.ErrorContains(t, err, "/pattern")
 	})
 }
 

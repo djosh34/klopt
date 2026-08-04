@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
 )
@@ -110,10 +109,6 @@ func parseWithSemanticVersionPattern(
 	versionPattern string,
 ) (map[string]Source, json.RawMessage, error) {
 	document := spec
-	if !utf8.Valid(spec) {
-		return nil, nil, errors.New("parse OpenAPI document: source is not valid UTF-8")
-	}
-
 	if json.Valid(spec) {
 		if err := rejectDuplicateJSONNames(spec); err != nil {
 			return nil, nil, fmt.Errorf("parse OpenAPI document JSON: %w", err)
