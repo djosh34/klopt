@@ -164,6 +164,39 @@ func TestEvaluateSharedYAMLCompositionDAGDeterministicallyWithoutTreeExpansion(t
 	)
 }
 
+func TestEvaluateDepth64SharedYAMLCompositionRejectingLeafRemainsInvalid(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(sharedYAMLCompositionDocument(64)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	value, err := parseStrictJSON([]byte(`1`))
+	require.NoError(t, err)
+
+	first := evaluate(model, value)
+	second := evaluate(model, value)
+
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.False(t, first.valid)
+	require.Equal(t, first, second)
+	require.Len(t, first.applicable, 65)
+	require.Len(t, first.allOf, 64)
+	require.NotZero(t, first.records.failures.count)
+
+	failure, ok := first.records.failures.at(0)
+	require.True(t, ok)
+	require.Equal(
+		t,
+		"#/paths/~1/post/requestBody/content/application~1json/schema"+
+			strings.Repeat("/allOf/0", 64)+"|#|type",
+		failure.String(),
+	)
+}
+
 func sharedYAMLCompositionDocument(depth int) string {
 	anchors := "x-schema-0: &s0 {type: string}\n"
 	for index := 1; index <= depth; index++ {

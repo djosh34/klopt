@@ -71,7 +71,7 @@ type evaluation struct {
 	allOf        []compositionTruth
 	anyOf        []compositionTruth
 	failures     []failureIdentity
-	failureCount int
+	failed       bool
 	fromCache    bool
 	materialized bool
 	records      *evaluationRecords
@@ -129,7 +129,7 @@ func evaluate(model *schemaModel, value *jsonValue) evaluation {
 
 	context := evaluationContext{cache: make(map[evaluationCacheKey]evaluationCacheEntry)}
 	result = context.evaluateNode(model.root, value, model.root.occurrence)
-	result.valid = result.err == nil && result.failureCount == 0
+	result.valid = result.err == nil && !result.failed
 
 	return result
 }
@@ -203,7 +203,7 @@ func (context *evaluationContext) evaluateNode(
 		evaluateCompositionRules(context, &result, node, occurrence, value)
 	}
 
-	result.valid = result.err == nil && result.failureCount == 0
+	result.valid = result.err == nil && !result.failed
 
 	if result.err == nil {
 		result.fromCache = false
@@ -331,7 +331,7 @@ func appendFailure(result *evaluation, identity failureIdentity) {
 	result.failures = append(result.failures, identity)
 	ensureEvaluationRecords(result)
 	result.records.failures.append(identity)
-	result.failureCount++
+	result.failed = true
 }
 
 // makeRuleIdentity creates a stable clean occurrence/rule identity.

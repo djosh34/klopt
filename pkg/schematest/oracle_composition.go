@@ -75,7 +75,7 @@ func evaluateAnyOfRules(
 
 	branchFailures := make([]failureIdentity, 0)
 	branchFailureRecords := &evaluationRecordList[failureIdentity]{}
-	branchFailureCount := 0
+	branchFailed := false
 	anyBranchValid := false
 
 	for index, child := range node.anyOf {
@@ -97,7 +97,7 @@ func evaluateAnyOfRules(
 			continue
 		}
 
-		branchFailureCount += childResult.failureCount
+		branchFailed = branchFailed || childResult.failed
 		branchFailureRecords.appendList(&childResult.records.failures, occurrenceTransform{})
 
 		if !childResult.fromCache || childResult.materialized {
@@ -109,7 +109,7 @@ func evaluateAnyOfRules(
 		return
 	}
 
-	result.failureCount += branchFailureCount
+	result.failed = result.failed || branchFailed
 	ensureEvaluationRecords(result)
 	result.records.failures.appendList(branchFailureRecords, occurrenceTransform{})
 	result.failures = append(result.failures, branchFailures...)

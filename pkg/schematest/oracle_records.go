@@ -75,7 +75,7 @@ func appendAnyOfTruth(result *evaluation, truth compositionTruth) {
 // append adds one local record to a sequence.
 func (list *evaluationRecordList[T]) append(value T) {
 	list.parts = append(list.parts, evaluationRecordPart[T]{values: []T{value}})
-	list.count++
+	list.count = addEvaluationRecordCount(list.count, 1)
 }
 
 // appendList adds a shared sequence with an optional occurrence transform.
@@ -88,7 +88,17 @@ func (list *evaluationRecordList[T]) appendList(other *evaluationRecordList[T], 
 		nested:    other,
 		transform: transform,
 	})
-	list.count += other.count
+	list.count = addEvaluationRecordCount(list.count, other.count)
+}
+
+// addEvaluationRecordCount saturates logical record counts without affecting record storage.
+func addEvaluationRecordCount(current, added int) int {
+	maximum := int(^uint(0) >> 1)
+	if current == maximum || added > maximum-current {
+		return maximum
+	}
+
+	return current + added
 }
 
 // rebased returns a shared sequence viewed from one evaluated use site.

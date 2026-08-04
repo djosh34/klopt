@@ -124,7 +124,7 @@ func mergeEvaluationRecords(result *evaluation, child evaluation) {
 func mergeEvaluation(result *evaluation, child evaluation) {
 	mergeEvaluationRecords(result, child)
 	result.records.failures.appendList(&child.records.failures, occurrenceTransform{})
-	result.failureCount += child.failureCount
+	result.failed = result.failed || child.failed
 
 	if child.err != nil {
 		result.err = child.err
