@@ -1726,6 +1726,73 @@ func TestValidationMakesRequiredReadOnlyRequestPropertiesOptional(t *testing.T) 
 	}
 }
 
+// TestValidationLocksRequestDirectionCombinations covers absent and supplied properties for every direction pair.
+func TestValidationLocksRequestDirectionCombinations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		annotations  string
+		absentValid  bool
+		parseFailure bool
+	}{
+		{name: "annotations omitted", absentValid: false},
+		{
+			name:        "both false",
+			annotations: `,"readOnly":false,"writeOnly":false`,
+			absentValid: false,
+		},
+		{
+			name:        "read only",
+			annotations: `,"readOnly":true,"writeOnly":false`,
+			absentValid: true,
+		},
+		{
+			name:        "write only",
+			annotations: `,"readOnly":false,"writeOnly":true`,
+			absentValid: false,
+		},
+		{
+			name:         "both true",
+			annotations:  `,"readOnly":true,"writeOnly":true`,
+			parseFailure: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := fmt.Sprintf(
+				`{"type":"object","required":["value"],"properties":{"value":{"type":"string","minLength":2%s}}}`,
+				test.annotations,
+			)
+
+			if test.parseFailure {
+				parsed, err := Parse(openAPISpec(schema, "", false))
+				require.Nil(t, parsed)
+				require.ErrorContains(t, err, "compile schema at "+
+					"#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value")
+				require.ErrorContains(t, err, "readOnly and writeOnly must not both be true")
+
+				return
+			}
+
+			parsed := mustParseSchema(t, schema, "")
+
+			absentErrors := parsed.Validate(json.RawMessage(`{}`))
+			if test.absentValid {
+				require.Empty(t, absentErrors)
+			} else {
+				require.Contains(t, errors.Join(absentErrors...).Error(), "keyword required")
+			}
+
+			require.Empty(t, parsed.Validate(json.RawMessage(`{"value":"okay"}`)))
+			require.Contains(t, errors.Join(parsed.Validate(json.RawMessage(`{"value":"x"}`))...).Error(), "keyword minLength")
+		})
+	}
+}
+
 // TestParseRejectsRecursiveSchemas makes finite, acyclic Parse results an explicit contract.
 func TestParseRejectsRecursiveSchemas(t *testing.T) {
 	t.Parallel()
