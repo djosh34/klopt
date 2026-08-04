@@ -529,6 +529,125 @@ func TestEvaluateNumericFailureIdentitiesAreDeterministic(t *testing.T) {
 	)
 }
 
+func TestEvaluateArrayCountsUseExistingArrayLengthAndIgnoreWrongKinds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		value      string
+		valid      bool
+		applicable []string
+		observed   []string
+		failures   []string
+	}{
+		{
+			name:       "empty at both boundaries",
+			schema:     `{"type":"array","minItems":0,"maxItems":0,"items":{"type":"string"}}`,
+			value:      `[]`,
+			valid:      true,
+			applicable: []string{"type", "minItems", "maxItems"},
+			observed:   []string{"array", "valid", "valid"},
+		},
+		{
+			name:       "short below minimum",
+			schema:     `{"type":"array","minItems":2,"maxItems":3,"items":{"type":"string"}}`,
+			value:      `["text"]`,
+			valid:      false,
+			applicable: []string{"type", "minItems", "maxItems", "type"},
+			observed:   []string{"array", "valid", "string"},
+			failures:   []string{"minItems"},
+		},
+		{
+			name:       "maximum boundary",
+			schema:     `{"type":"array","minItems":1,"maxItems":2,"items":{"type":"string"}}`,
+			value:      `["a","b"]`,
+			valid:      true,
+			applicable: []string{"type", "minItems", "maxItems", "type", "type"},
+			observed:   []string{"array", "valid", "valid", "string", "string"},
+		},
+		{
+			name:       "over maximum",
+			schema:     `{"type":"array","maxItems":1,"items":{"type":"string"}}`,
+			value:      `["a","b"]`,
+			valid:      false,
+			applicable: []string{"type", "maxItems", "type", "type"},
+			observed:   []string{"array", "string", "string"},
+			failures:   []string{"maxItems"},
+		},
+		{
+			name:       "wrong kind",
+			schema:     `{"type":"array","minItems":1,"maxItems":1,"items":{"type":"string"}}`,
+			value:      `"text"`,
+			valid:      false,
+			applicable: []string{"type"},
+			failures:   []string{"type"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := evaluateSchemaValue(t, test.schema, test.value)
+			require.NoError(t, result.err)
+			require.Equal(t, test.valid, result.valid)
+			require.Equal(t, test.applicable, applicableRules(result.applicable))
+			require.Equal(t, test.observed, observedLevels(result.observed))
+			require.Equal(t, test.failures, failureRules(result.failures))
+		})
+	}
+}
+
+func TestEvaluateArrayItemsOnlyExistingIndices(t *testing.T) {
+	t.Parallel()
+
+	result := evaluateSchemaValue(
+		t,
+		`{"type":"array","minItems":3,"items":{"type":"integer"}}`,
+		`[1]`,
+	)
+
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(
+		t,
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|minItems",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/items|#/0|type",
+		},
+		identityStrings(result.applicable),
+	)
+	require.Equal(t, []string{"array", "number"}, observedLevels(result.observed))
+	require.Equal(
+		t,
+		[]string{"#/paths/~1/post/requestBody/content/application~1json/schema|#|minItems"},
+		identityStrings(result.failures),
+	)
+}
+
+func TestEvaluateNestedArrayItemFailuresKeepNumericInstanceIdentity(t *testing.T) {
+	t.Parallel()
+
+	result := evaluateSchemaValue(
+		t,
+		`{"type":"array","items":{"type":"array","items":{"type":"integer"}}}`,
+		`[[1,1.5],["text"]]`,
+	)
+
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(
+		t,
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema/items/items|#/0/1|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/items/items|#/1/0|type",
+		},
+		identityStrings(result.failures),
+	)
+}
+
 func TestEvaluateRejectsMalformedPrivateJSONValue(t *testing.T) {
 	t.Parallel()
 
@@ -593,6 +712,19 @@ func failureRules(identities []failureIdentity) []string {
 	result := make([]string, 0, len(identities))
 	for _, identity := range identities {
 		result = append(result, identity.rule)
+	}
+
+	return result
+}
+
+func identityStrings(identities []ruleIdentity) []string {
+	if len(identities) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		result = append(result, identity.String())
 	}
 
 	return result
