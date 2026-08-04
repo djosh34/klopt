@@ -212,6 +212,270 @@ func TestEvaluateKeepsSiblingFailuresAndOrderDeterministic(t *testing.T) {
 	)
 }
 
+func TestEvaluateNumericBoundsUseExactComparisons(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		schema   string
+		value    string
+		valid    bool
+		observed []string
+		failures []string
+	}{
+		{
+			name:     "decimal boundary is inclusive",
+			schema:   `{"type":"number","minimum":0.10,"maximum":2e0}`,
+			value:    "0.1",
+			valid:    true,
+			observed: []string{"number", "valid", "valid"},
+		},
+		{
+			name:     "decimal below exact minimum",
+			schema:   `{"type":"number","minimum":0.10}`,
+			value:    "0.09999999999999999999",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"minimum"},
+		},
+		{
+			name:     "exponent above exact maximum",
+			schema:   `{"type":"number","maximum":2e0}`,
+			value:    "2.00000000000000000001",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"maximum"},
+		},
+		{
+			name:     "exclusive lower boundary",
+			schema:   `{"type":"number","minimum":1e-1,"exclusiveMinimum":true}`,
+			value:    "0.1",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"exclusiveMinimum"},
+		},
+		{
+			name:     "exclusive upper boundary",
+			schema:   `{"type":"number","maximum":2E0,"exclusiveMaximum":true}`,
+			value:    "2",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"exclusiveMaximum"},
+		},
+		{
+			name:     "single point",
+			schema:   `{"type":"number","minimum":1,"maximum":1}`,
+			value:    "1.0",
+			valid:    true,
+			observed: []string{"number", "valid", "valid"},
+		},
+		{
+			name:     "contradictory bounds",
+			schema:   `{"type":"number","minimum":2,"maximum":1}`,
+			value:    "1.5",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"minimum", "maximum"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := evaluateSchemaValue(t, test.schema, test.value)
+			require.NoError(t, result.err)
+			require.Equal(t, test.valid, result.valid)
+			require.Equal(t, test.observed, observedLevels(result.observed))
+			require.Equal(t, test.failures, failureRules(result.failures))
+		})
+	}
+}
+
+func TestEvaluateMultipleOfAndIntegerMembershipRemainExact(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		schema   string
+		value    string
+		valid    bool
+		failures []string
+	}{
+		{
+			name:   "decimal multiple",
+			schema: `{"type":"number","multipleOf":0.1}`,
+			value:  "0.3",
+			valid:  true,
+		},
+		{
+			name:     "exact decimal nonmultiple",
+			schema:   `{"type":"number","multipleOf":0.1}`,
+			value:    "0.30000000000000000001",
+			valid:    false,
+			failures: []string{"multipleOf"},
+		},
+		{
+			name:   "integral decimal satisfies integer",
+			schema: `{"type":"integer"}`,
+			value:  "100e-2",
+			valid:  true,
+		},
+		{
+			name:     "fraction fails integer only",
+			schema:   `{"type":"integer","multipleOf":0.1}`,
+			value:    "9007199254740992.55",
+			valid:    false,
+			failures: []string{"type", "multipleOf"},
+		},
+		{
+			name:   "large exact multiple",
+			schema: `{"type":"number","multipleOf":3}`,
+			value:  "9007199254740993",
+			valid:  true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := evaluateSchemaValue(t, test.schema, test.value)
+			require.NoError(t, result.err)
+			require.Equal(t, test.valid, result.valid)
+			require.Equal(t, test.failures, failureRules(result.failures))
+		})
+	}
+}
+
+func TestEvaluateNumericFormatsUseNativeApplicabilityAndExactRanges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		schema   string
+		value    string
+		valid    bool
+		observed []string
+		failures []string
+	}{
+		{
+			name:     "typeless int32 minimum",
+			schema:   `{"format":"int32"}`,
+			value:    "-2147483648",
+			valid:    true,
+			observed: []string{"number", "valid"},
+		},
+		{
+			name:     "typeless int32 above range",
+			schema:   `{"format":"int32"}`,
+			value:    "2147483648",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"format"},
+		},
+		{
+			name:     "typeless int32 fraction",
+			schema:   `{"format":"int32"}`,
+			value:    "1.5",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"format"},
+		},
+		{
+			name:     "typeless int64 above range",
+			schema:   `{"format":"int64"}`,
+			value:    "9223372036854775808",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"format"},
+		},
+		{
+			name:     "float just below overflow cutoff",
+			schema:   `{"format":"float"}`,
+			value:    "340282356779733661637539395458142568447",
+			valid:    true,
+			observed: []string{"number", "valid"},
+		},
+		{
+			name:     "float overflow cutoff",
+			schema:   `{"format":"float"}`,
+			value:    "340282356779733661637539395458142568448",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"format"},
+		},
+		{
+			name:     "double decimal edge",
+			schema:   `{"format":"double"}`,
+			value:    "1.7976931348623158e308",
+			valid:    true,
+			observed: []string{"number", "valid"},
+		},
+		{
+			name:     "double overflow",
+			schema:   `{"format":"double"}`,
+			value:    "1.7976931348623159e308",
+			valid:    false,
+			observed: []string{"number"},
+			failures: []string{"format"},
+		},
+		{
+			name:     "non-number is inapplicable",
+			schema:   `{"format":"int32","minimum":1,"multipleOf":2}`,
+			value:    `"text"`,
+			valid:    true,
+			observed: []string{"string"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := evaluateSchemaValue(t, test.schema, test.value)
+			require.NoError(t, result.err)
+			require.Equal(t, test.valid, result.valid)
+			require.Equal(t, test.observed, observedLevels(result.observed))
+			require.Equal(t, test.failures, failureRules(result.failures))
+		})
+	}
+}
+
+func TestEvaluateNumericFailureIdentitiesAreDeterministic(t *testing.T) {
+	t.Parallel()
+
+	schema := `{"type":"number","minimum":2,"exclusiveMinimum":true,` +
+		`"maximum":1,"exclusiveMaximum":true,"multipleOf":0.3,"format":"int32"}`
+	first := evaluateSchemaValue(t, schema, "1.6")
+	second := evaluateSchemaValue(t, schema, "1.6")
+
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.Equal(t, first, second)
+	require.False(t, first.valid)
+	require.Equal(
+		t,
+		[]string{"type", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "format"},
+		applicableRules(first.applicable),
+	)
+	require.Equal(
+		t,
+		[]string{"exclusiveMinimum", "exclusiveMaximum", "multipleOf", "format"},
+		failureRules(first.failures),
+	)
+	require.Equal(
+		t,
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|exclusiveMinimum",
+		first.failures[0].String(),
+	)
+	require.Equal(
+		t,
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|format",
+		first.failures[3].String(),
+	)
+}
+
 func TestEvaluateRejectsMalformedPrivateJSONValue(t *testing.T) {
 	t.Parallel()
 
