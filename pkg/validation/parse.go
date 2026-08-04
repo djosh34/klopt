@@ -767,6 +767,10 @@ func (compiler *schemaCompiler) compileString(
 			return keywordError(pointer, "pattern", errors.New("source is not valid UTF-8"))
 		}
 
+		if _, err := jsonvalue.Parse(raw); err != nil {
+			return keywordError(pointer, "pattern", err)
+		}
+
 		pattern, err := decodeString(raw, "pattern")
 		if err != nil {
 			return keywordError(pointer, "pattern", err)

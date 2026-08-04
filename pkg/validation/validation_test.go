@@ -552,6 +552,15 @@ func TestParseRejectsNamedOutsideProfileECMAScript51Patterns(t *testing.T) {
 		require.ErrorContains(t, err, "UTF-8")
 		require.ErrorContains(t, err, "/pattern")
 	})
+
+	t.Run("unpaired JSON surrogate escape", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := Parse(openAPISpec(`{"type":"string","pattern":"\ud800"}`, "", false))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "surrogate")
+		require.ErrorContains(t, err, "/pattern")
+	})
 }
 
 // TestParseExposesCompiledGraphAndCopiesInput covers the supported construction seam.
