@@ -54,6 +54,13 @@ func TestEvaluateExplicitKindsUseJSONKindAndExactIntegerMembership(t *testing.T)
 		{name: "integer decimal", schema: `{"type":"integer"}`, value: "1.0", valid: true, observed: []string{"number"}},
 		{name: "integer exponent", schema: `{"type":"integer"}`, value: "1e0", valid: true, observed: []string{"number"}},
 		{name: "integer fraction", schema: `{"type":"integer"}`, value: "1.5", valid: false, failures: []string{"type"}},
+		{
+			name:     "integer fraction above float64 precision",
+			schema:   `{"type":"integer"}`,
+			value:    "9007199254740992.5",
+			valid:    false,
+			failures: []string{"type"},
+		},
 		{name: "integer wrong kind", schema: `{"type":"integer"}`, value: `"1"`, valid: false, failures: []string{"type"}},
 		{name: "explicit non-nullable", schema: `{"type":"string"}`, value: "null", valid: false, failures: []string{"type"}},
 	}
@@ -183,20 +190,25 @@ func TestEvaluateKeepsSiblingFailuresAndOrderDeterministic(t *testing.T) {
 	t.Parallel()
 
 	schema := `{"type":"string","enum":["expected"]}`
-	first := evaluateSchemaValue(t, schema, `"actual"`)
-	second := evaluateSchemaValue(t, schema, `"actual"`)
+	first := evaluateSchemaValue(t, schema, `1`)
+	second := evaluateSchemaValue(t, schema, `1`)
 
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
 	require.Equal(t, first, second)
 	require.False(t, first.valid)
 	require.Equal(t, []string{"type", "enum"}, applicableRules(first.applicable))
-	require.Equal(t, []string{"string"}, observedLevels(first.observed))
-	require.Equal(t, []string{"enum"}, failureRules(first.failures))
+	require.Empty(t, first.observed)
+	require.Equal(t, []string{"type", "enum"}, failureRules(first.failures))
+	require.Equal(
+		t,
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type",
+		first.failures[0].String(),
+	)
 	require.Equal(
 		t,
 		"#/paths/~1/post/requestBody/content/application~1json/schema|#|enum",
-		first.failures[0].String(),
+		first.failures[1].String(),
 	)
 }
 
