@@ -444,6 +444,8 @@ func TestParseAdmitsRestrictedLeadingAssertionsWithConsumingRemainders(t *testin
 	}{
 		{name: "positive", pattern: `^(?=ab)a`, valid: "ab", invalid: "ac"},
 		{name: "negative", pattern: `^(?!ab)a`, valid: "ac", invalid: "ab"},
+		{name: "positive remainder mismatch", pattern: `^(?=a)ab`, valid: "ab", invalid: "aa"},
+		{name: "negative remainder mismatch", pattern: `^(?!ab)ac`, valid: "ac", invalid: "ad"},
 		{name: "consecutive mixed assertions", pattern: `^(?=a)(?!ab)a`, valid: "ac", invalid: "ab"},
 		{name: "negative then positive", pattern: `^(?!ab)(?=a)a`, valid: "ac", invalid: "ab"},
 	}
@@ -478,6 +480,8 @@ func TestParseRejectsUnsupportedLeadingAssertionPlacement(t *testing.T) {
 
 	patterns := []string{
 		`^(?=(?=a))a`,
+		`^(?=a)`,
+		`^(?!a)`,
 		`^(?=a)+a`,
 		`a(?=b)b`,
 		`(?=a)a`,

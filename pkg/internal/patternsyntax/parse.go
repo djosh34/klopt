@@ -803,6 +803,10 @@ func (state *parser) validateLookaheadPlacement() error {
 		return unsupportedError(firstLookahead, "lookaheads must be consecutive top-level assertions after ^")
 	}
 
+	if prefixCount == len(alternative.Children)-1 {
+		return unsupportedError(firstLookahead, "leading assertions require a consuming remainder")
+	}
+
 	return nil
 }
 
