@@ -648,6 +648,213 @@ func TestEvaluateNestedArrayItemFailuresKeepNumericInstanceIdentity(t *testing.T
 	)
 }
 
+func TestEvaluateObjectRulesUseStableCountsRequirednessAndMemberOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		value      string
+		valid      bool
+		applicable []string
+		observed   []string
+		failures   []string
+	}{
+		{
+			name: "wrong kind makes object rules inapplicable",
+			schema: `{"type":"object","minProperties":1,"maxProperties":1,"required":["name"],` +
+				`"properties":{"name":{"type":"string"}},"additionalProperties":false}`,
+			value:      `"text"`,
+			valid:      false,
+			applicable: []string{"type"},
+			observed:   nil,
+			failures:   []string{"type"},
+		},
+		{
+			name:       "missing required differs from supplied null",
+			schema:     `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`,
+			value:      `{}`,
+			valid:      false,
+			applicable: []string{"type", "required"},
+			observed:   []string{"object"},
+			failures:   []string{"required"},
+		},
+		{
+			name:       "supplied null passes required and reaches child",
+			schema:     `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`,
+			value:      `{"name":null}`,
+			valid:      false,
+			applicable: []string{"type", "required", "type"},
+			observed:   []string{"object", "present"},
+			failures:   []string{"type"},
+		},
+		{
+			name: "counts and closed extras are independently evaluated",
+			schema: `{"type":"object","minProperties":2,"maxProperties":2,"required":["name"],` +
+				`"properties":{"name":{"type":"string"}},"additionalProperties":false}`,
+			value: `{"name":"ok","extra":true}`,
+			valid: false,
+			applicable: []string{
+				"type", "minProperties", "maxProperties", "required", "type", "additionalProperties",
+			},
+			observed: []string{"object", "valid", "valid", "present", "string"},
+			failures: []string{"additionalProperties"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := evaluateSchemaValue(t, test.schema, test.value)
+			require.NoError(t, result.err)
+			require.Equal(t, test.valid, result.valid)
+			require.Equal(t, test.applicable, applicableRules(result.applicable))
+			require.Equal(t, test.observed, observedLevels(result.observed))
+			require.Equal(t, test.failures, failureRules(result.failures))
+		})
+	}
+}
+
+func TestEvaluateObjectRulesSortRequiredAndAdditionalMembersByUTF8(t *testing.T) {
+	t.Parallel()
+
+	result := evaluateSchemaValue(
+		t,
+		`{"type":"object","required":["é","a"],"additionalProperties":false}`,
+		`{"é":true,"z":true,"a":true}`,
+	)
+
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(
+		t,
+		[]string{"type", "required", "required", "additionalProperties", "additionalProperties", "additionalProperties"},
+		applicableRules(result.applicable),
+	)
+	require.Equal(t, []string{"object", "present", "present"}, observedLevels(result.observed))
+	require.Equal(
+		t,
+		[]string{"additionalProperties", "additionalProperties", "additionalProperties"},
+		failureRules(result.failures),
+	)
+	require.Equal(
+		t,
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#/a|additionalProperties",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#/z|additionalProperties",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#/é|additionalProperties",
+		},
+		identityStrings(result.failures),
+	)
+}
+
+func TestEvaluateObjectRulesValidateSuppliedReadOnlyWriteOnlyAndNestedValues(t *testing.T) {
+	t.Parallel()
+
+	result := evaluateSchemaValue(
+		t,
+		`{"type":"object","properties":{"read":{"type":"string","readOnly":true},`+
+			`"write":{"type":"integer","writeOnly":true},"nested":{"type":"object",`+
+			`"required":["child"],"properties":{"child":{"type":"boolean"}}}}}`,
+		`{"read":1,"write":2,"nested":{"child":"wrong"}}`,
+	)
+
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(
+		t,
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/nested|#/nested|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/nested|#/nested/child|required",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/nested/" +
+				"properties/child|#/nested/child|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/read|#/read|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/write|#/write|type",
+		},
+		identityStrings(result.applicable),
+	)
+	require.Equal(t, []string{"object", "object", "present", "number"}, observedLevels(result.observed))
+	require.Equal(
+		t,
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/nested/" +
+				"properties/child|#/nested/child|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/read|#/read|type",
+		},
+		identityStrings(result.failures),
+	)
+}
+
+func TestEvaluateAliasedObjectPropertiesRebaseNestedIdentities(t *testing.T) {
+	t.Parallel()
+
+	document := `openapi: 3.0.4
+x-shared: &shared
+  type: object
+  properties:
+    child: {type: string}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                a: *shared
+                b: *shared
+`
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+
+	value, err := parseStrictJSON([]byte(`{"a":{"child":1},"b":{"child":2}}`))
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(
+		t,
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a/properties/child|#/a/child|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/b/properties/child|#/b/child|type",
+		},
+		identityStrings(result.failures),
+	)
+}
+
+func TestEvaluateObjectAdditionalSchemaUsesOnlySuppliedMembers(t *testing.T) {
+	t.Parallel()
+
+	result := evaluateSchemaValue(
+		t,
+		`{"type":"object","additionalProperties":{"type":"integer"}}`,
+		`{"valid":1,"invalid":"text"}`,
+	)
+
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(
+		t,
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/additionalProperties|#/invalid|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/additionalProperties|#/valid|type",
+		},
+		identityStrings(result.applicable),
+	)
+	require.Equal(t, []string{"object", "number"}, observedLevels(result.observed))
+	require.Equal(
+		t,
+		[]string{"#/paths/~1/post/requestBody/content/application~1json/schema/additionalProperties|#/invalid|type"},
+		identityStrings(result.failures),
+	)
+}
+
 func TestEvaluateRejectsMalformedPrivateJSONValue(t *testing.T) {
 	t.Parallel()
 

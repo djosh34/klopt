@@ -129,9 +129,30 @@ func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrenc
 		evaluateArrayRules(&result, node, occurrence, value)
 	}
 
+	if result.err == nil {
+		evaluateObjectRules(&result, node, occurrence, value)
+	}
+
 	result.valid = result.err == nil && len(result.failures) == 0
 
 	return result
+}
+
+// rebaseChildOccurrence carries a direct schema shape's evaluated use site and instance path to a child.
+func rebaseChildOccurrence(
+	parent *schemaNode,
+	child *schemaNode,
+	usePointer string,
+	instanceTemplate string,
+) schemaOccurrence {
+	childOccurrence := child.occurrence
+	if parent.occurrence.usePointer == parent.occurrence.targetPointer {
+		childOccurrence.usePointer = usePointer
+	}
+
+	childOccurrence.instanceTemplate = instanceTemplate
+
+	return childOccurrence
 }
 
 // evaluateTypeRule applies the explicit kind and same-object nullable contract.
