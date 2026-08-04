@@ -656,17 +656,33 @@ func compileEnum(validation *Validation, pointer string, members map[string]json
 		return keywordError(pointer, "enum", errors.New("must be a non-empty array"))
 	}
 
-	validation.EnumValidation.Values = make([]json.RawMessage, len(values))
+	validation.EnumValidation.Values = make([]json.RawMessage, 0, len(values))
+	validation.EnumValidation.ExactValues = make([]jsonvalue.Value, 0, len(values))
 
-	validation.EnumValidation.ExactValues = make([]jsonvalue.Value, len(values))
+	seen := make(map[string]struct{}, len(values))
 	for index, value := range values {
 		exact, err := jsonvalue.Parse(value)
 		if err != nil {
 			return keywordError(pointer, "enum", fmt.Errorf("member %d: %w", index, err))
 		}
 
-		validation.EnumValidation.Values[index] = append(json.RawMessage(nil), value...)
-		validation.EnumValidation.ExactValues[index] = exact
+		canonical, err := exact.MarshalJSON()
+		if err != nil {
+			return keywordError(pointer, "enum", fmt.Errorf("member %d: canonicalize: %w", index, err))
+		}
+
+		key := string(canonical)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
+		validation.EnumValidation.Values = append(
+			validation.EnumValidation.Values,
+			append(json.RawMessage(nil), value...),
+		)
+		validation.EnumValidation.ExactValues = append(validation.EnumValidation.ExactValues, exact)
 	}
 
 	return nil
