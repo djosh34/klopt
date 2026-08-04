@@ -19,26 +19,14 @@ fixer_registry_file=
 fixer_prompt_file=
 manager_merge_state_file=
 
-delete_owned_agent() {
+stop_owned_agent() {
   local agent_id=$1
-  local failed=0
-  local inspect_output
 
   [[ -n "$agent_id" ]] || return 0
-  if ! paseo stop "$agent_id"; then
+  paseo stop "$agent_id" || {
     echo "failed to stop tracked agent: $agent_id" >&2
-    failed=1
-  fi
-  if ! paseo delete "$agent_id"; then
-    echo "failed to delete tracked agent: $agent_id" >&2
-    failed=1
-  fi
-  if inspect_output=$(paseo inspect --json "$agent_id" 2>&1); then
-    echo "tracked agent is still inspectable after delete: $agent_id" >&2
-    [[ -n "$inspect_output" ]] && printf '%s\n' "$inspect_output" >&2
-    failed=1
-  fi
-  return "$failed"
+    return 1
+  }
 }
 
 cleanup_agent_registry() {
@@ -52,7 +40,7 @@ cleanup_agent_registry() {
     return 1
   fi
   while IFS= read -r agent_id || [[ -n "$agent_id" ]]; do
-    if ! delete_owned_agent "$agent_id"; then
+    if ! stop_owned_agent "$agent_id"; then
       failed=1
     fi
   done <"$registry_file"
@@ -94,7 +82,7 @@ cleanup_on_exit() {
   set +e
 
   if [[ "$exit_status" -ne 0 ]]; then
-    if ! delete_owned_agent "$active_manager_id"; then
+    if ! stop_owned_agent "$active_manager_id"; then
       cleanup_failed=1
     fi
     if ! cleanup_agent_registry "$fixer_registry_file"; then
@@ -397,7 +385,7 @@ ensure_reviewer_result() {
 
   if ! agent_is_clean "$reviewer_id"; then
     echo "reviewer $reviewer_number attempt 1 failed; stopping it and checking its GitHub marker" >&2
-    if ! delete_owned_agent "$reviewer_id"; then
+    if ! stop_owned_agent "$reviewer_id"; then
       return 1
     fi
     unregister_script_agent "$reviewer_id"
@@ -417,7 +405,7 @@ ensure_reviewer_result() {
     "$reviewer_number" "$reviewer_model" "$reviewer_reasoning" 2)
   if ! agent_is_clean "$reviewer_id"; then
     echo "reviewer $reviewer_number retry failed" >&2
-    if delete_owned_agent "$reviewer_id"; then
+    if stop_owned_agent "$reviewer_id"; then
       unregister_script_agent "$reviewer_id"
     fi
     return 1
@@ -652,7 +640,7 @@ EOF
   paseo send "$manager_id" "$(cat <<EOF
 SETUP FIXER ONLY. Your exact manager ID is $manager_id. You are permitted to create exactly one initial fixer agent with paseo using provider $FIXER_MODEL, reasoning $FIXER_REASONING, and the exact prompt contents from $fixer_prompt_file. Pass that file's contents directly to paseo without displaying them in your conversation. This permission never extends to any other agent role. Keep the fixer ID out of GitHub, user comments, reviewer context, and messages to every other agent. The shell-owned cleanup registry is the required exception: the shell receives the ID only through that registry and never messages the fixer directly.
 
-In one uninterrupted shell command sequence, capture the ID returned by paseo and immediately append that exact ID as a new line to $fixer_registry_file before any inspection, wait, message, or other action. Then wait for the fixer, inspect it with paseo inspect --json, and require Status exactly idle and PendingPermissions empty. Retain its ID for the lifecycle. If setup fails after creation, stop and delete that fixer before ending. This setup turn performs only fixer creation and verification, then ends idle without PR or repository work.
+In one uninterrupted shell command sequence, capture the ID returned by paseo and immediately append that exact ID as a new line to $fixer_registry_file before any inspection, wait, message, or other action. Then wait for the fixer, inspect it with paseo inspect --json, and require Status exactly idle and PendingPermissions empty. Retain its ID for the lifecycle. If setup fails after creation, stop that fixer before ending. This setup turn performs only fixer creation and verification, then ends idle without PR or repository work.
 EOF
 )"
   wait_and_assert_agent "$manager_id"
