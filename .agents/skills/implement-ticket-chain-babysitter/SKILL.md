@@ -63,7 +63,7 @@ WAYFINDER=$(awk 'NF && $1 !~ /^#/ {print}' "$WAYFINDER_FILE")
 After every launch or recovery attempt, wait with a direct command:
 
 ```bash
-sleep 1200
+sleep 300
 ```
 
 At every 5-minute check, always inspect service status first, then read the last 20 log lines:
