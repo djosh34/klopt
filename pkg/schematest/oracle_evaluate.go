@@ -11,6 +11,18 @@ const (
 	oracleRuleType = "type"
 	// oracleRuleEnum identifies the Schema Object's enum rule.
 	oracleRuleEnum = "enum"
+	// oracleRuleMinimum identifies an inclusive numeric lower bound.
+	oracleRuleMinimum = "minimum"
+	// oracleRuleExclusiveMinimum identifies an exclusive numeric lower bound.
+	oracleRuleExclusiveMinimum = "exclusiveMinimum"
+	// oracleRuleMaximum identifies an inclusive numeric upper bound.
+	oracleRuleMaximum = "maximum"
+	// oracleRuleExclusiveMaximum identifies an exclusive numeric upper bound.
+	oracleRuleExclusiveMaximum = "exclusiveMaximum"
+	// oracleRuleMultipleOf identifies exact numeric divisibility.
+	oracleRuleMultipleOf = "multipleOf"
+	// oracleRuleFormat identifies a numeric format constraint.
+	oracleRuleFormat = "format"
 
 	// oracleLevelPrefix separates a rule identity from an observed level.
 	oracleLevelPrefix = "level:"
@@ -96,6 +108,12 @@ func evaluateNode(node *schemaNode, value *jsonValue, occurrence schemaOccurrenc
 	}
 
 	evaluateEnumRule(&result, node, occurrence, value)
+
+	if result.err != nil {
+		return result
+	}
+
+	evaluateNumberRules(&result, node, occurrence, value)
 	result.valid = result.err == nil && len(result.failures) == 0
 
 	return result
