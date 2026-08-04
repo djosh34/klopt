@@ -320,6 +320,32 @@ func TestGeneratedRegexpLimitBoundaries(t *testing.T) {
 	require.Empty(t, translation.output)
 }
 
+// TestParseEnforcesTranslatedRegexpBoundary measures the emitted matcher source, not authored bytes.
+func TestParseEnforcesTranslatedRegexpBoundary(t *testing.T) {
+	t.Parallel()
+
+	// The ordinary translated expression wrapper costs 4 bytes; \S, a, and . cost
+	// 174, 6, and 23 bytes respectively. These sources produce exactly the limit
+	// and the first overflow without reaching the AST-node limit.
+	atLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_661) + strings.Repeat(".", 492)
+	overLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_665) + strings.Repeat(".", 491)
+
+	validation, err := Parse(atLimit)
+	require.NoError(t, err)
+	require.NotNil(t, validation)
+
+	validation, err = Parse(overLimit)
+	require.ErrorIs(t, err, ErrTooComplex)
+	require.Nil(t, validation)
+
+	var complexity *ComplexityError
+	require.ErrorAs(t, err, &complexity)
+	require.Equal(t, "translation", complexity.Phase)
+	require.Equal(t, "generated Go regexp bytes", complexity.Limit)
+	require.Equal(t, uint64(maximumGeneratedRegexpBytes), complexity.Maximum)
+	require.Equal(t, uint64(maximumGeneratedRegexpBytes+1), complexity.Observed)
+}
+
 func TestParseAndValidateNamedRobustnessMatrix(t *testing.T) {
 	t.Parallel()
 

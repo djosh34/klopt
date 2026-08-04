@@ -508,6 +508,122 @@ func TestParseRejectsUnsupportedLeadingAssertionPlacement(t *testing.T) {
 	}
 }
 
+// TestParseEnforcesExactPatternResourceLimits pins every production Parse boundary.
+func TestParseEnforcesExactPatternResourceLimits(t *testing.T) {
+	t.Parallel()
+
+	// The matcher fixtures are measured after translation: the expression wrapper costs
+	// 4 bytes, each \S costs 174 bytes, each literal a costs 6 bytes, and each dot
+	// costs 23 bytes. The first fixture is exactly 1,048,576 bytes; the second is
+	// exactly 1,048,577 bytes.
+	matcherAtLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_661) + strings.Repeat(".", 492)
+	matcherOverLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_665) + strings.Repeat(".", 491)
+
+	tests := []struct {
+		name     string
+		pattern  string
+		wantErr  bool
+		limit    string
+		maximum  uint64
+		observed uint64
+	}{
+		// Source is counted as UTF-8 bytes, including the surrounding class brackets.
+		{
+			name: "source at limit", pattern: "[" + strings.Repeat("a", 65_536-2) + "]",
+		},
+		{
+			name: "source first overflow", pattern: "[" + strings.Repeat("a", 65_537-2) + "]",
+			wantErr: true, limit: "source bytes", maximum: 65_536, observed: 65_537,
+		},
+		// Nesting is the maximum number of simultaneously open groups.
+		{
+			name: "nesting at limit", pattern: strings.Repeat("(", 100) + "a" + strings.Repeat(")", 100),
+		},
+		{
+			name: "nesting first overflow", pattern: strings.Repeat("(", 101) + "a" + strings.Repeat(")", 101),
+			wantErr: true, limit: "nesting depth", maximum: 100, observed: 101,
+		},
+		// AST nodes count every appended expression, alternative, atom, group,
+		// lookahead, or repeat node; this literal fixture has one node per a,
+		// plus one expression and one alternative node.
+		{
+			name: "AST nodes at limit", pattern: strings.Repeat("a", 10_000-2),
+		},
+		{
+			name: "AST nodes first overflow", pattern: strings.Repeat("a", 10_000-1),
+			wantErr: true, limit: "AST nodes", maximum: 10_000, observed: 10_001,
+		},
+		// Leading assertions count consecutive top-level lookahead nodes after ^.
+		{
+			name: "leading assertions at limit", pattern: "^" + strings.Repeat("(?=a)", 64) + "a",
+		},
+		{
+			name: "leading assertions first overflow", pattern: "^" + strings.Repeat("(?=a)", 65) + "a",
+			wantErr: true, limit: "leading assertions", maximum: 64, observed: 65,
+		},
+		// A counted endpoint is its parsed decimal value, not its source width.
+		{
+			name: "counted endpoint at limit", pattern: "a{1000}",
+		},
+		{
+			name: "counted endpoint first overflow", pattern: "a{1001}",
+			wantErr: true, limit: "repeat endpoint", maximum: 1_000, observed: 1_001,
+		},
+		// Nested-repeat product is the largest product of counted factors on one
+		// nesting path, using bounded maxima or unbounded minima; the inner and
+		// outer factors here are 10 and 100.
+		{
+			name: "nested counted-repeat product at limit", pattern: "(?:a{10}){100}",
+		},
+		{
+			name: "nested counted-repeat product first overflow", pattern: "(?:a{10}){101}",
+			wantErr: true, limit: "cumulative nested repeat product", maximum: 1_000, observed: 1_010,
+		},
+		{
+			name: "translated matcher source at limit", pattern: matcherAtLimit,
+		},
+		{
+			name: "translated matcher source first overflow", pattern: matcherOverLimit,
+			wantErr: true, limit: "generated Go regexp bytes", maximum: 1_048_576, observed: 1_048_577,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse(openAPISpec(
+				`{"type":"string","pattern":`+strconv.Quote(test.pattern)+`}`,
+				"", false,
+			))
+			if !test.wantErr {
+				require.NoError(t, err)
+				require.NotNil(t, parsed["checkThing"].Body)
+
+				return
+			}
+
+			require.Error(t, err)
+			require.Nil(t, parsed)
+			require.ErrorContains(t, err, "/pattern")
+			require.ErrorIs(t, err, patternvalidator.ErrTooComplex)
+
+			var complexity *patternvalidator.ComplexityError
+			require.ErrorAs(t, err, &complexity)
+			require.Equal(t, test.limit, complexity.Limit)
+			require.Equal(t, test.maximum, complexity.Maximum)
+			require.Equal(t, test.observed, complexity.Observed)
+
+			repeated, repeatedErr := Parse(openAPISpec(
+				`{"type":"string","pattern":`+strconv.Quote(test.pattern)+`}`,
+				"", false,
+			))
+			require.Nil(t, repeated)
+			require.EqualError(t, repeatedErr, err.Error())
+		})
+	}
+}
+
 // TestParseAdmitsNamedECMAScript51PatternFamilies pins the production Parse seam.
 func TestParseAdmitsNamedECMAScript51PatternFamilies(t *testing.T) {
 	t.Parallel()
