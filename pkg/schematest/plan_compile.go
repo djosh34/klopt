@@ -464,6 +464,8 @@ func (builder *planBuilder) compileAllOfChild(
 }
 
 // compileTypeRules compiles kind levels and an explicit-type fault.
+//
+//nolint:nestif // Type-fault witness selection must remain beside type-level compilation.
 func (builder *planBuilder) compileTypeRules(
 	result *compiledNodePlan,
 	node *schemaNode,
@@ -486,6 +488,15 @@ func (builder *planBuilder) compileTypeRules(
 	}
 
 	if node.kind != schemaAny {
+		typeFaultRealizable, err := typeFaultHasWitness(node)
+		if err != nil {
+			return err
+		}
+
+		if !typeFaultRealizable {
+			return nil
+		}
+
 		pins, realizable, err := builder.faultPinsForAny(faultInherited, node, occurrence)
 		if err != nil {
 			return err
@@ -499,6 +510,26 @@ func (builder *planBuilder) compileTypeRules(
 	}
 
 	return nil
+}
+
+// typeFaultHasWitness reports whether enum admits a wrong-kind witness for the declared type.
+func typeFaultHasWitness(node *schemaNode) (bool, error) {
+	if node.enum == nil {
+		return true, nil
+	}
+
+	for _, member := range node.enum {
+		matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+		if err != nil {
+			return false, err
+		}
+
+		if !matches {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // compileEnumRules compiles semantic enum members and the enum fault.
@@ -976,7 +1007,7 @@ func defaultPresencePinsForKind(
 	case jsonArray:
 		return defaultArrayPresencePins(node, occurrence)
 	case jsonObject:
-		return defaultObjectPresencePins(node, occurrence), nil
+		return defaultObjectPresencePins(node, occurrence)
 	default:
 		return nil, nil
 	}
@@ -1008,11 +1039,14 @@ func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]
 	return []applicabilityPin{presencePin(itemOccurrence, presence)}, nil
 }
 
-// defaultObjectPresencePins chooses required members, omitted optional members, and no extras.
-func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) []applicabilityPin {
+// defaultObjectPresencePins chooses required members, enough lower-bound members, and no extras.
+//
+//nolint:cyclop // Required and lower-bound presence decisions share one canonical pass.
+func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]applicabilityPin, error) {
 	shape := node.schemaShape
 
 	names := make(map[string]bool, len(shape.properties)+len(shape.required))
+
 	for name := range shape.properties {
 		names[name] = true
 	}
@@ -1029,25 +1063,70 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) []
 	sort.Strings(sortedNames)
 
 	pins := make([]applicabilityPin, 0, len(sortedNames)+1)
+	presentCount := 0
+
 	for _, name := range sortedNames {
 		presence := planPinAbsent
 		if containsString(shape.required, name) {
 			presence = planPinPresent
+		} else {
+			needsMember, err := objectMinimumNeedsMember(shape.minProperties, presentCount)
+			if err != nil {
+				return nil, err
+			}
+
+			if needsMember {
+				presence = planPinPresent
+			}
+		}
+
+		if presence == planPinPresent {
+			presentCount++
 		}
 
 		pins = append(pins, presencePin(requiredPresenceOccurrence(node, occurrence, name), presence))
 	}
 
 	if shape.additionalProperties != nil {
+		presence := planPinAbsent
+
+		needsMember, err := objectMinimumNeedsMember(shape.minProperties, presentCount)
+		if err != nil {
+			return nil, err
+		}
+
+		if needsMember {
+			presence = planPinPresent
+		}
+
 		additionalOccurrence := rebasePlanOccurrence(
 			shape.additionalProperties,
 			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
 		)
-		pins = append(pins, presencePin(additionalOccurrence, planPinAbsent))
+		pins = append(pins, presencePin(additionalOccurrence, presence))
 	}
 
-	return pins
+	return pins, nil
+}
+
+// objectMinimumNeedsMember reports whether one more default member is needed.
+func objectMinimumNeedsMember(minimum *exactCount, presentCount int) (bool, error) {
+	if minimum == nil {
+		return false, nil
+	}
+
+	actual, err := parseExactNumber(fmt.Sprintf("%d", presentCount))
+	if err != nil {
+		return false, err
+	}
+
+	comparison, err := actual.compare(minimum.number)
+	if err != nil {
+		return false, err
+	}
+
+	return comparison < 0, nil
 }
 
 // validPinsForKind adds local defaults and the exact parent anyOf state.
@@ -1468,6 +1547,165 @@ func anyOfMaskForKind(node *schemaNode, kind jsonKind) (*big.Int, bool, error) {
 	return mask, true, nil
 }
 
+// branchCanAcceptInteger reports whether a branch can admit an integer JSON number.
+//
+//nolint:cyclop,gocognit,nestif // Numeric subtype applicability follows composition recursively.
+func branchCanAcceptInteger(node *schemaNode, visiting map[*schemaNode]bool) (bool, error) {
+	if node == nil || node.schemaShape == nil {
+		return false, errors.New("anyOf branch has no shape")
+	}
+
+	if visiting[node] {
+		return false, fmt.Errorf("recursive anyOf branch at %s", node.occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	switch node.kind {
+	case schemaAny, schemaInteger, schemaNumber:
+	default:
+		return false, nil
+	}
+
+	if node.enum != nil {
+		matched := false
+
+		for _, member := range node.enum {
+			if member == nil {
+				return false, errors.New("JSON enum member is nil")
+			}
+
+			if member.kind != jsonNumber {
+				continue
+			}
+
+			integer, err := member.number.isInteger()
+			if err != nil {
+				return false, err
+			}
+
+			matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+			if err != nil {
+				return false, err
+			}
+
+			if integer && matches {
+				matched = true
+
+				break
+			}
+		}
+
+		if !matched {
+			return false, nil
+		}
+	}
+
+	for _, child := range node.allOf {
+		accepted, err := branchCanAcceptInteger(child, visiting)
+		if err != nil {
+			return false, err
+		}
+
+		if !accepted {
+			return false, nil
+		}
+	}
+
+	if len(node.anyOf) == 0 {
+		return true, nil
+	}
+
+	for _, child := range node.anyOf {
+		accepted, err := branchCanAcceptInteger(child, visiting)
+		if err != nil {
+			return false, err
+		}
+
+		if accepted {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// branchAlwaysAcceptsInteger reports whether a branch always accepts integers.
+func branchAlwaysAcceptsInteger(node *schemaNode, visiting map[*schemaNode]bool) (bool, error) {
+	accepted, err := branchCanAcceptInteger(node, visiting)
+	if err != nil || !accepted {
+		return false, err
+	}
+
+	if node.enum != nil || len(node.allOf) > 0 {
+		return false, nil
+	}
+
+	if len(node.anyOf) > 0 {
+		for _, child := range node.anyOf {
+			always, err := branchAlwaysAcceptsInteger(child, visiting)
+			if err != nil {
+				return false, err
+			}
+
+			if always {
+				return true, nil
+			}
+		}
+
+		return false, nil
+	}
+
+	return !nodeHasSiblingRuleForKind(node, jsonNumber), nil
+}
+
+// integerAnyOfMask chooses the canonical truth mask for integer JSON numbers.
+//
+//nolint:cyclop // Integer subtype applicability follows the same branch decision phases.
+func integerAnyOfMask(node *schemaNode) (*big.Int, bool, error) {
+	if node == nil || len(node.anyOf) == 0 {
+		return nil, false, nil
+	}
+
+	mask := new(big.Int)
+	firstApplicable := -1
+
+	for index, child := range node.anyOf {
+		accepted, err := branchCanAcceptInteger(child, make(map[*schemaNode]bool))
+		if err != nil {
+			return nil, false, err
+		}
+
+		if !accepted {
+			continue
+		}
+
+		if firstApplicable < 0 {
+			firstApplicable = index
+		}
+
+		always, err := branchAlwaysAcceptsInteger(child, make(map[*schemaNode]bool))
+		if err != nil {
+			return nil, false, err
+		}
+
+		if always {
+			mask.SetBit(mask, index, 1)
+		}
+	}
+
+	if firstApplicable < 0 {
+		return nil, false, nil
+	}
+
+	if mask.Sign() == 0 {
+		mask.SetBit(mask, firstApplicable, 1)
+	}
+
+	return mask, true, nil
+}
+
 // anyOfMaskForAny chooses the first realizable mask in canonical JSON-kind order.
 func anyOfMaskForAny(node *schemaNode) (*big.Int, bool, error) {
 	for _, kind := range canonicalJSONKinds() {
@@ -1485,6 +1723,8 @@ func anyOfMaskForAny(node *schemaNode) (*big.Int, bool, error) {
 }
 
 // realizableAnyOfMasks returns distinct truth masks reachable by one JSON kind.
+//
+//nolint:cyclop // Canonical JSON kinds and numeric subtypes are merged deterministically.
 func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 	masks := make([]*big.Int, 0)
 
@@ -1498,18 +1738,39 @@ func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 			continue
 		}
 
-		duplicate := false
+		appendUnique := true
 
 		for _, existing := range masks {
 			if existing.Cmp(mask) == 0 {
-				duplicate = true
+				appendUnique = false
 
 				break
 			}
 		}
 
-		if !duplicate {
+		if appendUnique {
 			masks = append(masks, mask)
+		}
+	}
+
+	integerMask, integerRealizable, err := integerAnyOfMask(node)
+	if err != nil {
+		return nil, err
+	}
+
+	if integerRealizable {
+		appendUnique := true
+
+		for _, existing := range masks {
+			if existing.Cmp(integerMask) == 0 {
+				appendUnique = false
+
+				break
+			}
+		}
+
+		if appendUnique {
+			masks = append(masks, integerMask)
 		}
 	}
 

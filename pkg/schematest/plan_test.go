@@ -95,7 +95,6 @@ func TestMakePlanCanonicalizesPropertyAndEnumObligations(t *testing.T) {
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/2|#/2|type|level:string",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/2|#/2|type|fault:type",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|type|level:string",
-		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|type|fault:type",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|enum|level:member:0",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|enum|level:member:1",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|enum|fault:enum",
@@ -544,6 +543,85 @@ func TestPlanComparisonErrorsPropagate(t *testing.T) {
 		&schemaNode{schemaShape: &schemaShape{}}, invalidOccurrence, faults,
 	)
 	require.Error(t, err)
+}
+
+func TestMakePlanOmitsImpossibleTypedEnumTypeFault(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		schema    string
+		typeFault bool
+	}{
+		{name: "exhaustive string enum", schema: `{"type":"string","enum":["a"]}`, typeFault: false},
+		{name: "wrong-kind enum witness", schema: `{"type":"string","enum":["a",1]}`, typeFault: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected"})
+			require.NoError(t, err)
+
+			plan, err := makePlan(model)
+			require.NoError(t, err)
+
+			found := false
+
+			for _, target := range plan.faultTargets {
+				if strings.HasSuffix(target.obligation.String(), "|type|fault:type") {
+					found = true
+
+					break
+				}
+			}
+
+			require.Equal(t, test.typeFault, found)
+		})
+	}
+}
+
+func TestMakePlanEnumeratesReachableIntegerNumberAnyOfMasks(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"type":"integer"},{"type":"number"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:2")
+	findValidTarget(t, plan, "|anyOf|level:mask:3")
+
+	for _, target := range plan.validTargets {
+		require.NotContains(t, target.obligation.String(), "|anyOf|level:mask:1")
+	}
+}
+
+func TestMakePlanPositiveMinPropertiesPinsDeclaredMemberPresent(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object",
+		"minProperties":1,
+		"properties":{"x":{"type":"string"}},
+		"additionalProperties":false
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range []validTarget{
+		findValidTarget(t, plan, "|type|level:object"),
+		findValidTarget(t, plan, "|minProperties|level:valid"),
+	} {
+		requirePin(t, target.pins, "#/x", planPinPresent)
+		requireNoPresencePin(t, target.pins, "#/x", planPinAbsent)
+	}
 }
 
 func findValidTarget(t *testing.T, plan *searchPlan, suffix string) validTarget {
