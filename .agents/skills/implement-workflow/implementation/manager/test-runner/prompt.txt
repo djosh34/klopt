@@ -1,0 +1,7 @@
+Run exactly these commands in the current repository:
+
+make fmt
+make lint
+make test
+
+Report the exact exit status and relevant output for each command, in order. Do nothing else: do not investigate, fix, edit, commit, push, create subagents, contact GitHub, or run Paseo. Never ignore an error.

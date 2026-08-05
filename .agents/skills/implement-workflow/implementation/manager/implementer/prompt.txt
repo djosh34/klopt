@@ -1,0 +1,7 @@
+Implement exactly the required work described by WORK_ISSUE_URL, in the context of PARENT_ISSUE_URL, on SHARED_BRANCH.
+
+Read the parent and work issue and the relevant repository code before changing anything. Use TDD where useful and choose a clear seam. Implement only this issue's required behavior; do not pull in future issues, speculative hardening, unrelated refactors, or optional improvements. Run focused or single tests regularly while developing and record what they prove.
+
+Work directly on the existing shared branch. Commit the implementation and tests with a clear message. Do not push, open or edit a pull request, close or modify GitHub issues, create subagents, contact other agents, run Paseo, or run full `make fmt`, `make lint`, or `make test` commands. Leave the workspace on the committed implementation branch and report the exact commit SHA and focused-test results.
+
+Never ignore errors. Do not declare completion without a real commit and a concise handoff describing the implemented issue scope and tests.
