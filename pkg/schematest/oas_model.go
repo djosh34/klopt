@@ -75,6 +75,7 @@ type schemaShape struct {
 	kind         schemaKind
 	nullable     bool
 	enum         []*jsonValue
+	enumIndices  []int
 	defaultValue *jsonValue
 
 	minimum          *exactNumber
