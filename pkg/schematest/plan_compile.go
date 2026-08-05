@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"sort"
 	"strings"
+	"unicode/utf16"
 )
 
 // makePlan compiles every stable valid and isolated-fault obligation without
@@ -2511,6 +2512,13 @@ func collectAnyOfWitnesses(
 				return err
 			}
 		}
+
+		if witness, exists := canonicalStringPatternWitness(node.pattern); exists {
+			*witnesses, err = appendUniqueJSONWitness(*witnesses, witness)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	if kind == jsonNumber {
@@ -2621,6 +2629,34 @@ func shiftedExactNumber(number *exactNumber, delta int64) (*exactNumber, bool, e
 	}
 
 	return value, true, nil
+}
+
+// canonicalStringPatternWitness derives a witness for one literal-only pattern.
+//
+//nolint:cyclop // Literal-only AST validation is one bounded witness pass.
+func canonicalStringPatternWitness(pattern *patternAST) (*jsonValue, bool) {
+	if pattern == nil || pattern.expression == nil || len(pattern.expression.alternatives) != 1 {
+		return nil, false
+	}
+
+	sequence := pattern.expression.alternatives[0]
+	units := make([]uint16, 0, len(sequence.terms))
+
+	for _, term := range sequence.terms {
+		if term == nil || term.atom == nil || term.quantified || term.minimum != 1 || term.maximum != 1 {
+			return nil, false
+		}
+
+		switch term.atom.kind {
+		case patternStart, patternEnd:
+		case patternLiteral:
+			units = append(units, term.atom.literal)
+		default:
+			return nil, false
+		}
+	}
+
+	return &jsonValue{kind: jsonString, text: string(utf16.Decode(units))}, true
 }
 
 // canonicalStringMinLengthWitness derives a bounded valid-length string witness.

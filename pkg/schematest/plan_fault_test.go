@@ -84,8 +84,8 @@ func TestMakePlanDirectedFaultsUseTheirOwnAnyOfApplicability(t *testing.T) {
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
 		"type":"string",
-		"pattern":"^b",
-		"anyOf":[{"pattern":"^a"}, {"pattern":"^b"}]
+		"pattern":"^z$",
+		"anyOf":[{"pattern":"^z$"}, {"pattern":"^y$"}]
 	}`)), OperationID: "selected"})
 	require.NoError(t, err)
 
@@ -93,8 +93,8 @@ func TestMakePlanDirectedFaultsUseTheirOwnAnyOfApplicability(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|pattern|fault:pattern")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, true)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, false)
+	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
+	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
 }
 
 func TestMakePlanMaxLengthFaultUsesExactAnyOfApplicability(t *testing.T) {
@@ -103,7 +103,10 @@ func TestMakePlanMaxLengthFaultUsesExactAnyOfApplicability(t *testing.T) {
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
 		"type":"string",
 		"maxLength":0,
-		"anyOf":[{"maxLength":0}, {"maxLength":1}]
+		"anyOf":[
+			{"type":"string","pattern":"^z$","maxLength":0},
+			{"type":"string","pattern":"^q$"}
+		]
 	}`)), OperationID: "selected"})
 	require.NoError(t, err)
 
