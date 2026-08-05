@@ -254,6 +254,26 @@ func TestMakePlanEnumeratesDistinctStringAnyOfMasks(t *testing.T) {
 	require.Equal(t, []string{"level:mask:1", "level:mask:2"}, masks)
 }
 
+func TestMakePlanEnumFaultUsesFaultContextAnyOfMask(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"enum":["b"],
+		"anyOf":[{"enum":["a"]}, {"enum":["b"]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:2")
+
+	enumFault := findFaultTarget(t, plan, "|enum|fault:enum")
+	requireCompositionPin(t, enumFault.pins, "anyOf", 0, true)
+	requireCompositionPin(t, enumFault.pins, "anyOf", 1, false)
+}
+
 func TestMakePlanParentEnumExcludesDisallowedBooleanAnyOfMask(t *testing.T) {
 	t.Parallel()
 
@@ -274,6 +294,21 @@ func TestMakePlanParentEnumExcludesDisallowedBooleanAnyOfMask(t *testing.T) {
 			require.NotContains(t, target.obligation.component, "mask:1")
 		}
 	}
+}
+
+func TestMakePlanDerivesStringAnyOfWitnessFromMinLength(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"minLength":5}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:1")
 }
 
 func TestMakePlanOmitsMasksInapplicableToExplicitType(t *testing.T) {

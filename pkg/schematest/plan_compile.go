@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 // makePlan compiles every stable valid and isolated-fault obligation without
@@ -581,7 +583,7 @@ func (builder *planBuilder) compileEnumRules(
 	}
 
 	if !enumExhaustsNonNullableBoolean(node) {
-		pins, realizable, pinErr := builder.faultPinsForAny(faultInherited, node, occurrence)
+		pins, realizable, pinErr := builder.faultPinsForEnum(faultInherited, node, occurrence)
 		if pinErr != nil {
 			return pinErr
 		}
@@ -1228,6 +1230,29 @@ func (builder *planBuilder) faultPinsForAny(
 	return builder.validAnyOfPins(node, occurrence, inherited)
 }
 
+// faultPinsForEnum chooses an anyOf state while allowing this node's enum to fail.
+func (builder *planBuilder) faultPinsForEnum(
+	inherited []applicabilityPin,
+	node *schemaNode,
+	occurrence schemaOccurrence,
+) ([]applicabilityPin, bool, error) {
+	pins := appendPlanPins(inherited)
+	if node == nil || len(node.anyOf) == 0 {
+		return pins, true, nil
+	}
+
+	mask, realizable, err := anyOfMaskForEnumFault(node)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !realizable {
+		return nil, false, nil
+	}
+
+	return appendPlanPins(pins, anyOfMaskPins(occurrence, len(node.anyOf), mask)...), true, nil
+}
+
 // nodeAcceptsKindForTarget reports whether a valid target can use one JSON kind.
 func nodeAcceptsKindForTarget(node *schemaNode, kind jsonKind) bool {
 	if node.kind == schemaAny {
@@ -1740,6 +1765,75 @@ func anyOfMaskForAny(node *schemaNode) (*big.Int, bool, error) {
 	return nil, false, nil
 }
 
+// anyOfMaskForEnumFault chooses a mask with a witness that fails the local enum.
+//
+//nolint:cyclop // Enum-fault witness filtering has explicit canonical phases.
+func anyOfMaskForEnumFault(node *schemaNode) (*big.Int, bool, error) {
+	if node == nil || len(node.anyOf) == 0 {
+		return nil, false, errors.New("schema has no anyOf branches")
+	}
+
+	withoutEnum := schemaNodeWithoutEnum(node)
+	for _, kind := range canonicalJSONKinds() {
+		witnesses, err := canonicalAnyOfWitnesses(node, kind)
+		if err != nil {
+			return nil, false, err
+		}
+
+		for _, witness := range witnesses {
+			matches, err := enumContainsValue(node, witness)
+			if err != nil {
+				return nil, false, err
+			}
+
+			if matches {
+				continue
+			}
+
+			result := evaluateNode(withoutEnum, witness, node.occurrence)
+			if result.err != nil {
+				return nil, false, fmt.Errorf("evaluate enum-fault anyOf %s witness: %w", jsonKindName(kind), result.err)
+			}
+
+			if !result.valid {
+				continue
+			}
+
+			mask, exists := anyOfEvaluationMask(result, node.occurrence)
+			if exists {
+				return mask, true, nil
+			}
+		}
+	}
+
+	return nil, false, nil
+}
+
+// schemaNodeWithoutEnum shallow-copies one node while disabling only its enum.
+func schemaNodeWithoutEnum(node *schemaNode) *schemaNode {
+	shape := *node.schemaShape
+	shape.enum = nil
+	shape.enumIndices = nil
+
+	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}
+}
+
+// enumContainsValue reports whether one value is semantically listed by an enum.
+func enumContainsValue(node *schemaNode, value *jsonValue) (bool, error) {
+	for _, member := range node.enum {
+		equal, err := jsonSemanticEqual(member, value)
+		if err != nil {
+			return false, err
+		}
+
+		if equal {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 // booleanAnyOfMasks returns distinct truth masks for the canonical false and true values.
 //
 //nolint:cyclop // Boolean values and authored branch masks are one canonical pass.
@@ -2038,6 +2132,20 @@ func collectAnyOfWitnesses(
 		}
 	}
 
+	if kind == jsonString {
+		minimumWitnesses, err := canonicalStringMinLengthWitness(node.minLength)
+		if err != nil {
+			return err
+		}
+
+		for _, witness := range minimumWitnesses {
+			*witnesses, err = appendUniqueJSONWitness(*witnesses, witness)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	if kind == jsonNumber {
 		for _, bound := range []*exactNumber{node.minimum, node.maximum, node.multipleOf} {
 			if bound == nil {
@@ -2068,6 +2176,30 @@ func collectAnyOfWitnesses(
 	}
 
 	return nil
+}
+
+// canonicalStringMinLengthWitness derives valid-length strings from one constraint.
+func canonicalStringMinLengthWitness(minimum *exactCount) ([]*jsonValue, error) {
+	if minimum == nil || minimum.number == nil {
+		return []*jsonValue{}, nil
+	}
+
+	source, err := minimum.number.canonicalDecimal()
+	if err != nil {
+		return nil, err
+	}
+
+	length, err := strconv.ParseUint(source, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize minLength witness: %w", err)
+	}
+
+	maxInt := uint64(^uint(0) >> 1)
+	if length > maxInt {
+		return nil, fmt.Errorf("canonicalize minLength witness: length %d overflows int", length)
+	}
+
+	return []*jsonValue{{kind: jsonString, text: strings.Repeat("a", int(length))}}, nil
 }
 
 // appendUniqueJSONWitness retains semantic distinctness without changing authored values.
