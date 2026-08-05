@@ -139,12 +139,12 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 		anyOfBounds = append(anyOfBounds, [2]int{childMinimum, childMaximum})
 	}
 
-	itemPin := rowPresencePin(pins, schemaOccurrence{
+	itemPin, itemPinned := rowPresencePinDetails(pins, schemaOccurrence{
 		usePointer:       occurrence.usePointer + "/items",
 		targetPointer:    occurrence.targetPointer,
 		instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
 	})
-	if itemPin == planPinPresent && minimum < 1 {
+	if itemPinned && !itemPin.canonical && itemPin.presence == planPinPresent && minimum < 1 {
 		minimum = 1
 	}
 
@@ -250,9 +250,11 @@ func (s *search) walkObjectMembers(
 	}
 
 	member := members[index]
-	presence := rowPresencePin(pins, member.occurrence)
+	presence, presencePinned := rowPresencePinDetails(pins, member.occurrence)
 
-	choices, err := rowMemberPresenceChoices(node, occurrence, members, index, member, presence)
+	choices, err := rowMemberPresenceChoices(
+		node, occurrence, members, index, member, presence, presencePinned,
+	)
 	if err != nil {
 		return false, err
 	}
@@ -311,18 +313,27 @@ func rowMemberPresenceChoices(
 	members []rowMember,
 	index int,
 	member rowMember,
-	pinned pinPresence,
+	pinned applicabilityPin,
+	presencePinned bool,
 ) ([]bool, error) {
-	if pinned == planPinPresent {
-		return []bool{true}, nil
-	}
+	if presencePinned && !pinned.canonical {
+		if pinned.presence == planPinPresent {
+			return []bool{true}, nil
+		}
 
-	if pinned == planPinAbsent {
 		return []bool{false}, nil
 	}
 
 	if member.required {
 		return []bool{true}, nil
+	}
+
+	if presencePinned {
+		if pinned.presence == planPinPresent {
+			return []bool{true, false}, nil
+		}
+
+		return []bool{false, true}, nil
 	}
 
 	present, err := rowCanonicalMemberPresence(node, occurrence, members, index)
@@ -659,15 +670,28 @@ func rowChildName(parent, child string) (string, bool) {
 	return childTokens[len(parentTokens)], true
 }
 
-// rowPresencePin finds a concrete presence requirement for one schema occurrence.
-func rowPresencePin(pins []applicabilityPin, occurrence schemaOccurrence) pinPresence {
+// rowPresencePinDetails prefers a hard target pin over a canonical starting assignment.
+func rowPresencePinDetails(pins []applicabilityPin, occurrence schemaOccurrence) (applicabilityPin, bool) {
+	var canonical applicabilityPin
+
+	canonicalFound := false
+
 	for _, pin := range pins {
-		if pin.presence != planPinNoPresence && rowOccurrenceMatches(pin.occurrence, occurrence) {
-			return pin.presence
+		if pin.presence == planPinNoPresence || !rowOccurrenceMatches(pin.occurrence, occurrence) {
+			continue
+		}
+
+		if !pin.canonical {
+			return pin, true
+		}
+
+		if !canonicalFound {
+			canonical = pin
+			canonicalFound = true
 		}
 	}
 
-	return planPinNoPresence
+	return canonical, canonicalFound
 }
 
 // rowAdditionalPresencePinned reports whether the target explicitly asks for an extra member.
@@ -677,7 +701,9 @@ func rowAdditionalPresencePinned(occurrence schemaOccurrence, pins []applicabili
 		instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
 	}
 
-	return rowPresencePin(pins, wanted) == planPinPresent
+	pin, exists := rowPresencePinDetails(pins, wanted)
+
+	return exists && !pin.canonical && pin.presence == planPinPresent
 }
 
 // walkGenericValue assigns a small complete value where no child schema is available.

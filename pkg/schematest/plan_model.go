@@ -37,6 +37,7 @@ type applicabilityPin struct {
 	kind        jsonKind
 	hasKind     bool
 	presence    pinPresence
+	canonical   bool // Canonical structural assignments remain repairable during search.
 	composition string
 	branch      int
 	truth       bool

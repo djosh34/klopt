@@ -79,7 +79,7 @@ func targetRowMatches(result evaluation, target validTarget, value *jsonValue) b
 
 	for _, pin := range target.pins {
 		switch {
-		case pin.presence != planPinNoPresence && !presencePinWasSatisfied(value, pin):
+		case pin.presence != planPinNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
 			return false
 		case pin.hasKind && !kindWasObserved(result.observed, pin.occurrence, pin.kind):
 			return false
@@ -253,7 +253,7 @@ func branchTruthWasObserved(result evaluation, pin applicabilityPin) bool {
 
 	for _, truth := range truths {
 		if truth.rule != pin.composition || truth.occurrence.usePointer != parentUsePointer ||
-			!instanceTemplateMatches(truth.occurrence.instanceTemplate, pin.occurrence.instanceTemplate) {
+			!instanceTemplateMatches(pin.occurrence.instanceTemplate, truth.occurrence.instanceTemplate) {
 			continue
 		}
 
