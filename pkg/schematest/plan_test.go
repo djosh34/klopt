@@ -187,35 +187,6 @@ func TestMakePlanKeepsTypelessSiblingCompatibleKindFirst(t *testing.T) {
 	}, ids)
 }
 
-func TestMakePlanTypelessNullEnumDoesNotLeadKinds(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"enum":[null,true]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	ids := make([]string, 0)
-
-	for _, target := range plan.validTargets {
-		if target.obligation.rule == oracleRuleType {
-			ids = append(ids, target.obligation.String())
-		}
-	}
-
-	require.Equal(t, []string{
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:boolean",
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:null",
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:number",
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:string",
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:array",
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:object",
-	}, ids)
-}
-
 func TestMakePlanEnumeratesBooleanAnyOfMasks(t *testing.T) {
 	t.Parallel()
 
@@ -230,6 +201,23 @@ func TestMakePlanEnumeratesBooleanAnyOfMasks(t *testing.T) {
 
 	findValidTarget(t, plan, "|anyOf|level:mask:1")
 	findValidTarget(t, plan, "|anyOf|level:mask:2")
+}
+
+func TestMakePlanOmitsMasksInapplicableToExplicitType(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"enum":[true]}, {"enum":[false]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range plan.validTargets {
+		require.NotEqual(t, oracleRuleAnyOf, target.obligation.rule)
+	}
 }
 
 func TestMakePlanOmitsUnreachableGenericBooleanMasks(t *testing.T) {

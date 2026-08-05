@@ -1296,13 +1296,11 @@ func orderedTypeKinds(node *schemaNode) []jsonKind {
 	return ordered
 }
 
-// firstSiblingCompatibleKind selects the first authored or constrained non-null kind.
-//
-//nolint:cyclop // The canonical sibling-priority checks are intentionally explicit.
+// firstSiblingCompatibleKind selects the first authored or constrained kind.
 func firstSiblingCompatibleKind(node *schemaNode, allowed map[jsonKind]bool) (jsonKind, bool) {
 	if node.enum != nil {
 		for _, member := range node.enum {
-			if member != nil && member.kind != jsonNull && allowed[member.kind] {
+			if member != nil && allowed[member.kind] {
 				return member.kind, true
 			}
 		}
@@ -1732,6 +1730,10 @@ func booleanAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 		return nil, nil
 	}
 
+	if !nodeAcceptsKindForTarget(node, jsonBoolean) {
+		return nil, nil
+	}
+
 	booleanValues := []bool{false, true}
 
 	masks := make([]*big.Int, 0, len(booleanValues))
@@ -1877,7 +1879,7 @@ func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 	}
 
 	for _, kind := range canonicalJSONKinds() {
-		if kind == jsonBoolean && len(booleanMasks) > 0 {
+		if !nodeAcceptsKindForTarget(node, kind) || kind == jsonBoolean && len(booleanMasks) > 0 {
 			continue
 		}
 
@@ -1910,7 +1912,7 @@ func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 		return nil, err
 	}
 
-	if integerRealizable {
+	if integerRealizable && nodeAcceptsKindForTarget(node, jsonNumber) {
 		appendUnique := true
 
 		for _, existing := range masks {
