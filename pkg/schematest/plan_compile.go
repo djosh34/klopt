@@ -1296,11 +1296,13 @@ func orderedTypeKinds(node *schemaNode) []jsonKind {
 	return ordered
 }
 
-// firstSiblingCompatibleKind selects the first authored or constrained kind.
+// firstSiblingCompatibleKind selects the first authored or constrained non-null kind.
+//
+//nolint:cyclop // The canonical sibling-priority checks are intentionally explicit.
 func firstSiblingCompatibleKind(node *schemaNode, allowed map[jsonKind]bool) (jsonKind, bool) {
 	if node.enum != nil {
 		for _, member := range node.enum {
-			if member != nil && allowed[member.kind] {
+			if member != nil && member.kind != jsonNull && allowed[member.kind] {
 				return member.kind, true
 			}
 		}
@@ -1722,16 +1724,162 @@ func anyOfMaskForAny(node *schemaNode) (*big.Int, bool, error) {
 	return nil, false, nil
 }
 
-// realizableAnyOfMasks returns distinct truth masks reachable by one JSON kind.
+// booleanAnyOfMasks returns distinct truth masks for the canonical false and true values.
 //
-//nolint:cyclop // Canonical JSON kinds and numeric subtypes are merged deterministically.
+//nolint:cyclop // Boolean values and authored branch masks are one canonical pass.
+func booleanAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
+	if node == nil || len(node.anyOf) == 0 {
+		return nil, nil
+	}
+
+	booleanValues := []bool{false, true}
+
+	masks := make([]*big.Int, 0, len(booleanValues))
+
+	for _, value := range booleanValues {
+		mask := new(big.Int)
+
+		for index, child := range node.anyOf {
+			accepted, err := branchCanAcceptBoolean(child, value, make(map[*schemaNode]bool))
+			if err != nil {
+				return nil, err
+			}
+
+			if accepted {
+				mask.SetBit(mask, index, 1)
+			}
+		}
+
+		if mask.Sign() == 0 {
+			continue
+		}
+
+		duplicate := false
+
+		for _, existing := range masks {
+			if existing.Cmp(mask) == 0 {
+				duplicate = true
+
+				break
+			}
+		}
+
+		if !duplicate {
+			masks = append(masks, mask)
+		}
+	}
+
+	return masks, nil
+}
+
+// branchCanAcceptBoolean reports whether a branch accepts one exact boolean value.
+//
+//nolint:cyclop,gocognit,nestif // Recursive branch truth requires explicit semantic phases.
+func branchCanAcceptBoolean(node *schemaNode, value bool, visiting map[*schemaNode]bool) (bool, error) {
+	if node == nil || node.schemaShape == nil {
+		return false, errors.New("anyOf branch has no shape")
+	}
+
+	if visiting[node] {
+		return false, fmt.Errorf("recursive anyOf branch at %s", node.occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	if node.kind != schemaAny && node.kind != schemaBoolean {
+		return false, nil
+	}
+
+	if node.enum != nil {
+		matched := false
+
+		for _, member := range node.enum {
+			if member == nil {
+				return false, errors.New("JSON enum member is nil")
+			}
+
+			if member.kind != jsonBoolean || member.boolean != value {
+				continue
+			}
+
+			matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+			if err != nil {
+				return false, err
+			}
+
+			if matches {
+				matched = true
+
+				break
+			}
+		}
+
+		if !matched {
+			return false, nil
+		}
+	}
+
+	for _, child := range node.allOf {
+		accepted, err := branchCanAcceptBoolean(child, value, visiting)
+		if err != nil {
+			return false, err
+		}
+
+		if !accepted {
+			return false, nil
+		}
+	}
+
+	if len(node.anyOf) == 0 {
+		return true, nil
+	}
+
+	for _, child := range node.anyOf {
+		accepted, err := branchCanAcceptBoolean(child, value, visiting)
+		if err != nil {
+			return false, err
+		}
+
+		if accepted {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// realizableAnyOfMasks returns distinct truth masks reachable by canonical witnesses.
+//
+//nolint:cyclop // Canonical JSON kinds and scalar subtypes are merged deterministically.
 func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 	masks := make([]*big.Int, 0)
 
+	booleanMasks, err := booleanAnyOfMasks(node)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, mask := range booleanMasks {
+		appendUnique := true
+
+		for _, existing := range masks {
+			if existing.Cmp(mask) == 0 {
+				appendUnique = false
+
+				break
+			}
+		}
+
+		if appendUnique {
+			masks = append(masks, mask)
+		}
+	}
+
 	for _, kind := range canonicalJSONKinds() {
-		mask, realizable, err := anyOfMaskForKind(node, kind)
-		if err != nil {
-			return nil, err
+		mask, realizable, maskErr := anyOfMaskForKind(node, kind)
+		if maskErr != nil {
+			return nil, maskErr
 		}
 
 		if !realizable {
