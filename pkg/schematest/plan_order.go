@@ -157,21 +157,21 @@ func canonicalPlanArrayIndex(value string) (uint64, bool) {
 }
 
 // comparePlanObligations applies occurrence, rule, level, and fault order.
-func comparePlanObligations(left, right obligation) int {
+func comparePlanObligations(left, right obligation) (int, error) {
 	comparison, err := compareSchemaOccurrences(left.occurrence, right.occurrence)
 	if err != nil || comparison != 0 {
-		return comparison
+		return comparison, err
 	}
 
 	leftRank := obligationRuleRank(left)
 
 	rightRank := obligationRuleRank(right)
 	if leftRank != rightRank {
-		return compareInts(leftRank, rightRank)
+		return compareInts(leftRank, rightRank), nil
 	}
 
 	if left.rule != right.rule {
-		return strings.Compare(left.rule, right.rule)
+		return strings.Compare(left.rule, right.rule), nil
 	}
 
 	leftFault := planComponentIsFault(left.component)
@@ -179,17 +179,17 @@ func comparePlanObligations(left, right obligation) int {
 	rightFault := planComponentIsFault(right.component)
 	if leftFault != rightFault {
 		if leftFault {
-			return 1
+			return 1, nil
 		}
 
-		return -1
+		return -1, nil
 	}
 
 	if left.order != right.order {
-		return compareUint64(left.order, right.order)
+		return compareUint64(left.order, right.order), nil
 	}
 
-	return strings.Compare(left.component, right.component)
+	return strings.Compare(left.component, right.component), nil
 }
 
 // obligationRuleRank returns an explicit family rank or the generic rule rank.
@@ -216,20 +216,46 @@ func planRuleRankForKind(rule string, kind jsonKind) int {
 }
 
 // compareRuleIdentities applies canonical occurrence and rule order to failures.
-func compareRuleIdentities(left, right ruleIdentity) int {
+func compareRuleIdentities(left, right ruleIdentity) (int, error) {
 	comparison, err := compareSchemaOccurrences(left.occurrence, right.occurrence)
 	if err != nil || comparison != 0 {
-		return comparison
+		return comparison, err
 	}
 
 	leftRank := planRuleRank(left.rule)
 
 	rightRank := planRuleRank(right.rule)
 	if leftRank != rightRank {
-		return compareInts(leftRank, rightRank)
+		return compareInts(leftRank, rightRank), nil
 	}
 
-	return strings.Compare(left.rule, right.rule)
+	return strings.Compare(left.rule, right.rule), nil
+}
+
+// stablePlanSort performs a stable insertion sort while preserving comparison errors.
+func stablePlanSort[T any](values []T, compare func(T, T) (int, error)) error {
+	for index := 1; index < len(values); index++ {
+		current := values[index]
+		position := index
+
+		for position > 0 {
+			comparison, err := compare(current, values[position-1])
+			if err != nil {
+				return err
+			}
+
+			if comparison >= 0 {
+				break
+			}
+
+			values[position] = values[position-1]
+			position--
+		}
+
+		values[position] = current
+	}
+
+	return nil
 }
 
 // compareInts compares two planner ranks.

@@ -156,7 +156,7 @@ func TestMakePlanFaultsInvertCompositionBranchTruth(t *testing.T) {
 
 	anyOfFault := findFaultTarget(t, plan, "/anyOf/0|#|pattern|fault:pattern")
 	requireCompositionPin(t, anyOfFault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, anyOfFault.pins, "anyOf", 1, true)
+	requireCompositionPin(t, anyOfFault.pins, "anyOf", 1, false)
 }
 
 func TestMakePlanKeepsTypelessSiblingCompatibleKindFirst(t *testing.T) {
@@ -225,9 +225,9 @@ func TestMakePlanCanonicalizesRuleLevelsAndAnyOfClosure(t *testing.T) {
 	anyOfPlan, err := makePlan(anyOfModel)
 	require.NoError(t, err)
 
-	rootType := findValidTarget(t, anyOfPlan, "|type|level:null")
-	requireCompositionPin(t, rootType.pins, "anyOf", 0, true)
-	requireCompositionPin(t, rootType.pins, "anyOf", 1, false)
+	rootType := findValidTarget(t, anyOfPlan, "|type|level:number")
+	requireCompositionPin(t, rootType.pins, "anyOf", 0, false)
+	requireCompositionPin(t, rootType.pins, "anyOf", 1, true)
 
 	aggregate := findFaultTarget(t, anyOfPlan, "|anyOf|fault:anyOf")
 	anyOfRoot := "#/paths/~1/post/requestBody/content/application~1json/schema"
@@ -251,6 +251,299 @@ func TestMakePlanAcceptsSchemaNamesThatMatchCompositionKeywords(t *testing.T) {
 
 	_, err = makePlan(model)
 	require.NoError(t, err)
+}
+
+func TestMakePlanScalarFaultsPinTheirLocalKinds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+		rule   string
+		kind   jsonKind
+	}{
+		{name: "string", schema: `{"minLength":1}`, rule: oracleRuleMinLength, kind: jsonString},
+		{name: "array", schema: `{"minItems":1}`, rule: oracleRuleMinItems, kind: jsonArray},
+		{name: "object", schema: `{"minProperties":1}`, rule: oracleRuleMinProperties, kind: jsonObject},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected"})
+			require.NoError(t, err)
+
+			plan, err := makePlan(model)
+			require.NoError(t, err)
+
+			fault := findFaultTarget(t, plan, "|"+test.rule+"|fault:"+test.rule)
+			requireKindPin(t, fault.pins, fault.obligation.occurrence, test.kind)
+		})
+	}
+}
+
+func TestMakePlanRequiredPresencePinsContainmentAndUndeclaredNames(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object",
+		"required":["missing"]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	required := findValidTarget(t, plan, "|#/missing|required|level:present")
+	requireKindPin(t, required.pins, model.root.occurrence, jsonObject)
+	requirePin(t, required.pins, "#/missing", planPinPresent)
+}
+
+func TestMakePlanTypelessRequiredPresenceOnlyAppliesToObjects(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"required":["name"]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range plan.validTargets {
+		if target.obligation.rule != oracleRuleType {
+			continue
+		}
+
+		if target.obligation.component == oracleLevelPrefix+jsonKindName(jsonObject) {
+			requirePin(t, target.pins, "#/name", planPinPresent)
+
+			continue
+		}
+
+		requireNoPresencePin(t, target.pins, "#/name")
+	}
+}
+
+func TestMakePlanOmitsBareAnyOfFaultClosures(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{}, {"type":"string"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range plan.faultTargets {
+		require.NotEqual(t, oracleRuleAnyOf, target.obligation.rule)
+		require.NotContains(t, target.obligation.occurrence.usePointer, "/anyOf/")
+	}
+}
+
+func TestMakePlanAnyOfStringEnumUsesReachableAggregateRepresentative(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"type":"string","enum":["a"]}, {"type":"number"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findFaultTarget(t, plan, "/anyOf/0|#|enum|fault:enum")
+
+	for _, target := range plan.faultTargets {
+		require.NotContains(t, target.obligation.String(), "/anyOf/0|#|type|fault:type")
+	}
+
+	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	require.Equal(t, []string{
+		model.root.occurrence.usePointer + "|#|anyOf",
+		model.root.occurrence.usePointer + "/anyOf/0|#|enum",
+		model.root.occurrence.usePointer + "/anyOf/1|#|type",
+	}, identityStrings(aggregate.closure))
+}
+
+func TestMakePlanAnyOfLocalMinimumUsesCompatibleNumericBranch(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"minimum":1,
+		"anyOf":[{"type":"string"}, {"type":"number"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range []struct {
+		name string
+		want string
+	}{
+		{name: "valid", want: "|minimum|level:valid"},
+		{name: "fault", want: "|minimum|fault:minimum"},
+	} {
+		var pins []applicabilityPin
+		if target.name == "valid" {
+			pins = findValidTarget(t, plan, target.want).pins
+		} else {
+			pins = findFaultTarget(t, plan, target.want).pins
+		}
+
+		requireCompositionPin(t, pins, "anyOf", 0, false)
+		requireCompositionPin(t, pins, "anyOf", 1, true)
+	}
+}
+
+func TestMakePlanAnyOfOverlappingChildValidTargetsKeepSiblingsUnconstrained(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"type":"string"}, {"type":"string"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for index := 0; index < 2; index++ {
+		target := findValidTarget(t, plan, "/anyOf/"+itoa(index)+"|#|type|level:string")
+		requireCompositionPin(t, target.pins, "anyOf", index, true)
+
+		for sibling := 0; sibling < 2; sibling++ {
+			if sibling == index {
+				continue
+			}
+
+			requireNoCompositionPin(t, target.pins, "anyOf", sibling)
+		}
+	}
+}
+
+func TestMakePlanAnyOfPatternFaultClosesEveryBranch(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"type":"string","pattern":"^a"}, {"type":"number"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	pattern := findFaultTarget(t, plan, "/anyOf/0|#|pattern|fault:pattern")
+	requireCompositionPin(t, pattern.pins, "anyOf", 0, false)
+	requireCompositionPin(t, pattern.pins, "anyOf", 1, false)
+	require.Equal(t, []string{
+		model.root.occurrence.usePointer + "|#|anyOf",
+		model.root.occurrence.usePointer + "/anyOf/0|#|pattern",
+		model.root.occurrence.usePointer + "/anyOf/1|#|type",
+	}, identityStrings(pattern.closure))
+}
+
+func TestMakePlanPositiveMinItemsSuppliesItsItem(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array",
+		"minItems":1,
+		"items":{"type":"string"}
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range []validTarget{
+		findValidTarget(t, plan, "|type|level:array"),
+		findValidTarget(t, plan, "|minItems|level:valid"),
+	} {
+		requirePin(t, target.pins, "#/*", planPinPresent)
+		requireNoPresencePin(t, target.pins, "#/*", planPinAbsent)
+	}
+}
+
+func TestMakePlanOmitsZeroLowerBoundFaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+		rule   string
+	}{
+		{name: "minLength", schema: `{"type":"string","minLength":0}`, rule: oracleRuleMinLength},
+		{name: "minItems", schema: `{"type":"array","minItems":0,"items":{"type":"string"}}`, rule: oracleRuleMinItems},
+		{name: "minProperties", schema: `{"type":"object","minProperties":0}`, rule: oracleRuleMinProperties},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected"})
+			require.NoError(t, err)
+
+			plan, err := makePlan(model)
+			require.NoError(t, err)
+
+			for _, target := range plan.faultTargets {
+				require.NotEqual(t, test.rule, target.obligation.rule)
+			}
+		})
+	}
+}
+
+func TestMakePlanOmitsExhaustiveNonNullableBooleanEnumFault(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"boolean",
+		"enum":[true,false]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range plan.faultTargets {
+		require.NotEqual(t, oracleRuleEnum, target.obligation.rule)
+	}
+}
+
+func TestPlanComparisonErrorsPropagate(t *testing.T) {
+	t.Parallel()
+
+	invalidOccurrence := schemaOccurrence{
+		usePointer:       "not-a-pointer",
+		targetPointer:    "#",
+		instanceTemplate: "#",
+	}
+	validOccurrence := schemaOccurrence{
+		usePointer:       "#/valid",
+		targetPointer:    "#",
+		instanceTemplate: "#",
+	}
+	invalidIdentity := makeRuleIdentity(invalidOccurrence, oracleRuleType)
+	validIdentity := makeRuleIdentity(validOccurrence, oracleRuleType)
+	faults := []faultTarget{
+		{obligation: makeFaultObligation(invalidIdentity, oracleRuleType)},
+		{obligation: makeFaultObligation(validIdentity, oracleRuleType)},
+	}
+
+	_, _, err := firstCanonicalFault(faults)
+	require.Error(t, err)
+
+	_, err = canonicalFailureClosure([]failureIdentity{invalidIdentity, validIdentity})
+	require.Error(t, err)
+
+	_, _, err = firstRealizableFault(
+		&schemaNode{schemaShape: &schemaShape{}}, invalidOccurrence, faults,
+	)
+	require.Error(t, err)
 }
 
 func findValidTarget(t *testing.T, plan *searchPlan, suffix string) validTarget {
@@ -309,6 +602,20 @@ func requireOnlyPresencePin(t *testing.T, pins []applicabilityPin, instanceTempl
 	require.Equal(t, 1, count, "presence pin for %s", instanceTemplate)
 }
 
+func requireNoPresencePin(t *testing.T, pins []applicabilityPin, instanceTemplate string, forbidden ...pinPresence) {
+	t.Helper()
+
+	for _, pin := range pins {
+		if pin.occurrence.instanceTemplate != instanceTemplate || pin.presence == planPinNoPresence {
+			continue
+		}
+
+		if len(forbidden) == 0 || pin.presence == forbidden[0] {
+			t.Fatalf("unexpected presence pin for instance template %q: %#v", instanceTemplate, pins)
+		}
+	}
+}
+
 func requireKindPin(t *testing.T, pins []applicabilityPin, occurrence schemaOccurrence, kind jsonKind) {
 	t.Helper()
 
@@ -319,6 +626,16 @@ func requireKindPin(t *testing.T, pins []applicabilityPin, occurrence schemaOccu
 	}
 
 	t.Fatalf("kind pin for %s with kind %s not found: %#v", occurrence.usePointer, jsonKindName(kind), pins)
+}
+
+func requireNoCompositionPin(t *testing.T, pins []applicabilityPin, composition string, branch int) {
+	t.Helper()
+
+	for _, pin := range pins {
+		if pin.hasBranch && pin.composition == composition && pin.branch == branch {
+			t.Fatalf("unexpected composition pin %s[%d]: %#v", composition, branch, pins)
+		}
+	}
 }
 
 func requireCompositionPin(t *testing.T, pins []applicabilityPin, composition string, branch int, truth bool) {
