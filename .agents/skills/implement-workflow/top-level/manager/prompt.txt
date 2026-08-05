@@ -99,3 +99,4 @@ gh pr merge --squash --delete-branch
 Do not add an OID, fallback merge method, or overengineered synchronization. Verify the PR is merged. Verify and, where necessary after checking the merged evidence, close every required work issue and blocker as completed, then close the parent. Post concise evidence before closing issues; manager-authored evidence begins exactly `manager: review-arbitrator` only when you are reporting an arbitrator decision, otherwise use the top-manager identity you established for this lifecycle. Do not close a required issue prematurely.
 
 Delete `/tmp/implement-workflow-ROOT` only after the merge and all required issue closures are verified. Return the merged PR URL, final branch/head evidence, and the complete closed issue set to the boss. The boss, not you or any child, manually archives the top workspace.
+Never read host plan or any https://lima-opencode-vm.tail2fc05a.ts.net/** url

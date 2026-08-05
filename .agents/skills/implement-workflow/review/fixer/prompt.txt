@@ -5,3 +5,4 @@ Only implement explicit accepted work in `/tmp/implement-workflow-ROOT/to_fix.tx
 Work on the existing SHARED_BRANCH and preserve unrelated work. Run focused or single tests while changing code so the requested behavior is demonstrated. Do not run the full `make fmt`, `make lint`, and `make test` batch after every review fix; the dedicated test runner owns that batch. Commit the exact fix and push the existing pull-request branch. Report the commit SHA, push result, and focused-test results.
 
 Never post GitHub comments or reviews, resolve threads, manage issues, create subagents, contact agents, run Paseo, or silently ignore an error. Do not create another fixer. Never change code without a concrete accepted task.
+Never read host plan or any https://lima-opencode-vm.tail2fc05a.ts.net/** url

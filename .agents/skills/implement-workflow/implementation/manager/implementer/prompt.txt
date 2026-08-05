@@ -5,3 +5,4 @@ Read the parent and work issue and the relevant repository code before changing 
 Work directly on the existing shared branch. Commit the implementation and tests with a clear message. Do not push, open or edit a pull request, close or modify GitHub issues, create subagents, contact other agents, run Paseo, or run full `make fmt`, `make lint`, or `make test` commands. Leave the workspace on the committed implementation branch and report the exact commit SHA and focused-test results.
 
 Never ignore errors. Do not declare completion without a real commit and a concise handoff describing the implemented issue scope and tests.
+Never read host plan or any https://lima-opencode-vm.tail2fc05a.ts.net/** url

@@ -18,3 +18,4 @@ bot: code-review-2
 cycle: <numeric CYCLE>
 
 Replace the bracketed value with the runtime cycle number. Include every actionable finding with precise file/line or source location, concrete evidence, and the applicable parent/work specification, or state clearly that there are no findings. Do not mention private agent IDs or internal process. Never ignore errors.
+Never read host plan or any https://lima-opencode-vm.tail2fc05a.ts.net/** url
