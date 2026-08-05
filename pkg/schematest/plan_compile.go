@@ -1060,7 +1060,7 @@ func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]
 		appendInstanceToken(occurrence.instanceTemplate, "*"),
 	)
 
-	return []applicabilityPin{presencePin(itemOccurrence, presence)}, nil
+	return []applicabilityPin{canonicalPresencePin(itemOccurrence, presence)}, nil
 }
 
 // defaultObjectPresencePins chooses required members, enough lower-bound members, and no extras.
@@ -1108,7 +1108,7 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 			presentCount++
 		}
 
-		pins = append(pins, presencePin(requiredPresenceOccurrence(node, occurrence, name), presence))
+		pins = append(pins, canonicalPresencePin(requiredPresenceOccurrence(node, occurrence, name), presence))
 	}
 
 	if shape.additionalProperties != nil {
@@ -1128,7 +1128,7 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
 		)
-		pins = append(pins, presencePin(additionalOccurrence, presence))
+		pins = append(pins, canonicalPresencePin(additionalOccurrence, presence))
 	}
 
 	return pins, nil
@@ -2968,6 +2968,11 @@ func presencePin(occurrence schemaOccurrence, presence pinPresence) applicabilit
 	return applicabilityPin{occurrence: occurrence, presence: presence}
 }
 
+// canonicalPresencePin records the first structural assignment without making it a hard target precondition.
+func canonicalPresencePin(occurrence schemaOccurrence, presence pinPresence) applicabilityPin {
+	return applicabilityPin{occurrence: occurrence, presence: presence, canonical: true}
+}
+
 // allOfValidPins pins every allOf branch true.
 func allOfValidPins(occurrence schemaOccurrence, count int) []applicabilityPin {
 	return compositionPins(occurrence, "allOf", count, -1, true)
@@ -3129,6 +3134,7 @@ func mergePlanPins(left, right applicabilityPin) applicabilityPin {
 	if right.presence != planPinNoPresence {
 		merged.occurrence = right.occurrence
 		merged.presence = right.presence
+		merged.canonical = right.canonical
 	}
 
 	if right.hasBranch {
