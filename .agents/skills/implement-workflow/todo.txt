@@ -1,12 +1,11 @@
-https://github.com/djosh34/klopt/issues/67
-https://github.com/djosh34/klopt/issues/68
-https://github.com/djosh34/klopt/issues/69
-https://github.com/djosh34/klopt/issues/70
-https://github.com/djosh34/klopt/issues/71
-https://github.com/djosh34/klopt/issues/72
-(now also close: https://github.com/djosh34/klopt/issues/57)
-
-https://github.com/djosh34/klopt/issues/73
-https://github.com/djosh34/klopt/issues/74
-https://github.com/djosh34/klopt/issues/75
-(now also close: https://github.com/djosh34/klopt/issues/58)
+- [ ] https://github.com/djosh34/klopt/issues/67
+- [ ] https://github.com/djosh34/klopt/issues/68
+- [ ] https://github.com/djosh34/klopt/issues/69
+- [ ] https://github.com/djosh34/klopt/issues/70
+- [ ] https://github.com/djosh34/klopt/issues/71
+- [ ] https://github.com/djosh34/klopt/issues/72
+- [ ] (now also close: https://github.com/djosh34/klopt/issues/57)
+- [ ] https://github.com/djosh34/klopt/issues/73
+- [ ] https://github.com/djosh34/klopt/issues/74
+- [ ] https://github.com/djosh34/klopt/issues/75
+- [ ] (now also close: https://github.com/djosh34/klopt/issues/58)
