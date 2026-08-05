@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const planNumericFormatRank = 5
+
 type planPointerToken struct {
 	raw        string
 	decoded    string
@@ -209,7 +211,7 @@ func encodedPlanRuleRank(rank int) uint8 {
 // planRuleRankForKind places a numeric format before string-family rules.
 func planRuleRankForKind(rule string, kind jsonKind) int {
 	if rule == oracleRuleFormat && kind == jsonNumber {
-		return planRuleRank(oracleRuleMultipleOf) + 1
+		return planNumericFormatRank
 	}
 
 	return planRuleRank(rule)
@@ -292,6 +294,7 @@ func planRuleRank(rule string) int {
 		rankMinimum
 		rankMaximum
 		rankMultipleOf
+		rankNumericFormat
 		rankLengthMinimum
 		rankLengthMaximum
 		rankPattern
