@@ -7,6 +7,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMakePlanMinLengthZeroTerminates(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"minLength":0}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+	findValidTarget(t, plan, "|minLength|level:valid")
+}
+
+func TestMakePlanRetainsAnyOfObligationBeyondStringWitnessGuard(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"minLength":4097}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+	findValidTarget(t, plan, "|anyOf|level:mask:1")
+}
+
 func TestMakePlanAnyOfWitnessCountsUseExactValues(t *testing.T) {
 	t.Parallel()
 
@@ -69,6 +97,24 @@ func TestMakePlanDirectedFaultsUseTheirOwnAnyOfApplicability(t *testing.T) {
 	requireCompositionPin(t, fault.pins, "anyOf", 1, false)
 }
 
+func TestMakePlanMaxLengthFaultUsesExactAnyOfApplicability(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"maxLength":0,
+		"anyOf":[{"maxLength":0}, {"maxLength":1}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	fault := findFaultTarget(t, plan, "|maxLength|fault:maxLength")
+	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
+	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+}
+
 func TestMakePlanTypeFaultUsesWrongKindAnyOfApplicability(t *testing.T) {
 	t.Parallel()
 
@@ -86,11 +132,64 @@ func TestMakePlanTypeFaultUsesWrongKindAnyOfApplicability(t *testing.T) {
 	requireCompositionPin(t, fault.pins, "anyOf", 1, false)
 }
 
+func TestFaultCandidateSupportsKindRejectsConflictingSameInstancePins(t *testing.T) {
+	t.Parallel()
+
+	occurrence := schemaOccurrence{usePointer: "#/branch", instanceTemplate: "#"}
+	candidate := faultTarget{pins: []applicabilityPin{
+		kindPin(occurrence, jsonString),
+		kindPin(occurrence, jsonNumber),
+	}}
+
+	branch := &schemaNode{schemaShape: &schemaShape{}}
+	require.False(t, faultCandidateSupportsKind(candidate, branch, occurrence, jsonString))
+}
+
+func TestMakePlanPreservesNestedAllOfFaultsInAnyOfAggregate(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"allOf":[{"type":"number"}]}, {"type":"number"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	require.Equal(t, []string{
+		aggregate.obligation.ruleIdentity.String(),
+		aggregate.obligation.occurrence.usePointer + "/anyOf/0/allOf/0|#|type",
+		aggregate.obligation.occurrence.usePointer + "/anyOf/1|#|type",
+	}, identityStrings(aggregate.closure))
+	requireKindPin(t, aggregate.pins, aggregate.obligation.occurrence, jsonString)
+}
+
 func TestMakePlanAdditionalPropertyFaultUsesAnAddedMemberAnyOfMask(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
 		"type":"object",
+		"additionalProperties":false,
+		"anyOf":[{"type":"object","additionalProperties":false}, {"type":"object"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	fault := findFaultTarget(t, plan, "|#/*|additionalProperties|fault:additionalProperties")
+	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
+	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+}
+
+func TestMakePlanAdditionalPropertyWitnessAvoidsAuthoredName(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object",
+		"properties":{"__schematest_extra__":{"type":"boolean"},"a":{"type":"string"}},
 		"additionalProperties":false,
 		"anyOf":[{"type":"object","additionalProperties":false}, {"type":"object"}]
 	}`)), OperationID: "selected"})
@@ -120,6 +219,43 @@ func TestMakePlanRequiredFaultUsesAnOmittedMemberAnyOfMask(t *testing.T) {
 	fault := findFaultTarget(t, plan, "|#/id|required|fault:required")
 	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
 	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+}
+
+func TestMakePlanEnumFaultUsesNullableKindWhenSiblingRulesExhaustStrings(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"nullable":true,
+		"enum":[""],
+		"maxLength":0
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	fault := findFaultTarget(t, plan, "|enum|fault:enum")
+	requireKindPin(t, fault.pins, fault.obligation.occurrence, jsonNull)
+	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
+}
+
+func TestMakePlanOmitsExhaustiveNullableBooleanEnumFault(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"boolean",
+		"nullable":true,
+		"enum":[false,true,null]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range plan.faultTargets {
+		require.NotEqual(t, oracleRuleEnum, target.obligation.rule)
+	}
 }
 
 func TestMakePlanEnumFaultPinsTheDeclaredKind(t *testing.T) {

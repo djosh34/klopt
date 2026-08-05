@@ -588,16 +588,14 @@ func (builder *planBuilder) compileEnumRules(
 		builder.addValid(result, identity, "member:"+itoa(authoredIndex), pins)
 	}
 
-	if !enumExhaustsNonNullableBoolean(node) {
-		pins, realizable, pinErr := builder.faultPinsForEnum(faultInherited, node, occurrence)
-		if pinErr != nil {
-			return pinErr
-		}
+	pins, realizable, pinErr := builder.faultPinsForEnum(faultInherited, node, occurrence)
+	if pinErr != nil {
+		return pinErr
+	}
 
-		if realizable {
-			if err := builder.addFault(result, identity, pins, []failureIdentity{identity}); err != nil {
-				return err
-			}
+	if realizable {
+		if err := builder.addFault(result, identity, pins, []failureIdentity{identity}); err != nil {
+			return err
 		}
 	}
 
@@ -1359,12 +1357,17 @@ func (builder *planBuilder) faultPinsForEnum(
 		return nil, false, errors.New("schema occurrence has no shape")
 	}
 
-	if faultKind, hasKind := enumFaultKind(node); hasKind {
-		pins = appendPlanPins(pins, kindPin(occurrence, faultKind))
-	}
-
 	if len(node.anyOf) == 0 {
-		return pins, true, nil
+		faultKind, realizable, err := enumFaultKind(node)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if !realizable {
+			return nil, false, nil
+		}
+
+		return appendPlanPins(pins, kindPin(occurrence, faultKind)), true, nil
 	}
 
 	mask, faultKind, realizable, err := anyOfMaskForEnumFaultWithKind(node)
@@ -1382,8 +1385,6 @@ func (builder *planBuilder) faultPinsForEnum(
 }
 
 // anyOfMaskForTypeFault chooses a branch mask for a wrong-kind witness.
-//
-//nolint:cyclop // Wrong-kind candidates and structural fallback are one ordered search.
 func anyOfMaskForTypeFault(node *schemaNode, occurrence schemaOccurrence) (*big.Int, bool, error) {
 	withoutType := schemaNodeWithoutLocalRule(node, oracleRuleType)
 	identity := makeRuleIdentity(occurrence, oracleRuleType)
@@ -1421,21 +1422,6 @@ func anyOfMaskForTypeFault(node *schemaNode, occurrence schemaOccurrence) (*big.
 			if exists {
 				return mask, true, nil
 			}
-		}
-	}
-
-	for _, kind := range canonicalJSONKinds() {
-		if !typeFaultCanUseKind(node, kind) {
-			continue
-		}
-
-		mask, realizable, err := structuralAnyOfMaskForKind(node, kind)
-		if err != nil {
-			return nil, false, err
-		}
-
-		if realizable {
-			return mask, true, nil
 		}
 	}
 
@@ -1491,7 +1477,7 @@ func anyOfMaskForFaultRule(
 		}
 	}
 
-	return structuralAnyOfMaskForKind(node, kind)
+	return nil, false, nil
 }
 
 // anyOfMaskForAdditionalFault chooses a branch mask for an undeclared member.
@@ -1503,7 +1489,7 @@ func anyOfMaskForAdditionalFault(node *schemaNode, occurrence schemaOccurrence) 
 		return nil, false, err
 	}
 
-	extra := "__schematest_extra__"
+	extra := additionalPropertyWitnessName(node)
 	identity := makeRuleIdentity(appendObjectMemberOccurrence(occurrence, extra), oracleRuleAdditionalProperties)
 
 	for _, witness := range witnesses {
@@ -1537,7 +1523,23 @@ func anyOfMaskForAdditionalFault(node *schemaNode, occurrence schemaOccurrence) 
 		}
 	}
 
-	return structuralAnyOfMaskForKind(node, jsonObject)
+	return nil, false, nil
+}
+
+// additionalPropertyWitnessName chooses a stable member absent from authored properties.
+func additionalPropertyWitnessName(node *schemaNode) string {
+	const base = "__schematest_extra__"
+
+	if _, exists := node.properties[base]; !exists {
+		return base
+	}
+
+	for index := 1; ; index++ {
+		candidate := fmt.Sprintf("%s_%d", base, index)
+		if _, exists := node.properties[candidate]; !exists {
+			return candidate
+		}
+	}
 }
 
 // schemaNodeWithoutAdditional allows one undeclared member without changing children.
@@ -1618,7 +1620,7 @@ func anyOfMaskForRequiredFault(node *schemaNode, occurrence schemaOccurrence, na
 		}
 	}
 
-	return structuralAnyOfMaskForKind(node, jsonObject)
+	return nil, false, nil
 }
 
 // schemaNodeWithoutRequired removes one required member without changing children.
@@ -1805,30 +1807,6 @@ func nodeHasSiblingRuleForKind(node *schemaNode, kind jsonKind) bool {
 	default:
 		return false
 	}
-}
-
-// enumExhaustsNonNullableBoolean reports whether enum leaves no valid boolean value.
-func enumExhaustsNonNullableBoolean(node *schemaNode) bool {
-	if node.kind != schemaBoolean || node.nullable || node.enum == nil {
-		return false
-	}
-
-	seenTrue := false
-	seenFalse := false
-
-	for _, member := range node.enum {
-		if member == nil || member.kind != jsonBoolean {
-			continue
-		}
-
-		if member.boolean {
-			seenTrue = true
-		} else {
-			seenFalse = true
-		}
-	}
-
-	return seenTrue && seenFalse
 }
 
 // branchKindMatches reports whether one branch type admits the requested JSON kind.
@@ -2254,37 +2232,48 @@ func anyOfMaskForEnumFaultWithKind(node *schemaNode) (*big.Int, jsonKind, bool, 
 	return nil, jsonNull, false, nil
 }
 
-// enumFaultKind chooses the simplest kind for an isolated enum fault.
-func enumFaultKind(node *schemaNode) (jsonKind, bool) {
-	if node.kind == schemaAny {
-		return jsonNull, false
-	}
+// enumFaultKind chooses a kind with one exact sibling-clean enum-fault witness.
+func enumFaultKind(node *schemaNode) (jsonKind, bool, error) {
+	withoutEnum := schemaNodeWithoutEnum(node)
+	identity := makeRuleIdentity(node.occurrence, oracleRuleEnum)
 
-	if node.kind == schemaBoolean && node.nullable && enumContainsBothBooleans(node) {
-		return jsonNull, true
-	}
-
-	return schemaNodeJSONKind(node.kind), true
-}
-
-// enumContainsBothBooleans reports whether both non-null boolean values are authored.
-func enumContainsBothBooleans(node *schemaNode) bool {
-	seenTrue := false
-	seenFalse := false
-
-	for _, member := range node.enum {
-		if member == nil || member.kind != jsonBoolean {
-			continue
+	for _, kind := range enumFaultKinds(node) {
+		witnesses, err := canonicalAnyOfWitnesses(withoutEnum, kind)
+		if err != nil {
+			return jsonNull, false, err
 		}
 
-		if member.boolean {
-			seenTrue = true
-		} else {
-			seenFalse = true
+		for _, witness := range witnesses {
+			matches, err := enumContainsValue(node, witness)
+			if err != nil {
+				return jsonNull, false, err
+			}
+
+			if matches {
+				continue
+			}
+
+			base := evaluateNode(withoutEnum, witness, node.occurrence)
+			if base.err != nil {
+				return jsonNull, false, fmt.Errorf("evaluate enum-fault witness: %w", base.err)
+			}
+
+			if !base.valid {
+				continue
+			}
+
+			actual := evaluateNode(node, witness, node.occurrence)
+			if actual.err != nil {
+				return jsonNull, false, fmt.Errorf("evaluate enum-fault candidate: %w", actual.err)
+			}
+
+			if containsFailureIdentity(actual.failures, identity) {
+				return kind, true, nil
+			}
 		}
 	}
 
-	return seenTrue && seenFalse
+	return jsonNull, false, nil
 }
 
 // enumFaultKinds returns kinds that can fail enum without also failing type.
@@ -2355,6 +2344,8 @@ func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 }
 
 // realizableAnyOfMasksForKind evaluates every canonical witness for one JSON kind.
+//
+//nolint:cyclop // Exact witnesses and bounded structural fallback are one canonical pass.
 func realizableAnyOfMasksForKind(node *schemaNode, kind jsonKind) ([]*big.Int, error) {
 	if node == nil || len(node.anyOf) == 0 {
 		return nil, errors.New("schema has no anyOf branches")
@@ -2387,6 +2378,17 @@ func realizableAnyOfMasksForKind(node *schemaNode, kind jsonKind) ([]*big.Int, e
 		}
 
 		masks = appendUniqueAnyOfMask(masks, mask)
+	}
+
+	if len(masks) == 0 {
+		mask, realizable, structuralErr := structuralAnyOfMaskForKind(node, kind)
+		if structuralErr != nil {
+			return nil, structuralErr
+		}
+
+		if realizable {
+			masks = append(masks, mask)
+		}
 	}
 
 	sort.Slice(masks, func(left, right int) bool {
@@ -2659,6 +2661,10 @@ func exactCountUint64(count *exactCount) (uint64, bool, error) {
 
 	if !integer || count.number.numerator.Sign() < 0 {
 		return 0, false, nil
+	}
+
+	if count.number.numerator.Sign() == 0 {
+		return 0, true, nil
 	}
 
 	if count.number.exponent.Sign() > 0 {
@@ -3168,20 +3174,126 @@ func faultCandidateSupportsKind(
 	branchOccurrence schemaOccurrence,
 	kind jsonKind,
 ) bool {
+	foundKindPin := false
+
 	for _, pin := range candidate.pins {
-		if !pin.hasKind || pin.occurrence.usePointer != branchOccurrence.usePointer ||
-			pin.occurrence.instanceTemplate != branchOccurrence.instanceTemplate {
+		if !pin.hasKind || pin.occurrence.instanceTemplate != branchOccurrence.instanceTemplate {
 			continue
 		}
 
-		return pin.kind == kind
+		foundKindPin = true
+
+		if pin.kind != kind {
+			return false
+		}
+	}
+
+	if foundKindPin {
+		return true
 	}
 
 	if candidate.obligation.rule == oracleRuleType {
-		return typeFaultCanUseKind(branch, kind)
+		faultNode := faultTargetSchemaNode(branch, branchOccurrence, candidate)
+		if faultNode == nil {
+			return false
+		}
+
+		return typeFaultCanUseKind(faultNode, kind)
 	}
 
 	return true
+}
+
+// faultTargetSchemaNode resolves a branch fault's schema shape from its use site.
+//
+//nolint:cyclop,gocognit // The schema occurrence path has one explicit case per supported child shape.
+func faultTargetSchemaNode(
+	branch *schemaNode,
+	branchOccurrence schemaOccurrence,
+	candidate faultTarget,
+) *schemaNode {
+	if branch == nil || branch.schemaShape == nil {
+		return nil
+	}
+
+	usePointer := candidate.obligation.occurrence.usePointer
+
+	prefix := branchOccurrence.usePointer
+	if usePointer == prefix {
+		return branch
+	}
+
+	if !strings.HasPrefix(usePointer, prefix+"/") {
+		return nil
+	}
+
+	tokens, err := parsePlanPointer("#"+strings.TrimPrefix(usePointer, prefix), true)
+	if err != nil {
+		return nil
+	}
+
+	current := branch
+
+	for index := 0; index < len(tokens); {
+		token := tokens[index].decoded
+
+		switch token {
+		case "allOf":
+			if index+1 >= len(tokens) || !tokens[index+1].array {
+				return nil
+			}
+
+			branchIndex := tokens[index+1].arrayIndex
+			if branchIndex >= uint64(len(current.allOf)) {
+				return nil
+			}
+
+			current = current.allOf[branchIndex]
+			index += 2
+		case "anyOf":
+			if index+1 >= len(tokens) || !tokens[index+1].array {
+				return nil
+			}
+
+			branchIndex := tokens[index+1].arrayIndex
+			if branchIndex >= uint64(len(current.anyOf)) {
+				return nil
+			}
+
+			current = current.anyOf[branchIndex]
+			index += 2
+		case "items":
+			if current.items == nil {
+				return nil
+			}
+
+			current = current.items
+			index++
+		case "properties":
+			if index+1 >= len(tokens) {
+				return nil
+			}
+
+			property, exists := current.properties[tokens[index+1].decoded]
+			if !exists {
+				return nil
+			}
+
+			current = property
+			index += 2
+		case "additionalProperties":
+			if current.additionalProperties == nil {
+				return nil
+			}
+
+			current = current.additionalProperties
+			index++
+		default:
+			return nil
+		}
+	}
+
+	return current
 }
 
 // selectAnyOfRepresentativesAt backtracks over canonical branch representatives.
