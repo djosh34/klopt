@@ -169,6 +169,105 @@ func TestMakePlanPreservesNestedAllOfFaultsInAnyOfAggregate(t *testing.T) {
 	requireKindPin(t, aggregate.pins, aggregate.obligation.occurrence, jsonString)
 }
 
+func TestMakePlanAnyOfAggregateUsesInheritedKindPins(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"allOf":[{"type":"string"}],
+		"anyOf":[{"type":"number"}, {"type":"boolean"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	requireKindPin(t, aggregate.pins, aggregate.obligation.occurrence, jsonString)
+	requireCompositionPin(t, aggregate.pins, "anyOf", 0, false)
+	requireCompositionPin(t, aggregate.pins, "anyOf", 1, false)
+	require.Equal(t, []string{
+		aggregate.obligation.ruleIdentity.String(),
+		aggregate.obligation.occurrence.usePointer + "/anyOf/0|#|type",
+		aggregate.obligation.occurrence.usePointer + "/anyOf/1|#|type",
+	}, identityStrings(aggregate.closure))
+}
+
+func TestMakePlanMaximumFaultUsesDirectedBoundWitness(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"number",
+		"maximum":100,
+		"anyOf":[{"type":"number"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	fault := findFaultTarget(t, plan, "|maximum|fault:maximum")
+	requireCompositionPin(t, fault.pins, "anyOf", 0, true)
+	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
+}
+
+func TestMakePlanRequiredFaultsPopulateUnaffectedSiblings(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object",
+		"required":["id","name"],
+		"anyOf":[{}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	idFault := findFaultTarget(t, plan, "|#/id|required|fault:required")
+	requirePin(t, idFault.pins, "#/id", planPinAbsent)
+	requirePin(t, idFault.pins, "#/name", planPinPresent)
+	requireCompositionPin(t, idFault.pins, "anyOf", 0, true)
+
+	nameFault := findFaultTarget(t, plan, "|#/name|required|fault:required")
+	requirePin(t, nameFault.pins, "#/name", planPinAbsent)
+	requirePin(t, nameFault.pins, "#/id", planPinPresent)
+	requireCompositionPin(t, nameFault.pins, "anyOf", 0, true)
+}
+
+func TestMakePlanEnumFaultUsesStringOutsideCannedEnum(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"enum":["","a","b","text"]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	fault := findFaultTarget(t, plan, "|enum|fault:enum")
+	requireKindPin(t, fault.pins, fault.obligation.occurrence, jsonString)
+	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
+}
+
+func TestMakePlanOmitsContradictoryAnyOfScalarLevel(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"minLength":2,"maxLength":1}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range plan.validTargets {
+		require.NotEqual(t, "|anyOf|level:mask:1", target.obligation.String())
+	}
+}
+
 func TestMakePlanAdditionalPropertyFaultUsesAnAddedMemberAnyOfMask(t *testing.T) {
 	t.Parallel()
 
