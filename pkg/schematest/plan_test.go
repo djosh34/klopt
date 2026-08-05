@@ -232,6 +232,26 @@ func TestMakePlanEnumeratesBooleanAnyOfMasks(t *testing.T) {
 	findValidTarget(t, plan, "|anyOf|level:mask:2")
 }
 
+func TestMakePlanOmitsUnreachableGenericBooleanMasks(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"enum":[false,true]}, {"enum":[false,true]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:3")
+
+	for _, target := range plan.validTargets {
+		if target.obligation.rule == oracleRuleAnyOf {
+			require.NotContains(t, target.obligation.component, "mask:1")
+		}
+	}
+}
+
 func TestMakePlanSemanticEnumDedupeKeepsFirstAuthoredMembers(t *testing.T) {
 	t.Parallel()
 

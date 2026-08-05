@@ -1851,7 +1851,7 @@ func branchCanAcceptBoolean(node *schemaNode, value bool, visiting map[*schemaNo
 
 // realizableAnyOfMasks returns distinct truth masks reachable by canonical witnesses.
 //
-//nolint:cyclop // Canonical JSON kinds and scalar subtypes are merged deterministically.
+//nolint:cyclop,gocognit // Canonical JSON kinds and scalar subtypes are merged deterministically.
 func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 	masks := make([]*big.Int, 0)
 
@@ -1877,6 +1877,10 @@ func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 	}
 
 	for _, kind := range canonicalJSONKinds() {
+		if kind == jsonBoolean && len(booleanMasks) > 0 {
+			continue
+		}
+
 		mask, realizable, maskErr := anyOfMaskForKind(node, kind)
 		if maskErr != nil {
 			return nil, maskErr
