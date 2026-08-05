@@ -296,7 +296,7 @@ func rowStringFormatSamples(format schemaFormat) []string {
 	case schemaFormatIPv4:
 		return []string{"0.0.0.0"}
 	case schemaFormatUUID:
-		return []string{"00000000-0000-0000-0000-000000000000"}
+		return []string{"00000000-0000-4000-8000-000000000000"}
 	case schemaFormatUUIDv4, schemaFormatUUIDDashV4:
 		return []string{"00000000-0000-4000-8000-000000000000"}
 	case schemaFormatCIDR, schemaFormatIPv4CIDR:

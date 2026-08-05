@@ -43,6 +43,37 @@ func TestBuildStreamsDeterministicValidPrimitiveRows(t *testing.T) {
 	require.Equal(t, firstCases, secondCases)
 }
 
+// TestBuildEmitsOracleValidUUIDWitnesses verifies UUID format coverage through Build.
+func TestBuildEmitsOracleValidUUIDWitnesses(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{"type":"string","format":"uuid"}`))
+	cases := make([]Case, 0)
+
+	report, err := Build(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, cases)
+
+	for _, testCase := range cases {
+		require.True(t, testCase.Valid)
+		require.Equal(t, `"00000000-0000-4000-8000-000000000000"`, string(testCase.JSON))
+	}
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+
+	require.Equal(t, []string{
+		schemaPointer + "|#|type|level:string",
+		schemaPointer + "|#|format|level:valid",
+	}, report.Covered)
+}
+
 // TestBuildAdmitsBeforeZeroBudgetAndEmitsNothing verifies the zero-step stop.
 func TestBuildAdmitsBeforeZeroBudgetAndEmitsNothing(t *testing.T) {
 	t.Parallel()
