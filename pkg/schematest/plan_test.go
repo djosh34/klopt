@@ -187,6 +187,211 @@ func TestMakePlanKeepsTypelessSiblingCompatibleKindFirst(t *testing.T) {
 	}, ids)
 }
 
+func TestMakePlanTypelessNullEnumKeepsNonNullKindFirst(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"enum":[null,true]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	ids := make([]string, 0)
+
+	for _, target := range plan.validTargets {
+		if target.obligation.rule == oracleRuleType {
+			ids = append(ids, target.obligation.String())
+		}
+	}
+
+	require.Equal(t, []string{
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:boolean",
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:null",
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:number",
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:string",
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:array",
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:object",
+	}, ids)
+}
+
+func TestMakePlanEnumeratesBooleanAnyOfMasks(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"boolean",
+		"anyOf":[{"enum":[true]}, {"enum":[false]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:1")
+	findValidTarget(t, plan, "|anyOf|level:mask:2")
+}
+
+func TestMakePlanEnumeratesDistinctStringAnyOfMasks(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"enum":["a"]}, {"enum":["b"]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	masks := make([]string, 0)
+
+	for _, target := range plan.validTargets {
+		if target.obligation.rule == oracleRuleAnyOf {
+			masks = append(masks, target.obligation.component)
+		}
+	}
+
+	require.Equal(t, []string{"level:mask:1", "level:mask:2"}, masks)
+}
+
+func TestMakePlanEnumFaultUsesFaultContextAnyOfMask(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"enum":["b"],
+		"anyOf":[{"enum":["a"]}, {"enum":["b"]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:2")
+
+	enumFault := findFaultTarget(t, plan, "|enum|fault:enum")
+	requireCompositionPin(t, enumFault.pins, "anyOf", 0, true)
+	requireCompositionPin(t, enumFault.pins, "anyOf", 1, false)
+}
+
+func TestMakePlanParentEnumExcludesDisallowedBooleanAnyOfMask(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"boolean",
+		"enum":[true],
+		"anyOf":[{"enum":[false]}, {"enum":[true]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:2")
+
+	for _, target := range plan.validTargets {
+		if target.obligation.rule == oracleRuleAnyOf {
+			require.NotContains(t, target.obligation.component, "mask:1")
+		}
+	}
+}
+
+func TestMakePlanDerivesStringAnyOfWitnessFromMinLength(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"minLength":5}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:1")
+}
+
+func TestMakePlanOmitsMasksInapplicableToExplicitType(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"enum":[true]}, {"enum":[false]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	for _, target := range plan.validTargets {
+		require.NotEqual(t, oracleRuleAnyOf, target.obligation.rule)
+	}
+}
+
+func TestMakePlanOmitsUnreachableGenericBooleanMasks(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"enum":[false,true]}, {"enum":[false,true]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findValidTarget(t, plan, "|anyOf|level:mask:3")
+
+	for _, target := range plan.validTargets {
+		if target.obligation.rule == oracleRuleAnyOf {
+			require.NotContains(t, target.obligation.component, "mask:1")
+		}
+	}
+}
+
+func TestMakePlanSemanticEnumDedupeKeepsFirstAuthoredMembers(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"enum":[1,1.0,{"a":1,"b":2},{"b":2,"a":1},"kept"]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	ids := make([]string, 0)
+
+	for _, target := range plan.validTargets {
+		if target.obligation.rule == oracleRuleEnum {
+			ids = append(ids, target.obligation.String())
+		}
+	}
+
+	require.Equal(t, []string{
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|enum|level:member:0",
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|enum|level:member:2",
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|enum|level:member:4",
+	}, ids)
+
+	for _, test := range []struct {
+		value string
+		level string
+	}{
+		{value: `1`, level: "member:0"},
+		{value: `{"b":2,"a":1}`, level: "member:2"},
+		{value: `"kept"`, level: "member:4"},
+	} {
+		value, parseErr := parseStrictJSON([]byte(test.value))
+		require.NoError(t, parseErr)
+
+		result := evaluate(model, value)
+		require.NoError(t, result.err)
+
+		planTarget := findValidTarget(t, plan, "|enum|level:"+test.level)
+		require.Contains(t, levelIdentityStrings(result.observed), planTarget.expected.String())
+	}
+}
+
 func TestMakePlanCanonicalizesRuleLevelsAndAnyOfClosure(t *testing.T) {
 	t.Parallel()
 

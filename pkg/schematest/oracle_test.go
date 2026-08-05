@@ -182,7 +182,7 @@ func TestEvaluateEnumDuplicateMembersKeepFirstAuthoredLevel(t *testing.T) {
 	require.NoError(t, result.err)
 	require.True(t, result.valid)
 	require.Equal(t, []string{"type", "enum"}, applicableRules(result.applicable))
-	require.Equal(t, []string{"object", "member:1"}, observedLevels(result.observed))
+	require.Equal(t, []string{"object", "member:2"}, observedLevels(result.observed))
 	require.Empty(t, result.failures)
 }
 

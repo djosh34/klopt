@@ -142,7 +142,7 @@ func parseScalarSchemaFields(node *schemaNode, object map[string]*jsonValue, poi
 
 	node.nullable = node.kind != schemaAny && nullable
 
-	if node.enum, err = parseSchemaEnum(object, pointer); err != nil {
+	if node.enum, node.enumIndices, err = parseSchemaEnum(object, pointer); err != nil {
 		return err
 	}
 
@@ -213,21 +213,22 @@ func parseSchemaType(node *schemaNode, object map[string]*jsonValue, pointer str
 	return nil
 }
 
-func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue, error) {
+func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue, []int, error) {
 	value, exists := object["enum"]
 	if !exists {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	if value.kind != jsonArray {
-		return nil, fmt.Errorf("%s/enum: must be an array", pointer)
+		return nil, nil, fmt.Errorf("%s/enum: must be an array", pointer)
 	}
 
 	if len(value.array) == 0 {
-		return nil, fmt.Errorf("%s/enum: empty enum is outside the schematest profile", pointer)
+		return nil, nil, fmt.Errorf("%s/enum: empty enum is outside the schematest profile", pointer)
 	}
 
 	members := make([]*jsonValue, 0, len(value.array))
+	indices := make([]int, 0, len(value.array))
 	seen := make(map[int]bool, len(value.array))
 	interner := jsonValueInterner{
 		valueIDs: make(map[*jsonValue]int),
@@ -238,7 +239,7 @@ func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue
 	for index, candidate := range value.array {
 		identifier, err := interner.intern(candidate)
 		if err != nil {
-			return nil, fmt.Errorf("%s/enum/%d: canonicalize enum member: %w", pointer, index, err)
+			return nil, nil, fmt.Errorf("%s/enum/%d: canonicalize enum member: %w", pointer, index, err)
 		}
 
 		if seen[identifier] {
@@ -248,9 +249,10 @@ func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue
 		seen[identifier] = true
 
 		members = append(members, candidate)
+		indices = append(indices, index)
 	}
 
-	return members, nil
+	return members, indices, nil
 }
 
 type jsonValueInterner struct {

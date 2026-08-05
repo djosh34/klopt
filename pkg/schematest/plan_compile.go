@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 // makePlan compiles every stable valid and isolated-fault obligation without
@@ -572,11 +574,16 @@ func (builder *planBuilder) compileEnumRules(
 			continue
 		}
 
-		builder.addValid(result, identity, "member:"+itoa(index), pins)
+		authoredIndex := index
+		if index < len(node.enumIndices) {
+			authoredIndex = node.enumIndices[index]
+		}
+
+		builder.addValid(result, identity, "member:"+itoa(authoredIndex), pins)
 	}
 
 	if !enumExhaustsNonNullableBoolean(node) {
-		pins, realizable, pinErr := builder.faultPinsForAny(faultInherited, node, occurrence)
+		pins, realizable, pinErr := builder.faultPinsForEnum(faultInherited, node, occurrence)
 		if pinErr != nil {
 			return pinErr
 		}
@@ -1223,6 +1230,29 @@ func (builder *planBuilder) faultPinsForAny(
 	return builder.validAnyOfPins(node, occurrence, inherited)
 }
 
+// faultPinsForEnum chooses an anyOf state while allowing this node's enum to fail.
+func (builder *planBuilder) faultPinsForEnum(
+	inherited []applicabilityPin,
+	node *schemaNode,
+	occurrence schemaOccurrence,
+) ([]applicabilityPin, bool, error) {
+	pins := appendPlanPins(inherited)
+	if node == nil || len(node.anyOf) == 0 {
+		return pins, true, nil
+	}
+
+	mask, realizable, err := anyOfMaskForEnumFault(node)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !realizable {
+		return nil, false, nil
+	}
+
+	return appendPlanPins(pins, anyOfMaskPins(occurrence, len(node.anyOf), mask)...), true, nil
+}
+
 // nodeAcceptsKindForTarget reports whether a valid target can use one JSON kind.
 func nodeAcceptsKindForTarget(node *schemaNode, kind jsonKind) bool {
 	if node.kind == schemaAny {
@@ -1296,11 +1326,13 @@ func orderedTypeKinds(node *schemaNode) []jsonKind {
 	return ordered
 }
 
-// firstSiblingCompatibleKind selects the first authored or constrained kind.
+// firstSiblingCompatibleKind selects the first authored or constrained non-null kind.
+//
+//nolint:cyclop // Authored, constrained, and canonical kind priorities are explicit.
 func firstSiblingCompatibleKind(node *schemaNode, allowed map[jsonKind]bool) (jsonKind, bool) {
 	if node.enum != nil {
 		for _, member := range node.enum {
-			if member != nil && allowed[member.kind] {
+			if member != nil && member.kind != jsonNull && allowed[member.kind] {
 				return member.kind, true
 			}
 		}
@@ -1506,9 +1538,20 @@ func branchAlwaysAcceptsKind(node *schemaNode, kind jsonKind, visiting map[*sche
 }
 
 // anyOfMaskForKind chooses one realizable truth mask for a JSON kind.
+//
+//nolint:cyclop // Exact witnesses are preferred, with a structural fallback for fault planning.
 func anyOfMaskForKind(node *schemaNode, kind jsonKind) (*big.Int, bool, error) {
 	if node == nil || len(node.anyOf) == 0 {
 		return nil, false, errors.New("schema has no anyOf branches")
+	}
+
+	exactMasks, err := realizableAnyOfMasksForKind(node, kind)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if len(exactMasks) > 0 {
+		return exactMasks[0], true, nil
 	}
 
 	mask := new(big.Int)
@@ -1722,55 +1765,220 @@ func anyOfMaskForAny(node *schemaNode) (*big.Int, bool, error) {
 	return nil, false, nil
 }
 
-// realizableAnyOfMasks returns distinct truth masks reachable by one JSON kind.
+// anyOfMaskForEnumFault chooses a mask with a witness that fails the local enum.
 //
-//nolint:cyclop // Canonical JSON kinds and numeric subtypes are merged deterministically.
-func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
-	masks := make([]*big.Int, 0)
+//nolint:cyclop // Enum-fault witness filtering has explicit canonical phases.
+func anyOfMaskForEnumFault(node *schemaNode) (*big.Int, bool, error) {
+	if node == nil || len(node.anyOf) == 0 {
+		return nil, false, errors.New("schema has no anyOf branches")
+	}
 
+	withoutEnum := schemaNodeWithoutEnum(node)
 	for _, kind := range canonicalJSONKinds() {
-		mask, realizable, err := anyOfMaskForKind(node, kind)
+		witnesses, err := canonicalAnyOfWitnesses(node, kind)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 
-		if !realizable {
+		for _, witness := range witnesses {
+			matches, err := enumContainsValue(node, witness)
+			if err != nil {
+				return nil, false, err
+			}
+
+			if matches {
+				continue
+			}
+
+			result := evaluateNode(withoutEnum, witness, node.occurrence)
+			if result.err != nil {
+				return nil, false, fmt.Errorf("evaluate enum-fault anyOf %s witness: %w", jsonKindName(kind), result.err)
+			}
+
+			if !result.valid {
+				continue
+			}
+
+			mask, exists := anyOfEvaluationMask(result, node.occurrence)
+			if exists {
+				return mask, true, nil
+			}
+		}
+	}
+
+	return nil, false, nil
+}
+
+// schemaNodeWithoutEnum shallow-copies one node while disabling only its enum.
+func schemaNodeWithoutEnum(node *schemaNode) *schemaNode {
+	shape := *node.schemaShape
+	shape.enum = nil
+	shape.enumIndices = nil
+
+	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}
+}
+
+// enumContainsValue reports whether one value is semantically listed by an enum.
+func enumContainsValue(node *schemaNode, value *jsonValue) (bool, error) {
+	for _, member := range node.enum {
+		equal, err := jsonSemanticEqual(member, value)
+		if err != nil {
+			return false, err
+		}
+
+		if equal {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// booleanAnyOfMasks returns distinct truth masks for the canonical false and true values.
+//
+//nolint:cyclop // Boolean values and authored branch masks are one canonical pass.
+func booleanAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
+	if node == nil || len(node.anyOf) == 0 {
+		return nil, nil
+	}
+
+	if !nodeAcceptsKindForTarget(node, jsonBoolean) {
+		return nil, nil
+	}
+
+	booleanValues := []bool{false, true}
+
+	masks := make([]*big.Int, 0, len(booleanValues))
+
+	for _, value := range booleanValues {
+		mask := new(big.Int)
+
+		for index, child := range node.anyOf {
+			accepted, err := branchCanAcceptBoolean(child, value, make(map[*schemaNode]bool))
+			if err != nil {
+				return nil, err
+			}
+
+			if accepted {
+				mask.SetBit(mask, index, 1)
+			}
+		}
+
+		if mask.Sign() == 0 {
 			continue
 		}
 
-		appendUnique := true
+		duplicate := false
 
 		for _, existing := range masks {
 			if existing.Cmp(mask) == 0 {
-				appendUnique = false
+				duplicate = true
 
 				break
 			}
 		}
 
-		if appendUnique {
+		if !duplicate {
 			masks = append(masks, mask)
 		}
 	}
 
-	integerMask, integerRealizable, err := integerAnyOfMask(node)
-	if err != nil {
-		return nil, err
+	return masks, nil
+}
+
+// branchCanAcceptBoolean reports whether a branch accepts one exact boolean value.
+//
+//nolint:cyclop,gocognit,nestif // Recursive branch truth requires explicit semantic phases.
+func branchCanAcceptBoolean(node *schemaNode, value bool, visiting map[*schemaNode]bool) (bool, error) {
+	if node == nil || node.schemaShape == nil {
+		return false, errors.New("anyOf branch has no shape")
 	}
 
-	if integerRealizable {
-		appendUnique := true
+	if visiting[node] {
+		return false, fmt.Errorf("recursive anyOf branch at %s", node.occurrence.usePointer)
+	}
 
-		for _, existing := range masks {
-			if existing.Cmp(integerMask) == 0 {
-				appendUnique = false
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	if node.kind != schemaAny && node.kind != schemaBoolean {
+		return false, nil
+	}
+
+	if node.enum != nil {
+		matched := false
+
+		for _, member := range node.enum {
+			if member == nil {
+				return false, errors.New("JSON enum member is nil")
+			}
+
+			if member.kind != jsonBoolean || member.boolean != value {
+				continue
+			}
+
+			matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+			if err != nil {
+				return false, err
+			}
+
+			if matches {
+				matched = true
 
 				break
 			}
 		}
 
-		if appendUnique {
-			masks = append(masks, integerMask)
+		if !matched {
+			return false, nil
+		}
+	}
+
+	for _, child := range node.allOf {
+		accepted, err := branchCanAcceptBoolean(child, value, visiting)
+		if err != nil {
+			return false, err
+		}
+
+		if !accepted {
+			return false, nil
+		}
+	}
+
+	if len(node.anyOf) == 0 {
+		return true, nil
+	}
+
+	for _, child := range node.anyOf {
+		accepted, err := branchCanAcceptBoolean(child, value, visiting)
+		if err != nil {
+			return false, err
+		}
+
+		if accepted {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// realizableAnyOfMasks returns distinct truth masks reachable by complete-parent witnesses.
+func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
+	if node == nil || len(node.anyOf) == 0 {
+		return nil, errors.New("schema has no anyOf branches")
+	}
+
+	masks := make([]*big.Int, 0)
+
+	for _, kind := range canonicalJSONKinds() {
+		kindMasks, err := realizableAnyOfMasksForKind(node, kind)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, mask := range kindMasks {
+			masks = appendUniqueAnyOfMask(masks, mask)
 		}
 	}
 
@@ -1779,6 +1987,289 @@ func realizableAnyOfMasks(node *schemaNode) ([]*big.Int, error) {
 	})
 
 	return masks, nil
+}
+
+// realizableAnyOfMasksForKind evaluates every canonical witness for one JSON kind.
+func realizableAnyOfMasksForKind(node *schemaNode, kind jsonKind) ([]*big.Int, error) {
+	if node == nil || len(node.anyOf) == 0 {
+		return nil, errors.New("schema has no anyOf branches")
+	}
+
+	if !nodeAcceptsKindForTarget(node, kind) {
+		return nil, nil
+	}
+
+	witnesses, err := canonicalAnyOfWitnesses(node, kind)
+	if err != nil {
+		return nil, err
+	}
+
+	masks := make([]*big.Int, 0)
+
+	for _, witness := range witnesses {
+		result := evaluateNode(node, witness, node.occurrence)
+		if result.err != nil {
+			return nil, fmt.Errorf("evaluate anyOf %s witness: %w", jsonKindName(kind), result.err)
+		}
+
+		if !result.valid {
+			continue
+		}
+
+		mask, exists := anyOfEvaluationMask(result, node.occurrence)
+		if !exists {
+			return nil, errors.New("valid anyOf witness has no parent truth vector")
+		}
+
+		masks = appendUniqueAnyOfMask(masks, mask)
+	}
+
+	sort.Slice(masks, func(left, right int) bool {
+		return masks[left].Cmp(masks[right]) < 0
+	})
+
+	return masks, nil
+}
+
+// anyOfEvaluationMask extracts one parent anyOf truth vector as a low-bit mask.
+func anyOfEvaluationMask(result evaluation, occurrence schemaOccurrence) (*big.Int, bool) {
+	identity := makeRuleIdentity(occurrence, oracleRuleAnyOf)
+	for _, truth := range result.anyOf {
+		if truth.ruleIdentity != identity {
+			continue
+		}
+
+		mask := new(big.Int)
+
+		for index, branch := range truth.branches {
+			if branch {
+				mask.SetBit(mask, index, 1)
+			}
+		}
+
+		return mask, mask.Sign() != 0
+	}
+
+	return nil, false
+}
+
+// appendUniqueAnyOfMask keeps one copy of a numeric truth mask.
+func appendUniqueAnyOfMask(masks []*big.Int, candidate *big.Int) []*big.Int {
+	for _, existing := range masks {
+		if existing.Cmp(candidate) == 0 {
+			return masks
+		}
+	}
+
+	return append(masks, candidate)
+}
+
+// canonicalAnyOfWitnesses returns authored and simple canonical values for one kind.
+func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
+	witnesses := make([]*jsonValue, 0)
+	if err := collectAnyOfWitnesses(node, kind, make(map[*schemaNode]bool), &witnesses); err != nil {
+		return nil, err
+	}
+
+	canonical, err := canonicalKindWitnesses(kind)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, witness := range canonical {
+		var appendErr error
+
+		witnesses, appendErr = appendUniqueJSONWitness(witnesses, witness)
+		if appendErr != nil {
+			return nil, appendErr
+		}
+	}
+
+	return witnesses, nil
+}
+
+// collectAnyOfWitnesses collects values authored by the parent or its compositions.
+//
+//nolint:cyclop,gocognit // One recursive pass collects all complete-parent witness sources.
+func collectAnyOfWitnesses(
+	node *schemaNode,
+	kind jsonKind,
+	visiting map[*schemaNode]bool,
+	witnesses *[]*jsonValue,
+) error {
+	if node == nil || node.schemaShape == nil {
+		return errors.New("anyOf branch has no shape")
+	}
+
+	if visiting[node] {
+		return fmt.Errorf("recursive anyOf witness schema at %s", node.occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	for _, member := range node.enum {
+		if member == nil {
+			return errors.New("JSON enum member is nil")
+		}
+
+		if member.kind == kind {
+			var err error
+
+			*witnesses, err = appendUniqueJSONWitness(*witnesses, member)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if node.defaultValue != nil && node.defaultValue.kind == kind {
+		var err error
+
+		*witnesses, err = appendUniqueJSONWitness(*witnesses, node.defaultValue)
+		if err != nil {
+			return err
+		}
+	}
+
+	if kind == jsonString {
+		minimumWitnesses, err := canonicalStringMinLengthWitness(node.minLength)
+		if err != nil {
+			return err
+		}
+
+		for _, witness := range minimumWitnesses {
+			*witnesses, err = appendUniqueJSONWitness(*witnesses, witness)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if kind == jsonNumber {
+		for _, bound := range []*exactNumber{node.minimum, node.maximum, node.multipleOf} {
+			if bound == nil {
+				continue
+			}
+
+			value := &jsonValue{kind: jsonNumber, number: bound}
+
+			var err error
+
+			*witnesses, err = appendUniqueJSONWitness(*witnesses, value)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, child := range node.allOf {
+		if err := collectAnyOfWitnesses(child, kind, visiting, witnesses); err != nil {
+			return err
+		}
+	}
+
+	for _, child := range node.anyOf {
+		if err := collectAnyOfWitnesses(child, kind, visiting, witnesses); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// canonicalStringMinLengthWitness derives valid-length strings from one constraint.
+func canonicalStringMinLengthWitness(minimum *exactCount) ([]*jsonValue, error) {
+	if minimum == nil || minimum.number == nil {
+		return []*jsonValue{}, nil
+	}
+
+	source, err := minimum.number.canonicalDecimal()
+	if err != nil {
+		return nil, err
+	}
+
+	length, err := strconv.ParseUint(source, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize minLength witness: %w", err)
+	}
+
+	maxInt := uint64(^uint(0) >> 1)
+	if length > maxInt {
+		return nil, fmt.Errorf("canonicalize minLength witness: length %d overflows int", length)
+	}
+
+	return []*jsonValue{{kind: jsonString, text: strings.Repeat("a", int(length))}}, nil
+}
+
+// appendUniqueJSONWitness retains semantic distinctness without changing authored values.
+func appendUniqueJSONWitness(witnesses []*jsonValue, candidate *jsonValue) ([]*jsonValue, error) {
+	for _, existing := range witnesses {
+		equal, err := jsonSemanticEqual(existing, candidate)
+		if err != nil {
+			return nil, err
+		}
+
+		if equal {
+			return witnesses, nil
+		}
+	}
+
+	return append(witnesses, candidate), nil
+}
+
+// canonicalKindWitnesses returns small deterministic values for each JSON kind.
+//
+//nolint:cyclop // Each JSON kind has an explicit canonical witness family.
+func canonicalKindWitnesses(kind jsonKind) ([]*jsonValue, error) {
+	switch kind {
+	case jsonNull:
+		return []*jsonValue{{kind: jsonNull}}, nil
+	case jsonBoolean:
+		return []*jsonValue{{kind: jsonBoolean}, {kind: jsonBoolean, boolean: true}}, nil
+	case jsonNumber:
+		sources := []string{"-1", "0", "0.5", "1", "2", "3"}
+		values := make([]*jsonValue, 0, len(sources))
+
+		for _, source := range sources {
+			number, err := parseExactNumber(source)
+			if err != nil {
+				return nil, err
+			}
+
+			values = append(values, &jsonValue{kind: jsonNumber, number: number})
+		}
+
+		return values, nil
+	case jsonString:
+		return []*jsonValue{
+			{kind: jsonString, text: ""},
+			{kind: jsonString, text: "a"},
+			{kind: jsonString, text: "b"},
+			{kind: jsonString, text: "text"},
+		}, nil
+	case jsonArray:
+		number, err := parseExactNumber("0")
+		if err != nil {
+			return nil, err
+		}
+
+		return []*jsonValue{
+			{kind: jsonArray, array: []*jsonValue{}},
+			{kind: jsonArray, array: []*jsonValue{{kind: jsonBoolean}}},
+			{kind: jsonArray, array: []*jsonValue{{kind: jsonString, text: "a"}}},
+			{kind: jsonArray, array: []*jsonValue{{kind: jsonNumber, number: number}}},
+		}, nil
+	case jsonObject:
+		return []*jsonValue{
+			{kind: jsonObject, object: map[string]*jsonValue{}},
+			{kind: jsonObject, object: map[string]*jsonValue{
+				"a": {kind: jsonString, text: "a"},
+			}},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown JSON kind %d", kind)
+	}
 }
 
 // canonicalJSONKinds returns the locked JSON kind order.
