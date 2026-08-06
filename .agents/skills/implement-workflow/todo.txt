@@ -1,4 +1,4 @@
-- [ ] https://github.com/djosh34/klopt/issues/67
+- [x] https://github.com/djosh34/klopt/issues/67
 - [ ] https://github.com/djosh34/klopt/issues/68
 - [ ] https://github.com/djosh34/klopt/issues/69
 - [ ] https://github.com/djosh34/klopt/issues/70
