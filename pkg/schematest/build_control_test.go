@@ -142,7 +142,9 @@ func TestBuildChargesNestedCompositionsBeforeAssignment(t *testing.T) {
 	require.Equal(t, MaxStepsReached, report.Stop)
 	require.Equal(t, uint64(3), report.Steps)
 	require.Len(t, cases, 1)
-	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0|#|allOf|level:all-true")
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+	require.Contains(t, report.Covered, schemaPointer+"/allOf/0|#|allOf|level:all-true")
 }
 
 // TestBuildUsesOneCounterAcrossTargets verifies retries do not reset the budget.

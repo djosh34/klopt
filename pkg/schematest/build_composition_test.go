@@ -84,10 +84,41 @@ func TestBuildMergesNestedAnyOfArrayItemSchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+
 	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
 	require.Contains(t, cases, Case{JSON: []byte(`["q"]`), Valid: true})
-	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/anyOf/0/items|#/*|enum|level:member:0")
-	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/anyOf/1/items|#/*|enum|level:member:0")
+	require.Contains(t, report.Covered, schemaPointer+"/allOf/0/anyOf/0/items|#/*|enum|level:member:0")
+	require.Contains(t, report.Covered, schemaPointer+"/allOf/0/anyOf/1/items|#/*|enum|level:member:0")
+}
+
+// TestBuildCarriesComposedArrayDefaultsIntoMasks verifies authored structural defaults.
+func TestBuildCarriesComposedArrayDefaultsIntoMasks(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"anyOf":[
+			{"default":[true,true,true]},
+			{"maxItems":2}
+		]
+	}`))
+
+	cases := make([]Case, 0)
+	report, err := Build(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100000},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`[null,null,null]`), Valid: true})
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+	require.Contains(t, report.Covered, schemaPointer+"|#|anyOf|level:mask:1")
 }
 
 // TestBuildMergesAllOfObjectPropertySchemas verifies composed property witnesses.
@@ -139,9 +170,11 @@ func TestBuildUsesNestedAllOfObjectBounds(t *testing.T) {
 	require.NoError(t, err)
 
 	found := false
+
 	for _, testCase := range cases {
 		value, parseErr := parseStrictJSON(testCase.JSON)
 		require.NoError(t, parseErr)
+
 		if value.kind == jsonObject && len(value.object) >= 3 {
 			found = true
 
@@ -150,6 +183,47 @@ func TestBuildUsesNestedAllOfObjectBounds(t *testing.T) {
 	}
 
 	require.True(t, found)
+}
+
+// TestBuildUsesUnpinnedNestedAnyOfBoundsForOuterAllOf verifies ancestor repair bounds.
+func TestBuildUsesUnpinnedNestedAnyOfBoundsForOuterAllOf(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"type":"array",
+		"items":{"enum":[null]},
+		"allOf":[{"anyOf":[{"minItems":3},{"minItems":5}]}]
+	}`))
+
+	cases := make([]Case, 0)
+	report, err := Build(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000000},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+
+	found := false
+
+	for _, testCase := range cases {
+		value, parseErr := parseStrictJSON(testCase.JSON)
+		require.NoError(t, parseErr)
+
+		if value.kind == jsonArray && (len(value.array) == 3 || len(value.array) == 5) {
+			found = true
+
+			break
+		}
+	}
+
+	require.True(t, found)
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+	require.Contains(t, report.Covered, schemaPointer+"|#|allOf|level:all-true")
 }
 
 // TestBuildUsesNestedPinnedAnyOfArrayBounds verifies selected nested bounds.
@@ -168,7 +242,9 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 	require.NoError(t, err)
 
 	var target validTarget
+
 	foundTarget := false
+
 	for _, candidate := range plan.validTargets {
 		if strings.Contains(candidate.obligation.String(), "/allOf/0/anyOf/0|#|minItems|level:valid") {
 			target = candidate
@@ -177,6 +253,7 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 			break
 		}
 	}
+
 	require.True(t, foundTarget)
 
 	searchState := &search{model: model, maxSteps: 1000}
@@ -215,9 +292,11 @@ func TestBuildUsesComposedAdditionalPropertySchemas(t *testing.T) {
 	require.NoError(t, err)
 
 	found := false
+
 	for _, testCase := range cases {
 		value, parseErr := parseStrictJSON(testCase.JSON)
 		require.NoError(t, parseErr)
+
 		if value.kind != jsonObject || len(value.object) != 1 {
 			continue
 		}
@@ -230,7 +309,9 @@ func TestBuildUsesComposedAdditionalPropertySchemas(t *testing.T) {
 	}
 
 	require.True(t, found)
-	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/additionalProperties|#/*|enum|level:member:0")
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+	require.Contains(t, report.Covered, schemaPointer+"/allOf/0/additionalProperties|#/*|enum|level:member:0")
 }
 
 // TestBuildTargetsComposedAdditionalProperties verifies nested wildcard applicability.
@@ -253,12 +334,16 @@ func TestBuildTargetsComposedAdditionalProperties(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/additionalProperties|#/*|type|level:string")
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+	require.Contains(t, report.Covered, schemaPointer+"/allOf/0/additionalProperties|#/*|type|level:string")
 
 	found := false
+
 	for _, testCase := range cases {
 		value, parseErr := parseStrictJSON(testCase.JSON)
 		require.NoError(t, parseErr)
+
 		if value.kind == jsonObject && len(value.object) > 0 {
 			found = true
 
@@ -286,7 +371,8 @@ func TestBuildAppliesWildcardsAcrossComposedMemberDeclarations(t *testing.T) {
 				"properties":{"x":{"type":"string"}},
 				"allOf":[{"additionalProperties":{"enum":["z"]}}]
 			}`,
-			path: "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/additionalProperties|#/*|enum|level:member:0",
+			path: "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/" +
+				"additionalProperties|#/*|enum|level:member:0",
 		},
 		{
 			name: "root wildcard and composed property",
@@ -301,6 +387,8 @@ func TestBuildAppliesWildcardsAcrossComposedMemberDeclarations(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			cases := make([]Case, 0)
 			report, err := Build(
 				Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected", MaxSteps: 10000},
@@ -343,8 +431,10 @@ func TestBuildKeepsAnyOfSiblingPropertiesAsAlternatives(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, cases, Case{JSON: []byte(`{"x":""}`), Valid: true})
 	require.Contains(t, cases, Case{JSON: []byte(`{"x":-1}`), Valid: true})
-	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/anyOf/0/properties/x|#/x|type|level:string")
-	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/anyOf/1/properties/x|#/x|type|level:number")
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+	require.Contains(t, report.Covered, schemaPointer+"/anyOf/0/properties/x|#/x|type|level:string")
+	require.Contains(t, report.Covered, schemaPointer+"/anyOf/1/properties/x|#/x|type|level:number")
 }
 
 // TestBuildKeepsAnyOfArrayBranchesAsAlternatives verifies exact array masks.

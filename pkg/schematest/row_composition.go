@@ -67,8 +67,6 @@ func rowChildSchemaChoices(
 }
 
 // rowChildSchemaSourceSets groups direct and active composed child schemas.
-//
-//nolint:cyclop // Direct, allOf, pinned anyOf, and alternative selection share one seam.
 func rowChildSchemaSourceSets(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -82,6 +80,8 @@ func rowChildSchemaSourceSets(
 }
 
 // rowChildSchemaSourceSetsAt recursively preserves nested composition alternatives.
+//
+//nolint:cyclop // Direct, allOf, pinned anyOf, and alternative selection share one seam.
 func rowChildSchemaSourceSetsAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -112,6 +112,7 @@ func rowChildSchemaSourceSetsAt(
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
+
 		childSets, err := rowChildSchemaSourceSetsAt(
 			child, childOccurrence, pins, kind, name, visiting,
 		)
@@ -140,6 +141,7 @@ func rowChildSchemaSourceSetsAt(
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
+
 			childSets, err := rowChildSchemaSourceSetsAt(
 				child, childOccurrence, pins, kind, name, visiting,
 			)
@@ -160,6 +162,7 @@ func rowChildSchemaSourceSetsAt(
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
+
 		childSets, err := rowChildSchemaSourceSetsAt(
 			child, childOccurrence, pins, kind, name, visiting,
 		)
@@ -188,11 +191,41 @@ func combineRowSchemaSourceSets(
 			sources := make([]rowSchemaSource, 0, len(leftSources)+len(rightSources))
 			sources = append(sources, leftSources...)
 			sources = append(sources, rightSources...)
+
+			if rowSchemaSourceSetExists(result, sources) {
+				continue
+			}
+
 			result = append(result, sources)
 		}
 	}
 
 	return result
+}
+
+// rowSchemaSourceSetExists reports whether one source alternative is already present.
+func rowSchemaSourceSetExists(sets [][]rowSchemaSource, wanted []rowSchemaSource) bool {
+	for _, set := range sets {
+		if len(set) != len(wanted) {
+			continue
+		}
+
+		equal := true
+
+		for index := range set {
+			if set[index].node != wanted[index].node || set[index].occurrence != wanted[index].occurrence {
+				equal = false
+
+				break
+			}
+		}
+
+		if equal {
+			return true
+		}
+	}
+
+	return false
 }
 
 // rowChildSchemaSource returns one direct child schema with its rebased occurrence.
@@ -401,6 +434,8 @@ func composeRowMember(name string, candidates []rowMember, required bool, pins [
 }
 
 // rowMemberCompositionState identifies anyOf branch context for one property schema.
+//
+//nolint:cyclop // Candidate branch and sibling-parent checks are one applicability decision.
 func rowMemberCompositionState(candidate rowMember, pins []applicabilityPin) (bool, bool) {
 	active := false
 	constrained := false
@@ -424,6 +459,7 @@ func rowMemberCompositionState(candidate rowMember, pins []applicabilityPin) (bo
 
 		candidateParent, candidateNested := rowAnyOfParentUsePointer(candidate.occurrence.usePointer)
 		pinParent, pinNested := rowAnyOfParentUsePointer(pin.occurrence.usePointer)
+
 		candidateInstance, instanceOK := rowInstanceParentTemplate(candidate.occurrence.instanceTemplate)
 		if candidateNested && pinNested && instanceOK && candidateParent == pinParent &&
 			instanceTemplateMatches(pin.occurrence.instanceTemplate, candidateInstance) {

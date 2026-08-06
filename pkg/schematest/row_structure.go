@@ -132,57 +132,69 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 		maximum = int(count)
 	}
 
+	composedBounds := [][2]int{{minimum, maximum}}
+
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		childMinimum, childMaximum, err := rowNestedArrayBounds(child, childOccurrence, pins)
+
+		childBounds, err := rowNestedArrayBounds(child, childOccurrence, pins)
 		if err != nil {
 			return nil, err
 		}
 
-		if childMinimum > minimum {
-			minimum = childMinimum
-		}
-
-		if childMaximum < maximum {
-			maximum = childMaximum
-		}
+		composedBounds = combineRowArrayBounds(composedBounds, childBounds)
 	}
 
-	anyOfBounds := make([][2]int, 0, len(node.anyOf))
-
 	anyOfStates, anyOfPinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	for index, child := range node.anyOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence.usePointer+"/anyOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		childMinimum, childMaximum, err := rowNestedArrayBounds(child, childOccurrence, pins)
-		if err != nil {
-			return nil, err
-		}
-
-		if anyOfPinned {
+	if anyOfPinned {
+		for index, child := range node.anyOf {
 			if !anyOfStates[index] {
 				continue
 			}
 
-			if childMinimum > minimum {
-				minimum = childMinimum
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				occurrence.usePointer+"/anyOf/"+itoa(index),
+				occurrence.instanceTemplate,
+			)
+
+			childBounds, err := rowNestedArrayBounds(child, childOccurrence, pins)
+			if err != nil {
+				return nil, err
 			}
 
-			if childMaximum < maximum {
-				maximum = childMaximum
+			composedBounds = combineRowArrayBounds(composedBounds, childBounds)
+		}
+	} else if len(node.anyOf) > 0 {
+		alternativeBounds := make([][2]int, 0, len(node.anyOf))
+		for index, child := range node.anyOf {
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				occurrence.usePointer+"/anyOf/"+itoa(index),
+				occurrence.instanceTemplate,
+			)
+
+			childBounds, err := rowNestedArrayBounds(child, childOccurrence, pins)
+			if err != nil {
+				return nil, err
 			}
 
-			continue
+			alternativeBounds = append(
+				alternativeBounds,
+				combineRowArrayBounds(composedBounds, childBounds)...,
+			)
 		}
 
-		anyOfBounds = append(anyOfBounds, [2]int{childMinimum, childMaximum})
+		composedBounds = alternativeBounds
+	}
+
+	if len(composedBounds) == 1 {
+		minimum = composedBounds[0][0]
+		maximum = composedBounds[0][1]
 	}
 
 	itemPin, itemPinned := rowPresencePinDetails(pins, schemaOccurrence{
@@ -206,6 +218,11 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 
 	if itemPinned && !itemPin.canonical && itemPin.presence == planPinPresent && minimum < 1 {
 		minimum = 1
+	}
+
+	defaultLengths, err := rowComposedArrayDefaultLengths(node, occurrence, pins)
+	if err != nil {
+		return nil, err
 	}
 
 	if minimum > maximum {
@@ -237,7 +254,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 		appendLength(maximum)
 	}
 
-	for _, bounds := range anyOfBounds {
+	for _, bounds := range composedBounds {
 		appendLength(bounds[0])
 
 		if bounds[1] < int(^uint(0)>>1) {
@@ -245,54 +262,45 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 		}
 	}
 
+	for _, length := range defaultLengths {
+		appendLength(length)
+	}
+
 	return candidates, nil
 }
 
-// rowNestedArrayBounds extracts active local and composed bounds from a branch.
-func rowNestedArrayBounds(
+// rowComposedArrayDefaultLengths preserves active authored array defaults.
+func rowComposedArrayDefaultLengths(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
-) (int, int, error) {
-	return rowNestedArrayBoundsAt(node, occurrence, pins, make(map[*schemaNode]bool))
+) ([]int, error) {
+	return rowComposedArrayDefaultLengthsAt(node, occurrence, pins, make(map[*schemaNode]bool))
 }
 
-// rowNestedArrayBoundsAt carries nested pinned composition state through bounds.
+// rowComposedArrayDefaultLengthsAt recursively collects nested authored defaults.
 //
-//nolint:cyclop // Local, allOf, and pinned anyOf bounds are one calculation.
-func rowNestedArrayBoundsAt(
+//nolint:cyclop // Direct, allOf, and pinned anyOf defaults share one recursive pass.
+func rowComposedArrayDefaultLengthsAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
 	visiting map[*schemaNode]bool,
-) (int, int, error) {
-	minimum := 0
-	maximum := int(^uint(0) >> 1)
-	if node == nil {
-		return minimum, maximum, nil
+) ([]int, error) {
+	if node == nil || node.schemaShape == nil {
+		return nil, nil
 	}
 
 	if visiting[node] {
-		return 0, 0, fmt.Errorf("schematest: recursive row array bounds at %s", occurrence.usePointer)
+		return nil, fmt.Errorf("schematest: recursive row array default at %s", occurrence.usePointer)
 	}
 
 	visiting[node] = true
 	defer delete(visiting, node)
 
-	if count, fits, err := exactCountUint64(node.minItems); err != nil {
-		return 0, 0, err
-	} else if fits {
-		if count > uint64(maximum) {
-			return maximum, maximum, nil
-		}
-
-		minimum = int(count)
-	}
-
-	if count, fits, err := exactCountUint64(node.maxItems); err != nil {
-		return 0, 0, err
-	} else if fits && count < uint64(maximum) {
-		maximum = int(count)
+	lengths := make([]int, 0, 1)
+	if node.defaultValue != nil && node.defaultValue.kind == jsonArray {
+		lengths = append(lengths, len(node.defaultValue.array))
 	}
 
 	for index, child := range node.allOf {
@@ -301,29 +309,18 @@ func rowNestedArrayBoundsAt(
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		childMinimum, childMaximum, err := rowNestedArrayBoundsAt(
-			child, childOccurrence, pins, visiting,
-		)
+
+		childLengths, err := rowComposedArrayDefaultLengthsAt(child, childOccurrence, pins, visiting)
 		if err != nil {
-			return 0, 0, err
+			return nil, err
 		}
 
-		if childMinimum > minimum {
-			minimum = childMinimum
-		}
-
-		if childMaximum < maximum {
-			maximum = childMaximum
-		}
+		lengths = append(lengths, childLengths...)
 	}
 
 	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	if !pinned {
-		return minimum, maximum, nil
-	}
-
 	for index, child := range node.anyOf {
-		if !states[index] {
+		if pinned && !states[index] {
 			continue
 		}
 
@@ -332,23 +329,150 @@ func rowNestedArrayBoundsAt(
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		childMinimum, childMaximum, err := rowNestedArrayBoundsAt(
-			child, childOccurrence, pins, visiting,
-		)
+
+		childLengths, err := rowComposedArrayDefaultLengthsAt(child, childOccurrence, pins, visiting)
 		if err != nil {
-			return 0, 0, err
+			return nil, err
 		}
 
-		if childMinimum > minimum {
-			minimum = childMinimum
+		lengths = append(lengths, childLengths...)
+	}
+
+	return lengths, nil
+}
+
+// rowNestedArrayBounds extracts active local and composed bound alternatives.
+func rowNestedArrayBounds(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+) ([][2]int, error) {
+	return rowNestedArrayBoundsAt(node, occurrence, pins, make(map[*schemaNode]bool))
+}
+
+// rowNestedArrayBoundsAt carries nested composition alternatives through bounds.
+//
+//nolint:cyclop // Bound alternatives are combined in authored composition order.
+func rowNestedArrayBoundsAt(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	visiting map[*schemaNode]bool,
+) ([][2]int, error) {
+	maximum := int(^uint(0) >> 1)
+	if node == nil {
+		return [][2]int{{0, maximum}}, nil
+	}
+
+	if visiting[node] {
+		return nil, fmt.Errorf("schematest: recursive row array bounds at %s", occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	minimum := 0
+
+	if count, fits, err := exactCountUint64(node.minItems); err != nil {
+		return nil, err
+	} else if fits {
+		if count > uint64(maximum) {
+			return [][2]int{{maximum, maximum}}, nil
 		}
 
-		if childMaximum < maximum {
-			maximum = childMaximum
+		minimum = int(count)
+	}
+
+	if count, fits, err := exactCountUint64(node.maxItems); err != nil {
+		return nil, err
+	} else if fits && count < uint64(maximum) {
+		maximum = int(count)
+	}
+
+	bounds := [][2]int{{minimum, maximum}}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+
+		childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, pins, visiting)
+		if err != nil {
+			return nil, err
+		}
+
+		bounds = combineRowArrayBounds(bounds, childBounds)
+	}
+
+	if len(node.anyOf) == 0 {
+		return bounds, nil
+	}
+
+	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	if pinned {
+		for index, child := range node.anyOf {
+			if !states[index] {
+				continue
+			}
+
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				occurrence.usePointer+"/anyOf/"+itoa(index),
+				occurrence.instanceTemplate,
+			)
+
+			childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, pins, visiting)
+			if err != nil {
+				return nil, err
+			}
+
+			bounds = combineRowArrayBounds(bounds, childBounds)
+		}
+
+		return bounds, nil
+	}
+
+	alternatives := make([][2]int, 0, len(node.anyOf))
+	for index, child := range node.anyOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+
+		childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, pins, visiting)
+		if err != nil {
+			return nil, err
+		}
+
+		alternatives = append(alternatives, combineRowArrayBounds(bounds, childBounds)...)
+	}
+
+	return alternatives, nil
+}
+
+// combineRowArrayBounds intersects every left/right bound alternative.
+func combineRowArrayBounds(left, right [][2]int) [][2]int {
+	result := make([][2]int, 0, len(left)*len(right))
+	for _, leftBound := range left {
+		for _, rightBound := range right {
+			minimum := leftBound[0]
+			if rightBound[0] > minimum {
+				minimum = rightBound[0]
+			}
+
+			maximum := leftBound[1]
+			if rightBound[1] < maximum {
+				maximum = rightBound[1]
+			}
+
+			result = append(result, [2]int{minimum, maximum})
 		}
 	}
 
-	return minimum, maximum, nil
+	return result
 }
 
 // walkObject assigns members in canonical UTF-8 name order.
@@ -521,7 +645,7 @@ func rowObjectMinimumProperties(
 
 // rowNestedObjectMinimumProperties carries object lower bounds through active composition.
 //
-//nolint:cyclop // Local, allOf, and pinned anyOf bounds are one recursive calculation.
+//nolint:cyclop,gocognit // Local, allOf, and pinned anyOf bounds are one recursive calculation.
 func rowNestedObjectMinimumProperties(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -565,6 +689,7 @@ func rowNestedObjectMinimumProperties(
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
+
 		childMinimum, childFits, err := rowNestedObjectMinimumProperties(
 			child, childOccurrence, pins, visiting,
 		)
@@ -590,6 +715,7 @@ func rowNestedObjectMinimumProperties(
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
+
 			childMinimum, childFits, err := rowNestedObjectMinimumProperties(
 				child, childOccurrence, pins, visiting,
 			)
@@ -771,6 +897,8 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 }
 
 // rowAdditionalPropertySources returns active direct and composed wildcard schemas.
+//
+//nolint:cyclop // Direct, allOf, and pinned anyOf wildcard sources share one pass.
 func rowAdditionalPropertySources(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -780,6 +908,7 @@ func rowAdditionalPropertySources(
 	visiting := make(map[*schemaNode]bool)
 
 	var collect func(*schemaNode, schemaOccurrence) error
+
 	collect = func(current *schemaNode, currentOccurrence schemaOccurrence) error {
 		if current == nil || current.schemaShape == nil {
 			return nil
