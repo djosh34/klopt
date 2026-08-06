@@ -73,6 +73,29 @@ func (s *search) chargeNodeCompositions(
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
 ) error {
+	return s.chargeNestedCompositions(node, occurrence, pins, make(map[*schemaNode]bool))
+}
+
+// chargeNestedCompositions charges same-instance compositions before structural assignment.
+//
+//nolint:cyclop // Authored allOf and anyOf paths share one recursive charge pass.
+func (s *search) chargeNestedCompositions(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	visiting map[*schemaNode]bool,
+) error {
+	if node == nil || node.schemaShape == nil {
+		return errors.New("schematest: row composition has no shape")
+	}
+
+	if visiting[node] {
+		return fmt.Errorf("schematest: recursive row composition at %s", occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
 	if len(node.allOf) > 0 && rowHasCompositionPins(pins, occurrence, "allOf") {
 		if err := s.assign(); err != nil {
 			return err
@@ -81,6 +104,28 @@ func (s *search) chargeNodeCompositions(
 
 	if len(node.anyOf) > 0 && rowHasCompositionPins(pins, occurrence, "anyOf") {
 		if err := s.assign(); err != nil {
+			return err
+		}
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		if err := s.chargeNestedCompositions(child, childOccurrence, pins, visiting); err != nil {
+			return err
+		}
+	}
+
+	for index, child := range node.anyOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		if err := s.chargeNestedCompositions(child, childOccurrence, pins, visiting); err != nil {
 			return err
 		}
 	}
@@ -247,7 +292,7 @@ func rowHasCompositionPins(pins []applicabilityPin, occurrence schemaOccurrence,
 		if pin.hasBranch && pin.composition == composition &&
 			len(pin.occurrence.usePointer) > len(prefix) &&
 			pin.occurrence.usePointer[:len(prefix)] == prefix &&
-			instanceTemplateMatches(occurrence.instanceTemplate, pin.occurrence.instanceTemplate) {
+			instanceTemplateMatches(pin.occurrence.instanceTemplate, occurrence.instanceTemplate) {
 			return true
 		}
 	}
