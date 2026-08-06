@@ -16,7 +16,7 @@ prompt+="SKILL_DIR=$skill_dir"$'\n'
 prompt+="TOP_WORKSPACE_ID=$workspace_id"$'\n'
 
 agent_id=$(paseo -q run -d \
-  --provider openrouter/deepseek/deepseek-v4-flash-0731 \
+  --provider pi/openrouter/deepseek/deepseek-v4-flash-0731 \
   --thinking high \
   --title "Larger Issue $root" \
   --workspace "$workspace_id" \

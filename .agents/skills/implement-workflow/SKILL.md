@@ -59,7 +59,7 @@ WORKSPACE_ID=...
 AGENT_ID=...
 ```
 
-The launcher creates the top workspace with runtime title `Larger Issue N` using `paseo workspace create --isolation local --title "Larger Issue N"`, then creates the detached top-level manager in that workspace. The top manager uses `openrouter/deepseek/deepseek-v4-flash-0731` with thinking `high`.
+The launcher creates the top workspace with runtime title `Larger Issue N` using `paseo workspace create --isolation local --title "Larger Issue N"`, then creates the detached top-level manager in that workspace. The top manager uses `pi/openrouter/deepseek/deepseek-v4-flash-0731` with thinking `high`.
 
 Paseo's normal caller-agent relationship supplies the hierarchy through the caller's `PASEO_AGENT_ID`. Do not add hierarchy environment variables. All launchers use detached `paseo ... run -d`; no launcher waits for an agent.
 
