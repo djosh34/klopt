@@ -109,5 +109,8 @@ type schemaShape struct {
 
 // schemaModel is the selected application/json request body's private model.
 type schemaModel struct {
-	root *schemaNode
+	root                *schemaNode
+	schemaPointer       string
+	schemaValue         *jsonValue
+	canonicalSchemaJSON string
 }

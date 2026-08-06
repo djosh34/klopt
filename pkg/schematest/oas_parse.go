@@ -44,7 +44,11 @@ func parseInput(input Input) (*schemaModel, error) {
 		return nil, err
 	}
 
-	return &schemaModel{root: node}, nil
+	return &schemaModel{
+		root:          node,
+		schemaPointer: pointer,
+		schemaValue:   schema,
+	}, nil
 }
 
 func validateOpenAPIVersion(root map[string]*jsonValue) error {

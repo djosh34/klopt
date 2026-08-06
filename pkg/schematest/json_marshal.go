@@ -13,6 +13,96 @@ const (
 	jsonControlLimit = 0x20
 )
 
+// marshalCanonicalJSON serializes one JSON value with deterministic bytes and shared-node memoization.
+func marshalCanonicalJSON(value *jsonValue) ([]byte, error) {
+	return appendCanonicalJSON(nil, value, make(map[*jsonValue][]byte), make(map[*jsonValue]bool))
+}
+
+// appendCanonicalJSON memoizes and appends one canonical JSON value.
+//
+//nolint:cyclop,gocognit,wsl_v5 // Canonical JSON has one explicit scalar, array, and object pass.
+func appendCanonicalJSON(
+	encoded []byte,
+	value *jsonValue,
+	memo map[*jsonValue][]byte,
+	visiting map[*jsonValue]bool,
+) ([]byte, error) {
+	if value == nil {
+		return nil, fmt.Errorf("JSON value is nil")
+	}
+
+	if cached, exists := memo[value]; exists {
+		return append(encoded, cached...), nil
+	}
+
+	if visiting[value] {
+		return nil, fmt.Errorf("JSON value contains a cycle")
+	}
+
+	if err := validateJSONPayload(value); err != nil {
+		return nil, err
+	}
+
+	visiting[value] = true
+	defer delete(visiting, value)
+
+	var canonical []byte
+	switch value.kind {
+	case jsonArray:
+		canonical = append(canonical, '[')
+		for index, element := range value.array {
+			if index > 0 {
+				canonical = append(canonical, ',')
+			}
+
+			var err error
+			canonical, err = appendCanonicalJSON(canonical, element, memo, visiting)
+			if err != nil {
+				return nil, err
+			}
+		}
+		canonical = append(canonical, ']')
+	case jsonObject:
+		names := make([]string, 0, len(value.object))
+		for name, member := range value.object {
+			if !utf8.ValidString(name) {
+				return nil, fmt.Errorf("object member name is not valid UTF-8")
+			}
+			if member == nil {
+				return nil, fmt.Errorf("object member %q is nil", name)
+			}
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		canonical = append(canonical, '{')
+		for index, name := range names {
+			if index > 0 {
+				canonical = append(canonical, ',')
+			}
+			canonical = appendJSONString(canonical, name)
+			canonical = append(canonical, ':')
+
+			var err error
+			canonical, err = appendCanonicalJSON(canonical, value.object[name], memo, visiting)
+			if err != nil {
+				return nil, err
+			}
+		}
+		canonical = append(canonical, '}')
+	default:
+		var err error
+		canonical, err = appendStrictJSON(canonical, value)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	memo[value] = append([]byte(nil), canonical...)
+
+	return append(encoded, canonical...), nil
+}
+
 // marshalStrict serializes one complete JSON value with deterministic bytes.
 func marshalStrict(value *jsonValue) ([]byte, error) {
 	if err := validateJSONValue(value, make(map[*jsonValue]bool)); err != nil {

@@ -9,9 +9,15 @@ import (
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
 func (s *search) walkScalar(
 	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
+	if kind == jsonString && node.enum == nil {
+		return s.walkString(node, occurrence, pins, visit)
+	}
+
 	candidates, err := rowScalarValues(node, kind)
 	if err != nil {
 		return false, err

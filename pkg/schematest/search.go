@@ -16,6 +16,9 @@ type search struct {
 	model    *schemaModel
 	maxSteps uint64
 	steps    uint64
+
+	stringRule  string
+	stringLevel string
 }
 
 // assign charges one structural, kind, composition, enum, or scalar choice.
@@ -42,6 +45,16 @@ func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue,
 	if s == nil || s.model == nil || s.model.root == nil {
 		return nil, false, errors.New("schematest: search has no model")
 	}
+
+	previousStringRule := s.stringRule
+	previousStringLevel := s.stringLevel
+	s.stringRule = target.obligation.rule
+	s.stringLevel = target.expected.level
+
+	defer func() {
+		s.stringRule = previousStringRule
+		s.stringLevel = previousStringLevel
+	}()
 
 	var found *jsonValue
 
