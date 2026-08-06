@@ -313,13 +313,8 @@ func (s *search) walkString(
 		return false, nil
 	}
 
-	if s.model != nil && s.model.canonicalSchemaJSON == "" && s.model.schemaValue != nil {
-		canonical, canonicalErr := marshalCanonicalJSON(s.model.schemaValue)
-		if canonicalErr != nil {
-			return false, fmt.Errorf("canonicalize string schema: %w", canonicalErr)
-		}
-
-		s.model.canonicalSchemaJSON = string(canonical)
+	if err := ensureStringSearchCanonicalSchema(s.model); err != nil {
+		return false, err
 	}
 
 	product.model = s.model
@@ -329,6 +324,21 @@ func (s *search) walkString(
 	}
 
 	return s.searchStringObjective(product, objectives[0], visit)
+}
+
+func ensureStringSearchCanonicalSchema(model *schemaModel) error {
+	if model == nil || model.canonicalSchemaJSON != "" || model.schemaValue == nil {
+		return nil
+	}
+
+	canonical, err := marshalCanonicalJSON(model.schemaValue)
+	if err != nil {
+		return fmt.Errorf("canonicalize string schema: %w", err)
+	}
+
+	model.canonicalSchemaJSON = string(canonical)
+
+	return nil
 }
 
 // searchStringObjectives streams the ordered clean objectives without retaining witnesses.
@@ -358,6 +368,10 @@ func (s *search) searchStringObjective(
 	objective stringObjective,
 	visit rowVisit,
 ) (bool, error) {
+	if err := ensureStringSearchCanonicalSchema(product.model); err != nil {
+		return false, err
+	}
+
 	pinnedLengths, err := stringPinnedLengths(product, objective)
 	if err != nil {
 		return false, err
@@ -977,15 +991,6 @@ func stringPinnedLengths(product stringProduct, objective stringObjective) ([]ui
 			continue
 		}
 
-		matches, err := stringLengthMatchesAllExcept(product, objective, index, 0)
-		if err != nil {
-			return nil, err
-		}
-
-		if !matches {
-			continue
-		}
-
 		bound, fits, err := exactCountUint64(constraint.bound)
 		if err != nil {
 			return nil, err
@@ -994,51 +999,34 @@ func stringPinnedLengths(product stringProduct, objective stringObjective) ([]ui
 			continue
 		}
 
+		candidate := bound
 		switch {
 		case objective.kind == stringObjectiveLengthFalse && objective.index == index &&
 			constraint.kind == stringRuleMinLength:
-			if bound > 0 {
-				appendLength(bound - 1)
+			if bound == 0 {
+				continue
 			}
+
+			candidate = bound - 1
 		case objective.kind == stringObjectiveLengthFalse && objective.index == index &&
 			constraint.kind == stringRuleMaxLength:
-			if bound < maxStringSearchUint64 {
-				appendLength(bound + 1)
+			if bound == maxStringSearchUint64 {
+				continue
 			}
-		default:
-			appendLength(bound)
+
+			candidate = bound + 1
+		}
+
+		matches, err := stringLengthMatchesObjective(product, objective, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if matches {
+			appendLength(candidate)
 		}
 	}
 
 	return lengths, nil
-}
-
-func stringLengthMatchesAllExcept(
-	product stringProduct,
-	objective stringObjective,
-	excluded int,
-	length uint64,
-) (bool, error) {
-	for index, constraint := range product.lengths {
-		if index == excluded {
-			continue
-		}
-
-		matches, err := stringLengthConstraintMatches(constraint, length)
-		if err != nil {
-			return false, err
-		}
-
-		if objective.kind == stringObjectiveLengthFalse && objective.index == index {
-			matches = !matches
-		}
-
-		if !matches {
-			return false, nil
-		}
-	}
-
-	return true, nil
 }
 
 func stringObjectiveMaximumLength(
@@ -1073,7 +1061,11 @@ func stringObjectiveMaximumLength(
 		found = true
 	}
 
-	for _, format := range product.formats {
+	for index, format := range product.formats {
+		if objective.kind == stringObjectiveFormatFalse && objective.index == index {
+			continue
+		}
+
 		formatMaximum, formatFinite := stringFormatMaximumLength(format.format)
 		if !formatFinite {
 			continue

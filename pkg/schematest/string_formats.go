@@ -58,8 +58,14 @@ func stringFormatMaximumLength(format schemaFormat) (uint64, bool) {
 	switch format {
 	case schemaFormatDate:
 		return 10, true
+	case schemaFormatEmail:
+		return 254, true
+	case schemaFormatIPv4:
+		return 15, true
 	case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
 		return 36, true
+	case schemaFormatCIDR, schemaFormatIPv4CIDR:
+		return 18, true
 	default:
 		return 0, false
 	}
@@ -300,11 +306,15 @@ func stringIPv4Intervals(prefix string, cidr bool) []stringUnitInterval {
 
 	parts := strings.Split(address, ".")
 	if len(parts) == 4 && cleanIPv4Octet(parts[3], false) {
+		continuation := ""
+		if parts[3] != "0" && len(parts[3]) < 3 {
+			continuation = "0123456789"
+		}
 		if cidr {
-			return stringASCIIIntervals("/")
+			continuation += "/"
 		}
 
-		return nil
+		return stringASCIIIntervals(continuation)
 	}
 
 	current := parts[len(parts)-1]
@@ -365,7 +375,7 @@ func stringCIDRPrefixAllowed(prefix string) bool {
 
 func stringEmailIntervals(prefix string) []stringUnitInterval {
 	if prefix == "" {
-		return stringASCIIIntervals("\"!#$%&'*+/=?^_`{|}~-")
+		return stringASCIIIntervals("\"!#$%&'*+/=?^_`{|}~-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 	}
 
 	if prefix[0] == '"' {
@@ -432,7 +442,7 @@ func stringQuotedEmailIntervals(prefix string) []stringUnitInterval {
 }
 
 func stringUnquotedEmailLocalIntervals(prefix string) []stringUnitInterval {
-	if !stringUnquotedEmailLocal(prefix) {
+	if !stringUnquotedEmailLocalPrefix(prefix) {
 		return nil
 	}
 
@@ -443,13 +453,9 @@ func stringUnquotedEmailLocalIntervals(prefix string) []stringUnitInterval {
 	return stringASCIIIntervals("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&'*+/=?^_`{|}~-.@")
 }
 
-func stringUnquotedEmailLocal(value string) bool {
-	if value == "" {
-		return true
-	}
-
-	if value[0] == '.' || value[len(value)-1] == '.' {
-		return false
+func stringUnquotedEmailLocalPrefix(value string) bool {
+	if value == "" || value[0] == '.' {
+		return value == ""
 	}
 
 	previousDot := false
@@ -472,6 +478,11 @@ func stringUnquotedEmailLocal(value string) bool {
 	}
 
 	return true
+}
+
+func stringUnquotedEmailLocal(value string) bool {
+	return stringUnquotedEmailLocalPrefix(value) &&
+		value != "" && value[len(value)-1] != '.'
 }
 
 func stringEmailDomainIntervals(prefix string) []stringUnitInterval {

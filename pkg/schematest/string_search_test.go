@@ -447,6 +447,145 @@ func TestStringProductObjectivesUseLengthBoundaries(t *testing.T) {
 	require.Len(t, []rune(values[2]), 4)
 }
 
+func TestStringProductTriesRelevantLengthBoundariesBeforeFairLengths(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"minLength":2,
+			"maxLength":100,
+			"pattern":"^a{2,100}$"
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 1000}
+	var lengths []int
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "minLength", level: "valid"},
+		func(value *jsonValue) (bool, error) {
+			length := len([]rune(value.text))
+			if len(lengths) == 0 || lengths[len(lengths)-1] != length {
+				lengths = append(lengths, length)
+			}
+
+			return len(lengths) == 3, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []int{2, 100, 3}, lengths)
+}
+
+func TestStringProductDirectedFormatFalseIgnoresItsFiniteMaximum(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"format":"date",
+			"pattern":"^00000000000$"
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 1000}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveFormatFalse, index: 0, rule: "format", level: "false"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Len(t, values, 1)
+	require.Len(t, []rune(values[0]), 11)
+	require.False(t, cleanDateFormatMatches(values[0]))
+}
+
+func TestStringProductEmailPrefixKeepsDottedLocalPartsReachable(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"format":"email",
+			"pattern":"^a\\.b@c$"
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 1000}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{"a.b@c"}, values)
+}
+
+func TestStringProductIPv4PrefixKeepsCompletableOctetsReachable(t *testing.T) {
+	for _, test := range []struct {
+		format  string
+		pattern string
+		want    string
+	}{
+		{format: "ipv4", pattern: `^255\.255\.255\.255$`, want: "255.255.255.255"},
+		{format: "cidr", pattern: `^255\.255\.255\.255/32$`, want: "255.255.255.255/32"},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			model, err := parseInput(Input{
+				OpenAPI: []byte(documentWithJSONSchema(
+					`{"type":"string","format":` + strconv.Quote(test.format) + `,"pattern":` + strconv.Quote(test.pattern) + `}`,
+				)),
+				OperationID: "selected",
+			})
+			require.NoError(t, err)
+
+			product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+			require.NoError(t, err)
+			product.model = model
+
+			searchState := &search{model: model, maxSteps: 1000}
+			var values []string
+			complete, err := searchState.searchStringObjective(
+				product,
+				stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+				func(value *jsonValue) (bool, error) {
+					values = append(values, value.text)
+
+					return true, nil
+				},
+			)
+			require.NoError(t, err)
+			require.True(t, complete)
+			require.Equal(t, []string{test.want}, values)
+		})
+	}
+}
+
 func TestStringSearchSeedUsesCanonicalSchemaInputs(t *testing.T) {
 	model := &schemaModel{
 		schemaPointer:       "#/schema",
