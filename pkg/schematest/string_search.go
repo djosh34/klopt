@@ -339,7 +339,6 @@ func (s *search) searchStringObjective(
 	objective stringObjective,
 	visit rowVisit,
 ) (bool, error) {
-	seenCandidates := make(map[string]bool)
 	pinnedLengths, err := stringPinnedLengths(product, objective)
 	if err != nil {
 		return false, err
@@ -376,7 +375,6 @@ func (s *search) searchStringObjective(
 			false,
 			nil,
 			nil,
-			seenCandidates,
 			visit,
 		)
 	}
@@ -427,14 +425,13 @@ func (s *search) walkStringLength(
 	hasPrevious bool,
 	previous *uint16,
 	units []uint16,
-	seenCandidates map[string]bool,
 	visit rowVisit,
 ) (bool, error) {
 	pendingHigh := len(units) > 0 && units[len(units)-1] >= 0xd800 && units[len(units)-1] <= 0xdbff
 	if runeLength == targetLength && !pendingHigh {
 		return s.finishStringCandidate(
 			product, objective, runtime, position, previous, hasPrevious,
-			units, seenCandidates, visit,
+			units, visit,
 		)
 	}
 
@@ -496,7 +493,6 @@ func (s *search) walkStringLength(
 				true,
 				&unit,
 				nextUnits,
-				seenCandidates,
 				visit,
 			)
 			if err != nil || complete {
@@ -654,7 +650,6 @@ func (s *search) finishStringCandidate(
 	previous *uint16,
 	hasPrevious bool,
 	units []uint16,
-	seenCandidates map[string]bool,
 	visit rowVisit,
 ) (bool, error) {
 	previousUnit := uint16(0)
@@ -682,11 +677,9 @@ func (s *search) finishStringCandidate(
 		return false, err
 	}
 
-	if !matches || seenCandidates[text] {
+	if !matches {
 		return false, nil
 	}
-
-	seenCandidates[text] = true
 
 	return visit(&jsonValue{kind: jsonString, text: text})
 }

@@ -4,7 +4,9 @@ package schematest
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"strconv"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -244,6 +246,63 @@ func TestStringSearchSeedUsesCanonicalSchemaInputs(t *testing.T) {
 	want := binary.BigEndian.Uint64(digest[:8])
 
 	require.Equal(t, want, stringSearchSeed(model, objective))
+}
+
+func TestStringUTF16IntervalsKeepTheLockedBoundaries(t *testing.T) {
+	require.Equal(t, []stringUnitInterval{
+		{low: 0, high: 0x0009},
+		{low: 0x000b, high: 0x000c},
+		{low: 0x000e, high: 0x2027},
+		{low: 0x202a, high: 0xffff},
+	}, stringDotIntervals())
+
+	universal := patternClass{
+		parts: []patternClassPart{
+			{ranges: []patternRange{{low: '0', high: '9'}}},
+			{ranges: []patternRange{{low: '0', high: '9'}}, negated: true},
+		},
+	}
+	require.Equal(t, []stringUnitInterval{{low: 0, high: 0xffff}}, stringClassIntervals(universal))
+	require.Empty(t, stringClassIntervals(patternClass{}))
+	require.Equal(t, []stringUnitInterval{{low: 0, high: 0xffff}}, stringClassIntervals(patternClass{negated: true}))
+}
+
+func TestStringIntervalCandidatesUseStableUTF16Order(t *testing.T) {
+	interval := stringUnitInterval{low: 10, high: 20}
+
+	require.Equal(t, []uint16{10, 20, 15, 14}, stringIntervalCandidates(interval, 3, []uint16{15, 10, 20}))
+}
+
+func TestBuildStringClassesEscapesAndPairedUnicode(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		want    string
+	}{
+		{name: "range", pattern: `^[a-c]$`, want: `"a"`},
+		{name: "negated", pattern: `^[^a]$`, want: `"\u0000"`},
+		{name: "universal", pattern: `^[^]$`, want: `"\u0000"`},
+		{name: "class backspace", pattern: `^[\b]$`, want: `"\b"`},
+		{name: "hex escape", pattern: `^\x41$`, want: `"A"`},
+		{name: "control escape", pattern: `^\ca$`, want: `"\u0001"`},
+		{name: "paired unicode", pattern: `^😀$`, want: `"😀"`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := []byte(documentWithJSONSchema(`{"type":"string","pattern":` + strconv.Quote(test.pattern) + `}`))
+			var cases []Case
+			_, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000}, func(testCase Case) error {
+				cases = append(cases, testCase)
+
+				return nil
+			})
+			require.NoError(t, err)
+			require.NotEmpty(t, cases)
+			require.Equal(t, test.want, string(cases[0].JSON))
+			require.True(t, utf8.Valid(cases[0].JSON))
+		})
+	}
 }
 
 func objectiveKinds(objectives []stringObjective) []stringObjectiveKind {

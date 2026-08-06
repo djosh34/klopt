@@ -456,9 +456,18 @@ func stringClassIntervals(class patternClass) []stringUnitInterval {
 			continue
 		}
 
-		if patternClassMatches(class, uint16(low)) {
-			intervals = append(intervals, stringUnitInterval{low: uint16(low), high: uint16(high)})
+		if !patternClassMatches(class, uint16(low)) {
+			continue
 		}
+
+		candidate := stringUnitInterval{low: uint16(low), high: uint16(high)}
+		if len(intervals) > 0 && intervals[len(intervals)-1].high+1 == candidate.low {
+			intervals[len(intervals)-1].high = candidate.high
+
+			continue
+		}
+
+		intervals = append(intervals, candidate)
 	}
 
 	return intervals
