@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"strconv"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -456,6 +457,66 @@ func TestStringProductLeadingAssertionsStopContradictionsAtTheGlobalBudget(t *te
 	require.Equal(t, uint64(8), searchState.steps)
 }
 
+func TestCleanRetainedStringFormatBoundaries(t *testing.T) {
+	emailTotalValid := "a@" + strings.Repeat("b", 63) + "." +
+		strings.Repeat("c", 63) + "." + strings.Repeat("d", 63) + "." + strings.Repeat("e", 60)
+	tests := []struct {
+		name    string
+		format  schemaFormat
+		valid   string
+		invalid string
+	}{
+		{
+			name:    "email local part limit",
+			format:  schemaFormatEmail,
+			valid:   strings.Repeat("a", 64) + "@x",
+			invalid: strings.Repeat("a", 65) + "@x",
+		},
+		{
+			name:    "email total limit",
+			format:  schemaFormatEmail,
+			valid:   emailTotalValid,
+			invalid: emailTotalValid + "e",
+		},
+		{
+			name:    "ipv4 octet boundaries",
+			format:  schemaFormatIPv4,
+			valid:   "255.255.255.255",
+			invalid: "256.255.255.255",
+		},
+		{
+			name:    "ipv4 leading zero",
+			format:  schemaFormatIPv4,
+			valid:   "0.0.0.0",
+			invalid: "00.0.0.0",
+		},
+		{
+			name:    "cidr prefix boundaries",
+			format:  schemaFormatCIDR,
+			valid:   "255.255.255.255/32",
+			invalid: "255.255.255.255/33",
+		},
+		{
+			name:    "cidr preserves host bits",
+			format:  schemaFormatIPv4CIDR,
+			valid:   "192.0.2.7/24",
+			invalid: "192.0.2.07/24",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			matched, err := cleanStringFormatMatches(test.valid, test.format)
+			require.NoError(t, err)
+			require.True(t, matched)
+
+			matched, err = cleanStringFormatMatches(test.invalid, test.format)
+			require.NoError(t, err)
+			require.False(t, matched)
+		})
+	}
+}
+
 func TestStringFormatProductGoldenWitnesses(t *testing.T) {
 	t.Parallel()
 
@@ -494,6 +555,36 @@ func TestStringFormatProductGoldenWitnesses(t *testing.T) {
 			schema: `{"type":"string","format":"uuid","pattern":"^00000000-0000-4000-8000-000000000000$"}`,
 			want:   "00000000-0000-4000-8000-000000000000",
 			steps:  37,
+		},
+		{
+			name:   "email shortest mailbox",
+			schema: `{"type":"string","format":"email","pattern":"^a@b$"}`,
+			want:   "a@b",
+			steps:  4,
+		},
+		{
+			name:   "ipv4 lower boundary",
+			schema: `{"type":"string","format":"ipv4","pattern":"^0\\.0\\.0\\.0$"}`,
+			want:   "0.0.0.0",
+			steps:  8,
+		},
+		{
+			name:   "ipv4 upper boundary",
+			schema: `{"type":"string","format":"ipv4","pattern":"^255\\.255\\.255\\.255$"}`,
+			want:   "255.255.255.255",
+			steps:  24,
+		},
+		{
+			name:   "cidr lower prefix",
+			schema: `{"type":"string","format":"cidr","pattern":"^0\\.0\\.0\\.0/0$"}`,
+			want:   "0.0.0.0/0",
+			steps:  10,
+		},
+		{
+			name:   "cidr upper prefix preserves host bits",
+			schema: `{"type":"string","format":"ipv4-cidr","pattern":"^255\\.255\\.255\\.255/32$"}`,
+			want:   "255.255.255.255/32",
+			steps:  29,
 		},
 	}
 
@@ -573,6 +664,48 @@ func TestStringFormatNegativeKeepsStringSiblingsGolden(t *testing.T) {
 	require.NoError(t, result.err)
 	require.False(t, result.valid)
 	require.Equal(t, []string{"format"}, failureRules(result.failures))
+}
+
+func TestStringProductRetainedFormatNegativesKeepPatternAndLengths(t *testing.T) {
+	for _, format := range []schemaFormat{schemaFormatEmail, schemaFormatIPv4, schemaFormatCIDR} {
+		t.Run(formatName(format), func(t *testing.T) {
+			model, err := parseInput(Input{
+				OpenAPI: []byte(documentWithJSONSchema(
+					`{"type":"string","format":` + strconv.Quote(formatName(format)) + `,"minLength":2,"maxLength":2,"pattern":"^..$"}`,
+				)),
+				OperationID: "selected",
+			})
+			require.NoError(t, err)
+
+			product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+			require.NoError(t, err)
+			product.model = model
+
+			state := &search{model: model, maxSteps: 100}
+			var values []string
+			complete, err := state.searchStringObjective(
+				product,
+				stringObjective{kind: stringObjectiveFormatFalse, index: 0, rule: "format", level: "false"},
+				func(value *jsonValue) (bool, error) {
+					values = append(values, value.text)
+
+					return true, nil
+				},
+			)
+			require.NoError(t, err)
+			require.True(t, complete)
+			require.Len(t, values, 1)
+			require.Len(t, []rune(values[0]), 2)
+			matched, formatErr := cleanStringFormatMatches(values[0], format)
+			require.NoError(t, formatErr)
+			require.False(t, matched)
+
+			result := evaluate(model, &jsonValue{kind: jsonString, text: values[0]})
+			require.NoError(t, result.err)
+			require.False(t, result.valid)
+			require.Equal(t, []string{"format"}, failureRules(result.failures))
+		})
+	}
 }
 
 func TestPasswordFormatDoesNotEnterStringProduct(t *testing.T) {
@@ -886,6 +1019,37 @@ func TestStringProductEmailPrefixKeepsDottedLocalPartsReachable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, complete)
 	require.Equal(t, []string{"a.b@c"}, values)
+}
+
+func TestStringProductEmailEscapedQuotesKeepTheSMTPWitnessReachable(t *testing.T) {
+	value := `"a b\"c"@example.com`
+	pattern := `^"a b\\"c"@example\.com$`
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(
+			`{"type":"string","format":"email","pattern":` + strconv.Quote(pattern) + `}`,
+		)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	state := &search{model: model, maxSteps: 100_000}
+	var values []string
+	complete, err := state.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+		func(candidate *jsonValue) (bool, error) {
+			values = append(values, candidate.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{value}, values)
 }
 
 func TestStringProductIPv4PrefixKeepsCompletableOctetsReachable(t *testing.T) {

@@ -405,7 +405,10 @@ func stringQuotedEmailIntervals(prefix string) []stringUnitInterval {
 
 		case '\\':
 			position++
-			if position == len(prefix) || prefix[position] < 0x20 || prefix[position] > 0x7e {
+			if position == len(prefix) {
+				return stringASCIIIntervals(" !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\\\"")
+			}
+			if prefix[position] < 0x20 || prefix[position] > 0x7e {
 				return nil
 			}
 			position++
@@ -424,7 +427,7 @@ func stringQuotedEmailIntervals(prefix string) []stringUnitInterval {
 
 	if !closed {
 		if prefix[len(prefix)-1] == '\\' {
-			return stringASCIIIntervals(" !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~")
+			return stringASCIIIntervals(" !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\\\"")
 		}
 
 		return stringASCIIIntervals(" !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\\\"")
