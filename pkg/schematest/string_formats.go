@@ -219,13 +219,27 @@ func stringDateTimeIntervals(prefix string) []stringUnitInterval {
 	}
 
 	if prefix[19] == '.' {
-		for _, character := range prefix[20:] {
-			if character < '0' || character > '9' {
-				return nil
-			}
+		fractionEnd := 20
+		for fractionEnd < len(prefix) && prefix[fractionEnd] >= '0' && prefix[fractionEnd] <= '9' {
+			fractionEnd++
 		}
 
-		return stringASCIIIntervals("0123456789Z+-")
+		if fractionEnd == 20 {
+			return stringASCIIIntervals("0123456789")
+		}
+
+		if fractionEnd == len(prefix) {
+			return stringASCIIIntervals("0123456789Z+-")
+		}
+
+		switch prefix[fractionEnd] {
+		case 'Z':
+			return nil
+		case '+', '-':
+			return stringDateTimeOffsetIntervals(prefix[fractionEnd+1:])
+		default:
+			return nil
+		}
 	}
 
 	if prefix[19] == 'Z' {
@@ -236,7 +250,10 @@ func stringDateTimeIntervals(prefix string) []stringUnitInterval {
 		return nil
 	}
 
-	zone := prefix[20:]
+	return stringDateTimeOffsetIntervals(prefix[20:])
+}
+
+func stringDateTimeOffsetIntervals(zone string) []stringUnitInterval {
 	if len(zone) == 0 || len(zone) == 1 {
 		return stringASCIIIntervals("0123456789")
 	}

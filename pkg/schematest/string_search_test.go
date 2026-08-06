@@ -545,6 +545,12 @@ func TestStringFormatProductGoldenWitnesses(t *testing.T) {
 			steps:  46,
 		},
 		{
+			name:   "date-time fraction and offset",
+			schema: `{"type":"string","format":"date-time","pattern":"^2024-02-29T12:34:56\\.123\\+02:30$"}`,
+			want:   "2024-02-29T12:34:56.123+02:30",
+			steps:  51,
+		},
+		{
 			name:   "date-time offset",
 			schema: `{"type":"string","format":"date-time","pattern":"^2024-02-29T12:34:56\\+02:30$"}`,
 			want:   "2024-02-29T12:34:56+02:30",
