@@ -25,26 +25,41 @@ type stringPatternAssertionConstraint struct {
 	graph    *stringPatternGraph
 }
 
+type stringConstraintKind uint8
+
+const (
+	stringConstraintPattern stringConstraintKind = iota
+	stringConstraintFormat
+	stringConstraintLength
+)
+
+type stringConstraintRef struct {
+	kind  stringConstraintKind
+	index int
+}
+
 type stringPatternConstraint struct {
-	identity   ruleIdentity
-	pattern    *patternAST
-	graph      *stringPatternGraph
-	assertions []stringPatternAssertionConstraint
-	directed   bool
+	identity     ruleIdentity
+	pattern      *patternAST
+	graph        *stringPatternGraph
+	assertions   []stringPatternAssertionConstraint
+	failureGroup int
 
 	finite  bool
 	maximum uint64
 }
 
 type stringFormatConstraint struct {
-	identity ruleIdentity
-	format   schemaFormat
+	identity     ruleIdentity
+	format       schemaFormat
+	failureGroup int
 }
 
 type stringLengthConstraint struct {
-	identity ruleIdentity
-	kind     stringRuleKind
-	bound    *exactCount
+	identity     ruleIdentity
+	kind         stringRuleKind
+	bound        *exactCount
+	failureGroup int
 }
 
 type stringPinnedLength struct {
@@ -60,8 +75,10 @@ type stringProduct struct {
 	formats  []stringFormatConstraint
 	lengths  []stringLengthConstraint
 
-	fixedLengths []stringPinnedLength
-	seedUnits    []uint16
+	failureGroups [][]stringConstraintRef
+	enumValues    []*jsonValue
+	fixedLengths  []stringPinnedLength
+	seedUnits     []uint16
 }
 
 type stringObjectiveKind uint8
@@ -74,10 +91,11 @@ const (
 )
 
 type stringObjective struct {
-	kind  stringObjectiveKind
-	index int
-	rule  string
-	level string
+	kind             stringObjectiveKind
+	index            int
+	rule             string
+	level            string
+	falseConstraints []stringConstraintRef
 }
 
 type stringProductRuntime struct {
@@ -102,7 +120,7 @@ func buildStringProduct(
 
 	product := stringProduct{}
 	if err := collectStringProductRules(
-		&product, node, occurrence, pins, make(map[*schemaNode]bool), false,
+		&product, node, occurrence, pins, make(map[*schemaNode]bool), -1,
 	); err != nil {
 		return stringProduct{}, err
 	}
@@ -175,7 +193,7 @@ func collectStringProductRules(
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
 	visiting map[*schemaNode]bool,
-	directed bool,
+	failureGroup int,
 ) error {
 	if node == nil || node.schemaShape == nil {
 		return errors.New("string product child has no schema shape")
@@ -188,35 +206,71 @@ func collectStringProductRules(
 	visiting[node] = true
 	defer delete(visiting, node)
 
+	if node.enum != nil {
+		for _, enumValue := range node.enum {
+			if enumValue == nil {
+				return errors.New("string product enum value is nil")
+			}
+			if enumValue.kind != jsonString {
+				continue
+			}
+
+			var err error
+			product.enumValues, err = appendUniqueJSONWitness(product.enumValues, enumValue)
+			if err != nil {
+				return fmt.Errorf("collect string product enum: %w", err)
+			}
+		}
+	}
+
 	if nodeCanHaveKind(node, jsonString) {
 		if node.minLength != nil {
 			product.lengths = append(product.lengths, stringLengthConstraint{
-				identity: makeRuleIdentity(occurrence, oracleRuleMinLength),
-				kind:     stringRuleMinLength,
-				bound:    node.minLength,
+				identity:     makeRuleIdentity(occurrence, oracleRuleMinLength),
+				kind:         stringRuleMinLength,
+				bound:        node.minLength,
+				failureGroup: failureGroup,
+			})
+			appendStringConstraintToFailureGroup(product, failureGroup, stringConstraintRef{
+				kind:  stringConstraintLength,
+				index: len(product.lengths) - 1,
 			})
 		}
 
 		if node.maxLength != nil {
 			product.lengths = append(product.lengths, stringLengthConstraint{
-				identity: makeRuleIdentity(occurrence, oracleRuleMaxLength),
-				kind:     stringRuleMaxLength,
-				bound:    node.maxLength,
+				identity:     makeRuleIdentity(occurrence, oracleRuleMaxLength),
+				kind:         stringRuleMaxLength,
+				bound:        node.maxLength,
+				failureGroup: failureGroup,
+			})
+			appendStringConstraintToFailureGroup(product, failureGroup, stringConstraintRef{
+				kind:  stringConstraintLength,
+				index: len(product.lengths) - 1,
 			})
 		}
 
 		if node.pattern != nil {
 			product.patterns = append(product.patterns, stringPatternConstraint{
-				identity: makeRuleIdentity(occurrence, oracleRulePattern),
-				pattern:  node.pattern,
-				directed: directed,
+				identity:     makeRuleIdentity(occurrence, oracleRulePattern),
+				pattern:      node.pattern,
+				failureGroup: failureGroup,
+			})
+			appendStringConstraintToFailureGroup(product, failureGroup, stringConstraintRef{
+				kind:  stringConstraintPattern,
+				index: len(product.patterns) - 1,
 			})
 		}
 
 		if isStringSchemaFormat(node.format) && node.format != schemaFormatPassword {
 			product.formats = append(product.formats, stringFormatConstraint{
-				identity: makeRuleIdentity(occurrence, oracleRuleFormat),
-				format:   node.format,
+				identity:     makeRuleIdentity(occurrence, oracleRuleFormat),
+				format:       node.format,
+				failureGroup: failureGroup,
+			})
+			appendStringConstraintToFailureGroup(product, failureGroup, stringConstraintRef{
+				kind:  stringConstraintFormat,
+				index: len(product.formats) - 1,
 			})
 		}
 	}
@@ -227,7 +281,7 @@ func collectStringProductRules(
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting, directed); err != nil {
+		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting, failureGroup); err != nil {
 			return err
 		}
 	}
@@ -239,8 +293,12 @@ func collectStringProductRules(
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		branchDirected := directed || (pinned && !states[index])
-		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting, branchDirected); err != nil {
+		childFailureGroup := failureGroup
+		if pinned && !states[index] && childFailureGroup < 0 {
+			childFailureGroup = len(product.failureGroups)
+			product.failureGroups = append(product.failureGroups, nil)
+		}
+		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting, childFailureGroup); err != nil {
 			return err
 		}
 	}
@@ -248,8 +306,48 @@ func collectStringProductRules(
 	return nil
 }
 
+func appendStringConstraintToFailureGroup(product *stringProduct, group int, constraint stringConstraintRef) {
+	if group < 0 {
+		return
+	}
+
+	product.failureGroups[group] = append(product.failureGroups[group], constraint)
+}
+
+func stringProductFailureAlternatives(product stringProduct) [][]stringConstraintRef {
+	alternatives := [][]stringConstraintRef{{}}
+	for _, group := range product.failureGroups {
+		if len(group) == 0 {
+			continue
+		}
+
+		next := make([][]stringConstraintRef, 0, len(alternatives)*len(group))
+		for _, alternative := range alternatives {
+			for _, constraint := range group {
+				combined := append(append([]stringConstraintRef(nil), alternative...), constraint)
+				next = append(next, combined)
+			}
+		}
+		alternatives = next
+	}
+
+	return alternatives
+}
+
 func stringProductObjectives(product stringProduct, rule, level string) []stringObjective {
-	objectives := []stringObjective{{kind: stringObjectiveAllTrue, rule: rule, level: level}}
+	objectives := make([]stringObjective, 0, 1+len(product.patterns)+len(product.formats)+len(product.lengths))
+	failureAlternatives := stringProductFailureAlternatives(product)
+	if len(failureAlternatives) == 0 {
+		return objectives
+	}
+	for _, alternative := range failureAlternatives {
+		objectives = append(objectives, stringObjective{
+			kind:             stringObjectiveAllTrue,
+			rule:             rule,
+			level:            level,
+			falseConstraints: alternative,
+		})
+	}
 
 	for index, pattern := range product.patterns {
 		objectives = append(objectives, stringObjective{
@@ -323,6 +421,12 @@ func (s *search) walkString(
 		if candidateErr != nil {
 			return false, candidateErr
 		}
+		for _, enumValue := range product.enumValues {
+			candidates, candidateErr = appendUniqueJSONWitness(candidates, enumValue)
+			if candidateErr != nil {
+				return false, candidateErr
+			}
+		}
 
 		for _, candidate := range candidates {
 			if err := s.assign(); err != nil {
@@ -372,10 +476,6 @@ func (s *search) walkString(
 
 		return complete, visitErr
 	})
-
-	if complete && errors.Is(err, errMaxSteps) {
-		return true, nil
-	}
 
 	return complete, err
 }
@@ -479,6 +579,25 @@ func (s *search) searchStringObjective(
 		)
 	}
 
+	for _, candidate := range product.enumValues {
+		matches, matchErr := stringObjectiveMatches(product, objective, candidate.text)
+		if matchErr != nil {
+			return false, matchErr
+		}
+		if !matches {
+			continue
+		}
+
+		if assignErr := s.assign(); assignErr != nil {
+			return false, assignErr
+		}
+
+		complete, visitErr := visit(candidate)
+		if visitErr != nil || complete {
+			return complete, visitErr
+		}
+	}
+
 	for _, length := range pinnedLengths {
 		complete, tryErr := tryLength(length)
 		if tryErr != nil || complete {
@@ -512,6 +631,36 @@ func (s *search) searchStringObjective(
 		if length == maxStringSearchUint64 {
 			return false, nil
 		}
+	}
+}
+
+func stringObjectiveFalseConstraint(objective stringObjective, constraint stringConstraintRef) bool {
+	for _, falseConstraint := range objective.falseConstraints {
+		if falseConstraint == constraint {
+			return true
+		}
+	}
+
+	switch constraint.kind {
+	case stringConstraintPattern:
+		return objective.kind == stringObjectivePatternFalse && objective.index == constraint.index
+	case stringConstraintFormat:
+		return objective.kind == stringObjectiveFormatFalse && objective.index == constraint.index
+	case stringConstraintLength:
+		return objective.kind == stringObjectiveLengthFalse && objective.index == constraint.index
+	default:
+		return false
+	}
+}
+
+func stringPinnedLengthConstraint(pinned stringPinnedLength) stringConstraintRef {
+	switch pinned.kind {
+	case stringObjectivePatternFalse:
+		return stringConstraintRef{kind: stringConstraintPattern, index: pinned.index}
+	case stringObjectiveFormatFalse:
+		return stringConstraintRef{kind: stringConstraintFormat, index: pinned.index}
+	default:
+		return stringConstraintRef{kind: stringConstraintLength, index: pinned.index}
 	}
 }
 
@@ -581,10 +730,12 @@ func (s *search) walkStringLength(
 
 			invalidAssertion := false
 			for index, pattern := range runtime.patterns {
-				// A directed pattern still tracks its graph, but never rejects a unit.
+				// A false constraint still tracks its graph, but never rejects a unit.
 
-				directedPattern := product.patterns[index].directed ||
-					objective.kind == stringObjectivePatternFalse && objective.index == index
+				directedPattern := stringObjectiveFalseConstraint(objective, stringConstraintRef{
+					kind:  stringConstraintPattern,
+					index: index,
+				})
 				nextPattern := stringPatternRuntime{
 					graph: pattern.graph,
 					raw:   append([]int(nil), transition.targets[index]...),
@@ -700,7 +851,10 @@ func stringProductTransitions(
 
 	formatTransitions := make([][]stringUnitInterval, len(product.formats))
 	for index, format := range product.formats {
-		if objective.kind == stringObjectiveFormatFalse && objective.index == index {
+		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintFormat,
+			index: index,
+		}) {
 			continue
 		}
 
@@ -726,7 +880,10 @@ func stringProductTransitions(
 		unit := uint16(low)
 		allowed := true
 		for formatIndex, intervals := range formatTransitions {
-			if objective.kind == stringObjectiveFormatFalse && objective.index == formatIndex {
+			if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+				kind:  stringConstraintFormat,
+				index: formatIndex,
+			}) {
 				continue
 			}
 
@@ -744,8 +901,10 @@ func stringProductTransitions(
 		targets := make([][]int, len(patternTransitions))
 		assertionTargets := make([][][]int, len(patternTransitions))
 		for patternIndex, candidates := range patternTransitions {
-			directedPattern := product.patterns[patternIndex].directed ||
-				objective.kind == stringObjectivePatternFalse && objective.index == patternIndex
+			directedPattern := stringObjectiveFalseConstraint(objective, stringConstraintRef{
+				kind:  stringConstraintPattern,
+				index: patternIndex,
+			})
 
 			for _, candidate := range candidates {
 				if unit < candidate.interval.low || unit > candidate.interval.high {
@@ -891,8 +1050,10 @@ func (s *search) finishStringCandidate(
 	}
 
 	for index, pattern := range runtime.patterns {
-		if product.patterns[index].directed ||
-			objective.kind == stringObjectivePatternFalse && objective.index == index {
+		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintPattern,
+			index: index,
+		}) {
 			continue
 		}
 
@@ -931,10 +1092,10 @@ func stringObjectiveMatches(
 			return false, err
 		}
 
-		want := !pattern.directed
-		if objective.kind == stringObjectivePatternFalse && objective.index == index {
-			want = false
-		}
+		want := !stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintPattern,
+			index: index,
+		})
 
 		if matches != want {
 			return false, nil
@@ -948,7 +1109,10 @@ func stringObjectiveMatches(
 		}
 
 		want := true
-		if objective.kind == stringObjectiveFormatFalse && objective.index == index {
+		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintFormat,
+			index: index,
+		}) {
 			want = false
 		}
 
@@ -964,7 +1128,10 @@ func stringObjectiveMatches(
 			return false, err
 		}
 
-		if objective.kind == stringObjectiveLengthFalse && objective.index == index {
+		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintLength,
+			index: index,
+		}) {
 			matches = !matches
 		}
 
@@ -996,7 +1163,10 @@ func stringLengthMatchesObjective(product stringProduct, objective stringObjecti
 			return false, err
 		}
 
-		if objective.kind == stringObjectiveLengthFalse && objective.index == index {
+		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintLength,
+			index: index,
+		}) {
 			matches = !matches
 		}
 
@@ -1034,7 +1204,7 @@ func stringPinnedLengths(product stringProduct, objective stringObjective) ([]ui
 	}
 
 	for _, pinned := range product.fixedLengths {
-		if objective.kind == pinned.kind && objective.index == pinned.index {
+		if stringObjectiveFalseConstraint(objective, stringPinnedLengthConstraint(pinned)) {
 			continue
 		}
 
@@ -1063,15 +1233,19 @@ func stringPinnedLengths(product stringProduct, objective stringObjective) ([]ui
 
 		candidate := bound
 		switch {
-		case objective.kind == stringObjectiveLengthFalse && objective.index == index &&
-			constraint.kind == stringRuleMinLength:
+		case stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintLength,
+			index: index,
+		}) && constraint.kind == stringRuleMinLength:
 			if bound == 0 {
 				continue
 			}
 
 			candidate = bound - 1
-		case objective.kind == stringObjectiveLengthFalse && objective.index == index &&
-			constraint.kind == stringRuleMaxLength:
+		case stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintLength,
+			index: index,
+		}) && constraint.kind == stringRuleMaxLength:
 			if bound == maxStringSearchUint64 {
 				continue
 			}
@@ -1101,7 +1275,10 @@ func stringObjectiveMaximumLength(
 	patternMaximum := uint64(0)
 	patternFound := false
 	for index, pattern := range product.patterns {
-		if pattern.directed || objective.kind == stringObjectivePatternFalse && objective.index == index {
+		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintPattern,
+			index: index,
+		}) {
 			continue
 		}
 
@@ -1121,7 +1298,10 @@ func stringObjectiveMaximumLength(
 	}
 
 	for index, format := range product.formats {
-		if objective.kind == stringObjectiveFormatFalse && objective.index == index {
+		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintFormat,
+			index: index,
+		}) {
 			continue
 		}
 
@@ -1137,8 +1317,33 @@ func stringObjectiveMaximumLength(
 	}
 
 	for index, constraint := range product.lengths {
-		if constraint.kind != stringRuleMaxLength ||
-			objective.kind == stringObjectiveLengthFalse && objective.index == index {
+		falseConstraint := stringObjectiveFalseConstraint(objective, stringConstraintRef{
+			kind:  stringConstraintLength,
+			index: index,
+		})
+		if falseConstraint && constraint.kind == stringRuleMinLength {
+			bound, fits, err := exactCountUint64(constraint.bound)
+			if err != nil {
+				return 0, false, err
+			}
+			if !fits {
+				continue
+			}
+			if bound == 0 {
+				maximum = 0
+				found = true
+
+				continue
+			}
+			if !found || bound-1 < maximum {
+				maximum = bound - 1
+				found = true
+			}
+
+			continue
+		}
+
+		if constraint.kind != stringRuleMaxLength || falseConstraint {
 			continue
 		}
 

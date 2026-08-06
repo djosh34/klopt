@@ -552,7 +552,7 @@ func stringEmailAddressLiteralIntervals(body string) []stringUnitInterval {
 				characters += "-"
 			}
 		}
-		if body != "" && stringIPv4AddressPrefixAllowed(body) {
+		if body != "" && stringEmailIPv4AddressPrefixAllowed(body) {
 			characters += "0123456789."
 		}
 
@@ -605,6 +605,26 @@ func stringEmailAddressLiteralCanClose(body string) bool {
 
 	for _, character := range body[separator+1:] {
 		if character < '!' || character > '~' || character == '[' || character == '\\' || character == ']' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func stringEmailIPv4AddressPrefixAllowed(prefix string) bool {
+	parts := strings.Split(prefix, ".")
+	if len(parts) > 4 {
+		return false
+	}
+
+	for index, part := range parts {
+		last := index == len(parts)-1
+		if part == "" {
+			return last
+		}
+
+		if !cleanIPv4Octet(part, true) {
 			return false
 		}
 	}

@@ -4,6 +4,7 @@ package schematest
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"math/big"
 	"strconv"
 	"strings"
 	"testing"
@@ -136,6 +137,146 @@ func TestBuildReachesEmailAddressLiteralDelimiters(t *testing.T) {
 	formatMatched, err := cleanStringFormatMatches(value.text, schemaFormatEmail)
 	require.NoError(t, err)
 	require.True(t, formatMatched)
+}
+
+func TestStringProductPinnedFalseRulesFindMaskTwoWitnesses(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema string
+		want   string
+		length int
+	}{
+		{
+			name:   "length and pattern",
+			schema: `{"type":"string","anyOf":[{"minLength":2},{"pattern":"^a$"}]}`,
+			want:   "a",
+			length: 1,
+		},
+		{
+			name:   "sibling lengths",
+			schema: `{"type":"string","anyOf":[{"minLength":2},{"minLength":1}]}`,
+			length: 1,
+		},
+		{
+			name:   "retained format",
+			schema: `{"type":"string","anyOf":[{"format":"email"},{"format":"date"}]}`,
+			want:   "0000-01-01",
+			length: 10,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model, err := parseInput(Input{
+				OpenAPI:     []byte(documentWithJSONSchema(test.schema)),
+				OperationID: "selected",
+			})
+			require.NoError(t, err)
+
+			pins := anyOfMaskPins(model.root.occurrence, 2, big.NewInt(2))
+			product, err := buildStringProduct(model.root, model.root.occurrence, pins)
+			require.NoError(t, err)
+			product.model = model
+			objectives := stringProductObjectives(product, oracleRuleAnyOf, planLevelMask+"2")
+			require.NotEmpty(t, objectives)
+
+			state := &search{model: model, maxSteps: 10000}
+			var value *jsonValue
+			complete, err := state.searchStringObjective(product, objectives[0], func(candidate *jsonValue) (bool, error) {
+				value = candidate
+
+				return true, nil
+			})
+			require.NoError(t, err)
+			require.True(t, complete)
+			require.NotNil(t, value)
+			if test.want != "" {
+				require.Equal(t, test.want, value.text)
+			}
+			require.Equal(t, test.length, len([]rune(value.text)))
+
+			result := evaluate(model, value)
+			require.NoError(t, result.err)
+			require.True(t, result.valid)
+			require.True(t, compositionLevelWasObserved(result, levelIdentity{
+				ruleIdentity: makeRuleIdentity(model.root.occurrence, oracleRuleAnyOf),
+				level:        planLevelMask + "2",
+			}))
+		})
+	}
+}
+
+func TestBuildAnyOfConjunctiveFalseBranchUsesOneFailure(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"allOf":[{"pattern":"^a$"},{"pattern":"^b$"}]},{"pattern":"^a$"}]
+	}`))
+
+	var cases []Case
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`"a"`), Valid: true})
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:2")
+}
+
+func TestBuildReportsMaxStepsAfterStringObjectives(t *testing.T) {
+	var cases []Case
+	report, err := Build(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","pattern":"^a$"}`)),
+		OperationID: "selected",
+		MaxSteps:    6,
+	}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, uint64(6), report.Steps)
+}
+
+func TestBuildEmailAddressLiteralAllowsLeadingZeroIPv4Octets(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"format":"email",
+		"pattern":"^a@\\[001\\.002\\.003\\.004\\]$"
+	}`))
+
+	var cases []Case
+	_, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`"a@[001.002.003.004]"`), Valid: true})
+}
+
+func TestBuildPreservesComposedStringEnumValues(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"minLength":1,
+		"anyOf":[{"enum":["unique-enum-value"]}]
+	}`))
+
+	var cases []Case
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`"unique-enum-value"`), Valid: true})
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:1")
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/anyOf/0|#|enum|level:member:0")
 }
 
 func TestBuildUsesProductStringPatternWithDateFormat(t *testing.T) {
