@@ -291,6 +291,12 @@ func TestEvaluatePasswordFormatIsInert(t *testing.T) {
 		require.Equal(t, []string{"type"}, applicableRules(result.applicable))
 		require.Equal(t, []string{"string"}, observedLevels(result.observed))
 		require.Empty(t, result.failures)
+
+		parsed, err := parseStrictJSON([]byte(value))
+		require.NoError(t, err)
+		matched, err := cleanStringFormatMatches(parsed.text, schemaFormatPassword)
+		require.NoError(t, err)
+		require.True(t, matched)
 	}
 }
 

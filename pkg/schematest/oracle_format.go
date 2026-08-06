@@ -20,6 +20,8 @@ func cleanStringFormatMatches(value string, format schemaFormat) (bool, error) {
 		return cleanUUIDFormatMatches(value), nil
 	case schemaFormatCIDR, schemaFormatIPv4CIDR:
 		return cleanCIDRFormatMatches(value), nil
+	case schemaFormatPassword:
+		return true, nil
 	default:
 		return false, nil
 	}

@@ -456,6 +456,161 @@ func TestStringProductLeadingAssertionsStopContradictionsAtTheGlobalBudget(t *te
 	require.Equal(t, uint64(8), searchState.steps)
 }
 
+func TestStringFormatProductGoldenWitnesses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+		want   string
+		steps  uint64
+	}{
+		{
+			name:   "byte",
+			schema: `{"type":"string","format":"byte","pattern":"^YQ==$"}`,
+			want:   "YQ==",
+			steps:  5,
+		},
+		{
+			name:   "date",
+			schema: `{"type":"string","format":"date","pattern":"^2024-02-29$"}`,
+			want:   "2024-02-29",
+			steps:  11,
+		},
+		{
+			name:   "date-time fraction and Z",
+			schema: `{"type":"string","format":"date-time","pattern":"^2024-02-29T12:34:56\\.123Z$"}`,
+			want:   "2024-02-29T12:34:56.123Z",
+			steps:  46,
+		},
+		{
+			name:   "date-time offset",
+			schema: `{"type":"string","format":"date-time","pattern":"^2024-02-29T12:34:56\\+02:30$"}`,
+			want:   "2024-02-29T12:34:56+02:30",
+			steps:  47,
+		},
+		{
+			name:   "uuid version four",
+			schema: `{"type":"string","format":"uuid","pattern":"^00000000-0000-4000-8000-000000000000$"}`,
+			want:   "00000000-0000-4000-8000-000000000000",
+			steps:  37,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model, err := parseInput(Input{
+				OpenAPI:     []byte(documentWithJSONSchema(test.schema)),
+				OperationID: "selected",
+			})
+			require.NoError(t, err)
+
+			product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+			require.NoError(t, err)
+			product.model = model
+
+			state := &search{model: model, maxSteps: 100}
+			var values []string
+			complete, err := state.searchStringObjective(
+				product,
+				stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+				func(value *jsonValue) (bool, error) {
+					values = append(values, value.text)
+
+					return true, nil
+				},
+			)
+			require.NoError(t, err)
+			require.True(t, complete)
+			require.Equal(t, []string{test.want}, values)
+			require.Equal(t, test.steps, state.steps)
+		})
+	}
+}
+
+func TestStringFormatNegativeKeepsStringSiblingsGolden(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(
+			`{"type":"string","format":"byte","minLength":2,"pattern":"^.{2,4}$"}`,
+		)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+	require.Equal(
+		t,
+		[]stringObjectiveKind{
+			stringObjectiveAllTrue,
+			stringObjectivePatternFalse,
+			stringObjectiveFormatFalse,
+			stringObjectiveLengthFalse,
+		},
+		objectiveKinds(stringProductObjectives(product, "format", "valid")),
+	)
+
+	state := &search{model: model, maxSteps: 100}
+	var values []string
+	complete, err := state.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveFormatFalse, index: 0, rule: "format", level: "false"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{"\x00\x00"}, values)
+	require.Equal(t, uint64(3), state.steps)
+
+	result := evaluate(model, &jsonValue{kind: jsonString, text: values[0]})
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(t, []string{"format"}, failureRules(result.failures))
+}
+
+func TestPasswordFormatDoesNotEnterStringProduct(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","format":"password"}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+	require.Empty(t, product.formats)
+	require.Equal(
+		t,
+		[]stringObjectiveKind{stringObjectiveAllTrue},
+		objectiveKinds(stringProductObjectives(product, "format", "valid")),
+	)
+
+	state := &search{model: model, maxSteps: 10}
+	var values []string
+	complete, err := state.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{""}, values)
+	require.Equal(t, uint64(1), state.steps)
+}
+
 func TestStringProductObjectivesPreserveFormatAndPatternSiblings(t *testing.T) {
 	model, err := parseInput(Input{
 		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","pattern":"^a$","format":"date"}`)),
