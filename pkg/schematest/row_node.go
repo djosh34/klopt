@@ -247,7 +247,7 @@ func rowHasCompositionPins(pins []applicabilityPin, occurrence schemaOccurrence,
 		if pin.hasBranch && pin.composition == composition &&
 			len(pin.occurrence.usePointer) > len(prefix) &&
 			pin.occurrence.usePointer[:len(prefix)] == prefix &&
-			instanceTemplateMatches(occurrence.instanceTemplate, pin.occurrence.instanceTemplate) {
+			instanceTemplateMatches(pin.occurrence.instanceTemplate, occurrence.instanceTemplate) {
 			return true
 		}
 	}

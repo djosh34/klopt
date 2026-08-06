@@ -8,10 +8,11 @@ import (
 
 // rowMember describes one object member choice and its best clean schema occurrence.
 type rowMember struct {
-	name       string
-	node       *schemaNode
-	occurrence schemaOccurrence
-	required   bool
+	name         string
+	node         *schemaNode
+	occurrence   schemaOccurrence
+	required     bool
+	alternatives []rowMember
 }
 
 const (
@@ -40,18 +41,29 @@ func (s *search) walkArray(
 
 		elements := make([]*jsonValue, length)
 
-		itemOccurrence := schemaOccurrence{
-			usePointer:       occurrence.usePointer + "/items",
-			targetPointer:    occurrence.targetPointer,
-			instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
-		}
-		if node.items != nil {
-			itemOccurrence = rebasePlanOccurrence(node.items, itemOccurrence.usePointer, itemOccurrence.instanceTemplate)
+		itemChoices, err := rowChildSchemaChoices(node, occurrence, pins, rowChildItems, "")
+		if err != nil {
+			return false, err
 		}
 
-		complete, err := s.walkArrayElements(node.items, itemOccurrence, pins, elements, 0, visit)
-		if err != nil || complete {
-			return complete, err
+		for _, itemChoice := range itemChoices {
+			if len(itemChoices) > 1 {
+				if err := s.assign(); err != nil {
+					return false, err
+				}
+			}
+
+			complete, err := s.walkArrayElements(
+				itemChoice.node,
+				itemChoice.occurrence,
+				pins,
+				elements,
+				0,
+				visit,
+			)
+			if err != nil || complete {
+				return complete, err
+			}
 		}
 	}
 
@@ -93,7 +105,7 @@ func (s *search) walkArrayElements(
 
 // rowArrayLengths returns canonical and repair lengths for one array occurrence.
 //
-//nolint:cyclop,gocognit // Bound extraction and deterministic repair choices are one structural phase.
+//nolint:cyclop,gocognit,gocyclo // Bound extraction and deterministic repair choices are one structural phase.
 func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []applicabilityPin) ([]int, error) {
 	minimum := 0
 	maximum := int(^uint(0) >> 1)
@@ -130,10 +142,28 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 	}
 
 	anyOfBounds := make([][2]int, 0, len(node.anyOf))
-	for _, child := range node.anyOf {
+
+	anyOfStates, anyOfPinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	for index, child := range node.anyOf {
 		childMinimum, childMaximum, err := rowNestedArrayBounds(child)
 		if err != nil {
 			return nil, err
+		}
+
+		if anyOfPinned {
+			if !anyOfStates[index] {
+				continue
+			}
+
+			if childMinimum > minimum {
+				minimum = childMinimum
+			}
+
+			if childMaximum < maximum {
+				maximum = childMaximum
+			}
+
+			continue
 		}
 
 		anyOfBounds = append(anyOfBounds, [2]int{childMinimum, childMaximum})
@@ -144,6 +174,20 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 		targetPointer:    occurrence.targetPointer,
 		instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
 	})
+	if !itemPinned {
+		itemChoices, err := rowChildSchemaChoices(node, occurrence, pins, rowChildItems, "")
+		if err != nil {
+			return nil, err
+		}
+
+		for _, itemChoice := range itemChoices {
+			candidatePin, exists := rowPresencePinDetails(pins, itemChoice.occurrence)
+			if exists && (!itemPinned || !candidatePin.canonical) {
+				itemPin, itemPinned = candidatePin, true
+			}
+		}
+	}
+
 	if itemPinned && !itemPin.canonical && itemPin.presence == planPinPresent && minimum < 1 {
 		minimum = 1
 	}
@@ -189,6 +233,8 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 }
 
 // rowNestedArrayBounds extracts safe local bounds from a composition branch.
+//
+//nolint:cyclop // Local and allOf bound intersections are one structural phase.
 func rowNestedArrayBounds(node *schemaNode) (int, int, error) {
 	minimum := 0
 
@@ -213,6 +259,21 @@ func rowNestedArrayBounds(node *schemaNode) (int, int, error) {
 		maximum = int(count)
 	}
 
+	for _, child := range node.allOf {
+		childMinimum, childMaximum, err := rowNestedArrayBounds(child)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		if childMinimum > minimum {
+			minimum = childMinimum
+		}
+
+		if childMaximum < maximum {
+			maximum = childMaximum
+		}
+	}
+
 	return minimum, maximum, nil
 }
 
@@ -234,8 +295,6 @@ func (s *search) walkObject(
 }
 
 // walkObjectMembers performs deterministic presence and value backtracking.
-//
-//nolint:cyclop // Presence, child-value, and recursive continuation are one DFS phase.
 func (s *search) walkObjectMembers(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -253,7 +312,7 @@ func (s *search) walkObjectMembers(
 	presence, presencePinned := rowPresencePinDetails(pins, member.occurrence)
 
 	choices, err := rowMemberPresenceChoices(
-		node, occurrence, members, index, member, presence, presencePinned,
+		node, occurrence, pins, members, index, member, presence, presencePinned,
 	)
 	if err != nil {
 		return false, err
@@ -276,28 +335,56 @@ func (s *search) walkObjectMembers(
 		}
 
 		walkValue := func(value *jsonValue) (bool, error) {
-			if member.node != nil {
-				usable, err := rowChildValueUsable(member.node, member.occurrence, pins, value)
-				if err != nil || !usable {
-					return false, err
-				}
-			}
-
 			values[member.name] = value
 
 			return s.walkObjectMembers(node, occurrence, pins, members, values, index+1, visit)
 		}
 
-		var (
-			complete bool
-			err      error
-		)
-		if member.node == nil {
-			complete, err = s.walkGenericValue(pins, walkValue)
-		} else {
-			complete, err = s.walkNode(member.node, member.occurrence, pins, walkValue)
+		complete, err := s.walkRowMemberValues(member, pins, walkValue)
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	return false, nil
+}
+
+// walkRowMemberValues tries the merged property schema and any inactive-branch alternatives.
+//
+//nolint:cyclop // Schema alternatives and child recursion are one DFS phase.
+func (s *search) walkRowMemberValues(
+	member rowMember,
+	pins []applicabilityPin,
+	visit rowVisit,
+) (bool, error) {
+	candidates := make([]rowMember, 0, 1+len(member.alternatives))
+	candidates = append(candidates, member)
+	candidates = append(candidates, member.alternatives...)
+
+	for _, candidate := range candidates {
+		if len(candidates) > 1 {
+			if err := s.assign(); err != nil {
+				return false, err
+			}
 		}
 
+		if candidate.node == nil {
+			complete, err := s.walkGenericValue(pins, visit)
+			if err != nil || complete {
+				return complete, err
+			}
+
+			continue
+		}
+
+		complete, err := s.walkNode(candidate.node, candidate.occurrence, pins, func(value *jsonValue) (bool, error) {
+			usable, err := rowChildValueUsable(candidate.node, candidate.occurrence, pins, value)
+			if err != nil || !usable {
+				return false, err
+			}
+
+			return visit(value)
+		})
 		if err != nil || complete {
 			return complete, err
 		}
@@ -310,6 +397,7 @@ func (s *search) walkObjectMembers(
 func rowMemberPresenceChoices(
 	node *schemaNode,
 	occurrence schemaOccurrence,
+	pins []applicabilityPin,
 	members []rowMember,
 	index int,
 	member rowMember,
@@ -336,7 +424,7 @@ func rowMemberPresenceChoices(
 		return []bool{false, true}, nil
 	}
 
-	present, err := rowCanonicalMemberPresence(node, occurrence, members, index)
+	present, err := rowCanonicalMemberPresence(node, occurrence, pins, members, index)
 	if err != nil {
 		return nil, err
 	}
@@ -348,10 +436,68 @@ func rowMemberPresenceChoices(
 	return []bool{false, true}, nil
 }
 
+// rowObjectMinimumProperties returns the active local and composition lower bound.
+//
+//nolint:cyclop // Local, allOf, and pinned anyOf bounds are one calculation.
+func rowObjectMinimumProperties(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+) (uint64, bool, error) {
+	minimum := uint64(0)
+	fits := false
+
+	consider := func(candidate *exactCount) error {
+		count, candidateFits, err := exactCountUint64(candidate)
+		if err != nil {
+			return err
+		}
+
+		if candidateFits && (!fits || count > minimum) {
+			minimum = count
+			fits = true
+		}
+
+		return nil
+	}
+
+	if node == nil || node.schemaShape == nil {
+		return 0, false, nil
+	}
+
+	if err := consider(node.minProperties); err != nil {
+		return 0, false, err
+	}
+
+	for _, child := range node.allOf {
+		if !nodeCanHaveKind(child, jsonObject) {
+			continue
+		}
+
+		if err := consider(child.minProperties); err != nil {
+			return 0, false, err
+		}
+	}
+
+	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	if pinned {
+		for index, child := range node.anyOf {
+			if states[index] && nodeCanHaveKind(child, jsonObject) {
+				if err := consider(child.minProperties); err != nil {
+					return 0, false, err
+				}
+			}
+		}
+	}
+
+	return minimum, fits, nil
+}
+
 // rowCanonicalMemberPresence supplies required members and lower-bound members first.
 func rowCanonicalMemberPresence(
 	node *schemaNode,
-	_ schemaOccurrence,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
 	members []rowMember,
 	index int,
 ) (bool, error) {
@@ -360,11 +506,7 @@ func rowCanonicalMemberPresence(
 		return true, nil
 	}
 
-	if node.minProperties == nil {
-		return false, nil
-	}
-
-	minimum, fits, err := exactCountUint64(node.minProperties)
+	minimum, fits, err := rowObjectMinimumProperties(node, occurrence, pins)
 	if err != nil {
 		return false, err
 	}
@@ -376,7 +518,7 @@ func rowCanonicalMemberPresence(
 	present := 0
 
 	for prior := 0; prior < index; prior++ {
-		priorPresent, err := rowCanonicalMemberPresence(node, schemaOccurrence{}, members, prior)
+		priorPresent, err := rowCanonicalMemberPresence(node, occurrence, pins, members, prior)
 		if err != nil {
 			return false, err
 		}
@@ -457,29 +599,25 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 	for _, name := range names {
 		candidates := specs[name]
 
-		member := rowMember{name: name, required: required[name]}
-		if direct, exists := node.properties[name]; exists {
-			member.node = direct
-			member.occurrence = rebasePlanOccurrence(
-				direct,
-				occurrence.usePointer+"/properties/"+escapePointerToken(name),
-				appendInstanceToken(occurrence.instanceTemplate, name),
-			)
-		} else if selected, exists := rowMemberForPins(candidates, pins); exists {
-			member = selected
-			member.name = name
-			member.required = required[name]
-		} else if len(candidates) > 0 {
-			member = candidates[0]
-			member.name = name
-			member.required = required[name]
-		} else if node.additionalProperties != nil {
-			member.node = node.additionalProperties
-			member.occurrence = rebasePlanOccurrence(
-				node.additionalProperties,
-				occurrence.usePointer+"/additionalProperties",
-				appendInstanceToken(occurrence.instanceTemplate, name),
-			)
+		var member rowMember
+
+		if len(candidates) > 0 {
+			var err error
+
+			member, err = composeRowMember(name, candidates, required[name], pins)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			member = rowMember{name: name, required: required[name]}
+			if node.additionalProperties != nil {
+				member.node = node.additionalProperties
+				member.occurrence = rebasePlanOccurrence(
+					node.additionalProperties,
+					occurrence.usePointer+"/additionalProperties",
+					appendInstanceToken(occurrence.instanceTemplate, name),
+				)
+			}
 		}
 
 		members = append(members, member)
@@ -499,7 +637,7 @@ func rowAdditionalMemberNames(
 		return nil, nil
 	}
 
-	minimum, fits, err := exactCountUint64(node.minProperties)
+	minimum, fits, err := rowObjectMinimumProperties(node, occurrence, pins)
 	if err != nil {
 		return nil, err
 	}
@@ -637,19 +775,6 @@ func rowCompositionPinTruth(
 	}
 
 	return false
-}
-
-// rowMemberForPins picks the composition member whose use site carries a target pin.
-func rowMemberForPins(candidates []rowMember, pins []applicabilityPin) (rowMember, bool) {
-	for _, candidate := range candidates {
-		for _, pin := range pins {
-			if rowOccurrenceMatches(pin.occurrence, candidate.occurrence) {
-				return candidate, true
-			}
-		}
-	}
-
-	return rowMember{}, false
 }
 
 // rowChildName extracts one data member token below an instance template.

@@ -133,13 +133,21 @@ func compositionLevelWasObserved(result evaluation, expected levelIdentity) bool
 				return false
 			}
 
+			allTrue := true
+
 			for _, branch := range truth.branches {
 				if !branch {
-					return false
+					allTrue = false
+
+					break
 				}
 			}
 
-			return true
+			if allTrue {
+				return true
+			}
+
+			continue
 		}
 
 		mask := new(big.Int)
@@ -150,7 +158,9 @@ func compositionLevelWasObserved(result evaluation, expected levelIdentity) bool
 			}
 		}
 
-		return mask.Sign() != 0 && expected.level == planLevelMask+mask.String()
+		if mask.Sign() != 0 && expected.level == planLevelMask+mask.String() {
+			return true
+		}
 	}
 
 	return false
