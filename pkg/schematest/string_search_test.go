@@ -209,6 +209,133 @@ func TestStringProductObjectivesPreserveFormatAndPatternSiblings(t *testing.T) {
 	require.True(t, cleanDateFormatMatches(values[0]))
 }
 
+func TestStringBoundedQuantifiersUseFiniteProductFrontiers(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","pattern":"^a{2,3}$"}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	require.Len(t, product.patterns, 1)
+	require.True(t, product.patterns[0].finite)
+	require.Equal(t, uint64(3), product.patterns[0].maximum)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 100}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Equal(t, []string{"aa", "aaa"}, values)
+	require.Equal(t, uint64(10), searchState.steps)
+}
+
+func TestStringBoundedQuantifierContradictionEndsAtPatternMaximum(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","minLength":4,"pattern":"^a{2,3}$"}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 100}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Empty(t, values)
+	require.Equal(t, uint64(4), searchState.steps)
+}
+
+func TestStringQuantifierEdgesUseTheGlobalAssignmentBudget(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","pattern":"^a{2,3}$"}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 8}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return false, nil
+		},
+	)
+	require.False(t, complete)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, []string{"aa"}, values)
+	require.Equal(t, uint64(8), searchState.steps)
+}
+
+func TestBuildSearchesS3QuantifierAnchorBoundaryAndWhitespaceLanguages(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		want    string
+	}{
+		{name: "greedy counted", pattern: `^a{1,2}$`, want: "a"},
+		{name: "lazy unbounded", pattern: `^a+?$`, want: "a"},
+		{name: "absolute anchors", pattern: `^a$`, want: "a"},
+		{name: "word boundary", pattern: `^\bA$`, want: "A"},
+		{name: "non-word boundary", pattern: `^\B\W$`, want: "\x00"},
+		{name: "ES whitespace", pattern: `^\s$`, want: "\t"},
+		{name: "ES non-whitespace", pattern: `^\S$`, want: "\x00"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var cases []Case
+			_, err := Build(
+				Input{
+					OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","pattern":` + strconv.Quote(test.pattern) + `}`)),
+					OperationID: "selected",
+					MaxSteps:    1_000,
+				},
+				func(testCase Case) error {
+					cases = append(cases, testCase)
+
+					return nil
+				},
+			)
+			require.NoError(t, err)
+			require.NotEmpty(t, cases)
+
+			value, err := parseStrictJSON(cases[0].JSON)
+			require.NoError(t, err)
+			require.Equal(t, test.want, value.text)
+		})
+	}
+}
+
 func TestStringProductObjectivesUseLengthBoundaries(t *testing.T) {
 	model, err := parseInput(Input{
 		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","minLength":2,"maxLength":3}`)),

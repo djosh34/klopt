@@ -127,6 +127,11 @@ func buildStringProduct(
 	}
 
 	for index, pattern := range product.patterns {
+		if maximum, finite := stringPatternMaximumRuneLength(pattern.pattern); finite {
+			product.patterns[index].finite = true
+			product.patterns[index].maximum = maximum
+		}
+
 		if lengths, exact := stringPatternExactRuneLengths(pattern.pattern); exact {
 			for _, length := range lengths {
 				product.fixedLengths = append(product.fixedLengths, stringPinnedLength{
@@ -134,12 +139,6 @@ func buildStringProduct(
 					kind:  stringObjectivePatternFalse,
 					index: index,
 				})
-			}
-			product.patterns[index].finite = true
-			for _, length := range lengths {
-				if length > product.patterns[index].maximum {
-					product.patterns[index].maximum = length
-				}
 			}
 		}
 	}
@@ -1033,6 +1032,182 @@ func uniqueUint64(values []uint64) []uint64 {
 	}
 
 	return result
+}
+
+type stringPatternLengthSummary struct {
+	maximum       uint64
+	startsAtInput bool
+	endsAtInput   bool
+}
+
+// stringPatternMaximumRuneLength identifies anchored patterns with bounded repetition.
+func stringPatternMaximumRuneLength(pattern *patternAST) (uint64, bool) {
+	if pattern == nil || pattern.expression == nil {
+		return 0, false
+	}
+
+	summary, finite := stringExpressionLengthSummary(pattern.expression)
+	if !finite || !summary.startsAtInput || !summary.endsAtInput {
+		return 0, false
+	}
+
+	return summary.maximum, true
+}
+
+func stringExpressionLengthSummary(expression *patternExpression) (stringPatternLengthSummary, bool) {
+	if expression == nil || len(expression.alternatives) == 0 {
+		return stringPatternLengthSummary{}, false
+	}
+
+	summary := stringPatternLengthSummary{
+		startsAtInput: true,
+		endsAtInput:   true,
+	}
+
+	for _, alternative := range expression.alternatives {
+		sequence, finite := stringSequenceLengthSummary(alternative)
+		if !finite {
+			return stringPatternLengthSummary{}, false
+		}
+
+		if sequence.maximum > summary.maximum {
+			summary.maximum = sequence.maximum
+		}
+
+		summary.startsAtInput = summary.startsAtInput && sequence.startsAtInput
+		summary.endsAtInput = summary.endsAtInput && sequence.endsAtInput
+	}
+
+	return summary, true
+}
+
+func stringSequenceLengthSummary(sequence *patternSequence) (stringPatternLengthSummary, bool) {
+	if sequence == nil {
+		return stringPatternLengthSummary{}, false
+	}
+
+	summary := stringPatternLengthSummary{}
+	for index, term := range sequence.terms {
+		termSummary, finite := stringTermLengthSummary(term)
+		if !finite {
+			return stringPatternLengthSummary{}, false
+		}
+
+		maximum, fits := addStringPatternLengths(summary.maximum, termSummary.maximum)
+		if !fits {
+			return stringPatternLengthSummary{}, false
+		}
+
+		summary.maximum = maximum
+		if index == 0 {
+			summary.startsAtInput = termSummary.startsAtInput
+		}
+	}
+
+	for index := len(sequence.terms) - 1; index >= 0; index-- {
+		termSummary, finite := stringTermLengthSummary(sequence.terms[index])
+		if !finite {
+			return stringPatternLengthSummary{}, false
+		}
+
+		if !termSummary.endsAtInput {
+			continue
+		}
+
+		endsAtInput := true
+		for _, following := range sequence.terms[index+1:] {
+			followingSummary, followingFinite := stringTermLengthSummary(following)
+			if !followingFinite || followingSummary.maximum != 0 {
+				endsAtInput = false
+
+				break
+			}
+		}
+
+		if endsAtInput {
+			summary.endsAtInput = true
+
+			break
+		}
+	}
+
+	return summary, true
+}
+
+func stringTermLengthSummary(term *patternTerm) (stringPatternLengthSummary, bool) {
+	if term == nil || term.atom == nil {
+		return stringPatternLengthSummary{}, false
+	}
+
+	atomSummary, finite := stringAtomLengthSummary(term.atom)
+	if !finite {
+		return stringPatternLengthSummary{}, false
+	}
+
+	if !term.quantified {
+		return atomSummary, true
+	}
+
+	if term.unbounded {
+		if atomSummary.maximum != 0 {
+			return stringPatternLengthSummary{}, false
+		}
+
+		atomSummary.startsAtInput = false
+		atomSummary.endsAtInput = false
+
+		return atomSummary, true
+	}
+
+	maximum, fits := multiplyStringPatternLengths(atomSummary.maximum, term.maximum)
+	if !fits {
+		return stringPatternLengthSummary{}, false
+	}
+
+	return stringPatternLengthSummary{
+		maximum:       maximum,
+		startsAtInput: atomSummary.startsAtInput && term.minimum == 1 && term.maximum == 1,
+		endsAtInput:   atomSummary.endsAtInput && term.minimum == 1 && term.maximum == 1,
+	}, true
+}
+
+func stringAtomLengthSummary(atom *patternAtom) (stringPatternLengthSummary, bool) {
+	if atom == nil {
+		return stringPatternLengthSummary{}, false
+	}
+
+	summary := stringPatternLengthSummary{}
+	switch atom.kind {
+	case patternLiteral, patternDot, patternClassAtom:
+		summary.maximum = 1
+	case patternStart:
+		summary.startsAtInput = true
+	case patternEnd:
+		summary.endsAtInput = true
+	case patternWordBoundary, patternNotWordBoundary:
+	case patternGroup:
+		return stringExpressionLengthSummary(atom.expression)
+	default:
+		return stringPatternLengthSummary{}, false
+	}
+
+	return summary, true
+}
+
+func addStringPatternLengths(left, right uint64) (uint64, bool) {
+	if right > maxStringSearchUint64-left {
+		return 0, false
+	}
+
+	return left + right, true
+}
+
+func multiplyStringPatternLengths(left, right uint64) (uint64, bool) {
+	if left != 0 && right > maxStringSearchUint64/left {
+		return 0, false
+	}
+
+	return left * right, true
 }
 
 // stringPatternExactRuneLengths identifies finite literal-only pattern lengths.
