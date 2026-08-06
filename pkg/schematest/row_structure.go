@@ -437,16 +437,36 @@ func rowMemberPresenceChoices(
 }
 
 // rowObjectMinimumProperties returns the active local and composition lower bound.
-//
-//nolint:cyclop // Local, allOf, and pinned anyOf bounds are one calculation.
 func rowObjectMinimumProperties(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
 ) (uint64, bool, error) {
+	return rowNestedObjectMinimumProperties(node, occurrence, pins, make(map[*schemaNode]bool))
+}
+
+// rowNestedObjectMinimumProperties carries object lower bounds through active composition.
+//
+//nolint:cyclop // Local, allOf, and pinned anyOf bounds are one recursive calculation.
+func rowNestedObjectMinimumProperties(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	visiting map[*schemaNode]bool,
+) (uint64, bool, error) {
+	if node == nil || node.schemaShape == nil || !nodeCanHaveKind(node, jsonObject) {
+		return 0, false, nil
+	}
+
+	if visiting[node] {
+		return 0, false, fmt.Errorf("schematest: recursive row object bounds at %s", occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
 	minimum := uint64(0)
 	fits := false
-
 	consider := func(candidate *exactCount) error {
 		count, candidateFits, err := exactCountUint64(candidate)
 		if err != nil {
@@ -461,31 +481,51 @@ func rowObjectMinimumProperties(
 		return nil
 	}
 
-	if node == nil || node.schemaShape == nil {
-		return 0, false, nil
-	}
-
 	if err := consider(node.minProperties); err != nil {
 		return 0, false, err
 	}
 
-	for _, child := range node.allOf {
-		if !nodeCanHaveKind(child, jsonObject) {
-			continue
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		childMinimum, childFits, err := rowNestedObjectMinimumProperties(
+			child, childOccurrence, pins, visiting,
+		)
+		if err != nil {
+			return 0, false, err
 		}
 
-		if err := consider(child.minProperties); err != nil {
-			return 0, false, err
+		if childFits && (!fits || childMinimum > minimum) {
+			minimum = childMinimum
+			fits = true
 		}
 	}
 
 	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
 	if pinned {
 		for index, child := range node.anyOf {
-			if states[index] && nodeCanHaveKind(child, jsonObject) {
-				if err := consider(child.minProperties); err != nil {
-					return 0, false, err
-				}
+			if !states[index] {
+				continue
+			}
+
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				occurrence.usePointer+"/anyOf/"+itoa(index),
+				occurrence.instanceTemplate,
+			)
+			childMinimum, childFits, err := rowNestedObjectMinimumProperties(
+				child, childOccurrence, pins, visiting,
+			)
+			if err != nil {
+				return 0, false, err
+			}
+
+			if childFits && (!fits || childMinimum > minimum) {
+				minimum = childMinimum
+				fits = true
 			}
 		}
 	}
@@ -558,29 +598,41 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 		}
 	}
 
+	additionalSources, err := rowAdditionalPropertySources(node, occurrence, pins)
+	if err != nil {
+		return nil, err
+	}
+
 	extraNames, err := rowAdditionalMemberNames(node, specs, pins, occurrence)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, name := range extraNames {
-		member := rowMember{name: name}
-		if node.additionalProperties != nil {
-			member.node = node.additionalProperties
-			member.occurrence = rebasePlanOccurrence(
-				node.additionalProperties,
-				occurrence.usePointer+"/additionalProperties",
-				appendInstanceToken(occurrence.instanceTemplate, name),
-			)
-		} else {
-			member.occurrence = schemaOccurrence{
-				usePointer:       occurrence.usePointer + "/additionalProperties",
-				targetPointer:    occurrence.targetPointer,
-				instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, name),
-			}
+		if len(additionalSources) == 0 {
+			specs[name] = append(specs[name], rowMember{
+				name: name,
+				occurrence: schemaOccurrence{
+					usePointer:       occurrence.usePointer + "/additionalProperties",
+					targetPointer:    occurrence.targetPointer,
+					instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, name),
+				},
+			})
+
+			continue
 		}
 
-		specs[name] = append(specs[name], member)
+		for _, source := range additionalSources {
+			specs[name] = append(specs[name], rowMember{
+				name: name,
+				node: source.node,
+				occurrence: rebasePlanOccurrence(
+					source.node,
+					source.occurrence.usePointer,
+					appendInstanceToken(occurrence.instanceTemplate, name),
+				),
+			})
+		}
 	}
 
 	names := make([]string, 0, len(specs))
@@ -624,6 +676,81 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 	}
 
 	return members, nil
+}
+
+// rowAdditionalPropertySources returns active direct and composed wildcard schemas.
+func rowAdditionalPropertySources(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+) ([]rowSchemaSource, error) {
+	sources := make([]rowSchemaSource, 0)
+	visiting := make(map[*schemaNode]bool)
+
+	var collect func(*schemaNode, schemaOccurrence) error
+	collect = func(current *schemaNode, currentOccurrence schemaOccurrence) error {
+		if current == nil || current.schemaShape == nil {
+			return nil
+		}
+
+		if visiting[current] {
+			return fmt.Errorf("schematest: recursive row additional-properties shape at %s", currentOccurrence.usePointer)
+		}
+
+		visiting[current] = true
+		defer delete(visiting, current)
+
+		if current.additionalProperties != nil {
+			additionalOccurrence := rebasePlanOccurrence(
+				current.additionalProperties,
+				currentOccurrence.usePointer+"/additionalProperties",
+				appendInstanceToken(currentOccurrence.instanceTemplate, "*"),
+			)
+			sources = append(sources, rowSchemaSource{
+				node:       current.additionalProperties,
+				occurrence: additionalOccurrence,
+			})
+		}
+
+		for index, child := range current.allOf {
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				currentOccurrence.usePointer+"/allOf/"+itoa(index),
+				currentOccurrence.instanceTemplate,
+			)
+			if err := collect(child, childOccurrence); err != nil {
+				return err
+			}
+		}
+
+		states, pinned := rowCompositionTruthStates(pins, currentOccurrence, "anyOf", len(current.anyOf))
+		if !pinned {
+			return nil
+		}
+
+		for index, child := range current.anyOf {
+			if !states[index] {
+				continue
+			}
+
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				currentOccurrence.usePointer+"/anyOf/"+itoa(index),
+				currentOccurrence.instanceTemplate,
+			)
+			if err := collect(child, childOccurrence); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	if err := collect(node, occurrence); err != nil {
+		return nil, err
+	}
+
+	return sources, nil
 }
 
 // rowAdditionalMemberNames adds wildcard members needed by lower bounds or target pins.
@@ -821,14 +948,20 @@ func rowPresencePinDetails(pins []applicabilityPin, occurrence schemaOccurrence)
 
 // rowAdditionalPresencePinned reports whether the target explicitly asks for an extra member.
 func rowAdditionalPresencePinned(occurrence schemaOccurrence, pins []applicabilityPin) bool {
-	wanted := schemaOccurrence{
-		usePointer:       occurrence.usePointer + "/additionalProperties",
-		instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
+	wantedTemplate := appendInstanceToken(occurrence.instanceTemplate, "*")
+
+	for _, pin := range pins {
+		if pin.canonical || pin.presence != planPinPresent ||
+			!strings.HasSuffix(pin.occurrence.usePointer, "/additionalProperties") {
+			continue
+		}
+
+		if pin.occurrence.instanceTemplate == wantedTemplate {
+			return true
+		}
 	}
 
-	pin, exists := rowPresencePinDetails(pins, wanted)
-
-	return exists && !pin.canonical && pin.presence == planPinPresent
+	return false
 }
 
 // walkGenericValue assigns a small complete value where no child schema is available.

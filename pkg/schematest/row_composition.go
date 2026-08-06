@@ -2,6 +2,7 @@ package schematest
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -79,20 +80,9 @@ func rowChildSchemaSourceSets(
 		return nil, errors.New("schematest: composed row child has no shape")
 	}
 
-	common := make([]rowSchemaSource, 0, 1+len(node.allOf))
-	if source, exists := rowChildSchemaSource(node, occurrence, kind, name); exists {
-		common = append(common, source)
-	}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		if source, exists := rowChildSchemaSource(child, childOccurrence, kind, name); exists {
-			common = append(common, source)
-		}
+	common, err := rowComposedChildSchemaSources(node, occurrence, kind, name)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(node.anyOf) == 0 {
@@ -113,9 +103,11 @@ func rowChildSchemaSourceSets(
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
-			if source, exists := rowChildSchemaSource(child, childOccurrence, kind, name); exists {
-				selected = append(selected, source)
+			sources, err := rowComposedChildSchemaSources(child, childOccurrence, kind, name)
+			if err != nil {
+				return nil, err
 			}
+			selected = append(selected, sources...)
 		}
 
 		return [][]rowSchemaSource{selected}, nil
@@ -130,9 +122,11 @@ func rowChildSchemaSourceSets(
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if source, exists := rowChildSchemaSource(child, childOccurrence, kind, name); exists {
-			selected = append(selected, source)
+		sources, err := rowComposedChildSchemaSources(child, childOccurrence, kind, name)
+		if err != nil {
+			return nil, err
 		}
+		selected = append(selected, sources...)
 
 		alternatives = append(alternatives, selected)
 	}
@@ -180,6 +174,54 @@ func rowChildSchemaSource(
 	default:
 		return rowSchemaSource{}, false
 	}
+}
+
+// rowComposedChildSchemaSources returns direct and nested allOf child schemas.
+func rowComposedChildSchemaSources(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	kind rowChildKind,
+	name string,
+) ([]rowSchemaSource, error) {
+	sources := make([]rowSchemaSource, 0)
+	visiting := make(map[*schemaNode]bool)
+
+	var collect func(*schemaNode, schemaOccurrence) error
+	collect = func(current *schemaNode, currentOccurrence schemaOccurrence) error {
+		if current == nil || current.schemaShape == nil {
+			return errors.New("schematest: composed row child has no shape")
+		}
+
+		if visiting[current] {
+			return fmt.Errorf("schematest: recursive row child shape at %s", currentOccurrence.usePointer)
+		}
+
+		visiting[current] = true
+		defer delete(visiting, current)
+
+		if source, exists := rowChildSchemaSource(current, currentOccurrence, kind, name); exists {
+			sources = append(sources, source)
+		}
+
+		for index, child := range current.allOf {
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				currentOccurrence.usePointer+"/allOf/"+itoa(index),
+				currentOccurrence.instanceTemplate,
+			)
+			if err := collect(child, childOccurrence); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	if err := collect(node, occurrence); err != nil {
+		return nil, err
+	}
+
+	return sources, nil
 }
 
 // rowChildOccurrence supplies the direct structural child path used by generic values.
@@ -368,15 +410,29 @@ func rowMemberCompositionState(candidate rowMember, pins []applicabilityPin) (bo
 		}
 
 		candidateParent, candidateNested := rowAnyOfParentUsePointer(candidate.occurrence.usePointer)
-
-		pinParent := strings.TrimSuffix(pin.occurrence.usePointer, "/"+itoa(pin.branch))
-		if candidateNested && candidateParent == pinParent &&
-			instanceTemplateMatches(pin.occurrence.instanceTemplate, candidate.occurrence.instanceTemplate) {
+		pinParent, pinNested := rowAnyOfParentUsePointer(pin.occurrence.usePointer)
+		candidateInstance, instanceOK := rowInstanceParentTemplate(candidate.occurrence.instanceTemplate)
+		if candidateNested && pinNested && instanceOK && candidateParent == pinParent &&
+			instanceTemplateMatches(pin.occurrence.instanceTemplate, candidateInstance) {
 			constrained = true
 		}
 	}
 
 	return active, constrained
+}
+
+// rowInstanceParentTemplate returns the parent of one concrete instance template.
+func rowInstanceParentTemplate(instanceTemplate string) (string, bool) {
+	if instanceTemplate == "#" {
+		return "", false
+	}
+
+	index := strings.LastIndexByte(instanceTemplate, '/')
+	if index < 1 {
+		return "", false
+	}
+
+	return instanceTemplate[:index], true
 }
 
 // rowAnyOfParentUsePointer returns the nearest authored anyOf parent path.
