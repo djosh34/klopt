@@ -15,6 +15,12 @@ type rowMember struct {
 	alternatives []rowMember
 }
 
+// rowAdditionalPropertySource identifies a wildcard schema and its declaring object.
+type rowAdditionalPropertySource struct {
+	source rowSchemaSource
+	owner  *schemaNode
+}
+
 const (
 	// rowLengthCandidateCapacity is the small transient array-length frontier.
 	rowLengthCandidateCapacity = 8
@@ -126,8 +132,13 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 		maximum = int(count)
 	}
 
-	for _, child := range node.allOf {
-		childMinimum, childMaximum, err := rowNestedArrayBounds(child)
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		childMinimum, childMaximum, err := rowNestedArrayBounds(child, childOccurrence, pins)
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +156,12 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 
 	anyOfStates, anyOfPinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
-		childMinimum, childMaximum, err := rowNestedArrayBounds(child)
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		childMinimum, childMaximum, err := rowNestedArrayBounds(child, childOccurrence, pins)
 		if err != nil {
 			return nil, err
 		}
@@ -232,16 +248,36 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 	return candidates, nil
 }
 
-// rowNestedArrayBounds extracts safe local bounds from a composition branch.
-//
-//nolint:cyclop // Local and allOf bound intersections are one structural phase.
-func rowNestedArrayBounds(node *schemaNode) (int, int, error) {
-	minimum := 0
+// rowNestedArrayBounds extracts active local and composed bounds from a branch.
+func rowNestedArrayBounds(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+) (int, int, error) {
+	return rowNestedArrayBoundsAt(node, occurrence, pins, make(map[*schemaNode]bool))
+}
 
+// rowNestedArrayBoundsAt carries nested pinned composition state through bounds.
+//
+//nolint:cyclop // Local, allOf, and pinned anyOf bounds are one calculation.
+func rowNestedArrayBoundsAt(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	visiting map[*schemaNode]bool,
+) (int, int, error) {
+	minimum := 0
 	maximum := int(^uint(0) >> 1)
 	if node == nil {
 		return minimum, maximum, nil
 	}
+
+	if visiting[node] {
+		return 0, 0, fmt.Errorf("schematest: recursive row array bounds at %s", occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
 
 	if count, fits, err := exactCountUint64(node.minItems); err != nil {
 		return 0, 0, err
@@ -259,8 +295,46 @@ func rowNestedArrayBounds(node *schemaNode) (int, int, error) {
 		maximum = int(count)
 	}
 
-	for _, child := range node.allOf {
-		childMinimum, childMaximum, err := rowNestedArrayBounds(child)
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		childMinimum, childMaximum, err := rowNestedArrayBoundsAt(
+			child, childOccurrence, pins, visiting,
+		)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		if childMinimum > minimum {
+			minimum = childMinimum
+		}
+
+		if childMaximum < maximum {
+			maximum = childMaximum
+		}
+	}
+
+	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	if !pinned {
+		return minimum, maximum, nil
+	}
+
+	for index, child := range node.anyOf {
+		if !states[index] {
+			continue
+		}
+
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		childMinimum, childMaximum, err := rowNestedArrayBoundsAt(
+			child, childOccurrence, pins, visiting,
+		)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -603,26 +677,17 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 		return nil, err
 	}
 
-	extraNames, err := rowAdditionalMemberNames(node, specs, pins, occurrence)
-	if err != nil {
-		return nil, err
-	}
+	appendAdditionalSource := func(name string) bool {
+		applied := false
 
-	for _, name := range extraNames {
-		if len(additionalSources) == 0 {
-			specs[name] = append(specs[name], rowMember{
-				name: name,
-				occurrence: schemaOccurrence{
-					usePointer:       occurrence.usePointer + "/additionalProperties",
-					targetPointer:    occurrence.targetPointer,
-					instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, name),
-				},
-			})
+		for _, additional := range additionalSources {
+			if additional.owner != nil {
+				if _, declared := additional.owner.properties[name]; declared {
+					continue
+				}
+			}
 
-			continue
-		}
-
-		for _, source := range additionalSources {
+			source := additional.source
 			specs[name] = append(specs[name], rowMember{
 				name: name,
 				node: source.node,
@@ -632,7 +697,34 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 					appendInstanceToken(occurrence.instanceTemplate, name),
 				),
 			})
+			applied = true
 		}
+
+		return applied
+	}
+
+	for name := range specs {
+		appendAdditionalSource(name)
+	}
+
+	extraNames, err := rowAdditionalMemberNames(node, specs, pins, occurrence)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, name := range extraNames {
+		if appendAdditionalSource(name) {
+			continue
+		}
+
+		specs[name] = append(specs[name], rowMember{
+			name: name,
+			occurrence: schemaOccurrence{
+				usePointer:       occurrence.usePointer + "/additionalProperties",
+				targetPointer:    occurrence.targetPointer,
+				instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, name),
+			},
+		})
 	}
 
 	names := make([]string, 0, len(specs))
@@ -683,8 +775,8 @@ func rowAdditionalPropertySources(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
-) ([]rowSchemaSource, error) {
-	sources := make([]rowSchemaSource, 0)
+) ([]rowAdditionalPropertySource, error) {
+	sources := make([]rowAdditionalPropertySource, 0)
 	visiting := make(map[*schemaNode]bool)
 
 	var collect func(*schemaNode, schemaOccurrence) error
@@ -706,9 +798,12 @@ func rowAdditionalPropertySources(
 				currentOccurrence.usePointer+"/additionalProperties",
 				appendInstanceToken(currentOccurrence.instanceTemplate, "*"),
 			)
-			sources = append(sources, rowSchemaSource{
-				node:       current.additionalProperties,
-				occurrence: additionalOccurrence,
+			sources = append(sources, rowAdditionalPropertySource{
+				source: rowSchemaSource{
+					node:       current.additionalProperties,
+					occurrence: additionalOccurrence,
+				},
+				owner: current,
 			})
 		}
 

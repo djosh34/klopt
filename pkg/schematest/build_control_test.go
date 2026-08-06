@@ -101,6 +101,50 @@ func TestBuildStopsBeforeStructuralAssignment(t *testing.T) {
 	require.Zero(t, emitted)
 }
 
+// TestBuildChargesNestedCompositionsBeforeAssignment verifies nested cutoff charging.
+func TestBuildChargesNestedCompositionsBeforeAssignment(t *testing.T) {
+	t.Parallel()
+
+	cases := make([]Case, 0)
+	report, err := Build(
+		Input{
+			OpenAPI:     []byte(documentWithJSONSchema(`{"allOf":[{"allOf":[{}]}]}`)),
+			OperationID: "selected",
+			MaxSteps:    2,
+		},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, uint64(2), report.Steps)
+	require.Empty(t, cases)
+
+	cases = cases[:0]
+	report, err = Build(
+		Input{
+			OpenAPI:     []byte(documentWithJSONSchema(`{"allOf":[{"allOf":[{}]}]}`)),
+			OperationID: "selected",
+			MaxSteps:    3,
+		},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, uint64(3), report.Steps)
+	require.Len(t, cases, 1)
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0|#|allOf|level:all-true")
+}
+
 // TestBuildUsesOneCounterAcrossTargets verifies retries do not reset the budget.
 func TestBuildUsesOneCounterAcrossTargets(t *testing.T) {
 	t.Parallel()

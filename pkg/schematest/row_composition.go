@@ -66,7 +66,7 @@ func rowChildSchemaChoices(
 	return choices, nil
 }
 
-// rowChildSchemaSourceSets groups direct, allOf, and selected anyOf child schemas.
+// rowChildSchemaSourceSets groups direct and active composed child schemas.
 //
 //nolint:cyclop // Direct, allOf, pinned anyOf, and alternative selection share one seam.
 func rowChildSchemaSourceSets(
@@ -76,22 +76,59 @@ func rowChildSchemaSourceSets(
 	kind rowChildKind,
 	name string,
 ) ([][]rowSchemaSource, error) {
+	return rowChildSchemaSourceSetsAt(
+		node, occurrence, pins, kind, name, make(map[*schemaNode]bool),
+	)
+}
+
+// rowChildSchemaSourceSetsAt recursively preserves nested composition alternatives.
+func rowChildSchemaSourceSetsAt(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	kind rowChildKind,
+	name string,
+	visiting map[*schemaNode]bool,
+) ([][]rowSchemaSource, error) {
 	if node == nil || node.schemaShape == nil {
 		return nil, errors.New("schematest: composed row child has no shape")
 	}
 
-	common, err := rowComposedChildSchemaSources(node, occurrence, kind, name)
-	if err != nil {
-		return nil, err
+	if visiting[node] {
+		return nil, fmt.Errorf("schematest: recursive row child shape at %s", occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	common := make([][]rowSchemaSource, 1)
+	if source, exists := rowChildSchemaSource(node, occurrence, kind, name); exists {
+		common[0] = append(common[0], source)
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		childSets, err := rowChildSchemaSourceSetsAt(
+			child, childOccurrence, pins, kind, name, visiting,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		common = combineRowSchemaSourceSets(common, childSets)
 	}
 
 	if len(node.anyOf) == 0 {
-		return [][]rowSchemaSource{common}, nil
+		return common, nil
 	}
 
 	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
 	if pinned {
-		selected := append([]rowSchemaSource(nil), common...)
+		selected := common
 
 		for index, child := range node.anyOf {
 			if !states[index] {
@@ -103,35 +140,59 @@ func rowChildSchemaSourceSets(
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
-			sources, err := rowComposedChildSchemaSources(child, childOccurrence, kind, name)
+			childSets, err := rowChildSchemaSourceSetsAt(
+				child, childOccurrence, pins, kind, name, visiting,
+			)
 			if err != nil {
 				return nil, err
 			}
-			selected = append(selected, sources...)
+
+			selected = combineRowSchemaSourceSets(selected, childSets)
 		}
 
-		return [][]rowSchemaSource{selected}, nil
+		return selected, nil
 	}
 
 	alternatives := make([][]rowSchemaSource, 0, len(node.anyOf))
 	for index, child := range node.anyOf {
-		selected := append([]rowSchemaSource(nil), common...)
-
 		childOccurrence := rebasePlanOccurrence(
 			child,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		sources, err := rowComposedChildSchemaSources(child, childOccurrence, kind, name)
+		childSets, err := rowChildSchemaSourceSetsAt(
+			child, childOccurrence, pins, kind, name, visiting,
+		)
 		if err != nil {
 			return nil, err
 		}
-		selected = append(selected, sources...)
 
-		alternatives = append(alternatives, selected)
+		alternatives = append(
+			alternatives,
+			combineRowSchemaSourceSets(common, childSets)...,
+		)
 	}
 
 	return alternatives, nil
+}
+
+// combineRowSchemaSourceSets computes the allOf product of child alternatives.
+func combineRowSchemaSourceSets(
+	left [][]rowSchemaSource,
+	right [][]rowSchemaSource,
+) [][]rowSchemaSource {
+	result := make([][]rowSchemaSource, 0, len(left)*len(right))
+
+	for _, leftSources := range left {
+		for _, rightSources := range right {
+			sources := make([]rowSchemaSource, 0, len(leftSources)+len(rightSources))
+			sources = append(sources, leftSources...)
+			sources = append(sources, rightSources...)
+			result = append(result, sources)
+		}
+	}
+
+	return result
 }
 
 // rowChildSchemaSource returns one direct child schema with its rebased occurrence.
@@ -174,54 +235,6 @@ func rowChildSchemaSource(
 	default:
 		return rowSchemaSource{}, false
 	}
-}
-
-// rowComposedChildSchemaSources returns direct and nested allOf child schemas.
-func rowComposedChildSchemaSources(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	kind rowChildKind,
-	name string,
-) ([]rowSchemaSource, error) {
-	sources := make([]rowSchemaSource, 0)
-	visiting := make(map[*schemaNode]bool)
-
-	var collect func(*schemaNode, schemaOccurrence) error
-	collect = func(current *schemaNode, currentOccurrence schemaOccurrence) error {
-		if current == nil || current.schemaShape == nil {
-			return errors.New("schematest: composed row child has no shape")
-		}
-
-		if visiting[current] {
-			return fmt.Errorf("schematest: recursive row child shape at %s", currentOccurrence.usePointer)
-		}
-
-		visiting[current] = true
-		defer delete(visiting, current)
-
-		if source, exists := rowChildSchemaSource(current, currentOccurrence, kind, name); exists {
-			sources = append(sources, source)
-		}
-
-		for index, child := range current.allOf {
-			childOccurrence := rebasePlanOccurrence(
-				child,
-				currentOccurrence.usePointer+"/allOf/"+itoa(index),
-				currentOccurrence.instanceTemplate,
-			)
-			if err := collect(child, childOccurrence); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	}
-
-	if err := collect(node, occurrence); err != nil {
-		return nil, err
-	}
-
-	return sources, nil
 }
 
 // rowChildOccurrence supplies the direct structural child path used by generic values.

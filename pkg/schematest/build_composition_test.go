@@ -1,6 +1,7 @@
 package schematest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,6 +57,37 @@ func TestBuildMergesNestedAllOfArrayItemSchemas(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, SpaceExhausted, report.Stop)
 	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
+}
+
+// TestBuildMergesNestedAnyOfArrayItemSchemas verifies nested alternative item witnesses.
+func TestBuildMergesNestedAnyOfArrayItemSchemas(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"type":"array",
+		"minItems":1,
+		"items":{},
+		"allOf":[{"anyOf":[
+			{"items":{"enum":["z"]}},
+			{"items":{"enum":["q"]}}
+		]}]
+	}`))
+
+	cases := make([]Case, 0)
+	report, err := Build(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100000},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
+	require.Contains(t, cases, Case{JSON: []byte(`["q"]`), Valid: true})
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/anyOf/0/items|#/*|enum|level:member:0")
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/anyOf/1/items|#/*|enum|level:member:0")
 }
 
 // TestBuildMergesAllOfObjectPropertySchemas verifies composed property witnesses.
@@ -118,6 +150,46 @@ func TestBuildUsesNestedAllOfObjectBounds(t *testing.T) {
 	}
 
 	require.True(t, found)
+}
+
+// TestBuildUsesNestedPinnedAnyOfArrayBounds verifies selected nested bounds.
+func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"type":"array",
+		"items":{},
+		"allOf":[{"anyOf":[{"minItems":3},{"maxItems":0}]}]
+	}`))
+
+	model, err := parseInput(Input{OpenAPI: document, OperationID: "selected"})
+	require.NoError(t, err)
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	var target validTarget
+	foundTarget := false
+	for _, candidate := range plan.validTargets {
+		if strings.Contains(candidate.obligation.String(), "/allOf/0/anyOf/0|#|minItems|level:valid") {
+			target = candidate
+			foundTarget = true
+
+			break
+		}
+	}
+	require.True(t, foundTarget)
+
+	searchState := &search{model: model, maxSteps: 1000}
+	row, found, err := findTargetRow(plan, target, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NotNil(t, row)
+	require.Equal(t, jsonArray, row.kind)
+	require.Len(t, row.array, 3)
+
+	result := evaluate(model, row)
+	require.NoError(t, result.err)
+	require.True(t, targetRowMatches(result, target, row))
 }
 
 // TestBuildUsesComposedAdditionalPropertySchemas verifies wildcard value witnesses.
@@ -195,6 +267,55 @@ func TestBuildTargetsComposedAdditionalProperties(t *testing.T) {
 	}
 
 	require.True(t, found)
+}
+
+// TestBuildAppliesWildcardsAcrossComposedMemberDeclarations verifies both owner forms.
+func TestBuildAppliesWildcardsAcrossComposedMemberDeclarations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+		path   string
+	}{
+		{
+			name: "root property and composed wildcard",
+			schema: `{
+				"type":"object",
+				"required":["x"],
+				"properties":{"x":{"type":"string"}},
+				"allOf":[{"additionalProperties":{"enum":["z"]}}]
+			}`,
+			path: "#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/additionalProperties|#/*|enum|level:member:0",
+		},
+		{
+			name: "root wildcard and composed property",
+			schema: `{
+				"type":"object",
+				"additionalProperties":{"enum":["z"]},
+				"allOf":[{"required":["x"],"properties":{"x":{"type":"string"}}}]
+			}`,
+			path: "#/paths/~1/post/requestBody/content/application~1json/schema/additionalProperties|#/*|enum|level:member:0",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cases := make([]Case, 0)
+			report, err := Build(
+				Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected", MaxSteps: 10000},
+				func(testCase Case) error {
+					cases = append(cases, testCase)
+
+					return nil
+				},
+			)
+
+			require.NoError(t, err)
+			require.Contains(t, cases, Case{JSON: []byte(`{"x":"z"}`), Valid: true})
+			require.Contains(t, report.Covered, test.path)
+		})
+	}
 }
 
 // TestBuildKeepsAnyOfSiblingPropertiesAsAlternatives verifies sibling property masks.
