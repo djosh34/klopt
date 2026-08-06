@@ -527,14 +527,12 @@ func (s *search) walkStringLength(
 
 			invalidAssertion := false
 			for index, pattern := range runtime.patterns {
+				// A directed pattern still tracks its graph, but never rejects a unit.
+
+				directedPattern := objective.kind == stringObjectivePatternFalse && objective.index == index
 				nextPattern := stringPatternRuntime{
 					graph: pattern.graph,
 					raw:   append([]int(nil), transition.targets[index]...),
-				}
-				if objective.kind == stringObjectivePatternFalse && objective.index == index {
-					nextRuntime.patterns[index] = nextPattern
-
-					continue
 				}
 
 				for assertionIndex, assertion := range pattern.assertions {
@@ -553,7 +551,7 @@ func (s *search) walkStringLength(
 						nextAssertion.matched = nextAssertion.acceptsAt(
 							int(position+1), unit, true, nil, nextAtEnd,
 						)
-						if nextAssertion.matched && !nextAssertion.positive {
+						if nextAssertion.matched && !nextAssertion.positive && !directedPattern {
 							invalidAssertion = true
 						}
 					}
@@ -603,11 +601,8 @@ func stringProductTransitions(
 	assertionTransitions := make([][][]stringPatternTransition, len(runtime.patterns))
 	boundaries := []int{0, stringUTF16UnitCount}
 
+	// Directed patterns remain in the interval partition so their complements are reachable.
 	for index, pattern := range runtime.patterns {
-		if objective.kind == stringObjectivePatternFalse && objective.index == index {
-			continue
-		}
-
 		patternTransitions[index] = pattern.outgoing(position, previous, hasPrevious)
 		for _, transition := range patternTransitions[index] {
 			boundaries = append(
@@ -683,9 +678,7 @@ func stringProductTransitions(
 		targets := make([][]int, len(patternTransitions))
 		assertionTargets := make([][][]int, len(patternTransitions))
 		for patternIndex, candidates := range patternTransitions {
-			if objective.kind == stringObjectivePatternFalse && objective.index == patternIndex {
-				continue
-			}
+			directedPattern := objective.kind == stringObjectivePatternFalse && objective.index == patternIndex
 
 			for _, candidate := range candidates {
 				if unit < candidate.interval.low || unit > candidate.interval.high {
@@ -697,7 +690,7 @@ func stringProductTransitions(
 				break
 			}
 
-			if len(targets[patternIndex]) == 0 {
+			if len(targets[patternIndex]) == 0 && !directedPattern {
 				allowed = false
 
 				break
@@ -720,7 +713,7 @@ func stringProductTransitions(
 				}
 
 				if len(assertionTargets[patternIndex][assertionIndex]) == 0 &&
-					runtime.patterns[patternIndex].assertions[assertionIndex].positive {
+					runtime.patterns[patternIndex].assertions[assertionIndex].positive && !directedPattern {
 					allowed = false
 
 					break

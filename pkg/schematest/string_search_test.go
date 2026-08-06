@@ -121,6 +121,193 @@ func TestStringProductObjectivesKeepDirectedSiblingsTrue(t *testing.T) {
 	require.Equal(t, []string{"b", "a"}, values)
 }
 
+func TestStringProductDirectedPatternUsesTargetIntervalsForFalseWitnesses(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"allOf":[
+				{"pattern":"^(?=[a-m]|[o-z])(?:[a-m]|[o-z])$"},
+				{"pattern":"^[a-z]$"}
+			]
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 100}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectivePatternFalse, index: 0, rule: "pattern", level: "false"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{"n"}, values)
+
+	result := evaluate(model, &jsonValue{kind: jsonString, text: values[0]})
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	require.Equal(t, []string{product.patterns[0].identity.String()}, identityStrings(result.failures))
+}
+
+func TestStringProductDirectedLengthObjectivesKeepStringClosure(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"allOf":[
+				{"minLength":2,"maxLength":3,"pattern":"^a{0,4}$"},
+				{"minLength":1,"maxLength":4,"pattern":"^a+$"}
+			]
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	objectives := stringProductObjectives(product, "pattern", "valid")
+	for _, test := range []struct {
+		name      string
+		objective stringObjective
+		want      string
+	}{
+		{
+			name:      "minimum",
+			objective: objectives[len(objectives)-4],
+			want:      "a",
+		},
+		{
+			name:      "maximum",
+			objective: objectives[len(objectives)-3],
+			want:      "aaaa",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			searchState := &search{model: model, maxSteps: 1_000}
+			var values []string
+			complete, searchErr := searchState.searchStringObjective(
+				product,
+				test.objective,
+				func(value *jsonValue) (bool, error) {
+					values = append(values, value.text)
+
+					return true, nil
+				},
+			)
+			require.NoError(t, searchErr)
+			require.True(t, complete)
+			require.Equal(t, []string{test.want}, values)
+
+			result := evaluate(model, &jsonValue{kind: jsonString, text: values[0]})
+			require.NoError(t, result.err)
+			require.False(t, result.valid)
+			require.Equal(t, []string{product.lengths[test.objective.index].identity.String()}, identityStrings(result.failures))
+		})
+	}
+}
+
+func TestStringProductUnsatisfiableDirectedPatternStaysUncovered(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"allOf":[{"pattern":"^a+$"},{"pattern":"^aa$"}]
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 100}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectivePatternFalse, index: 0, rule: "pattern", level: "false"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Empty(t, values)
+}
+
+func TestStringProductUnsatisfiableDirectedLengthStaysUncovered(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"minLength":2,
+			"maxLength":2,
+			"pattern":"^a{2}$"
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 100}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveLengthFalse, index: 0, rule: "minLength", level: "false"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Empty(t, values)
+}
+
+func TestStringProductDirectedPatternRetriesUseGlobalAssignments(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"allOf":[{"pattern":"^a$"},{"pattern":"^a{2,3}$"}]
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 5}
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectivePatternFalse, index: 0, rule: "pattern", level: "false"},
+		func(*jsonValue) (bool, error) {
+			t.Fatal("budget cutoff produced a partial directed witness")
+
+			return false, nil
+		},
+	)
+	require.False(t, complete)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, uint64(5), searchState.steps)
+}
+
 func TestBuildStringFormatWitnessesUseCleanLanguages(t *testing.T) {
 	for _, format := range []schemaFormat{
 		schemaFormatByte,
