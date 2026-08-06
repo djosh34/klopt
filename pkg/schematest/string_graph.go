@@ -60,16 +60,31 @@ func compileStringPatternGraph(pattern *patternAST) (*stringPatternGraph, error)
 		return nil, errors.New("string pattern has no expression")
 	}
 
+	return compileStringPatternExpressionGraph(pattern.expression, false)
+}
+
+// compileStringPatternExpressionGraph compiles one expression with optional input anchoring.
+func compileStringPatternExpressionGraph(expression *patternExpression, anchored bool) (*stringPatternGraph, error) {
+	if expression == nil {
+		return nil, errors.New("string pattern expression is nil")
+	}
+
 	builder := stringPatternGraphBuilder{}
-	fragment, err := builder.compileExpression(pattern.expression)
+	fragment, err := builder.compileExpression(expression)
 	if err != nil {
 		return nil, err
 	}
 
 	builder.graph.start = fragment.start
+	if anchored {
+		start := builder.newState()
+		builder.addEpsilon(start, fragment.start, stringAssertionStart)
+		builder.graph.start = start
+	}
+
 	builder.graph.states[fragment.end].accept = true
 
-	if stringPatternStartsAnywhere(pattern.expression) {
+	if !anchored && stringPatternStartsAnywhere(expression) {
 		builder.addEdge(builder.graph.start, builder.graph.start, stringAllUnitIntervals())
 	}
 
@@ -249,14 +264,35 @@ func (builder *stringPatternGraphBuilder) compileAtom(
 	return stringPatternFragment{start: start, end: end}, nil
 }
 
+// stringPatternAssertionRuntime carries one leading assertion's raw NFA state set.
+type stringPatternAssertionRuntime struct {
+	graph    *stringPatternGraph
+	raw      []int
+	positive bool
+	matched  bool
+}
+
 // stringPatternRuntime carries one path's raw NFA state set.
 type stringPatternRuntime struct {
-	graph *stringPatternGraph
-	raw   []int
+	graph      *stringPatternGraph
+	raw        []int
+	assertions []stringPatternAssertionRuntime
 }
 
 func newStringPatternRuntime(graph *stringPatternGraph) stringPatternRuntime {
 	return stringPatternRuntime{graph: graph, raw: []int{graph.start}}
+}
+
+func (runtime stringPatternAssertionRuntime) acceptsAt(
+	position int,
+	previous uint16,
+	hasPrevious bool,
+	current *uint16,
+	atEnd bool,
+) bool {
+	return stringPatternRuntime{graph: runtime.graph, raw: runtime.raw}.acceptsAt(
+		position, previous, hasPrevious, current, atEnd,
+	)
 }
 
 func (runtime stringPatternRuntime) outgoing(
@@ -373,7 +409,21 @@ func (runtime stringPatternRuntime) accepts(
 	previous uint16,
 	hasPrevious bool,
 ) bool {
-	for _, stateID := range runtime.closure(position, previous, hasPrevious, nil, true) {
+	return runtime.acceptsAt(position, previous, hasPrevious, nil, true)
+}
+
+func (runtime stringPatternRuntime) acceptsAt(
+	position int,
+	previous uint16,
+	hasPrevious bool,
+	current *uint16,
+	atEnd bool,
+) bool {
+	if runtime.graph == nil {
+		return false
+	}
+
+	for _, stateID := range runtime.closure(position, previous, hasPrevious, current, atEnd) {
 		if stateID >= 0 && stateID < len(runtime.graph.states) && runtime.graph.states[stateID].accept {
 			return true
 		}
@@ -418,6 +468,10 @@ func stringAssertionAllows(
 	case stringAssertionEnd:
 		return atEnd
 	case stringAssertionWordBoundary, stringAssertionNotWordBoundary:
+		if current == nil && !atEnd {
+			return false
+		}
+
 		previousWord := hasPrevious && isPatternWordUnit(previous)
 		currentWord := current != nil && isPatternWordUnit(*current)
 		boundary := previousWord != currentWord

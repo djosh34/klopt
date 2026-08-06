@@ -20,10 +20,16 @@ const (
 	stringRuleMaxLength
 )
 
-type stringPatternConstraint struct {
-	identity ruleIdentity
-	pattern  *patternAST
+type stringPatternAssertionConstraint struct {
+	positive bool
 	graph    *stringPatternGraph
+}
+
+type stringPatternConstraint struct {
+	identity   ruleIdentity
+	pattern    *patternAST
+	graph      *stringPatternGraph
+	assertions []stringPatternAssertionConstraint
 
 	finite  bool
 	maximum uint64
@@ -78,8 +84,9 @@ type stringProductRuntime struct {
 }
 
 type stringProductTransition struct {
-	interval stringUnitInterval
-	targets  [][]int
+	interval         stringUnitInterval
+	targets          [][]int
+	assertionTargets [][][]int
 }
 
 // buildStringProduct collects every string rule active in one target state.
@@ -100,12 +107,25 @@ func buildStringProduct(
 	}
 
 	for index := range product.patterns {
-		graph, err := compileStringPatternGraph(product.patterns[index].pattern)
+		pattern := &product.patterns[index]
+		graph, err := compileStringPatternGraph(pattern.pattern)
 		if err != nil {
-			return stringProduct{}, fmt.Errorf("compile string pattern %s: %w", product.patterns[index].identity, err)
+			return stringProduct{}, fmt.Errorf("compile string pattern %s: %w", pattern.identity, err)
 		}
 
-		product.patterns[index].graph = graph
+		pattern.graph = graph
+		for _, assertion := range pattern.pattern.leadingAssertions {
+			assertionGraph, assertionErr := compileStringPatternExpressionGraph(assertion.expression, true)
+			if assertionErr != nil {
+				return stringProduct{}, fmt.Errorf("compile string assertion %s: %w", pattern.identity, assertionErr)
+			}
+
+			pattern.assertions = append(pattern.assertions, stringPatternAssertionConstraint{
+				positive: assertion.positive,
+				graph:    assertionGraph,
+			})
+		}
+
 		product.seedUnits = appendUniqueUint16(
 			product.seedUnits,
 			stringPatternSeedUnits(product.patterns[index].pattern)...,
@@ -361,7 +381,20 @@ func (s *search) searchStringObjective(
 			patterns: make([]stringPatternRuntime, 0, len(product.patterns)),
 		}
 		for _, pattern := range product.patterns {
-			runtime.patterns = append(runtime.patterns, newStringPatternRuntime(pattern.graph))
+			patternRuntime := newStringPatternRuntime(pattern.graph)
+			for _, assertion := range pattern.assertions {
+				assertionRuntime := stringPatternAssertionRuntime{
+					graph:    assertion.graph,
+					raw:      []int{assertion.graph.start},
+					positive: assertion.positive,
+				}
+				assertionRuntime.matched = assertionRuntime.acceptsAt(
+					0, 0, false, nil, length == 0,
+				)
+				patternRuntime.assertions = append(patternRuntime.assertions, assertionRuntime)
+			}
+
+			runtime.patterns = append(runtime.patterns, patternRuntime)
 		}
 
 		return s.walkStringLength(
@@ -470,16 +503,55 @@ func (s *search) walkStringLength(
 			nextRuntime := stringProductRuntime{
 				patterns: make([]stringPatternRuntime, len(runtime.patterns)),
 			}
-			for index, pattern := range runtime.patterns {
-				nextRuntime.patterns[index] = stringPatternRuntime{
-					graph: pattern.graph,
-					raw:   append([]int(nil), transition.targets[index]...),
-				}
-			}
 
 			nextRuneLength := runeLength
 			if !pendingHigh {
 				nextRuneLength++
+			}
+			nextPendingHigh := unit >= 0xd800 && unit <= 0xdbff
+			nextAtEnd := nextRuneLength == targetLength && !nextPendingHigh
+
+			invalidAssertion := false
+			for index, pattern := range runtime.patterns {
+				nextPattern := stringPatternRuntime{
+					graph: pattern.graph,
+					raw:   append([]int(nil), transition.targets[index]...),
+				}
+				if objective.kind == stringObjectivePatternFalse && objective.index == index {
+					nextRuntime.patterns[index] = nextPattern
+
+					continue
+				}
+
+				for assertionIndex, assertion := range pattern.assertions {
+					nextAssertion := stringPatternAssertionRuntime{
+						graph:    assertion.graph,
+						positive: assertion.positive,
+					}
+					if assertion.matched {
+						nextAssertion.raw = append([]int(nil), assertion.raw...)
+						nextAssertion.matched = true
+					} else {
+						targets := transition.assertionTargets[index]
+						if assertionIndex < len(targets) {
+							nextAssertion.raw = append([]int(nil), targets[assertionIndex]...)
+						}
+						nextAssertion.matched = nextAssertion.acceptsAt(
+							int(position+1), unit, true, nil, nextAtEnd,
+						)
+						if nextAssertion.matched && !nextAssertion.positive {
+							invalidAssertion = true
+						}
+					}
+
+					nextPattern.assertions = append(nextPattern.assertions, nextAssertion)
+				}
+
+				nextRuntime.patterns[index] = nextPattern
+			}
+
+			if invalidAssertion {
+				continue
 			}
 
 			complete, err := s.walkStringLength(
@@ -503,6 +575,7 @@ func (s *search) walkStringLength(
 	return false, nil
 }
 
+//nolint:gocyclo // Pattern, assertion, and format frontiers share one interval partition.
 func stringProductTransitions(
 	product stringProduct,
 	objective stringObjective,
@@ -513,6 +586,7 @@ func stringProductTransitions(
 	hasPrevious bool,
 ) []stringProductTransition {
 	patternTransitions := make([][]stringPatternTransition, len(runtime.patterns))
+	assertionTransitions := make([][][]stringPatternTransition, len(runtime.patterns))
 	boundaries := []int{0, stringUTF16UnitCount}
 
 	for index, pattern := range runtime.patterns {
@@ -527,6 +601,25 @@ func stringProductTransitions(
 				int(transition.interval.low),
 				int(transition.interval.high)+1,
 			)
+		}
+
+		assertionTransitions[index] = make([][]stringPatternTransition, len(pattern.assertions))
+		for assertionIndex, assertion := range pattern.assertions {
+			if assertion.matched {
+				continue
+			}
+
+			assertionTransitions[index][assertionIndex] = stringPatternRuntime{
+				graph: assertion.graph,
+				raw:   assertion.raw,
+			}.outgoing(position, previous, hasPrevious)
+			for _, transition := range assertionTransitions[index][assertionIndex] {
+				boundaries = append(
+					boundaries,
+					int(transition.interval.low),
+					int(transition.interval.high)+1,
+				)
+			}
 		}
 	}
 
@@ -574,6 +667,7 @@ func stringProductTransitions(
 		}
 
 		targets := make([][]int, len(patternTransitions))
+		assertionTargets := make([][][]int, len(patternTransitions))
 		for patternIndex, candidates := range patternTransitions {
 			if objective.kind == stringObjectivePatternFalse && objective.index == patternIndex {
 				continue
@@ -594,6 +688,34 @@ func stringProductTransitions(
 
 				break
 			}
+
+			assertionTargets[patternIndex] = make([][]int, len(assertionTransitions[patternIndex]))
+			for assertionIndex, candidates := range assertionTransitions[patternIndex] {
+				if runtime.patterns[patternIndex].assertions[assertionIndex].matched {
+					continue
+				}
+
+				for _, candidate := range candidates {
+					if unit < candidate.interval.low || unit > candidate.interval.high {
+						continue
+					}
+
+					assertionTargets[patternIndex][assertionIndex] = candidate.targets
+
+					break
+				}
+
+				if len(assertionTargets[patternIndex][assertionIndex]) == 0 &&
+					runtime.patterns[patternIndex].assertions[assertionIndex].positive {
+					allowed = false
+
+					break
+				}
+			}
+
+			if !allowed {
+				break
+			}
 		}
 
 		if !allowed {
@@ -601,12 +723,18 @@ func stringProductTransitions(
 		}
 
 		transition := stringProductTransition{
-			interval: stringUnitInterval{low: unit, high: uint16(high)},
-			targets:  copyPatternTargets(targets),
+			interval:         stringUnitInterval{low: unit, high: uint16(high)},
+			targets:          copyPatternTargets(targets),
+			assertionTargets: copyPatternAssertionTargets(assertionTargets),
 		}
 		if len(transitions) > 0 &&
 			transitions[len(transitions)-1].interval.high+1 == transition.interval.low &&
-			patternTargetsEqual(transitions[len(transitions)-1].targets, transition.targets) {
+			patternTargetsEqual(
+				transitions[len(transitions)-1].targets,
+				transition.targets,
+				transitions[len(transitions)-1].assertionTargets,
+				transition.assertionTargets,
+			) {
 			transitions[len(transitions)-1].interval.high = transition.interval.high
 
 			continue
@@ -627,14 +755,41 @@ func copyPatternTargets(targets [][]int) [][]int {
 	return copyTargets
 }
 
-func patternTargetsEqual(left, right [][]int) bool {
-	if len(left) != len(right) {
+func copyPatternAssertionTargets(targets [][][]int) [][][]int {
+	copyTargets := make([][][]int, len(targets))
+	for index, patternTargets := range targets {
+		copyTargets[index] = copyPatternTargets(patternTargets)
+	}
+
+	return copyTargets
+}
+
+func patternTargetsEqual(
+	left, right [][]int,
+	leftAssertions, rightAssertions [][][]int,
+) bool {
+	if len(left) != len(right) || len(leftAssertions) != len(rightAssertions) {
 		return false
 	}
 
 	for index := range left {
 		if !intSlicesEqual(left[index], right[index]) {
 			return false
+		}
+	}
+
+	for index := range leftAssertions {
+		if len(leftAssertions[index]) != len(rightAssertions[index]) {
+			return false
+		}
+
+		for assertionIndex := range leftAssertions[index] {
+			if !intSlicesEqual(
+				leftAssertions[index][assertionIndex],
+				rightAssertions[index][assertionIndex],
+			) {
+				return false
+			}
 		}
 	}
 
@@ -667,6 +822,12 @@ func (s *search) finishStringCandidate(
 
 		if !pattern.accepts(int(position), previousUnit, hasPrevious) {
 			return false, nil
+		}
+
+		for _, assertion := range pattern.assertions {
+			if assertion.matched != assertion.positive {
+				return false, nil
+			}
 		}
 	}
 

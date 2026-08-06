@@ -15,7 +15,7 @@ func TestBuildUsesOneProductForSimultaneousStringPatterns(t *testing.T) {
 	document := []byte(documentWithJSONSchema(`{
 		"type":"string",
 		"allOf":[
-			{"pattern":"^a+$"},
+			{"pattern":"^(?=ab)a"},
 			{"pattern":"^a.$"}
 		]
 	}`))
@@ -32,7 +32,7 @@ func TestBuildUsesOneProductForSimultaneousStringPatterns(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotEmpty(t, cases)
-	require.Equal(t, `"aa"`, string(cases[0].JSON))
+	require.Equal(t, `"ab"`, string(cases[0].JSON))
 	require.NotEmpty(t, report.Covered)
 }
 
@@ -97,7 +97,7 @@ func TestStringProductObjectivesKeepDirectedSiblingsTrue(t *testing.T) {
 	model, err := parseInput(Input{
 		OpenAPI: []byte(documentWithJSONSchema(`{
 			"type":"string",
-			"allOf":[{"pattern":"^a$"},{"pattern":"^b$"}]
+			"allOf":[{"pattern":"^(?=a)a$"},{"pattern":"^b$"}]
 		}`)),
 		OperationID: "selected",
 	})
@@ -181,6 +181,92 @@ func formatName(format schemaFormat) string {
 	default:
 		return ""
 	}
+}
+
+func TestStringProductLeadingAssertionsConstrainWitnesses(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","pattern":"^(?=ab)(?!ac)a"}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 22, model.root.pattern.matcherBytes)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	require.Len(t, product.patterns, 1)
+	require.Len(t, product.patterns[0].assertions, 2)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 100}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{"ab"}, values)
+	require.Equal(t, uint64(6), searchState.steps)
+}
+
+func TestStringProductLeadingAssertionsUseTheNextUTF16Unit(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(
+			`{"type":"string","minLength":2,"pattern":"^(?=a\\b)a"}`,
+		)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 100}
+	var values []string
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{"a\x00"}, values)
+}
+
+func TestStringProductLeadingAssertionsStopContradictionsAtTheGlobalBudget(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","pattern":"^(?=a)(?!a)a"}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	product.model = model
+
+	searchState := &search{model: model, maxSteps: 8}
+	complete, err := searchState.searchStringObjective(
+		product,
+		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		func(*jsonValue) (bool, error) {
+			t.Fatal("contradictory assertions produced a witness")
+
+			return false, nil
+		},
+	)
+	require.False(t, complete)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, uint64(8), searchState.steps)
 }
 
 func TestStringProductObjectivesPreserveFormatAndPatternSiblings(t *testing.T) {
