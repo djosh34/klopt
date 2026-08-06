@@ -798,39 +798,39 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 		}
 	}
 
-	additionalSources, err := rowAdditionalPropertySources(node, occurrence, pins)
+	additionalSourceSets, err := rowAdditionalPropertySources(node, occurrence, pins)
 	if err != nil {
 		return nil, err
 	}
 
-	appendAdditionalSource := func(name string) bool {
-		applied := false
+	additionalMembersForName := func(name string) [][]rowMember {
+		result := make([][]rowMember, 0, len(additionalSourceSets))
 
-		for _, additional := range additionalSources {
-			if additional.owner != nil {
-				if _, declared := additional.owner.properties[name]; declared {
-					continue
+		for _, sourceSet := range additionalSourceSets {
+			members := make([]rowMember, 0, len(sourceSet))
+			for _, additional := range sourceSet {
+				if additional.owner != nil {
+					if _, declared := additional.owner.properties[name]; declared {
+						continue
+					}
 				}
+
+				source := additional.source
+				members = append(members, rowMember{
+					name: name,
+					node: source.node,
+					occurrence: rebasePlanOccurrence(
+						source.node,
+						source.occurrence.usePointer,
+						appendInstanceToken(occurrence.instanceTemplate, name),
+					),
+				})
 			}
 
-			source := additional.source
-			specs[name] = append(specs[name], rowMember{
-				name: name,
-				node: source.node,
-				occurrence: rebasePlanOccurrence(
-					source.node,
-					source.occurrence.usePointer,
-					appendInstanceToken(occurrence.instanceTemplate, name),
-				),
-			})
-			applied = true
+			result = append(result, members)
 		}
 
-		return applied
-	}
-
-	for name := range specs {
-		appendAdditionalSource(name)
+		return result
 	}
 
 	extraNames, err := rowAdditionalMemberNames(node, specs, pins, occurrence)
@@ -839,18 +839,9 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 	}
 
 	for _, name := range extraNames {
-		if appendAdditionalSource(name) {
-			continue
+		if _, exists := specs[name]; !exists {
+			specs[name] = nil
 		}
-
-		specs[name] = append(specs[name], rowMember{
-			name: name,
-			occurrence: schemaOccurrence{
-				usePointer:       occurrence.usePointer + "/additionalProperties",
-				targetPointer:    occurrence.targetPointer,
-				instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, name),
-			},
-		})
 	}
 
 	names := make([]string, 0, len(specs))
@@ -867,27 +858,15 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 
 	members := make([]rowMember, 0, len(names))
 	for _, name := range names {
-		candidates := specs[name]
-
-		var member rowMember
-
-		if len(candidates) > 0 {
-			var err error
-
-			member, err = composeRowMember(name, candidates, required[name], pins)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			member = rowMember{name: name, required: required[name]}
-			if node.additionalProperties != nil {
-				member.node = node.additionalProperties
-				member.occurrence = rebasePlanOccurrence(
-					node.additionalProperties,
-					occurrence.usePointer+"/additionalProperties",
-					appendInstanceToken(occurrence.instanceTemplate, name),
-				)
-			}
+		member, err := composeRowMemberAlternatives(
+			name,
+			specs[name],
+			additionalMembersForName(name),
+			required[name],
+			pins,
+		)
+		if err != nil {
+			return nil, err
 		}
 
 		members = append(members, member)
@@ -896,30 +875,81 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 	return members, nil
 }
 
-// rowAdditionalPropertySources returns active direct and composed wildcard schemas.
+// composeRowMemberAlternatives keeps mutually exclusive wildcard schemas separate.
+func composeRowMemberAlternatives(
+	name string,
+	base []rowMember,
+	sourceSets [][]rowMember,
+	required bool,
+	pins []applicabilityPin,
+) (rowMember, error) {
+	if len(sourceSets) == 0 {
+		sourceSets = [][]rowMember{{}}
+	} else {
+		hasSource := false
+
+		for _, sources := range sourceSets {
+			if len(sources) > 0 {
+				hasSource = true
+
+				break
+			}
+		}
+
+		if !hasSource {
+			sourceSets = [][]rowMember{{}}
+		}
+	}
+
+	composed := make([]rowMember, 0, len(sourceSets))
+	for _, sources := range sourceSets {
+		candidates := make([]rowMember, 0, len(base)+len(sources))
+		candidates = append(candidates, base...)
+		candidates = append(candidates, sources...)
+
+		if len(candidates) == 0 {
+			candidates = append(candidates, rowMember{name: name, required: required})
+		}
+
+		member, err := composeRowMember(name, candidates, required, pins)
+		if err != nil {
+			return rowMember{}, err
+		}
+
+		composed = append(composed, member)
+	}
+
+	member := composed[0]
+	member.alternatives = append(member.alternatives, composed[1:]...)
+
+	return member, nil
+}
+
+// rowAdditionalPropertySources returns active direct and composed wildcard alternatives.
 //
-//nolint:cyclop // Direct, allOf, and pinned anyOf wildcard sources share one pass.
+//nolint:cyclop,gocognit // Direct, allOf, and anyOf wildcard sources share one recursive pass.
 func rowAdditionalPropertySources(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
-) ([]rowAdditionalPropertySource, error) {
-	sources := make([]rowAdditionalPropertySource, 0)
+) ([][]rowAdditionalPropertySource, error) {
 	visiting := make(map[*schemaNode]bool)
 
-	var collect func(*schemaNode, schemaOccurrence) error
+	var collect func(*schemaNode, schemaOccurrence) ([][]rowAdditionalPropertySource, error)
 
-	collect = func(current *schemaNode, currentOccurrence schemaOccurrence) error {
+	collect = func(current *schemaNode, currentOccurrence schemaOccurrence) ([][]rowAdditionalPropertySource, error) {
 		if current == nil || current.schemaShape == nil {
-			return nil
+			return [][]rowAdditionalPropertySource{{}}, nil
 		}
 
 		if visiting[current] {
-			return fmt.Errorf("schematest: recursive row additional-properties shape at %s", currentOccurrence.usePointer)
+			return nil, fmt.Errorf("schematest: recursive row additional-properties shape at %s", currentOccurrence.usePointer)
 		}
 
 		visiting[current] = true
 		defer delete(visiting, current)
+
+		common := [][]rowAdditionalPropertySource{{}}
 
 		if current.additionalProperties != nil {
 			additionalOccurrence := rebasePlanOccurrence(
@@ -927,7 +957,7 @@ func rowAdditionalPropertySources(
 				currentOccurrence.usePointer+"/additionalProperties",
 				appendInstanceToken(currentOccurrence.instanceTemplate, "*"),
 			)
-			sources = append(sources, rowAdditionalPropertySource{
+			common[0] = append(common[0], rowAdditionalPropertySource{
 				source: rowSchemaSource{
 					node:       current.additionalProperties,
 					occurrence: additionalOccurrence,
@@ -942,39 +972,87 @@ func rowAdditionalPropertySources(
 				currentOccurrence.usePointer+"/allOf/"+itoa(index),
 				currentOccurrence.instanceTemplate,
 			)
-			if err := collect(child, childOccurrence); err != nil {
-				return err
+
+			childSets, err := collect(child, childOccurrence)
+			if err != nil {
+				return nil, err
 			}
+
+			common = combineRowAdditionalPropertySourceSets(common, childSets)
+		}
+
+		if len(current.anyOf) == 0 {
+			return common, nil
 		}
 
 		states, pinned := rowCompositionTruthStates(pins, currentOccurrence, "anyOf", len(current.anyOf))
-		if !pinned {
-			return nil
-		}
+		if pinned {
+			selected := common
 
-		for index, child := range current.anyOf {
-			if !states[index] {
-				continue
+			for index, child := range current.anyOf {
+				if !states[index] {
+					continue
+				}
+
+				childOccurrence := rebasePlanOccurrence(
+					child,
+					currentOccurrence.usePointer+"/anyOf/"+itoa(index),
+					currentOccurrence.instanceTemplate,
+				)
+
+				childSets, err := collect(child, childOccurrence)
+				if err != nil {
+					return nil, err
+				}
+
+				selected = combineRowAdditionalPropertySourceSets(selected, childSets)
 			}
 
+			return selected, nil
+		}
+
+		alternatives := make([][]rowAdditionalPropertySource, 0, len(current.anyOf))
+		for index, child := range current.anyOf {
 			childOccurrence := rebasePlanOccurrence(
 				child,
 				currentOccurrence.usePointer+"/anyOf/"+itoa(index),
 				currentOccurrence.instanceTemplate,
 			)
-			if err := collect(child, childOccurrence); err != nil {
-				return err
+
+			childSets, err := collect(child, childOccurrence)
+			if err != nil {
+				return nil, err
 			}
+
+			alternatives = append(
+				alternatives,
+				combineRowAdditionalPropertySourceSets(common, childSets)...,
+			)
 		}
 
-		return nil
+		return alternatives, nil
 	}
 
-	if err := collect(node, occurrence); err != nil {
-		return nil, err
+	return collect(node, occurrence)
+}
+
+// combineRowAdditionalPropertySourceSets computes the allOf product of wildcard alternatives.
+func combineRowAdditionalPropertySourceSets(
+	left [][]rowAdditionalPropertySource,
+	right [][]rowAdditionalPropertySource,
+) [][]rowAdditionalPropertySource {
+	result := make([][]rowAdditionalPropertySource, 0, len(left)*len(right))
+
+	for _, leftSources := range left {
+		for _, rightSources := range right {
+			sources := make([]rowAdditionalPropertySource, 0, len(leftSources)+len(rightSources))
+			sources = append(sources, leftSources...)
+			sources = append(sources, rightSources...)
+			result = append(result, sources)
+		}
 	}
 
-	return sources, nil
+	return result
 }
 
 // rowAdditionalMemberNames adds wildcard members needed by lower bounds or target pins.

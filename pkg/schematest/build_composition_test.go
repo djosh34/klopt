@@ -406,6 +406,48 @@ func TestBuildAppliesWildcardsAcrossComposedMemberDeclarations(t *testing.T) {
 	}
 }
 
+// TestBuildPreservesUnpinnedNestedAnyOfWildcards verifies wildcard alternatives.
+func TestBuildPreservesUnpinnedNestedAnyOfWildcards(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"type":"object",
+		"required":["x"],
+		"properties":{"x":{}},
+		"allOf":[{"anyOf":[
+			{"additionalProperties":{"enum":["z"]}},
+			{"additionalProperties":{"enum":["q"]}}
+		]}]
+	}`))
+
+	cases := make([]Case, 0)
+	report, err := Build(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 10000},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+
+	found := false
+
+	for _, testCase := range cases {
+		if testCase.Valid && (string(testCase.JSON) == `{"x":"z"}` || string(testCase.JSON) == `{"x":"q"}`) {
+			found = true
+
+			break
+		}
+	}
+
+	require.True(t, found)
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+	require.Contains(t, report.Covered, schemaPointer+"|#|allOf|level:all-true")
+}
+
 // TestBuildKeepsAnyOfSiblingPropertiesAsAlternatives verifies sibling property masks.
 func TestBuildKeepsAnyOfSiblingPropertiesAsAlternatives(t *testing.T) {
 	t.Parallel()
