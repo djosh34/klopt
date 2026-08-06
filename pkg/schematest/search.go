@@ -19,6 +19,9 @@ type search struct {
 
 	stringRule  string
 	stringLevel string
+
+	stringTarget    ruleIdentity
+	hasStringTarget bool
 }
 
 // assign charges one structural, kind, composition, enum, or scalar choice.
@@ -48,12 +51,18 @@ func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue,
 
 	previousStringRule := s.stringRule
 	previousStringLevel := s.stringLevel
+	previousStringTarget := s.stringTarget
+	previousHasStringTarget := s.hasStringTarget
 	s.stringRule = target.obligation.rule
 	s.stringLevel = target.expected.level
+	s.stringTarget = target.obligation.ruleIdentity
+	s.hasStringTarget = true
 
 	defer func() {
 		s.stringRule = previousStringRule
 		s.stringLevel = previousStringLevel
+		s.stringTarget = previousStringTarget
+		s.hasStringTarget = previousHasStringTarget
 	}()
 
 	var found *jsonValue

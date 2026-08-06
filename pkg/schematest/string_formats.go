@@ -515,7 +515,7 @@ func stringEmailDomainIntervals(prefix string) []stringUnitInterval {
 			return nil
 		}
 
-		return stringASCIIIntervals("!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~")
+		return stringEmailAddressLiteralIntervals(prefix[1:])
 	}
 
 	if !stringEmailDomainPrefix(prefix) {
@@ -528,6 +528,112 @@ func stringEmailDomainIntervals(prefix string) []stringUnitInterval {
 	}
 
 	return stringASCIIIntervals("-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.")
+}
+
+func stringEmailAddressLiteralActive(prefix []uint16) bool {
+	if !stringPrefixASCII(prefix) {
+		return false
+	}
+
+	value := stringASCIIValue(prefix)
+	separator := strings.IndexByte(value, '@')
+
+	return separator >= 0 && separator+1 < len(value) && value[separator+1] == '[' &&
+		!strings.Contains(value[separator+2:], "]")
+}
+
+func stringEmailAddressLiteralIntervals(body string) []stringUnitInterval {
+	separator := strings.IndexByte(body, ':')
+	if separator < 0 {
+		characters := ""
+		if stringEmailAddressTagPartial(body) {
+			characters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+			if body != "" {
+				characters += "-"
+			}
+		}
+		if body != "" && stringIPv4AddressPrefixAllowed(body) {
+			characters += "0123456789."
+		}
+
+		intervals := stringASCIIIntervals(characters)
+		if stringEmailAddressTagPrefix(body) {
+			intervals = append(intervals, stringUnitInterval{low: ':', high: ':'})
+		}
+		if stringEmailAddressLiteralCanClose(body) {
+			intervals = append(intervals, stringUnitInterval{low: ']', high: ']'})
+		}
+
+		return sortedStringEmailIntervals(intervals)
+	}
+
+	if !strings.EqualFold(body[:separator], "ipv6") && !stringEmailAddressTagPrefix(body[:separator]) {
+		return nil
+	}
+
+	var intervals []stringUnitInterval
+	if strings.EqualFold(body[:separator], "ipv6") {
+		intervals = stringASCIIIntervals(".0123456789ABCDEFabcdef:")
+	} else {
+		intervals = stringASCIIIntervals("!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz{|}~")
+	}
+
+	if stringEmailAddressLiteralCanClose(body) {
+		intervals = append(intervals, stringUnitInterval{low: ']', high: ']'})
+	}
+
+	return sortedStringEmailIntervals(intervals)
+}
+
+func stringEmailAddressLiteralCanClose(body string) bool {
+	if cleanEmailIPv4(body) {
+		return true
+	}
+
+	separator := strings.IndexByte(body, ':')
+	if separator < 1 || separator+1 >= len(body) {
+		return false
+	}
+
+	if strings.EqualFold(body[:separator], "ipv6") {
+		return cleanEmailIPv6(body[separator+1:])
+	}
+
+	if !stringEmailAddressTagPrefix(body[:separator]) {
+		return false
+	}
+
+	for _, character := range body[separator+1:] {
+		if character < '!' || character > '~' || character == '[' || character == '\\' || character == ']' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func stringEmailAddressTagPartial(value string) bool {
+	if value == "" {
+		return true
+	}
+
+	return value[0] != '-' && isEmailTagCharacters(value)
+}
+
+func stringEmailAddressTagPrefix(value string) bool {
+	return value != "" && stringEmailAddressTagPartial(value) && isASCIIAlphaNumeric(value[len(value)-1])
+}
+
+func sortedStringEmailIntervals(intervals []stringUnitInterval) []stringUnitInterval {
+	sort.Slice(intervals, func(left, right int) bool {
+		if intervals[left].low != intervals[right].low {
+			return intervals[left].low < intervals[right].low
+		}
+
+		return intervals[left].high < intervals[right].high
+	})
+
+	return intervals
 }
 
 func stringEmailDomainPrefix(prefix string) bool {

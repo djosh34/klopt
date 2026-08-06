@@ -30,6 +30,7 @@ type stringPatternConstraint struct {
 	pattern    *patternAST
 	graph      *stringPatternGraph
 	assertions []stringPatternAssertionConstraint
+	directed   bool
 
 	finite  bool
 	maximum uint64
@@ -101,7 +102,7 @@ func buildStringProduct(
 
 	product := stringProduct{}
 	if err := collectStringProductRules(
-		&product, node, occurrence, pins, make(map[*schemaNode]bool),
+		&product, node, occurrence, pins, make(map[*schemaNode]bool), false,
 	); err != nil {
 		return stringProduct{}, err
 	}
@@ -174,6 +175,7 @@ func collectStringProductRules(
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
 	visiting map[*schemaNode]bool,
+	directed bool,
 ) error {
 	if node == nil || node.schemaShape == nil {
 		return errors.New("string product child has no schema shape")
@@ -207,6 +209,7 @@ func collectStringProductRules(
 			product.patterns = append(product.patterns, stringPatternConstraint{
 				identity: makeRuleIdentity(occurrence, oracleRulePattern),
 				pattern:  node.pattern,
+				directed: directed,
 			})
 		}
 
@@ -224,23 +227,20 @@ func collectStringProductRules(
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting); err != nil {
+		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting, directed); err != nil {
 			return err
 		}
 	}
 
 	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
-		if pinned && !states[index] {
-			continue
-		}
-
 		childOccurrence := rebasePlanOccurrence(
 			child,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting); err != nil {
+		branchDirected := directed || (pinned && !states[index])
+		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting, branchDirected); err != nil {
 			return err
 		}
 	}
@@ -281,7 +281,32 @@ func stringProductObjectives(product stringProduct, rule, level string) []string
 	return objectives
 }
 
-// walkString searches the all-true string objective for one row target.
+func stringProductTargetIsLast(product stringProduct, target ruleIdentity) (bool, error) {
+	identities := make([]ruleIdentity, 0, len(product.patterns)+len(product.formats)+len(product.lengths))
+	for _, pattern := range product.patterns {
+		identities = append(identities, pattern.identity)
+	}
+	for _, format := range product.formats {
+		identities = append(identities, format.identity)
+	}
+	for _, length := range product.lengths {
+		identities = append(identities, length.identity)
+	}
+
+	for _, identity := range identities {
+		comparison, err := compareRuleIdentities(target, identity)
+		if err != nil {
+			return false, err
+		}
+		if comparison < 0 {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// walkString searches the ordered string objectives for one row target.
 func (s *search) walkString(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -323,7 +348,36 @@ func (s *search) walkString(
 		return false, nil
 	}
 
-	return s.searchStringObjective(product, objectives[0], visit)
+	if s.hasStringTarget {
+		last, lastErr := stringProductTargetIsLast(product, s.stringTarget)
+		if lastErr != nil {
+			return false, lastErr
+		}
+		if !last {
+			return s.searchStringObjective(product, objectives[0], visit)
+		}
+	}
+
+	complete := false
+	err = s.searchStringObjectives(product, s.stringRule, s.stringLevel, func(
+		objective stringObjective,
+		value *jsonValue,
+	) (bool, error) {
+		if objective.kind != stringObjectiveAllTrue {
+			return true, nil
+		}
+
+		var visitErr error
+		complete, visitErr = visit(value)
+
+		return complete, visitErr
+	})
+
+	if complete && errors.Is(err, errMaxSteps) {
+		return true, nil
+	}
+
+	return complete, err
 }
 
 func ensureStringSearchCanonicalSchema(model *schemaModel) error {
@@ -529,7 +583,8 @@ func (s *search) walkStringLength(
 			for index, pattern := range runtime.patterns {
 				// A directed pattern still tracks its graph, but never rejects a unit.
 
-				directedPattern := objective.kind == stringObjectivePatternFalse && objective.index == index
+				directedPattern := product.patterns[index].directed ||
+					objective.kind == stringObjectivePatternFalse && objective.index == index
 				nextPattern := stringPatternRuntime{
 					graph: pattern.graph,
 					raw:   append([]int(nil), transition.targets[index]...),
@@ -632,6 +687,17 @@ func stringProductTransitions(
 		}
 	}
 
+	preserveEmailAddressPartitions := false
+	if stringEmailAddressLiteralActive(prefix) {
+		for _, format := range product.formats {
+			if format.format == schemaFormatEmail {
+				preserveEmailAddressPartitions = true
+
+				break
+			}
+		}
+	}
+
 	formatTransitions := make([][]stringUnitInterval, len(product.formats))
 	for index, format := range product.formats {
 		if objective.kind == stringObjectiveFormatFalse && objective.index == index {
@@ -678,7 +744,8 @@ func stringProductTransitions(
 		targets := make([][]int, len(patternTransitions))
 		assertionTargets := make([][][]int, len(patternTransitions))
 		for patternIndex, candidates := range patternTransitions {
-			directedPattern := objective.kind == stringObjectivePatternFalse && objective.index == patternIndex
+			directedPattern := product.patterns[patternIndex].directed ||
+				objective.kind == stringObjectivePatternFalse && objective.index == patternIndex
 
 			for _, candidate := range candidates {
 				if unit < candidate.interval.low || unit > candidate.interval.high {
@@ -735,6 +802,7 @@ func stringProductTransitions(
 			assertionTargets: copyPatternAssertionTargets(assertionTargets),
 		}
 		if len(transitions) > 0 &&
+			!preserveEmailAddressPartitions &&
 			transitions[len(transitions)-1].interval.high+1 == transition.interval.low &&
 			patternTargetsEqual(
 				transitions[len(transitions)-1].targets,
@@ -823,7 +891,8 @@ func (s *search) finishStringCandidate(
 	}
 
 	for index, pattern := range runtime.patterns {
-		if objective.kind == stringObjectivePatternFalse && objective.index == index {
+		if product.patterns[index].directed ||
+			objective.kind == stringObjectivePatternFalse && objective.index == index {
 			continue
 		}
 
@@ -862,7 +931,7 @@ func stringObjectiveMatches(
 			return false, err
 		}
 
-		want := true
+		want := !pattern.directed
 		if objective.kind == stringObjectivePatternFalse && objective.index == index {
 			want = false
 		}
@@ -1031,16 +1100,13 @@ func stringObjectiveMaximumLength(
 
 	patternMaximum := uint64(0)
 	patternFound := false
-	patternsBounded := true
 	for index, pattern := range product.patterns {
-		if objective.kind == stringObjectivePatternFalse && objective.index == index {
+		if pattern.directed || objective.kind == stringObjectivePatternFalse && objective.index == index {
 			continue
 		}
 
 		if !pattern.finite {
-			patternsBounded = false
-
-			break
+			continue
 		}
 
 		if !patternFound || pattern.maximum < patternMaximum {
@@ -1049,7 +1115,7 @@ func stringObjectiveMaximumLength(
 		}
 	}
 
-	if patternsBounded && patternFound {
+	if patternFound {
 		maximum = patternMaximum
 		found = true
 	}

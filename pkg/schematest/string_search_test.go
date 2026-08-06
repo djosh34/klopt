@@ -71,6 +71,73 @@ func TestBuildDoesNotPinUnanchoredPatternLength(t *testing.T) {
 	require.Equal(t, `"ba"`, string(cases[0].JSON))
 }
 
+func TestBuildContradictoryFiniteStringProductExhausts(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"allOf":[{"pattern":"^a$"},{"pattern":"^b*$"}]
+	}`))
+
+	var cases []Case
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Empty(t, cases)
+}
+
+func TestBuildPreservesPinnedFalseAnyOfStringBranches(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"pattern":"^[ac-z]$"},{"pattern":"^[a-z]$"}]
+	}`))
+
+	var cases []Case
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`"b"`), Valid: true})
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:2")
+}
+
+func TestBuildReachesEmailAddressLiteralDelimiters(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"format":"email",
+		"minLength":7,
+		"maxLength":7,
+		"pattern":"^a@\\[[ -~]{4}$"
+	}`))
+
+	var cases []Case
+	_, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, cases)
+	value, err := parseStrictJSON(cases[0].JSON)
+	require.NoError(t, err)
+	require.Equal(t, 7, len([]rune(value.text)))
+	model, err := parseInput(Input{OpenAPI: document, OperationID: "selected"})
+	require.NoError(t, err)
+	result := evaluate(model, value)
+	require.NoError(t, result.err)
+	require.True(t, result.valid)
+	formatMatched, err := cleanStringFormatMatches(value.text, schemaFormatEmail)
+	require.NoError(t, err)
+	require.True(t, formatMatched)
+}
+
 func TestBuildUsesProductStringPatternWithDateFormat(t *testing.T) {
 	document := []byte(documentWithJSONSchema(`{
 		"type":"string",
