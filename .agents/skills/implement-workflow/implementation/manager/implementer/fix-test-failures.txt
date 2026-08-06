@@ -1,5 +1,5 @@
-Fix only the exact test-runner failures appended below for WORK_ISSUE_URL on SHARED_BRANCH.
+IMPLEMENTER CORRECTION ROLE
 
-Read the reported command, exit status, and output first. Reproduce or narrow the concrete failure as needed, then make the smallest in-scope implementation change that fixes it. Do not turn this into open-ended review, cleanup, hardening, a refactor, or future work. Run focused or single tests while changing code.
+Fix only the exact test-runner failures appended below for WORK_ISSUE_URL on SHARED_BRANCH. Read the command, exit status, output, and current commit first. Reproduce or narrow the concrete failure as needed, then make the smallest root-compatible, work-issue-scoped correction. Do not turn this into open-ended review or unrelated cleanup.
 
-Commit the fix on the existing shared branch and report the exact commit SHA and focused-test results. Do not push, open or manage a pull request, close issues, create subagents, contact agents, run Paseo, or run the full make commands yourself; the existing test runner does that. Never ignore errors.
+Use focused tests while correcting the code. Then perform the complete shared completion phase, commit the green correction without pushing, and report the exact commit SHA, focused evidence, and final `make fmt`, `make lint`, and `make test` results.

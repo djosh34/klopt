@@ -1,8 +1,7 @@
-Implement exactly the required work described by WORK_ISSUE_URL, in the context of PARENT_ISSUE_URL, on SHARED_BRANCH.
+IMPLEMENTER ROLE
 
-Read the parent and work issue and the relevant repository code before changing anything. Use TDD where useful and choose a clear seam. Implement only this issue's required behavior; do not pull in future issues, speculative hardening, unrelated refactors, or optional improvements. Run focused or single tests regularly while developing and record what they prove.
+Implement exactly WORK_ISSUE_URL on SHARED_BRANCH. Read ROOT_ISSUE_URL, PARENT_ISSUE_URL, WORK_ISSUE_URL, the relevant repository standards, and the current code before changing anything. Root is authoritative; the parent and work issue define bounded required scope when compatible with root.
 
-Work directly on the existing shared branch. Commit the implementation and tests with a clear message. Do not push, open or edit a pull request, close or modify GitHub issues, create subagents, contact other agents, run Paseo, or run full `make fmt`, `make lint`, or `make test` commands. Leave the workspace on the committed implementation branch and report the exact commit SHA and focused-test results.
+Use TDD where useful and choose a clear seam. Compatible implementation refactors are welcome when needed for a clean design, but do not take scope from sibling or future issues. Run focused tests while developing and record what they prove.
 
-Never ignore errors. Do not declare completion without a real commit and a concise handoff describing the implemented issue scope and tests.
-Never read host plan or any https://lima-opencode-vm.tail2fc05a.ts.net/** url
+After the shared completion phase passes, commit with a clear message. Do not push, open or edit a pull request, or modify or close GitHub issues. Leave the workspace on the committed shared branch and report the exact commit SHA, implemented scope, focused-test evidence, and final `make fmt`, `make lint`, and `make test` results.

@@ -9,25 +9,33 @@ pr_path=${pr_path#*/}
 repo=${pr_path%%/*}
 pr_number=${pr_url##*/}
 
-issue_comments=$(gh api --paginate --slurp \
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+
+gh api --paginate --slurp \
   "repos/$owner/$repo/issues/$pr_number/comments?per_page=100" |
-  jq -c '[.[][] | {
+  jq '[.[][] | {
     id,
     kind: "issue-comment",
     author: (.user.login // null),
+    author_type: (.user.type // null),
+    author_association: (.author_association // null),
     body: (.body // ""),
     url: (.html_url // .url // null),
     created_at: (.created_at // null),
     updated_at: (.updated_at // null),
     reply_to_id: (.in_reply_to_id // null),
     node_id: (.node_id // null)
-  }]')
-formal_reviews=$(gh api --paginate --slurp \
+  }]' >"$tmp_dir/issue-comments.json"
+
+gh api --paginate --slurp \
   "repos/$owner/$repo/pulls/$pr_number/reviews?per_page=100" |
-  jq -c '[.[][] | {
+  jq '[.[][] | {
     id,
     kind: "formal-review",
     author: (.user.login // null),
+    author_type: (.user.type // null),
+    author_association: (.author_association // null),
     body: (.body // ""),
     url: (.html_url // .url // null),
     created_at: (.created_at // null),
@@ -38,13 +46,16 @@ formal_reviews=$(gh api --paginate --slurp \
     state: (.state // null),
     commit_id: (.commit_id // null),
     node_id: (.node_id // null)
-  }]')
-inline_comments=$(gh api --paginate --slurp \
+  }]' >"$tmp_dir/formal-reviews.json"
+
+gh api --paginate --slurp \
   "repos/$owner/$repo/pulls/$pr_number/comments?per_page=100" |
-  jq -c '[.[][] | {
+  jq '[.[][] | {
     id,
     kind: "inline-review-comment",
     author: (.user.login // null),
+    author_type: (.user.type // null),
+    author_association: (.author_association // null),
     body: (.body // ""),
     url: (.html_url // .url // null),
     created_at: (.created_at // null),
@@ -61,10 +72,9 @@ inline_comments=$(gh api --paginate --slurp \
     commit_id: (.commit_id // null),
     diff_hunk: (.diff_hunk // null),
     node_id: (.node_id // null)
-  }]')
+  }]' >"$tmp_dir/inline-comments.json"
 
-jq -n \
-  --argjson issue_comments "$issue_comments" \
-  --argjson formal_reviews "$formal_reviews" \
-  --argjson inline_comments "$inline_comments" \
-  '$issue_comments + $formal_reviews + $inline_comments' >"$output_path"
+jq -s 'add' \
+  "$tmp_dir/issue-comments.json" \
+  "$tmp_dir/formal-reviews.json" \
+  "$tmp_dir/inline-comments.json" >"$output_path"

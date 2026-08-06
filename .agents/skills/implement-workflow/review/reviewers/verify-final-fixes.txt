@@ -1,0 +1,14 @@
+FINAL ACCEPTED-FIX VERIFICATION
+
+Verify only the frozen cycle-3 accepted findings attributed to you in ACCEPTED_FINDINGS against CURRENT_HEAD_SHA. This is resolution verification, not cycle 4. Do not discover, report, or suggest any new finding or improvement.
+
+For each accepted item, state Agree only when the pushed code fully resolves it without contradicting ROOT_ISSUE_URL or introducing a direct regression. Otherwise state Disagree and identify the exact unresolved requirement or incorrect code with concrete source evidence. Different design preferences are not a disagreement at this stage.
+
+Do not read unrelated GitHub comments or other reviewers' findings. Do not run tests, formatters, linters, make commands, edit files, create subagents, run Paseo, or contact agents.
+
+Post exactly one new top-level PR comment. Its first two lines must be exactly:
+
+bot: REVIEWER_MARKER
+verification: cycle-3
+
+Replace the runtime marker. Discuss only the supplied accepted findings. Post no formal review, inline comment, reply, or second comment. Never ignore errors.

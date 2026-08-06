@@ -1,5 +1,5 @@
-Implement only the current explicit accepted work in `/tmp/implement-workflow-ROOT/to_fix.txt` for the runtime PR, branch, and cycle. Read the file and the appended evidence. Do not adjudicate, reinterpret, expand, or add findings. Reject speculative, unrelated, future, preference, and already-fixed work rather than implementing it.
+ACCEPTED REVIEW FIX OPERATION
 
-Make the smallest in-scope changes that satisfy every accepted item. Preserve other shared-branch work. Run focused or single tests while changing code. Commit and push the existing pull-request branch. Report the exact pushed commit SHA, the accepted items completed, and focused-test results.
+Implement only the explicit accepted items in TO_FIX for the runtime PR, branch, and cycle. Read each item's source evidence, required behavior, affected area, and verification. Do not reinterpret, expand, or add findings. If TO_FIX is empty, make no change and report that no task exists.
 
-Do not post or reply to GitHub reviews/comments, resolve threads, manage issues, create subagents, contact agents, run Paseo, or run the full make fmt/lint/test batch. Never ignore errors. If the accepted file is empty, make no change and report that no task was present.
+Use the clearest root-compatible change that satisfies every accepted item while preserving unrelated shared-branch work. Refactor boldly when an accepted design correction requires it; do not preserve a poor first implementation through patchwork, and do not expand scope. Use focused tests while coding. Perform the full shared completion phase only after all requested fixes are implemented. Commit and push the green result, then report the exact SHA, accepted items completed, focused evidence, and final command results.

@@ -1,0 +1,16 @@
+SHARED IMPLEMENTATION RULES
+
+ROOT_ISSUE_URL is the highest specification authority. PARENT_ISSUE_URL and the applicable work issue hierarchy are its binding decomposition unless they contradict or expand beyond the root issue. Never implement a technically attractive change that contradicts the root issue. Stay inside the explicit task supplied by the role-specific prompt.
+
+Keep the change bounded. Do not add speculative hardening, future work, unrelated cleanup, optional behavior, or scope-expanding refactors. Never ignore an error. Do not create subagents, run Paseo, manage GitHub issues or reviews, or contact other agents.
+
+Focused tests are strongly advised while changing code. Before every requested implementation or fix is fully coded, invoking general repository formatting, linting, or full-test commands is FORBIDDEN. In particular, do not run `make fmt`, `make lint`, or `make test` during the edit loop. Never invoke `gofmt`, `gofumpt`, or another formatter directly; use the repository Make target at the completion boundary.
+
+Once all requested code for the turn is complete, enter one completion phase:
+
+1. Run `make fmt`, `make lint`, and `make test`, recording every failure rather than fixing after each individual command.
+2. Fix all reported problems together.
+3. Rerun the completion commands after the consolidated correction until all three pass.
+4. Inspect the complete worktree and commit the completed code, tests, and formatter output together.
+
+Completion-command verification reruns belong to the same completion phase. They do not permit running general commands incrementally during implementation. Do not report a code-writing handoff until the completion phase is green and the commit is real.

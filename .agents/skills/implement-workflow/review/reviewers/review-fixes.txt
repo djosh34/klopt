@@ -1,7 +1,16 @@
-Re-review the current pull request after the accepted fixes. This is a reused internal reviewer turn, not permission to read prior findings. First independently inspect the parent/work specification and the current PR diff from FIXED_REVIEW_BASE_SHA. In particular answer whether you agree with the fixes in the current head, then perform the complete Standards and Spec review again using the same strict acceptance rules.
+LATER REVIEW CYCLE
 
-Accept only a direct applicable parent or required-issue contradiction, unimplemented required scope, a PR-introduced regression, or a concrete failing input, test, or required check. Reject speculation, hardening, refactoring or design preferences, future work, unrelated pre-existing defects, optional improvements, and extra tests without acceptance evidence. Cycle 2 requires substantially skeptical concrete merge-blocking evidence. Cycle 3 requires an unequivocal merge blocker with direct evidence and is final. Do not invent work to keep a cycle alive.
+Review the new pushed code using your retained role and focus. The runtime values include PRIOR_DISPOSITIONS containing the arbitrator's Accepted/Rejected decisions for your own prior findings only. Do not read GitHub review comments or anyone else's findings.
 
-Never read GitHub issue comments, pull-request comments, formal reviews, inline review comments, or anyone else's findings. Do not run tests, make fmt, make lint, or make test. Do not edit or create files, create subagents, run Paseo, contact agents, or contact a fixer. Inspect only the issue/specification and the current fixed-base PR diff and relevant source context.
+First state whether you agree that each accepted finding was correctly addressed by the current code. If an accepted fix was misunderstood, regressed behavior, or remains incomplete, report the exact concrete mismatch. For each rejected finding, accept the arbitrator's decision or challenge it once with new concrete evidence; do not merely repeat the preference.
 
-Post exactly one new top-level GitHub pull-request comment with gh and no formal review, inline comment, second comment, or reply. Its first two lines must be exactly the reviewer marker for your identity and `cycle: <numeric CYCLE>`; preserve the marker you were assigned in the initial turn. Include all current actionable findings with concrete evidence, or an explicit no-findings result. Never ignore errors.
+Then independently review the current diff from FIXED_REVIEW_BASE_SHA under the active cycle threshold. Cycle 2 accepts only demonstrated material problems. Cycle 3 accepts only major issues that should block merge. Root remains the highest authority, and no finding may contradict it or expand its scope.
+
+Do not run tests, formatters, linters, or make commands. Do not edit files, create subagents, run Paseo, contact agents, or act as a fixer.
+
+Post exactly one new top-level PR comment. Its first two lines must be exactly:
+
+bot: REVIEWER_MARKER
+cycle: CYCLE
+
+Replace both runtime placeholders. Include disposition agreement/disagreement and every current actionable finding, or an explicit clean result. Post no formal review, inline comment, reply, or second comment. Never ignore errors.
