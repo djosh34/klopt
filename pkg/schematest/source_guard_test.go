@@ -266,6 +266,8 @@ func TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes(t *testing.T) {
 			`rows := []*jsonValue{}; for range 2 { rows = append(rows, new(jsonValue)); yield() }; _ = rows }`,
 		`package schematest; type jsonValue struct{}; func Build() { stream() }; ` +
 			`func stream() { parents := []*jsonValue{}; parents = append(parents, new(jsonValue)); _ = parents }`,
+		`package schematest; type jsonValue struct{}; func Build() { stream() }; ` +
+			`func stream() { rows := []*jsonValue{}; rows = append(rows, new(jsonValue)); _ = rows }`,
 		`package schematest; type jsonValue struct{}; type helperState struct { outputs []*jsonValue }; ` +
 			`func Build() { stream() }; func stream() { state := new(helperState); _ = state }`,
 		`package schematest; type Case struct{}; type helperState struct { saved []Case }; ` +
@@ -1131,7 +1133,7 @@ func reachableLocalOwnershipViolations(
 
 		activeSearchLocal := !streaming && authorizedActiveLocalName(variable.Name())
 
-		checkGeneratedValues := streaming && !activeSearchLocal
+		checkGeneratedValues := runtimeFunction && !activeSearchLocal
 		if !guardTypeIsAuthorized(variable.Type(), authorized) && forbiddenOwnedCollection(
 			variable.Type(), variable.Name(), caseType, jsonValueType, authorized,
 			runtimeFunction && !activeSearchLocal, checkGeneratedValues,
@@ -1149,8 +1151,16 @@ func reachableLocalOwnershipViolations(
 func authorizedActiveLocalName(name string) bool {
 	lower := strings.ToLower(name)
 
-	return strings.Contains(lower, "candidate") || strings.Contains(lower, "witness") ||
-		strings.Contains(lower, "parentpins") || strings.Contains(lower, "parenttokens")
+	for _, category := range []string{
+		"candidate", "witness", "parentpins", "parenttokens", "canonical",
+		"derived", "edits", "elements", "filtered", "seeded", "selected", "values",
+	} {
+		if strings.Contains(lower, category) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // guardTypeIsAuthorized reports whether a local is one explicit model, plan, current-value, or search category.
