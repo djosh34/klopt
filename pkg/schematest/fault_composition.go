@@ -35,6 +35,7 @@ type compositionEdit struct {
 	path        []string
 	replacement *jsonValue
 	remove      bool
+	append      bool
 }
 
 // findCompositionFaultDerivative uses complete-schema assignments only as a
@@ -152,6 +153,10 @@ func tryCompositionEdits(
 
 	for _, edit := range edits {
 		if applyErr := applyCompositionEdit(candidate, edit); applyErr != nil {
+			if errors.Is(applyErr, errCompositionEditInapplicable) {
+				return nil, false, nil
+			}
+
 			return nil, false, applyErr
 		}
 	}
@@ -217,17 +222,27 @@ func compositionDifference(parent, assignment *jsonValue, path []string) []compo
 
 		return edits
 	case jsonArray:
-		if len(parent.array) != len(assignment.array) {
-			return []compositionEdit{{path: append([]string(nil), path...), replacement: assignment}}
-		}
-
 		var edits []compositionEdit
 
-		for index := range parent.array {
+		common := min(len(parent.array), len(assignment.array))
+		for index := 0; index < common; index++ {
 			token := strconv.Itoa(index)
 			edits = append(edits, compositionDifference(
 				parent.array[index], assignment.array[index], append(pathCopy(path), token),
 			)...)
+		}
+
+		for index := len(parent.array) - 1; index >= len(assignment.array); index-- {
+			edits = append(edits, compositionEdit{
+				path: append(pathCopy(path), strconv.Itoa(index)), remove: true,
+			})
+		}
+
+		for index := len(parent.array); index < len(assignment.array); index++ {
+			edits = append(edits, compositionEdit{
+				path:        append(pathCopy(path), strconv.Itoa(index)),
+				replacement: assignment.array[index], append: true,
+			})
 		}
 
 		return edits
@@ -271,6 +286,9 @@ func visitCompositionEditSubsets(
 	return walk(0)
 }
 
+// errCompositionEditInapplicable rejects a structurally incomplete edit subset.
+var errCompositionEditInapplicable = errors.New("schematest: composition edit is inapplicable")
+
 // applyCompositionEdit applies one edit to a transient parent copy.
 //
 //nolint:cyclop // Root, object, and array edits share one mutation boundary.
@@ -297,11 +315,19 @@ func applyCompositionEdit(root *jsonValue, edit compositionEdit) error {
 
 	token := edit.path[len(edit.path)-1]
 	if edit.remove {
-		if parent.kind != jsonObject {
-			return errors.New("schematest: composition removal parent is not an object")
-		}
+		switch parent.kind {
+		case jsonObject:
+			delete(parent.object, token)
+		case jsonArray:
+			index, parseErr := strconv.Atoi(token)
+			if parseErr != nil || index != len(parent.array)-1 {
+				return errCompositionEditInapplicable
+			}
 
-		delete(parent.object, token)
+			parent.array = parent.array[:index]
+		default:
+			return errors.New("schematest: composition removal parent is not a container")
+		}
 
 		return nil
 	}
@@ -316,11 +342,23 @@ func applyCompositionEdit(root *jsonValue, edit compositionEdit) error {
 		parent.object[token] = replacement
 	case jsonArray:
 		index, parseErr := strconv.Atoi(token)
-		if parseErr != nil || index < 0 || index >= len(parent.array) {
+		if parseErr != nil || index < 0 {
 			return errors.New("schematest: composition array edit index is invalid")
 		}
 
-		parent.array[index] = replacement
+		if edit.append {
+			if index != len(parent.array) {
+				return errCompositionEditInapplicable
+			}
+
+			parent.array = append(parent.array, replacement)
+		} else {
+			if index >= len(parent.array) {
+				return errCompositionEditInapplicable
+			}
+
+			parent.array[index] = replacement
+		}
 	default:
 		return errors.New("schematest: composition edit parent is not a container")
 	}

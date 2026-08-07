@@ -87,6 +87,7 @@ func formatHasNumericSemantics(format schemaFormat) bool {
 	}
 }
 
+//nolint:cyclop // Seeded witnesses and active-conjunction fallback share one search.
 func findTypeDerivative(
 	parent *jsonValue,
 	fault faultTarget,
@@ -94,19 +95,48 @@ func findTypeDerivative(
 	model *schemaModel,
 	s *search,
 ) (*jsonValue, bool, error) {
-	withoutType := schemaNodeWithoutLocalRule(node, oracleRuleType)
+	withoutLocalType := schemaNodeWithoutLocalRule(node, oracleRuleType)
 	for _, kind := range canonicalJSONKinds() {
 		if !typeFaultCanUseKind(node, kind) {
 			continue
 		}
 
-		candidates, err := canonicalAnyOfWitnesses(withoutType, kind)
-		if err != nil {
-			return nil, false, err
+		seeded, seedErr := canonicalAnyOfWitnesses(withoutLocalType, kind)
+		if seedErr != nil {
+			return nil, false, seedErr
 		}
 
-		if derivative, found, err := firstReplacementDerivative(parent, fault, candidates, model, s); err != nil || found {
-			return derivative, found, err
+		derivative, found, seedErr := firstReplacementDerivative(parent, fault, seeded, model, s)
+		if seedErr != nil || found {
+			return derivative, found, seedErr
+		}
+
+		container, occurrence, found := resolveFaultValueContainer(
+			model.root, model.root.occurrence, fault.obligation.occurrence,
+		)
+		if !found {
+			continue
+		}
+
+		withoutType := cloneWithoutFaultRule(container, occurrence, fault.obligation.occurrence, oracleRuleType)
+		derivative = nil
+
+		complete, err := s.walkNode(
+			withoutType, occurrence, fault.pins, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
+				selected, matched, selectErr := firstReplacementDerivative(
+					parent, fault, []*jsonValue{candidate}, model, s,
+				)
+				if selectErr != nil || !matched {
+					return false, selectErr
+				}
+
+				derivative = selected
+
+				return true, nil
+			},
+		)
+		if err != nil || complete {
+			return derivative, complete, err
 		}
 	}
 
@@ -785,13 +815,6 @@ func findAdditionalPropertyDerivative(
 
 	parentPointer := pointerFromTokens(tokens[:len(tokens)-1])
 
-	node, found := resolveFaultNodeAtInstance(
-		s.model.root, s.model.root.occurrence, fault.obligation.occurrence.usePointer, parentPointer,
-	)
-	if !found {
-		return nil, false, errors.New("schematest: additional-property parent schema was not found")
-	}
-
 	containerTarget := fault.obligation.occurrence
 	containerTarget.instanceTemplate = parentPointer
 
@@ -802,13 +825,16 @@ func findAdditionalPropertyDerivative(
 		return nil, false, nil
 	}
 
-	name := additionalPropertyWitnessName(node)
+	name := additionalPropertyWitnessName(container)
+
+	pins := append([]applicabilityPin(nil), fault.pins...)
+	pins = append(pins, faultMemberPresencePin(containerOccurrence, name))
 
 	for _, path := range matchingValuePaths(parent, parentPointer) {
 		var derivative *jsonValue
 
-		complete, err := walkActiveAdditionalPropertyValues(
-			container, containerOccurrence, fault.pins, name, s,
+		complete, err := walkActiveFaultChildValues(
+			container, containerOccurrence, pins, rowChildProperty, name, s,
 			func(witness *jsonValue) (bool, error) {
 				if assignErr := s.assign(); assignErr != nil {
 					return false, assignErr
@@ -849,59 +875,6 @@ func findAdditionalPropertyDerivative(
 	return nil, false, nil
 }
 
-//nolint:cyclop // Active wildcard source merging and walking form one seam.
-func walkActiveAdditionalPropertyValues(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	name string,
-	s *search,
-	visit rowVisit,
-) (bool, error) {
-	sets, err := rowAdditionalPropertySources(node, occurrence, pins)
-	if err != nil {
-		return false, err
-	}
-
-	for _, set := range sets {
-		sources := make([]rowSchemaSource, 0, len(set))
-		for _, additional := range set {
-			if additional.owner != nil {
-				if _, declared := additional.owner.properties[name]; declared {
-					continue
-				}
-			}
-
-			source := additional.source
-			source.occurrence = rebasePlanOccurrence(
-				source.node, source.occurrence.usePointer, appendInstanceToken(occurrence.instanceTemplate, name),
-			)
-			sources = append(sources, source)
-		}
-
-		choice, exists, mergeErr := mergeRowSchemaSources(rowPreferredSchemaSources(sources, pins))
-		if mergeErr != nil {
-			return false, mergeErr
-		}
-
-		if !exists {
-			complete, walkErr := s.walkGenericValue(pins, visit)
-			if walkErr != nil || complete {
-				return complete, walkErr
-			}
-
-			continue
-		}
-
-		complete, walkErr := s.walkNode(choice.node, choice.occurrence, pins, rowSearchContext{}, visit)
-		if walkErr != nil || complete {
-			return complete, walkErr
-		}
-	}
-
-	return false, nil
-}
-
 func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure []failureIdentity) (bool, error) {
 	result := evaluate(model, derivative)
 	if result.err != nil {
@@ -939,26 +912,25 @@ func resolveExactFaultTarget(
 	return nil, schemaOccurrence{}, false
 }
 
-func resolveFaultNodeAtInstance(
+func resolveFaultValueContainer(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	usePointer,
-	instanceTemplate string,
-) (*schemaNode, bool) {
-	if occurrence.usePointer == usePointer &&
-		instanceTemplateMatches(occurrence.instanceTemplate, instanceTemplate) {
-		return node, true
+	target schemaOccurrence,
+) (*schemaNode, schemaOccurrence, bool) {
+	if instanceTemplateMatches(occurrence.instanceTemplate, target.instanceTemplate) &&
+		(target.usePointer == occurrence.usePointer || strings.HasPrefix(target.usePointer, occurrence.usePointer+"/")) {
+		return node, occurrence, true
 	}
 
 	for _, child := range faultSchemaChildren(node, occurrence) {
-		if foundNode, found := resolveFaultNodeAtInstance(
-			child.node, child.occurrence, usePointer, instanceTemplate,
+		if foundNode, foundOccurrence, found := resolveFaultValueContainer(
+			child.node, child.occurrence, target,
 		); found {
-			return foundNode, true
+			return foundNode, foundOccurrence, true
 		}
 	}
 
-	return nil, false
+	return nil, schemaOccurrence{}, false
 }
 
 func resolveFaultContainer(
@@ -1159,9 +1131,15 @@ func exhaustFaultStructuralBudget(s *search) error {
 		return errors.New("schematest: nil search")
 	}
 
-	s.steps = s.maxSteps
+	var frontier uint64
 
-	return errMaxSteps
+	for {
+		if err := s.assign(); err != nil {
+			return err
+		}
+
+		frontier++
+	}
 }
 
 func maxInt() int {

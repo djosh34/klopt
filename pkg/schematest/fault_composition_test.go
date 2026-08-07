@@ -142,6 +142,37 @@ func TestItemAnyOfAggregateFaultPreservesUnrelatedArrayElements(t *testing.T) {
 	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 }
 
+func TestAnyOfAggregateFaultPreservesArrayPrefixWhenAssignmentLengthDiffers(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"array","items":{"type":"string"},
+		"anyOf":[{"minItems":2},{"maxItems":0}]
+	}`)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	parent := &jsonValue{kind: jsonArray, array: []*jsonValue{
+		{kind: jsonString, text: "keep"},
+		{kind: jsonString, text: "unrelated"},
+	}}
+	parentJSON := marshalFaultTestValue(t, parent)
+	searchState := &search{model: model, maxSteps: 100_000}
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `["keep"]`, string(marshalFaultTestValue(t, derivative)))
+	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
+
+	matches, err := derivativeHasClosure(model, derivative, fault.closure)
+	require.NoError(t, err)
+	require.True(t, matches)
+
+	cutoff := &search{model: model, maxSteps: searchState.steps}
+	cutoff.steps = cutoff.maxSteps
+	_, err = applyFault(parent, fault, cutoff)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
+}
+
 func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 	t.Parallel()
 

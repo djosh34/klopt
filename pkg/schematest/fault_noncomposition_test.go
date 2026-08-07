@@ -134,6 +134,53 @@ func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {
 	}
 }
 
+func TestBuildTypeFaultUsesActiveSiblingEnumWitness(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		derivative string
+		steps      uint64
+	}{
+		{
+			name:       "number enum witness",
+			schema:     `{"allOf":[{"type":"string"},{"enum":["ok",7]}]}`,
+			derivative: `7`,
+			steps:      3926,
+		},
+		{
+			name:       "large integer enum witness",
+			schema:     `{"allOf":[{"type":"boolean"},{"enum":[true,123456789]}]}`,
+			derivative: `123456789`,
+			steps:      3863,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cases []Case
+
+			report, err := Build(Input{
+				OpenAPI:     []byte(documentWithJSONSchema(test.schema)),
+				OperationID: "selected", MaxSteps: 1_000_000,
+			}, func(testCase Case) error {
+				cases = append(cases, testCase)
+
+				return nil
+			})
+			require.NoError(t, err)
+			require.Contains(t, cases, Case{JSON: []byte(test.derivative), Valid: false})
+			require.Equal(t, SpaceExhausted, report.Stop)
+			require.Equal(t, test.steps, report.Steps)
+			require.Contains(t, report.Covered,
+				"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0|#|type|fault:type")
+		})
+	}
+}
+
 func TestAdditionalPropertyFaultUsesActiveSiblingValueSchema(t *testing.T) {
 	t.Parallel()
 
@@ -153,6 +200,51 @@ func TestAdditionalPropertyFaultUsesActiveSiblingValueSchema(t *testing.T) {
 	derivative, err := applyFault(parent, fault, searchState)
 	require.NoError(t, err)
 	require.Equal(t, `{"__schematest_extra__":""}`, string(marshalFaultTestValue(t, derivative)))
+}
+
+func TestAdditionalPropertyFaultUsesActiveDeclaredPropertySchema(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		derivative string
+	}{
+		{
+			name: "declared enum",
+			schema: `{"type":"object","allOf":[{"additionalProperties":false},` +
+				`{"properties":{"__schematest_extra__":{"enum":["needed"]}}}]}`,
+			derivative: `{"__schematest_extra__":"needed"}`,
+		},
+		{
+			name: "declared numeric intersection",
+			schema: `{"type":"object","allOf":[{"additionalProperties":false},` +
+				`{"properties":{"__schematest_extra__":` +
+				`{"type":"number","minimum":5,"multipleOf":2}}}]}`,
+			derivative: `{"__schematest_extra__":6}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, plan := compositionFaultModel(t, test.schema)
+			fault := findFaultTarget(t, plan,
+				"/allOf/0|#/*|additionalProperties|fault:additionalProperties")
+			searchState := &search{model: model, maxSteps: 100_000}
+			parent, found, err := regenerateParent(plan, fault, searchState)
+			require.NoError(t, err)
+			require.True(t, found)
+
+			derivative, err := applyFault(parent, fault, searchState)
+			require.NoError(t, err)
+			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
+			matches, err := derivativeHasClosure(model, derivative, fault.closure)
+			require.NoError(t, err)
+			require.True(t, matches)
+		})
+	}
 }
 
 func TestLargeCountFaultsStopBeforeMaterialization(t *testing.T) {
@@ -277,14 +369,14 @@ func TestBuildTypelessNumericFormatFaults(t *testing.T) {
 	}
 }
 
-func TestOversizedCountFaultAdvancesToCutoffAnalytically(t *testing.T) {
+func TestOversizedCountFaultChargesRealFrontierToCutoff(t *testing.T) {
 	t.Parallel()
 
 	model, plan := compositionFaultModel(t, `{
 		"type":"array","maxItems":184467440737095516160,"items":{}
 	}`)
 	fault := findFaultTarget(t, plan, "|maxItems|fault:maxItems")
-	searchState := &search{model: model, maxSteps: 1 << 60}
+	searchState := &search{model: model, maxSteps: 25}
 	parent, found, err := regenerateParent(plan, fault, searchState)
 	require.NoError(t, err)
 	require.True(t, found)
