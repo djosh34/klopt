@@ -33,11 +33,20 @@ func TestNumberBoundaryCandidates(t *testing.T) {
 			want:    []string{"1.2", "2.2", "0.2", "3.456", "2.456", "4.456", "0"},
 		},
 		{
-			name:     "divisor contributes relevant scale",
+			name:     "multiple follows zero in directed order",
 			kind:     schemaNumber,
 			minimum:  "1",
 			multiple: "0.0001",
-			want:     []string{"1", "1.0001", "0.9999", "0"},
+			want: []string{
+				"1", "1.0001", "0.9999", "0",
+				"1e-4", "-1e-4", "2e-4",
+			},
+		},
+		{
+			name:     "integer multiple uses unit quantum",
+			kind:     schemaInteger,
+			multiple: "2.00",
+			want:     []string{"0", "2", "-2", "3", "1"},
 		},
 		{
 			name:    "single point deduplicates preserving first",
@@ -76,11 +85,96 @@ func TestNumberBoundaryCandidates(t *testing.T) {
 				node.multipleOf = requireExactNumber(t, test.multiple)
 			}
 
-			candidates, err := numberBoundaryCandidates(node)
+			candidates, err := numberDeterministicCandidates(node)
 			require.NoError(t, err)
 			require.Equal(t, test.want, marshalNumberCandidates(t, candidates))
 		})
 	}
+}
+
+// TestNumberIntegerFormatCandidates pins exact edges and their one-step outside values.
+func TestNumberIntegerFormatCandidates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		format schemaFormat
+		want   []string
+	}{
+		{
+			name:   "int32",
+			format: schemaFormatInt32,
+			want: []string{
+				"0", "-2147483648", "-2147483649", "2147483647", "2147483648",
+			},
+		},
+		{
+			name:   "int64",
+			format: schemaFormatInt64,
+			want: []string{
+				"0", "-9223372036854775808", "-9223372036854775809",
+				"9223372036854775807", "9223372036854775808",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			node := &schemaNode{schemaShape: &schemaShape{kind: schemaNumber, format: test.format}}
+			candidates, err := numberDeterministicCandidates(node)
+			require.NoError(t, err)
+			require.Equal(t, test.want, marshalNumberCandidates(t, candidates))
+		})
+	}
+}
+
+// TestWalkScalarFindsDirectedExactNonmultiple verifies sibling bounds survive a divisibility objective.
+func TestWalkScalarFindsDirectedExactNonmultiple(t *testing.T) {
+	t.Parallel()
+
+	node := &schemaNode{schemaShape: &schemaShape{
+		kind:       schemaNumber,
+		minimum:    requireExactNumber(t, "9007199254740993"),
+		maximum:    requireExactNumber(t, "9007199254740993"),
+		multipleOf: requireExactNumber(t, "2"),
+		format:     schemaFormatInt64,
+	}}
+	state := &search{maxSteps: 20}
+
+	var found string
+
+	complete, err := state.walkScalar(
+		node,
+		schemaOccurrence{},
+		nil,
+		rowSearchContext{},
+		jsonNumber,
+		func(value *jsonValue) (bool, error) {
+			result := evaluateNode(node, value, schemaOccurrence{})
+			if result.err != nil {
+				return false, result.err
+			}
+
+			if len(result.failures) != 1 || result.failures[0].rule != oracleRuleMultipleOf {
+				return false, nil
+			}
+
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			found = string(encoded)
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, "9007199254740993", found)
+	require.Equal(t, uint64(1), state.steps)
 }
 
 // TestWalkScalarFindsExactBoundIntersections verifies inclusive and exclusive boundary repair.
@@ -152,6 +246,40 @@ func TestWalkScalarFindsExactBoundIntersections(t *testing.T) {
 			require.Equal(t, test.wantSteps, state.steps)
 		})
 	}
+}
+
+// TestWalkScalarChargesMultipleCandidates pins one charge for each deduplicated exact candidate.
+func TestWalkScalarChargesMultipleCandidates(t *testing.T) {
+	t.Parallel()
+
+	node := &schemaNode{schemaShape: &schemaShape{
+		kind:       schemaNumber,
+		multipleOf: requireExactNumber(t, "0.3"),
+	}}
+	state := &search{maxSteps: 5}
+	seen := make([]string, 0)
+
+	complete, err := state.walkScalar(
+		node,
+		schemaOccurrence{},
+		nil,
+		rowSearchContext{},
+		jsonNumber,
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			seen = append(seen, string(encoded))
+
+			return false, nil
+		},
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, complete)
+	require.Equal(t, uint64(5), state.steps)
+	require.Equal(t, []string{"0", "0.3", "-0.3", "0.4", "0.2"}, seen)
 }
 
 // TestWalkScalarChargesBoundaryCandidates pins one charge immediately before each candidate.

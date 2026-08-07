@@ -5,8 +5,8 @@ import (
 	"math/big"
 )
 
-// numberBoundaryCandidates returns minimum, nearby minimum, maximum, nearby maximum, and zero.
-func numberBoundaryCandidates(node *schemaNode) ([]*jsonValue, error) {
+// numberDeterministicCandidates returns exact boundary, divisibility, and integer-format candidates.
+func numberDeterministicCandidates(node *schemaNode) ([]*jsonValue, error) {
 	if node == nil || node.schemaShape == nil {
 		return nil, errors.New("schematest: number boundary schema has no shape")
 	}
@@ -41,7 +41,103 @@ func numberBoundaryCandidates(node *schemaNode) ([]*jsonValue, error) {
 		return nil, err
 	}
 
+	if err := appendNumberMultipleCandidates(&candidates, node.multipleOf, quantum); err != nil {
+		return nil, err
+	}
+
+	if err := appendNumberIntegerFormatCandidates(&candidates, node.format); err != nil {
+		return nil, err
+	}
+
 	return candidates, nil
+}
+
+// appendNumberMultipleCandidates appends the divisor and its directed exact neighbors.
+func appendNumberMultipleCandidates(
+	candidates *[]*jsonValue,
+	divisor, quantum *exactNumber,
+) error {
+	if divisor == nil {
+		return nil
+	}
+
+	negativeDivisor, err := newExactNumber(
+		new(big.Int).Neg(divisor.numerator),
+		divisor.denominator,
+		divisor.exponent,
+		divisor.scale,
+	)
+	if err != nil {
+		return err
+	}
+
+	positiveNeighbor, err := addExactNumbers(divisor, quantum)
+	if err != nil {
+		return err
+	}
+
+	negativeQuantum, err := newExactNumber(
+		new(big.Int).Neg(quantum.numerator),
+		quantum.denominator,
+		quantum.exponent,
+		quantum.scale,
+	)
+	if err != nil {
+		return err
+	}
+
+	negativeNeighbor, err := addExactNumbers(divisor, negativeQuantum)
+	if err != nil {
+		return err
+	}
+
+	for _, number := range []*exactNumber{divisor, negativeDivisor, positiveNeighbor, negativeNeighbor} {
+		var appendErr error
+
+		*candidates, appendErr = appendUniqueJSONWitness(
+			*candidates,
+			&jsonValue{kind: jsonNumber, number: number},
+		)
+		if appendErr != nil {
+			return appendErr
+		}
+	}
+
+	return nil
+}
+
+// appendNumberIntegerFormatCandidates appends exact signed edges and one-step outside values.
+func appendNumberIntegerFormatCandidates(candidates *[]*jsonValue, format schemaFormat) error {
+	var sources []string
+
+	switch format {
+	case schemaFormatInt32:
+		sources = []string{"-2147483648", "-2147483649", "2147483647", "2147483648"}
+	case schemaFormatInt64:
+		sources = []string{
+			"-9223372036854775808", "-9223372036854775809",
+			"9223372036854775807", "9223372036854775808",
+		}
+	default:
+		return nil
+	}
+
+	for _, source := range sources {
+		number, err := parseExactNumber(source)
+		if err != nil {
+			return err
+		}
+
+		*candidates, err = appendUniqueJSONWitness(
+			*candidates,
+			&jsonValue{kind: jsonNumber, number: number},
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // numberBoundaryQuantum returns one for integer schemas and the finest authored numeric unit otherwise.
