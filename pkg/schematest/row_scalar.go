@@ -9,7 +9,7 @@ import (
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
 //
-//nolint:cyclop,nestif // Basic pattern search and the existing scalar frontier share one dispatch seam.
+//nolint:cyclop,nestif // String search and the existing scalar frontier share one dispatch seam.
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -20,6 +20,11 @@ func (s *search) walkScalar(
 	if kind == jsonString {
 		handled, complete, err := s.walkDirectedStringObjective(node, occurrence, pins, visit)
 		if err != nil || handled {
+			return complete, err
+		}
+
+		complete, err = s.walkActiveSimpleStringFormats(node, occurrence, pins, visit)
+		if err != nil || complete {
 			return complete, err
 		}
 

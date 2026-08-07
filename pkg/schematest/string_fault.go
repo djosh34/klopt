@@ -11,6 +11,7 @@ type stringSearchObjectiveKind uint8
 const (
 	stringSearchAllTrue stringSearchObjectiveKind = iota
 	stringSearchPatternFalse
+	stringSearchFormatFalse
 	stringSearchMinLengthFalse
 	stringSearchMaxLengthFalse
 )
@@ -93,6 +94,8 @@ func stringFaultObjectiveKind(rule string) (stringSearchObjectiveKind, bool) {
 	switch rule {
 	case oracleRulePattern:
 		return stringSearchPatternFalse, true
+	case oracleRuleFormat:
+		return stringSearchFormatFalse, true
 	case oracleRuleMinLength:
 		return stringSearchMinLengthFalse, true
 	case oracleRuleMaxLength:
@@ -157,12 +160,35 @@ func (s *search) walkDirectedStringObjective(
 		return true, false, err
 	}
 
+	formats := make([]activeStringFormat, 0)
+	if err := collectActiveStringFormats(node, occurrence, pins, objective, &formats); err != nil {
+		return true, false, err
+	}
+
 	patternIndex := directedStringPatternIndex(patterns, objective)
+	formatIndex := directedStringFormatIndex(formats, objective)
 
 	lengthIndex := directedStringLengthIndex(lengthConstraints, objective)
-	if objective.kind == stringSearchPatternFalse && patternIndex < 0 ||
-		objective.kind != stringSearchPatternFalse && lengthIndex < 0 {
-		return false, false, nil
+	switch objective.kind {
+	case stringSearchPatternFalse:
+		if patternIndex < 0 {
+			return false, false, nil
+		}
+	case stringSearchFormatFalse:
+		if formatIndex < 0 {
+			return false, false, nil
+		}
+
+		complete, walkErr := s.walkSimpleStringFormatCandidates(
+			patterns, lengthConstraints, formats, formatIndex, visit,
+		)
+		if walkErr != nil || complete {
+			return true, complete, walkErr
+		}
+	default:
+		if lengthIndex < 0 {
+			return false, false, nil
+		}
 	}
 
 	patternASTs := make([]*patternAST, 0, len(patterns))
@@ -170,15 +196,33 @@ func (s *search) walkDirectedStringObjective(
 		patternASTs = append(patternASTs, pattern.pattern)
 	}
 
-	lengths, lengthObjective, possible, err := directedBasicStringLengths(lengthConstraints, lengthIndex, objective)
+	var (
+		lengths         basicStringLengths
+		lengthObjective basicStringLengthObjective
+		possible        bool
+		err             error
+	)
+	if objective.kind == stringSearchFormatFalse {
+		lengths, err = basicStringLengthsFromActive(lengthConstraints)
+		possible = err == nil
+	} else {
+		lengths, lengthObjective, possible, err = directedBasicStringLengths(
+			lengthConstraints, lengthIndex, objective,
+		)
+	}
+
 	if err != nil || !possible {
 		return true, false, err
 	}
 
 	var targetNode *schemaNode
-	if objective.kind == stringSearchPatternFalse {
+
+	switch objective.kind {
+	case stringSearchPatternFalse:
 		targetNode = patterns[patternIndex].node
-	} else {
+	case stringSearchFormatFalse:
+		targetNode = formats[formatIndex].node
+	default:
 		targetNode = lengthConstraints[lengthIndex].node
 	}
 
