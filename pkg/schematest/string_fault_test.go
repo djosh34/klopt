@@ -168,7 +168,7 @@ func TestFindStringFaultRowResolvesNestedScalarTargets(t *testing.T) {
 			require.True(t, resolved)
 
 			result := evaluateNode(node, row, occurrence)
-			matches, err := exactStringFailureClosure(result.failures, target.closure)
+			matches, err := exactFailureClosure(result.failures, target.closure)
 			require.NoError(t, err)
 			require.True(t, matches)
 		})
