@@ -3,9 +3,14 @@ package schematest
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -57,6 +62,11 @@ func requireCleanRoomImport(t *testing.T, file, path string, forbidden []string)
 
 // isGeneratedImport reports whether a local import names a generator or generated package.
 func isGeneratedImport(path string) bool {
+	generatedConsumer := modulePath + "/pkg/decode/example"
+	if path == generatedConsumer || strings.HasPrefix(path, generatedConsumer+"/") {
+		return true
+	}
+
 	if !strings.HasPrefix(path, modulePath+"/") {
 		return false
 	}
@@ -70,11 +80,20 @@ func isGeneratedImport(path string) bool {
 	return false
 }
 
+// TestGeneratedImportGuardRejectsCheckedInConsumer pins the actual generated semantic package root.
+func TestGeneratedImportGuardRejectsCheckedInConsumer(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, isGeneratedImport(modulePath+"/pkg/decode/example"))
+	require.False(t, isGeneratedImport("github.com/goccy/go-yaml"))
+}
+
 // TestOnlyLockedDeclarationsArePublic keeps the complete public module interface unchanged.
 func TestOnlyLockedDeclarationsArePublic(t *testing.T) {
 	t.Parallel()
 
-	files := productionASTs(t)
+	guardPackage := productionGuardPackage(t)
+	files := guardPackage.files
 	want := []string{
 		"Build",
 		"Case",
@@ -92,7 +111,7 @@ func TestOnlyLockedDeclarationsArePublic(t *testing.T) {
 
 	slices.Sort(got)
 	require.Equal(t, want, got)
-	require.Empty(t, publicAPIViolations(files))
+	require.Empty(t, append(publicAPIViolations(files), publicMethodSetViolations(guardPackage)...))
 }
 
 // TestLockedPublicAPIGuardRejectsGrowth proves methods and fields cannot bypass the declaration list.
@@ -113,6 +132,7 @@ func TestLockedPublicAPIGuardRejectsGrowth(t *testing.T) {
 		suffix string
 	}{
 		{name: "exported method", suffix: `func (Input) Extra() {}`},
+		{name: "alias receiver method", suffix: `type inputAlias = Input; func (inputAlias) Extra() {}`},
 		{name: "exported field", suffix: `type ExtraInput struct { Extra string }`},
 	}
 
@@ -125,7 +145,11 @@ func TestLockedPublicAPIGuardRejectsGrowth(t *testing.T) {
 				source = strings.Replace(base, "MaxSteps uint64", "MaxSteps uint64; Extra string", 1)
 			}
 
-			require.NotEmpty(t, publicAPIViolations([]*ast.File{parseGoSource(t, source)}))
+			guardPackage := parseGuardPackage(t, map[string]string{"meta.go": source})
+			require.NotEmpty(t, append(
+				publicAPIViolations(guardPackage.files),
+				publicMethodSetViolations(guardPackage)...,
+			))
 		})
 	}
 }
@@ -134,30 +158,41 @@ func TestLockedPublicAPIGuardRejectsGrowth(t *testing.T) {
 func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	t.Parallel()
 
-	operationIDs := canonicalCorpusOperationIDs(t)
-	for _, file := range productionGoFiles(t) {
-		source, err := os.ReadFile(file)
-		require.NoError(t, err)
-
-		violations := copiedAnswerViolations(parseGoFile(t, file), source, operationIDs)
-		require.Emptyf(t, violations, "%s contains copied or fixture-derived semantics: %v", file, violations)
-	}
+	guardPackage := productionGuardPackage(t)
+	violations := copiedAnswerViolations(guardPackage, canonicalCorpusOperationIDs(t))
+	require.Emptyf(t, violations, "production contains copied or fixture-derived semantics: %v", violations)
 }
 
 // TestCopiedAnswerGuardRejectsConcreteBypasses pins semantic selectors and renamed generated structures.
 func TestCopiedAnswerGuardRejectsConcreteBypasses(t *testing.T) {
 	t.Parallel()
 
-	operationIDs := map[string]bool{"allOfObject": true}
-	tests := []string{
-		`package schematest; const suffix = "Object"; func f(input Input) { if input.OperationID == "allOf" + suffix {} }`,
-		`package schematest; type Validation struct{}; type KindValidation struct{}; ` +
-			`func renamed() []*Validation { return []*Validation{{}} }`,
+	operationIDs := map[string]bool{"allOfObject": true, "alphaRequest": true}
+	tests := []map[string]string{
+		{"selector.go": `package schematest; type Input struct { OperationID string }; const suffix = "Object"; ` +
+			`func f(input Input) { if input.OperationID == "allOf" + suffix {} }`},
+		{
+			"graph.go": `package schematest
+				type vertex struct { links []*vertex; label string }
+				var privateTable = func() []*vertex {
+					graph := make([]*vertex, 2)
+					for index := range graph { graph[index] = new(vertex) }
+					*graph[0] = vertex{links: []*vertex{graph[1]}, label: "object"}
+					*graph[1] = vertex{label: "string"}
+					return graph
+				}()
+			`,
+		},
+		{
+			"suffix.go": `package schematest; const suffix = "Request"`,
+			"selector.go": `package schematest; type Input struct { OperationID string }; ` +
+				`func f(input Input) { if input.OperationID == "alpha" + suffix {} }`,
+		},
 	}
 
-	for _, source := range tests {
-		parsed := parseGoSource(t, source)
-		require.NotEmpty(t, copiedAnswerViolations(parsed, []byte(source), operationIDs))
+	for _, sources := range tests {
+		guardPackage := parseGuardPackage(t, sources)
+		require.NotEmpty(t, copiedAnswerViolations(guardPackage, operationIDs))
 	}
 }
 
@@ -190,7 +225,7 @@ func TestCanonicalCorpusOperationIDsAreSemanticAndComplete(t *testing.T) {
 func TestBuildReachableStateOwnsNoCaseCorpus(t *testing.T) {
 	t.Parallel()
 
-	violations := corpusOwnershipViolations(productionASTs(t)...)
+	violations := corpusOwnershipViolations(productionGuardPackage(t))
 	require.Emptyf(t, violations, "production contains corpus-bearing execution state: %v", violations)
 }
 
@@ -199,17 +234,37 @@ func TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes(t *testing.T) {
 	t.Parallel()
 
 	tests := []string{
-		`package schematest; type Case struct{}; func Build() { var cases []Case; ` +
-			`_ = func(c Case) { cases = append(cases, c) } }`,
-		`package schematest; type Case struct{}; func Build() { stream() }; func stream() { var saved []Case; _ = saved }`,
-		`package schematest; type Case struct{}; type buildState struct { emitted []Case }`,
-		`package schematest; type buildState struct { encoded [][]byte }`,
+		`package schematest; type Case struct{}; var saved []Case; func Build() {}`,
+		`package schematest; type Case struct{}; var saved = []Case{}; func Build() {}`,
+		`package schematest; type Case struct{}; func Build() { saved := []Case{}; saved = append(saved, Case{}) }`,
+		`package schematest; type Case struct{}; type caseList []Case; var saved caseList; func Build() {}`,
+		`package schematest; type Case struct{}; type caseList = []Case; var saved caseList; func Build() {}`,
+		`package schematest; type Case struct{}; func Build() { var saved []Case; ` +
+			`_ = func(c Case) { saved = append(saved, c) } }`,
+		`package schematest; type jsonValue struct{}; func Build() { parents := []*jsonValue{}; _ = parents }`,
+		`package schematest; type jsonValue struct{}; type buildState struct { outputs []*jsonValue }; ` +
+			`func Build() { state := new(buildState); _ = state }`,
+		`package schematest; type buildState struct { encoded [][]byte }; ` +
+			`func Build() { state := new(buildState); _ = state }`,
 	}
 	for _, source := range tests {
-		require.NotEmpty(t, corpusOwnershipViolations(parseGoSource(t, source)))
+		guardPackage := parseGuardPackage(t, map[string]string{"meta.go": source})
+		require.NotEmpty(t, corpusOwnershipViolations(guardPackage), source)
 	}
 
-	harmless := parseGoSource(t, `package schematest; type buildState struct { counter uint64; path []int }`)
+	harmless := parseGuardPackage(t, map[string]string{
+		"meta.go": `package schematest
+			type jsonValue struct { array []*jsonValue }
+			type schemaShape struct { enum []*jsonValue }
+			type schemaModel struct { root *schemaShape }
+			type searchPlan struct { targets []int }
+			type search struct { path []int }
+			func Build() {
+				model := new(schemaModel); plan := new(searchPlan); active := new(search)
+				_, _, _ = model, plan, active
+			}
+		`,
+	})
 	require.Empty(t, corpusOwnershipViolations(harmless))
 }
 
@@ -372,276 +427,58 @@ func receiverIsPublicType(receivers *ast.FieldList) bool {
 	return false
 }
 
-// copiedAnswerViolations finds semantic fixture constants and generated validation table shapes.
-func copiedAnswerViolations(file *ast.File, source []byte, operationIDs map[string]bool) []string {
+// copiedAnswerViolations finds package-wide fixture constants and generated table construction.
+func copiedAnswerViolations(guardPackage *sourceGuardPackage, operationIDs map[string]bool) []string {
 	var violations []string
 
-	constants := stringConstants(file)
-
-	ast.Inspect(file, func(node ast.Node) bool {
-		expression, ok := node.(ast.Expr)
-		if ok {
-			if value, found := evaluateStringExpression(expression, constants); found && operationIDs[value] {
-				violations = append(violations, "fixture operation selector: "+value)
-			}
-		}
-
-		return true
-	})
-
-	text := string(source)
-	for _, forbidden := range []string{"testdata/", "alpha_zeta", "request_bodies", "Code generated", "//go:generate"} {
-		if strings.Contains(text, forbidden) {
-			violations = append(violations, "forbidden source marker: "+forbidden)
-		}
-	}
-
-	generatedVocabulary := map[string]bool{
-		"RequestValidation": true,
-		"Validation":        true,
-		"KindValidation":    true,
-		"EnumValidation":    true,
-		"NumberValidation":  true,
-		"StringValidation":  true,
-	}
-	seenGeneratedTypes := make(map[string]bool)
-
-	ast.Inspect(file, func(node ast.Node) bool {
-		identifier, ok := node.(*ast.Ident)
-		if ok && generatedVocabulary[identifier.Name] {
-			seenGeneratedTypes[identifier.Name] = true
-		}
-
-		return true
-	})
-
-	if len(seenGeneratedTypes) >= 2 {
-		violations = append(violations, "copied generated validation structure")
-	}
-
-	return violations
-}
-
-// stringConstants resolves package constants used to hide fixture selectors.
-//
-//nolint:cyclop,gocognit // Declarations, grouped names, and expression resolution form one fixed-point pass.
-func stringConstants(file *ast.File) map[string]string {
-	constants := make(map[string]string)
-
-	for range len(file.Decls) + 1 {
-		changed := false
-
-		for _, declaration := range file.Decls {
-			general, ok := declaration.(*ast.GenDecl)
-			if !ok || general.Tok != token.CONST {
-				continue
-			}
-
-			for _, specification := range general.Specs {
-				values, ok := specification.(*ast.ValueSpec)
-				if !ok {
-					continue
-				}
-
-				for index, name := range values.Names {
-					if index >= len(values.Values) {
-						continue
-					}
-
-					value, found := evaluateStringExpression(values.Values[index], constants)
-					if found && constants[name.Name] != value {
-						constants[name.Name] = value
-						changed = true
-					}
-				}
-			}
-		}
-
-		if !changed {
-			break
-		}
-	}
-
-	return constants
-}
-
-// evaluateStringExpression evaluates literal, constant, parenthesized, and concatenated strings.
-func evaluateStringExpression(expression ast.Expr, constants map[string]string) (string, bool) {
-	switch typed := expression.(type) {
-	case *ast.BasicLit:
-		if typed.Kind != token.STRING {
-			return "", false
-		}
-
-		value, err := strconv.Unquote(typed.Value)
-
-		return value, err == nil
-	case *ast.Ident:
-		value, found := constants[typed.Name]
-
-		return value, found
-	case *ast.ParenExpr:
-		return evaluateStringExpression(typed.X, constants)
-	case *ast.BinaryExpr:
-		if typed.Op != token.ADD {
-			return "", false
-		}
-
-		left, leftOK := evaluateStringExpression(typed.X, constants)
-		right, rightOK := evaluateStringExpression(typed.Y, constants)
-
-		return left + right, leftOK && rightOK
-	default:
-		return "", false
-	}
-}
-
-// corpusOwnershipViolations rejects collections capable of retaining emitted cases or encoded bodies.
-func corpusOwnershipViolations(files ...*ast.File) []string {
-	var violations []string
-
-	functions := make(map[string][]*ast.FuncDecl)
-
-	for _, file := range files {
+	for _, file := range guardPackage.files {
 		ast.Inspect(file, func(node ast.Node) bool {
-			switch typed := node.(type) {
-			case *ast.StructType:
-				for _, field := range typed.Fields.List {
-					for _, name := range field.Names {
-						if forbiddenCorpusCollection(name.Name, field.Type) {
-							violations = append(violations, "corpus-bearing field: "+name.Name)
-						}
-					}
-				}
-			case *ast.FuncDecl:
-				functions[typed.Name.Name] = append(functions[typed.Name.Name], typed)
+			expression, ok := node.(ast.Expr)
+			if !ok {
+				return true
+			}
+
+			value := guardPackage.info.Types[expression].Value
+			if value != nil && value.Kind() == constant.String && operationIDs[constant.StringVal(value)] {
+				violations = append(violations, "fixture operation selector: "+constant.StringVal(value))
 			}
 
 			return true
 		})
-	}
 
-	pending := []string{"Build"}
-	reachable := make(map[*ast.FuncDecl]bool)
-
-	for len(pending) > 0 {
-		name := pending[len(pending)-1]
-		pending = pending[:len(pending)-1]
-
-		for _, function := range functions[name] {
-			if reachable[function] {
-				continue
+		text := string(guardPackage.sources[file])
+		for _, forbidden := range []string{
+			"testdata/", "alpha_zeta", "request_bodies", "Code generated", "//go:generate",
+		} {
+			if strings.Contains(text, forbidden) {
+				violations = append(violations, "forbidden source marker: "+forbidden)
 			}
+		}
 
-			reachable[function] = true
-			violations = append(violations, functionLocalCorpusViolations(function.Body)...)
-			pending = append(pending, calledFunctionNames(function.Body)...)
+		if containsGeneratedGraphFingerprint(file) {
+			violations = append(violations, "copied generated validation graph construction")
 		}
 	}
 
 	return violations
 }
 
-// calledFunctionNames returns direct package-function and method call names.
-func calledFunctionNames(body *ast.BlockStmt) []string {
-	var names []string
+// containsGeneratedGraphFingerprint detects the generated consumer's allocate-link-fill IIFE shape.
+func containsGeneratedGraphFingerprint(file *ast.File) bool {
+	found := false
 
-	ast.Inspect(body, func(node ast.Node) bool {
+	ast.Inspect(file, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
+		if !ok || len(call.Args) != 0 {
+			return true
+		}
+
+		function, ok := call.Fun.(*ast.FuncLit)
 		if !ok {
 			return true
 		}
 
-		switch function := call.Fun.(type) {
-		case *ast.Ident:
-			names = append(names, function.Name)
-		case *ast.SelectorExpr:
-			names = append(names, function.Sel.Name)
-		}
-
-		return true
-	})
-
-	return names
-}
-
-// functionLocalCorpusViolations finds emitted-value collections in one reachable function.
-//
-//nolint:cyclop // Explicit declarations and inferred make calls are the two local ownership forms.
-func functionLocalCorpusViolations(body *ast.BlockStmt) []string {
-	var violations []string
-
-	ast.Inspect(body, func(node ast.Node) bool {
-		switch typed := node.(type) {
-		case *ast.ValueSpec:
-			for _, name := range typed.Names {
-				if forbiddenEmittedCollection(typed.Type) {
-					violations = append(violations, "reachable local corpus: "+name.Name)
-				}
-			}
-		case *ast.AssignStmt:
-			for index, left := range typed.Lhs {
-				name, ok := left.(*ast.Ident)
-				if !ok || index >= len(typed.Rhs) {
-					continue
-				}
-
-				call, ok := typed.Rhs[index].(*ast.CallExpr)
-				if ok && len(call.Args) > 0 && forbiddenEmittedCollection(call.Args[0]) {
-					violations = append(violations, "reachable local corpus: "+name.Name)
-				}
-			}
-		}
-
-		return true
-	})
-
-	return violations
-}
-
-// forbiddenCorpusCollection identifies retained corpus categories by type or ownership name.
-func forbiddenCorpusCollection(name string, expression ast.Expr) bool {
-	if forbiddenEmittedCollection(expression) {
-		return true
-	}
-
-	if expression == nil || !isCollectionType(expression) {
-		return false
-	}
-
-	lower := strings.ToLower(name)
-	for _, word := range []string{"corpus", "case", "parent", "derivative", "pair", "visited", "witness", "guidance"} {
-		if strings.Contains(lower, word) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// forbiddenEmittedCollection identifies Case and encoded-byte collections independent of names.
-func forbiddenEmittedCollection(expression ast.Expr) bool {
-	return expression != nil && isCollectionType(expression) &&
-		(containsTypeName(expression, "Case") || containsEncodedByteCollection(expression))
-}
-
-// isCollectionType reports whether an expression directly owns multiple values.
-func isCollectionType(expression ast.Expr) bool {
-	switch expression.(type) {
-	case *ast.ArrayType, *ast.MapType, *ast.ChanType:
-		return true
-	default:
-		return false
-	}
-}
-
-// containsTypeName reports whether a collection recursively contains a named type.
-func containsTypeName(expression ast.Expr, wanted string) bool {
-	found := false
-
-	ast.Inspect(expression, func(node ast.Node) bool {
-		identifier, ok := node.(*ast.Ident)
-		if ok && identifier.Name == wanted {
+		if generatedGraphIIFE(function) {
 			found = true
 
 			return false
@@ -653,16 +490,413 @@ func containsTypeName(expression ast.Expr, wanted string) bool {
 	return found
 }
 
-// containsEncodedByteCollection reports whether a type directly owns multiple byte slices.
-func containsEncodedByteCollection(expression ast.Expr) bool {
-	outer, ok := expression.(*ast.ArrayType)
-	if !ok || outer.Len != nil {
+// generatedGraphIIFE requires the generated table's fixed allocation, initialization, links, and return.
+//
+//nolint:cyclop // Allocation discovery and the four-part graph fingerprint form one structural check.
+func generatedGraphIIFE(function *ast.FuncLit) bool {
+	for _, statement := range function.Body.List {
+		assignment, ok := statement.(*ast.AssignStmt)
+		if !ok || len(assignment.Lhs) != 1 || len(assignment.Rhs) != 1 {
+			continue
+		}
+
+		name, ok := assignment.Lhs[0].(*ast.Ident)
+		if !ok || !isFixedPointerSliceMake(assignment.Rhs[0]) {
+			continue
+		}
+
+		allocated, filled, linked, returned := generatedGraphOperations(function.Body, name.Name)
+		if allocated && filled && linked && returned {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isFixedPointerSliceMake identifies make([]*T, N), the generated graph's indexed storage.
+func isFixedPointerSliceMake(expression ast.Expr) bool {
+	call, ok := expression.(*ast.CallExpr)
+	if !ok || len(call.Args) < 2 {
 		return false
 	}
 
-	inner, ok := outer.Elt.(*ast.ArrayType)
+	makeName, ok := call.Fun.(*ast.Ident)
+	if !ok || makeName.Name != "make" {
+		return false
+	}
 
-	return ok && inner.Len == nil && expressionName(inner.Elt) == "byte"
+	slice, ok := call.Args[0].(*ast.ArrayType)
+	if !ok || slice.Len != nil {
+		return false
+	}
+
+	_, pointerElements := slice.Elt.(*ast.StarExpr)
+
+	return pointerElements
+}
+
+// generatedGraphOperations finds allocation of every node, indexed graph filling, graph links, and return.
+//
+//nolint:cyclop // Indexed allocation, fill, linking, and return are the required generated graph fingerprint.
+func generatedGraphOperations(body *ast.BlockStmt, graph string) (bool, bool, bool, bool) {
+	var allocated, filled, linked, returned bool
+
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.AssignStmt:
+			for index, left := range typed.Lhs {
+				if indexedGraph(left, graph) && index < len(typed.Rhs) && isNewCall(typed.Rhs[index]) {
+					allocated = true
+				}
+
+				star, ok := left.(*ast.StarExpr)
+				if ok && indexedGraph(star.X, graph) && index < len(typed.Rhs) {
+					if _, composite := typed.Rhs[index].(*ast.CompositeLit); composite {
+						filled = true
+						linked = linked || expressionContainsGraphIndex(typed.Rhs[index], graph)
+					}
+				}
+			}
+		case *ast.ReturnStmt:
+			returned = returned || len(typed.Results) == 1 && identName(typed.Results[0]) == graph
+		}
+
+		return true
+	})
+
+	return allocated, filled, linked, returned
+}
+
+// indexedGraph reports whether an expression indexes the selected graph variable.
+func indexedGraph(expression ast.Expr, graph string) bool {
+	index, ok := expression.(*ast.IndexExpr)
+
+	return ok && identName(index.X) == graph
+}
+
+// isNewCall reports whether an expression allocates one graph node.
+func isNewCall(expression ast.Expr) bool {
+	call, ok := expression.(*ast.CallExpr)
+
+	return ok && identName(call.Fun) == "new"
+}
+
+// expressionContainsGraphIndex finds a graph edge inside an indexed composite assignment.
+func expressionContainsGraphIndex(expression ast.Expr, graph string) bool {
+	found := false
+
+	ast.Inspect(expression, func(node ast.Node) bool {
+		candidate, ok := node.(ast.Expr)
+		if ok && indexedGraph(candidate, graph) {
+			found = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return found
+}
+
+// identName returns an identifier's spelling or an empty string.
+func identName(expression ast.Expr) string {
+	identifier, ok := expression.(*ast.Ident)
+	if !ok {
+		return ""
+	}
+
+	return identifier.Name
+}
+
+// corpusOwnershipViolations performs package-wide typed ownership inspection from Build.
+//
+//nolint:cyclop // Package roots, private state graph, and typed function reachability form one ownership proof.
+func corpusOwnershipViolations(guardPackage *sourceGuardPackage) []string {
+	var violations []string
+
+	caseType := packageObjectType(guardPackage, "Case")
+	jsonValueType := packageObjectType(guardPackage, "jsonValue")
+
+	for _, name := range guardPackage.pkg.Scope().Names() {
+		variable, ok := guardPackage.pkg.Scope().Lookup(name).(*types.Var)
+		if ok && forbiddenOwnedCollection(variable.Type(), caseType, jsonValueType, true) {
+			violations = append(violations, "package corpus owner: "+variable.Name())
+		}
+	}
+
+	ownerTypes := buildOwnedTypes(guardPackage)
+	for owner := range ownerTypes {
+		structure, ok := types.Unalias(owner.Type()).Underlying().(*types.Struct)
+		if !ok {
+			continue
+		}
+
+		for index := range structure.NumFields() {
+			field := structure.Field(index)
+
+			allowModelValue := owner.Name() == "jsonValue" || owner.Name() == "schemaShape"
+			if forbiddenOwnedCollection(field.Type(), caseType, jsonValueType, !allowModelValue) {
+				violations = append(violations, "corpus-bearing field: "+owner.Name()+"."+field.Name())
+			}
+		}
+	}
+
+	functions := guardFunctions(guardPackage)
+	buildObject := guardPackage.pkg.Scope().Lookup("Build")
+
+	build, ok := buildObject.(*types.Func)
+	if !ok {
+		return append(violations, "Build function is missing from typed package")
+	}
+
+	pending := []*types.Func{build}
+	reachable := make(map[*types.Func]bool)
+
+	for len(pending) > 0 {
+		function := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+
+		if function == nil || reachable[function] {
+			continue
+		}
+
+		reachable[function] = true
+
+		declaration := functions[function]
+		if declaration == nil {
+			continue
+		}
+
+		violations = append(violations, reachableLocalOwnershipViolations(
+			guardPackage, declaration, function == build, caseType, jsonValueType,
+		)...)
+
+		called := calledGuardFunctions(guardPackage, declaration.Body)
+		if function == build {
+			called = slices.DeleteFunc(called, func(candidate *types.Func) bool {
+				return candidate.Name() == "parseInput" || candidate.Name() == "makePlan"
+			})
+		}
+
+		pending = append(pending, called...)
+	}
+
+	return violations
+}
+
+// buildOwnedTypes follows named private state types rooted in Build's local ownership.
+func buildOwnedTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
+	owned := make(map[*types.TypeName]bool)
+
+	buildObject, ok := guardPackage.pkg.Scope().Lookup("Build").(*types.Func)
+	if !ok {
+		return owned
+	}
+
+	declaration := guardFunctions(guardPackage)[buildObject]
+	if declaration == nil {
+		return owned
+	}
+
+	ast.Inspect(declaration.Body, func(node ast.Node) bool {
+		identifier, ok := node.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		variable, ok := guardPackage.info.Defs[identifier].(*types.Var)
+		if ok {
+			collectNamedOwnerTypes(variable.Type(), owned)
+		}
+
+		return true
+	})
+
+	return owned
+}
+
+// collectNamedOwnerTypes recursively follows fields from one named Build-owned type.
+func collectNamedOwnerTypes(owned types.Type, found map[*types.TypeName]bool) {
+	owned = types.Unalias(owned)
+	switch typed := owned.(type) {
+	case *types.Pointer:
+		collectNamedOwnerTypes(typed.Elem(), found)
+	case *types.Named:
+		object := typed.Obj()
+		if found[object] {
+			return
+		}
+
+		found[object] = true
+
+		structure, ok := typed.Underlying().(*types.Struct)
+		if !ok {
+			return
+		}
+
+		for index := range structure.NumFields() {
+			collectNamedOwnerTypes(structure.Field(index).Type(), found)
+		}
+	case *types.Slice:
+		collectNamedOwnerTypes(typed.Elem(), found)
+	case *types.Array:
+		collectNamedOwnerTypes(typed.Elem(), found)
+	case *types.Map:
+		collectNamedOwnerTypes(typed.Key(), found)
+		collectNamedOwnerTypes(typed.Elem(), found)
+	}
+}
+
+// guardFunctions indexes package function declarations by their typed objects.
+func guardFunctions(guardPackage *sourceGuardPackage) map[*types.Func]*ast.FuncDecl {
+	functions := make(map[*types.Func]*ast.FuncDecl)
+
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+
+			object, ok := guardPackage.info.Defs[function.Name].(*types.Func)
+			if ok {
+				functions[object] = function
+			}
+		}
+	}
+
+	return functions
+}
+
+// calledGuardFunctions returns typed same-package calls from one function body.
+func calledGuardFunctions(guardPackage *sourceGuardPackage, body *ast.BlockStmt) []*types.Func {
+	var functions []*types.Func
+
+	ast.Inspect(body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		var object types.Object
+
+		switch called := call.Fun.(type) {
+		case *ast.Ident:
+			object = guardPackage.info.Uses[called]
+		case *ast.SelectorExpr:
+			object = guardPackage.info.Uses[called.Sel]
+		}
+
+		function, ok := object.(*types.Func)
+		if ok && function.Pkg() == guardPackage.pkg {
+			functions = append(functions, function)
+		}
+
+		return true
+	})
+
+	return functions
+}
+
+// reachableLocalOwnershipViolations inspects explicit, inferred, aliased, and closure-captured locals.
+func reachableLocalOwnershipViolations(
+	guardPackage *sourceGuardPackage,
+	declaration *ast.FuncDecl,
+	build bool,
+	caseType,
+	jsonValueType types.Type,
+) []string {
+	var violations []string
+
+	ast.Inspect(declaration.Body, func(node ast.Node) bool {
+		identifier, ok := node.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		variable, ok := guardPackage.info.Defs[identifier].(*types.Var)
+		if !ok {
+			return true
+		}
+
+		if forbiddenOwnedCollection(variable.Type(), caseType, jsonValueType, build) {
+			violations = append(violations, "reachable local corpus: "+variable.Name())
+		}
+
+		return true
+	})
+
+	return violations
+}
+
+// forbiddenOwnedCollection classifies corpus ownership through named and aliased collection types.
+func forbiddenOwnedCollection(
+	owned types.Type,
+	caseType,
+	jsonValueType types.Type,
+	checkGeneratedValues bool,
+) bool {
+	elements, collection := collectionElementTypes(owned)
+	if !collection {
+		return false
+	}
+
+	for _, element := range elements {
+		if sameGuardType(element, caseType) || isByteCollection(element) ||
+			checkGeneratedValues && isPointerToGuardType(element, jsonValueType) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// collectionElementTypes unwraps named and aliased slices, arrays, maps, and channels.
+func collectionElementTypes(owned types.Type) ([]types.Type, bool) {
+	underlying := types.Unalias(owned).Underlying()
+	switch typed := underlying.(type) {
+	case *types.Slice:
+		return []types.Type{typed.Elem()}, true
+	case *types.Array:
+		return []types.Type{typed.Elem()}, true
+	case *types.Map:
+		return []types.Type{typed.Key(), typed.Elem()}, true
+	case *types.Chan:
+		return []types.Type{typed.Elem()}, true
+	default:
+		return nil, false
+	}
+}
+
+// isByteCollection reports whether one collection element is itself a byte collection.
+func isByteCollection(owned types.Type) bool {
+	elements, collection := collectionElementTypes(owned)
+
+	return collection && len(elements) == 1 && sameGuardType(elements[0], types.Typ[types.Byte])
+}
+
+// isPointerToGuardType reports whether a collection element points to one package type.
+func isPointerToGuardType(owned, wanted types.Type) bool {
+	pointer, ok := types.Unalias(owned).Underlying().(*types.Pointer)
+
+	return ok && sameGuardType(pointer.Elem(), wanted)
+}
+
+// sameGuardType compares types after resolving aliases.
+func sameGuardType(left, right types.Type) bool {
+	return left != nil && right != nil && types.Identical(types.Unalias(left), types.Unalias(right))
+}
+
+// packageObjectType returns one package-level type when present.
+func packageObjectType(guardPackage *sourceGuardPackage, name string) types.Type {
+	object := guardPackage.pkg.Scope().Lookup(name)
+	if object == nil {
+		return nil
+	}
+
+	return object.Type()
 }
 
 // canonicalCorpusOperationIDs derives selectors from every authoritative checked-in corpus document.
@@ -822,18 +1056,134 @@ func topLevelExportedNames(file *ast.File) []string {
 	return names
 }
 
-// productionASTs parses the complete production package for cross-file ownership checks.
-func productionASTs(t *testing.T) []*ast.File {
+// sourceGuardPackage holds one package's shared syntax and semantic type information.
+type sourceGuardPackage struct {
+	files   []*ast.File
+	fset    *token.FileSet
+	pkg     *types.Package
+	info    *types.Info
+	sources map[*ast.File][]byte
+}
+
+// productionGuardPackage loads every production file into one semantic package.
+func productionGuardPackage(t *testing.T) *sourceGuardPackage {
 	t.Helper()
 
-	files := productionGoFiles(t)
+	sources := make(map[string]string)
 
-	parsed := make([]*ast.File, 0, len(files))
-	for _, file := range files {
-		parsed = append(parsed, parseGoFile(t, file))
+	for _, file := range productionGoFiles(t) {
+		source, err := os.ReadFile(file)
+		require.NoError(t, err)
+
+		sources[file] = string(source)
 	}
 
-	return parsed
+	return parseGuardPackage(t, sources)
+}
+
+// parseGuardPackage parses and type-checks a package-wide synthetic or production source set.
+func parseGuardPackage(t *testing.T, sources map[string]string) *sourceGuardPackage {
+	t.Helper()
+
+	fset := token.NewFileSet()
+
+	filenames := make([]string, 0, len(sources))
+	for filename := range sources {
+		filenames = append(filenames, filename)
+	}
+
+	slices.Sort(filenames)
+
+	guardPackage := &sourceGuardPackage{
+		fset:    fset,
+		sources: make(map[*ast.File][]byte, len(sources)),
+		info: &types.Info{
+			Types:      make(map[ast.Expr]types.TypeAndValue),
+			Defs:       make(map[*ast.Ident]types.Object),
+			Uses:       make(map[*ast.Ident]types.Object),
+			Selections: make(map[*ast.SelectorExpr]*types.Selection),
+		},
+	}
+	for _, filename := range filenames {
+		source := []byte(sources[filename])
+		file, err := parser.ParseFile(fset, filename, source, 0)
+		require.NoError(t, err)
+
+		guardPackage.files = append(guardPackage.files, file)
+		guardPackage.sources[file] = source
+	}
+
+	configuration := types.Config{Importer: moduleSourceImporter(fset)}
+	checked, err := configuration.Check(
+		"github.com/djosh34/klopt/pkg/schematest",
+		fset,
+		guardPackage.files,
+		guardPackage.info,
+	)
+	require.NoError(t, err)
+
+	guardPackage.pkg = checked
+
+	return guardPackage
+}
+
+// moduleSourceImporter resolves module dependencies through their Go export data.
+func moduleSourceImporter(fset *token.FileSet) types.Importer {
+	cache := make(map[string]string)
+	lookup := func(path string) (io.ReadCloser, error) {
+		exportFile, found := cache[path]
+		if !found {
+			command := exec.Command("go", "list", "-export", "-f", "{{.Export}}", path)
+
+			output, err := command.Output()
+			if err != nil {
+				return nil, fmt.Errorf("locate export data for %s: %w", path, err)
+			}
+
+			exportFile = strings.TrimSpace(string(output))
+			if exportFile == "" {
+				return nil, fmt.Errorf("locate export data for %s: empty path", path)
+			}
+
+			cache[path] = exportFile
+		}
+
+		reader, err := os.Open(exportFile)
+		if err != nil {
+			return nil, fmt.Errorf("open export data for %s: %w", path, err)
+		}
+
+		return reader, nil
+	}
+
+	return importer.ForCompiler(fset, "gc", lookup)
+}
+
+// publicMethodSetViolations resolves aliases before checking locked public method sets.
+func publicMethodSetViolations(guardPackage *sourceGuardPackage) []string {
+	var violations []string
+
+	seen := make(map[*types.Func]bool)
+
+	for _, name := range []string{"Input", "Case", "StopReason", "Report"} {
+		object := guardPackage.pkg.Scope().Lookup(name)
+		if object == nil {
+			continue
+		}
+
+		for _, receiver := range []types.Type{object.Type(), types.NewPointer(object.Type())} {
+			methods := types.NewMethodSet(receiver)
+			for index := range methods.Len() {
+				method, ok := methods.At(index).Obj().(*types.Func)
+				if ok && method.Exported() && method.Pkg() == guardPackage.pkg && !seen[method] {
+					seen[method] = true
+					violations = append(violations, "exported method on public type: "+method.Name())
+				}
+			}
+		}
+	}
+
+	return violations
 }
 
 // productionGoFiles lists package implementation files from the checked-out directory.

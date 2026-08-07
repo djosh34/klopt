@@ -65,11 +65,11 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	short, err := measureBuildMemory(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100}, 3,
 	)
-	require.NoError(t, err)
+	require.NoError(t, err, "measurement=%+v", short)
 	long, err := measureBuildMemory(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 5_000}, 39,
 	)
-	require.NoError(t, err)
+	require.NoError(t, err, "measurement=%+v", long)
 
 	t.Logf("retention measurements: short=%+v long=%+v", short, long)
 
@@ -134,18 +134,18 @@ func measureBuildMemory(input Input, measureAtCase int) (buildMemoryMeasurement,
 		return buildMemoryMeasurement{}, err
 	}
 
-	if measurement.callbackHeap == 0 {
-		return buildMemoryMeasurement{}, fmt.Errorf(
-			"memory sample callback %d was not reached; observed %d cases", measureAtCase, measurement.cases,
-		)
-	}
-
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 
 	measurement.steps = report.Steps
 	measurement.stop = report.Stop
 	measurement.totalAllocated = after.TotalAlloc - before.TotalAlloc
+
+	if measurement.callbackHeap == 0 {
+		return measurement, fmt.Errorf(
+			"memory sample callback %d was not reached; measurement=%+v", measureAtCase, measurement,
+		)
+	}
 
 	return measurement, nil
 }
@@ -157,12 +157,21 @@ func TestBuildMemoryMeasurementPreservesRawResultsAndRequiresItsSample(t *testin
 	require.Equal(t, int64(25), signedHeapDifference(125, 100))
 	require.Equal(t, int64(-25), signedHeapDifference(100, 125))
 
-	_, err := measureBuildMemory(Input{
+	measurement, err := measureBuildMemory(Input{
 		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"boolean"}`)),
 		OperationID: "selected",
 		MaxSteps:    5,
 	}, 100)
 	require.ErrorContains(t, err, "memory sample callback 100 was not reached")
+	require.Equal(t, uint64(5), measurement.budget)
+	require.Equal(t, 2, measurement.cases)
+	require.Equal(t, uint64(5), measurement.steps)
+	require.Equal(t, SpaceExhausted, measurement.stop)
+	require.NotZero(t, measurement.preRunHeap)
+	require.Zero(t, measurement.callbackHeap)
+	require.Zero(t, measurement.retained)
+	require.Positive(t, measurement.totalAllocated)
+	require.Contains(t, err.Error(), fmt.Sprintf("measurement=%+v", measurement))
 }
 
 // signedHeapDifference preserves both positive and negative raw heap deltas.

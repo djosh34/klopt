@@ -39,7 +39,7 @@ func BenchmarkBuildStress(b *testing.B) {
 
 			measurement, err := measureBuildMemory(input, warmCases)
 			if err != nil {
-				b.Fatal(err)
+				b.Fatalf("measure stress Build: %v; measurement=%+v", err, measurement)
 			}
 
 			b.ReportAllocs()
