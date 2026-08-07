@@ -33,10 +33,11 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 		{JSON: []byte(`"b"`), Valid: true},
 		{JSON: []byte(`"b"`), Valid: true},
 		{JSON: []byte(`"b"`), Valid: true},
+		{JSON: []byte(`"a"`), Valid: false},
 	}, firstCases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 95,
+		Steps: 106,
 		Covered: []string{
 			schemaPointer + "|#|type|level:string",
 			schemaPointer + "|#|minLength|level:valid",
@@ -45,6 +46,7 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 			schemaPointer + "|#|allOf|level:all-true",
 			schemaPointer + "/allOf/0|#|type|level:string",
 			schemaPointer + "/allOf/0|#|pattern|level:valid",
+			schemaPointer + "/allOf/0|#|pattern|fault:pattern",
 		},
 		Uncovered: []string{
 			schemaPointer + "|#|type|fault:type",
@@ -56,7 +58,6 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 			schemaPointer + "/allOf/0|#|type|level:number",
 			schemaPointer + "/allOf/0|#|type|level:array",
 			schemaPointer + "/allOf/0|#|type|level:object",
-			schemaPointer + "/allOf/0|#|pattern|fault:pattern",
 		},
 	}, firstReport)
 	require.Equal(t, firstCases, secondCases)

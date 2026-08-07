@@ -28,7 +28,7 @@ func applyNonCompositionFault(parent *jsonValue, fault faultTarget, s *search) (
 	}
 
 	if !found {
-		return nil, fmt.Errorf("schematest: planned fault has no isolated derivative: %s", fault.obligation.String())
+		return nil, fmt.Errorf("%w: %s", errFaultNotFound, fault.obligation.String())
 	}
 
 	if assignErr := s.assign(); assignErr != nil {

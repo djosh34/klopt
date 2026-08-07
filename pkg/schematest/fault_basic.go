@@ -6,6 +6,9 @@ import (
 	"math/big"
 )
 
+// errFaultNotFound leaves an unrealizable planned fault uncovered.
+var errFaultNotFound = errors.New("schematest: planned fault has no isolated derivative")
+
 // streamBasicFaults visits supported faults in planner order.
 func streamBasicFaults(
 	plan *searchPlan,
@@ -14,8 +17,7 @@ func streamBasicFaults(
 	yield func(Case) error,
 ) (StopReason, error) {
 	for _, fault := range plan.faultTargets {
-		if fault.obligation.rule == oracleRuleAllOf || fault.obligation.rule == oracleRuleAnyOf ||
-			faultHasCompositionPins(fault) {
+		if faultHasCompositionPins(fault) && !faultIsCompositionTarget(fault) {
 			continue
 		}
 
@@ -31,7 +33,7 @@ func streamBasicFaults(
 	return SpaceExhausted, nil
 }
 
-// faultHasCompositionPins reports whether a later composition task owns the fault.
+// faultHasCompositionPins reports whether a fault has composition context.
 func faultHasCompositionPins(fault faultTarget) bool {
 	for _, pin := range fault.pins {
 		if pin.hasBranch {
@@ -42,9 +44,22 @@ func faultHasCompositionPins(fault faultTarget) bool {
 	return false
 }
 
+// faultIsCompositionTarget reports whether the composition phase owns the fault.
+func faultIsCompositionTarget(fault faultTarget) bool {
+	if faultNeedsCompositionSearch(fault) {
+		return true
+	}
+
+	for _, pin := range fault.pins {
+		if pin.hasBranch && pin.composition == "allOf" && !pin.truth {
+			return true
+		}
+	}
+
+	return false
+}
+
 // streamBasicFault replays, applies, verifies, and emits one fault derivative.
-//
-//nolint:cyclop // Replay, cutoff, exact verification, serialization, and streaming form one seam.
 func streamBasicFault(
 	plan *searchPlan,
 	fault faultTarget,
@@ -57,17 +72,13 @@ func streamBasicFault(
 		return err
 	}
 
-	derivative, found, err := findNonCompositionDerivative(parent, fault, s)
-	if err != nil {
-		return err
-	}
-
-	if !found {
+	derivative, err := applyFault(parent, fault, s)
+	if errors.Is(err, errFaultNotFound) {
 		return nil
 	}
 
-	if assignErr := s.assign(); assignErr != nil {
-		return assignErr
+	if err != nil {
+		return err
 	}
 
 	result := evaluate(s.model, derivative)
@@ -141,18 +152,30 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 func parentReplayPins(fault faultTarget) []applicabilityPin {
 	pins := copyPlanPins(fault.pins)
 	for index := range pins {
-		if !instanceTemplateMatches(
-			fault.obligation.occurrence.instanceTemplate,
-			pins[index].occurrence.instanceTemplate,
-		) {
-			continue
+		if pins[index].hasBranch {
+			if pins[index].composition == "anyOf" {
+				pins[index].hasBranch = false
+			} else {
+				pins[index].truth = true
+			}
 		}
 
-		switch fault.obligation.rule {
-		case oracleRuleRequired:
-			pins[index].presence = planPinPresent
-		case oracleRuleAdditionalProperties:
-			pins[index].presence = planPinAbsent
+		for _, failure := range fault.closure {
+			if !instanceTemplateMatches(
+				failure.occurrence.instanceTemplate,
+				pins[index].occurrence.instanceTemplate,
+			) {
+				continue
+			}
+
+			switch failure.rule {
+			case oracleRuleRequired:
+				pins[index].presence = planPinPresent
+			case oracleRuleAdditionalProperties:
+				pins[index].presence = planPinAbsent
+			default:
+				pins[index].hasKind = false
+			}
 		}
 	}
 
@@ -177,6 +200,10 @@ func faultPinsMatch(result evaluation, value *jsonValue, pins []applicabilityPin
 
 // applyFault copies the current parent, charges one fault choice, and applies one fault.
 func applyFault(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, error) {
+	if faultNeedsCompositionSearch(fault) {
+		return applyCompositionFault(parent, fault, s)
+	}
+
 	return applyNonCompositionFault(parent, fault, s)
 }
 
