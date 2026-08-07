@@ -214,11 +214,24 @@ func TestBuildSearchesRemainingFormatsAcrossActiveSiblingConstraints(t *testing.
 		pattern string
 		length  int
 		witness string
+		stop    StopReason
 	}{
-		{name: "email", format: "email", pattern: `^a@b$`, length: 3, witness: "a@b"},
-		{name: "ipv4", format: "ipv4", pattern: `^255\\.255\\.255\\.255$`, length: 15, witness: "255.255.255.255"},
-		{name: "cidr", format: "cidr", pattern: `^192\\.0\\.2\\.7/32$`, length: 12, witness: "192.0.2.7/32"},
-		{name: "ipv4-cidr", format: "ipv4-cidr", pattern: `^192\\.0\\.2\\.7/32$`, length: 12, witness: "192.0.2.7/32"},
+		{
+			name: "email", format: "email", pattern: `^a@b$`, length: 3,
+			witness: "a@b", stop: SpaceExhausted,
+		},
+		{
+			name: "ipv4", format: "ipv4", pattern: `^255\\.255\\.255\\.255$`, length: 15,
+			witness: "255.255.255.255", stop: MaxStepsReached,
+		},
+		{
+			name: "cidr", format: "cidr", pattern: `^192\\.0\\.2\\.7/32$`, length: 12,
+			witness: "192.0.2.7/32", stop: MaxStepsReached,
+		},
+		{
+			name: "ipv4-cidr", format: "ipv4-cidr", pattern: `^192\\.0\\.2\\.7/32$`, length: 12,
+			witness: "192.0.2.7/32", stop: MaxStepsReached,
+		},
 	}
 
 	for _, test := range tests {
@@ -237,7 +250,7 @@ func TestBuildSearchesRemainingFormatsAcrossActiveSiblingConstraints(t *testing.
 			})
 			require.NoError(t, err)
 			require.Contains(t, cases, Case{JSON: []byte(`"` + test.witness + `"`), Valid: true})
-			require.Equal(t, SpaceExhausted, report.Stop)
+			require.Equal(t, test.stop, report.Stop)
 		})
 	}
 }

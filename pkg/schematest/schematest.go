@@ -108,7 +108,99 @@ func Build(input Input, yield func(Case) error) (Report, error) {
 		}
 	}
 
+	if stop == SpaceExhausted {
+		stopped, streamErr := streamStringFaults(plan, searchState, yield, covered)
+		if streamErr != nil {
+			return Report{}, streamErr
+		}
+
+		if stopped {
+			stop = MaxStepsReached
+		}
+	}
+
 	return buildReport(plan, searchState.steps, stop, covered), nil
+}
+
+// streamStringFaults runs pattern, format, minimum-length, and maximum-length
+// objectives after the complete valid schedule.
+func streamStringFaults(
+	plan *searchPlan,
+	searchState *search,
+	yield func(Case) error,
+	covered map[string]bool,
+) (bool, error) {
+	for kind := stringSearchPatternFalse; kind <= stringSearchMaxLengthFalse; kind++ {
+		for _, target := range plan.faultTargets {
+			targetKind, stringFault := stringFaultObjectiveKind(target.obligation.rule)
+			if !stringFault || targetKind != kind || !faultTargetPinsString(target) {
+				continue
+			}
+
+			stopped, err := streamStringFault(target, searchState, yield, covered)
+			if stopped || err != nil {
+				return stopped, err
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// streamStringFault verifies and emits one directed string objective.
+func streamStringFault(
+	target faultTarget,
+	searchState *search,
+	yield func(Case) error,
+	covered map[string]bool,
+) (bool, error) {
+	row, found, err := findStringFaultRow(target, searchState)
+	if err != nil {
+		if errors.Is(err, errMaxSteps) {
+			return true, nil
+		}
+
+		return false, fmt.Errorf("search string fault %s: %w", target.obligation.String(), err)
+	}
+
+	if !found {
+		return false, nil
+	}
+
+	encoded, err := marshalStrict(row)
+	if err != nil {
+		return false, fmt.Errorf("serialize string fault %s: %w", target.obligation.String(), err)
+	}
+
+	result := evaluate(searchState.model, row)
+	if result.err != nil {
+		return false, fmt.Errorf("re-evaluate string fault %s: %w", target.obligation.String(), result.err)
+	}
+
+	matches, err := exactStringFailureClosure(result.failures, target.closure)
+	if err != nil {
+		return false, fmt.Errorf("verify string fault %s: %w", target.obligation.String(), err)
+	}
+
+	if result.valid || !matches {
+		return false, fmt.Errorf("generated string fault %s has an unexpected oracle verdict", target.obligation.String())
+	}
+
+	covered[target.obligation.String()] = true
+
+	return false, yield(Case{JSON: encoded, Valid: false})
+}
+
+// faultTargetPinsString distinguishes string format objectives from numeric formats.
+func faultTargetPinsString(target faultTarget) bool {
+	for _, pin := range target.pins {
+		if pin.hasKind && pin.kind == jsonString &&
+			rowOccurrenceMatches(pin.occurrence, target.obligation.occurrence) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // markObservedValidTargets records every valid obligation observed by one row.
