@@ -90,7 +90,7 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 
 	expectedReport := Report{
 		Stop:  SpaceExhausted,
-		Steps: 82,
+		Steps: 76,
 		Covered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:array",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|minItems|level:valid",
@@ -110,14 +110,14 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 		},
 	}
 	expectedCases := []Case{
-		{JSON: []byte(`[-1]`), Valid: true},
-		{JSON: []byte(`[-1]`), Valid: true},
-		{JSON: []byte(`[-1]`), Valid: true},
+		{JSON: []byte(`[0]`), Valid: true},
+		{JSON: []byte(`[0]`), Valid: true},
+		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[""]`), Valid: true},
 		{JSON: []byte(`[""]`), Valid: true},
-		{JSON: []byte(`[-1]`), Valid: true},
+		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[""]`), Valid: true},
-		{JSON: []byte(`[-1]`), Valid: true},
+		{JSON: []byte(`[0]`), Valid: true},
 	}
 
 	firstReport, firstCases, err := collect()
@@ -217,7 +217,7 @@ func TestBuildRepairsCanonicalObjectPresenceForSuppliedProperty(t *testing.T) {
 
 	expectedReport := Report{
 		Stop:  SpaceExhausted,
-		Steps: 63,
+		Steps: 43,
 		Covered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:object",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|minProperties|level:valid",
@@ -238,7 +238,7 @@ func TestBuildRepairsCanonicalObjectPresenceForSuppliedProperty(t *testing.T) {
 		{JSON: []byte(`{"a":""}`), Valid: true},
 		{JSON: []byte(`{"a":""}`), Valid: true},
 		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"b":-1}`), Valid: true},
+		{JSON: []byte(`{"b":0}`), Valid: true},
 	}
 
 	firstReport, firstCases, err := collect()
@@ -312,7 +312,7 @@ func TestBuildStreamsObjectPresenceAndPropertyTargets(t *testing.T) {
 		{JSON: []byte(`{"id":""}`), Valid: true},
 		{JSON: []byte(`{"__schematest_extra__":false,"id":""}`), Valid: true},
 		{JSON: []byte(`{"id":""}`), Valid: true},
-		{JSON: []byte(`{"id":"","optional":-1}`), Valid: true},
+		{JSON: []byte(`{"id":"","optional":0}`), Valid: true},
 	}
 
 	firstReport, firstCases, err := collect()

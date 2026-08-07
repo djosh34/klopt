@@ -7,6 +7,8 @@ import (
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
+//
+//nolint:cyclop // Enum, number, string, and finite primitive paths share one scalar seam.
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -15,6 +17,19 @@ func (s *search) walkScalar(
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
+	if node.enum == nil && kind == jsonNumber {
+		return s.walkActiveScalarPinAlternatives(
+			node,
+			occurrence,
+			append([]applicabilityPin(nil), pins...),
+			func(activePins []applicabilityPin) (bool, error) {
+				return s.walkActiveNumberRules(
+					node, occurrence, activePins, context.validTarget, visit,
+				)
+			},
+		)
+	}
+
 	candidates, err := rowScalarValues(node, kind)
 	if err != nil {
 		return false, err
@@ -36,17 +51,6 @@ func (s *search) walkScalar(
 	}
 
 	switch kind {
-	case jsonNumber:
-		return s.walkActiveScalarPinAlternatives(
-			node,
-			occurrence,
-			append([]applicabilityPin(nil), pins...),
-			func(activePins []applicabilityPin) (bool, error) {
-				return s.walkActiveNumberRules(
-					node, occurrence, activePins, context.validTarget, visit,
-				)
-			},
-		)
 	case jsonString:
 		return s.walkActiveScalarPinAlternatives(
 			node,
@@ -174,31 +178,9 @@ func rowScalarValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 
 	var candidates []*jsonValue
 
-	var err error
-
-	hasDeterministicNumberCandidates := kind == jsonNumber && nodeHasNumberCandidateRules(node)
-	if hasDeterministicNumberCandidates {
-		candidates, err = numberDeterministicCandidates(node)
-	} else {
-		candidates, err = canonicalKindWitnesses(kind)
-	}
-
+	candidates, err := canonicalKindWitnesses(kind)
 	if err != nil {
 		return nil, err
-	}
-
-	if hasDeterministicNumberCandidates {
-		canonical, canonicalErr := canonicalKindWitnesses(kind)
-		if canonicalErr != nil {
-			return nil, canonicalErr
-		}
-
-		for _, candidate := range canonical {
-			candidates, err = appendUniqueJSONWitness(candidates, candidate)
-			if err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	if node.defaultValue != nil && node.defaultValue.kind == kind {

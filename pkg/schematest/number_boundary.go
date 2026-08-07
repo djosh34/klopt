@@ -5,109 +5,216 @@ import (
 	"math/big"
 )
 
-// numberDeterministicCandidates returns exact boundary, divisibility, and integer-format candidates.
-func numberDeterministicCandidates(node *schemaNode) ([]*jsonValue, error) {
-	if node == nil || node.schemaShape == nil {
-		return nil, errors.New("schematest: number boundary schema has no shape")
-	}
+// numberRuleValueCount is the count of scale-bearing numeric rule values.
+const numberRuleValueCount = 3
 
-	quantum, err := numberBoundaryQuantum(node)
-	if err != nil {
-		return nil, err
-	}
-
-	var candidates []*jsonValue
-
-	err = appendNumberBoundaryTriplet(&candidates, node.minimum, quantum, true)
-	if err != nil {
-		return nil, err
-	}
-
-	err = appendNumberBoundaryTriplet(&candidates, node.maximum, quantum, false)
-	if err != nil {
-		return nil, err
-	}
-
-	zero, err := parseExactNumber("0")
-	if err != nil {
-		return nil, err
-	}
-
-	candidates, err = appendUniqueJSONWitness(
-		candidates,
-		&jsonValue{kind: jsonNumber, number: zero},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := appendNumberMultipleCandidates(&candidates, node.multipleOf, quantum); err != nil {
-		return nil, err
-	}
-
-	if err := appendNumberFormatCandidates(&candidates, node.format); err != nil {
-		return nil, err
-	}
-
-	return candidates, nil
+// numberSchedule is the exact numeric conjunction for one pinned composition view.
+type numberSchedule struct {
+	rules   []activeNumberRule
+	quantum *exactNumber
+	seeded  bool
 }
 
-// appendNumberMultipleCandidates appends the divisor and its directed exact neighbors.
-func appendNumberMultipleCandidates(
-	candidates *[]*jsonValue,
-	divisor, quantum *exactNumber,
-) error {
-	if divisor == nil {
-		return nil
+// newNumberSchedule compiles one active conjunction and its shared quantum.
+//
+//nolint:cyclop // Active kind, scale, and frontier policy are compiled in one pass.
+func newNumberSchedule(rules []activeNumberRule) (numberSchedule, error) {
+	if len(rules) == 0 {
+		return numberSchedule{}, errors.New("schematest: number schedule has no active schemas")
 	}
 
-	negativeDivisor, err := newExactNumber(
-		new(big.Int).Neg(divisor.numerator),
-		divisor.denominator,
-		divisor.exponent,
-		divisor.scale,
-	)
-	if err != nil {
-		return err
-	}
+	integer := false
+	seeded := false
 
-	positiveNeighbor, err := addExactNumbers(divisor, quantum)
-	if err != nil {
-		return err
-	}
+	numbers := make([]*exactNumber, 0, len(rules)*numberRuleValueCount)
+	for _, rule := range rules {
+		if rule.node == nil || rule.node.schemaShape == nil {
+			return numberSchedule{}, errors.New("schematest: number boundary schema has no shape")
+		}
 
-	negativeQuantum, err := newExactNumber(
-		new(big.Int).Neg(quantum.numerator),
-		quantum.denominator,
-		quantum.exponent,
-		quantum.scale,
-	)
-	if err != nil {
-		return err
-	}
+		integer = integer || rule.node.kind == schemaInteger
 
-	negativeNeighbor, err := addExactNumbers(divisor, negativeQuantum)
-	if err != nil {
-		return err
-	}
-
-	for _, number := range []*exactNumber{divisor, negativeDivisor, positiveNeighbor, negativeNeighbor} {
-		var appendErr error
-
-		*candidates, appendErr = appendUniqueJSONWitness(
-			*candidates,
-			&jsonValue{kind: jsonNumber, number: number},
-		)
-		if appendErr != nil {
-			return appendErr
+		seeded = seeded || nodeHasNumberSearchRules(rule.node)
+		for _, number := range []*exactNumber{rule.node.minimum, rule.node.maximum, rule.node.multipleOf} {
+			if number != nil {
+				numbers = append(numbers, number)
+			}
 		}
 	}
 
-	return nil
+	var (
+		quantum *exactNumber
+		err     error
+	)
+	if integer || len(numbers) == 0 {
+		quantum, err = parseExactNumber("1")
+	} else {
+		quantum, err = exactQuantum(numbers...)
+	}
+
+	if err != nil {
+		return numberSchedule{}, err
+	}
+
+	return numberSchedule{rules: rules, quantum: quantum, seeded: seeded}, nil
 }
 
-// appendNumberFormatCandidates appends exact signed format edges and outside values.
-func appendNumberFormatCandidates(candidates *[]*jsonValue, format schemaFormat) error {
+// numberCandidateEmitter incrementally deduplicates and assigns exact scalar choices.
+type numberCandidateEmitter struct {
+	search *search
+	visit  rowVisit
+	seen   []*exactNumber
+}
+
+// emit charges and visits one first-occurrence exact edge.
+func (emitter *numberCandidateEmitter) emit(number *exactNumber) (bool, error) {
+	for _, earlier := range emitter.seen {
+		equal, err := number.compare(earlier)
+		if err != nil {
+			return false, err
+		}
+
+		if equal == 0 {
+			return false, nil
+		}
+	}
+
+	if err := emitter.search.assign(); err != nil {
+		return false, err
+	}
+
+	emitter.seen = append(emitter.seen, number)
+
+	return emitter.visit(&jsonValue{kind: jsonNumber, number: number})
+}
+
+// makeAndEmit checks the global stop before constructing the next exact neighbor.
+func (emitter *numberCandidateEmitter) makeAndEmit(
+	makeNumber func() (*exactNumber, error),
+) (bool, error) {
+	if emitter.search.steps == emitter.search.maxSteps {
+		return false, errMaxSteps
+	}
+
+	number, err := makeNumber()
+	if err != nil {
+		return false, err
+	}
+
+	return emitter.emit(number)
+}
+
+// walkNumberDeterministic emits global boundary phases in canonical active-rule order.
+func (s *search) walkNumberDeterministic(
+	schedule numberSchedule,
+	visit rowVisit,
+) (bool, error) {
+	emitter := numberCandidateEmitter{search: s, visit: visit}
+
+	return emitter.walkDeterministic(schedule)
+}
+
+// walkDeterministic emits all finite phases in their required global order.
+//
+//nolint:cyclop // The required numeric phases are deliberately explicit and ordered.
+func (emitter *numberCandidateEmitter) walkDeterministic(
+	schedule numberSchedule,
+) (bool, error) {
+	for _, rule := range schedule.rules {
+		complete, err := emitter.walkBoundary(rule.node.minimum, schedule.quantum, true)
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	for _, rule := range schedule.rules {
+		complete, err := emitter.walkBoundary(rule.node.maximum, schedule.quantum, false)
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	complete, err := emitter.makeAndEmit(func() (*exactNumber, error) {
+		return parseExactNumber("0")
+	})
+	if err != nil || complete {
+		return complete, err
+	}
+
+	for _, rule := range schedule.rules {
+		complete, err = emitter.walkMultiple(rule.node.multipleOf, schedule.quantum)
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	for _, rule := range schedule.rules {
+		complete, err = emitter.walkFormat(rule.node.format)
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	return false, nil
+}
+
+// walkBoundary emits a bound followed by its directed exact neighbors.
+func (emitter *numberCandidateEmitter) walkBoundary(
+	bound, quantum *exactNumber,
+	minimum bool,
+) (bool, error) {
+	if bound == nil {
+		return false, nil
+	}
+
+	complete, err := emitter.emit(bound)
+	if err != nil || complete {
+		return complete, err
+	}
+
+	firstSign := int64(1)
+	if !minimum {
+		firstSign = -1
+	}
+
+	for _, sign := range []int64{firstSign, -firstSign} {
+		complete, err = emitter.makeAndEmit(func() (*exactNumber, error) {
+			return addSignedExactNumbers(bound, quantum, sign)
+		})
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	return false, nil
+}
+
+// walkMultiple emits the divisor, its negative, and directed neighbors.
+func (emitter *numberCandidateEmitter) walkMultiple(
+	divisor, quantum *exactNumber,
+) (bool, error) {
+	if divisor == nil {
+		return false, nil
+	}
+
+	factories := []func() (*exactNumber, error){
+		func() (*exactNumber, error) { return divisor, nil },
+		func() (*exactNumber, error) { return negateExactNumber(divisor) },
+		func() (*exactNumber, error) { return addSignedExactNumbers(divisor, quantum, 1) },
+		func() (*exactNumber, error) { return addSignedExactNumbers(divisor, quantum, -1) },
+	}
+	for _, factory := range factories {
+		complete, err := emitter.makeAndEmit(factory)
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	return false, nil
+}
+
+// walkFormat emits the active format's exact inside and outside edges.
+func (emitter *numberCandidateEmitter) walkFormat(format schemaFormat) (bool, error) {
 	var sources []string
 
 	switch format {
@@ -119,151 +226,125 @@ func appendNumberFormatCandidates(candidates *[]*jsonValue, format schemaFormat)
 			"9223372036854775807", "9223372036854775808",
 		}
 	case schemaFormatFloat, schemaFormatDouble:
-		return appendNumberFloatFormatCandidates(candidates, format)
+		return emitter.walkFloatFormat(format)
 	default:
-		return nil
+		return false, nil
 	}
 
 	for _, source := range sources {
-		number, err := parseExactNumber(source)
-		if err != nil {
-			return err
-		}
+		value := source
 
-		*candidates, err = appendUniqueJSONWitness(
-			*candidates,
-			&jsonValue{kind: jsonNumber, number: number},
-		)
-		if err != nil {
-			return err
+		complete, err := emitter.makeAndEmit(func() (*exactNumber, error) {
+			return parseExactNumber(value)
+		})
+		if err != nil || complete {
+			return complete, err
 		}
 	}
 
-	return nil
+	return false, nil
 }
 
-// appendNumberFloatFormatCandidates uses the exact finite-overflow cutoff.
-func appendNumberFloatFormatCandidates(candidates *[]*jsonValue, format schemaFormat) error {
+// walkFloatFormat emits exact finite-overflow edges incrementally.
+func (emitter *numberCandidateEmitter) walkFloatFormat(format schemaFormat) (bool, error) {
+	if emitter.search.steps == emitter.search.maxSteps {
+		return false, errMaxSteps
+	}
+
 	limit, err := exactBinaryFloatOverflowLimit(format)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	one, err := parseExactNumber("1")
-	if err != nil {
-		return err
-	}
+	factories := []func() (*exactNumber, error){
+		func() (*exactNumber, error) {
+			negativeLimit, negateErr := negateExactNumber(limit)
+			if negateErr != nil {
+				return nil, negateErr
+			}
 
-	negativeOne, err := parseExactNumber("-1")
-	if err != nil {
-		return err
-	}
+			one, oneErr := parseExactNumber("1")
+			if oneErr != nil {
+				return nil, oneErr
+			}
 
-	positiveInside, err := addExactNumbers(limit, negativeOne)
-	if err != nil {
-		return err
-	}
+			return addSignedExactNumbers(negativeLimit, one, 1)
+		},
+		func() (*exactNumber, error) { return negateExactNumber(limit) },
+		func() (*exactNumber, error) {
+			one, oneErr := parseExactNumber("1")
+			if oneErr != nil {
+				return nil, oneErr
+			}
 
-	negativeLimit, err := newExactRational(new(big.Int).Neg(limit.numerator), limit.denominator)
-	if err != nil {
-		return err
+			return addSignedExactNumbers(limit, one, -1)
+		},
+		func() (*exactNumber, error) { return limit, nil },
 	}
-
-	negativeInside, err := addExactNumbers(negativeLimit, one)
-	if err != nil {
-		return err
-	}
-
-	for _, number := range []*exactNumber{negativeInside, negativeLimit, positiveInside, limit} {
-		*candidates, err = appendUniqueJSONWitness(
-			*candidates,
-			&jsonValue{kind: jsonNumber, number: number},
-		)
-		if err != nil {
-			return err
+	for _, factory := range factories {
+		complete, walkErr := emitter.makeAndEmit(factory)
+		if walkErr != nil || complete {
+			return complete, walkErr
 		}
 	}
 
-	return nil
+	return false, nil
+}
+
+// negateExactNumber returns the exact additive inverse.
+func negateExactNumber(number *exactNumber) (*exactNumber, error) {
+	return newExactNumber(
+		new(big.Int).Neg(number.numerator), number.denominator, number.exponent, number.scale,
+	)
+}
+
+// addSignedExactNumbers adds or subtracts right according to sign.
+func addSignedExactNumbers(left, right *exactNumber, sign int64) (*exactNumber, error) {
+	if sign >= 0 {
+		return addExactNumbers(left, right)
+	}
+
+	negative, err := negateExactNumber(right)
+	if err != nil {
+		return nil, err
+	}
+
+	return addExactNumbers(left, negative)
+}
+
+// numberDeterministicCandidates collects the finite schedule for focused golden tests.
+func numberDeterministicCandidates(node *schemaNode) ([]*jsonValue, error) {
+	schedule, err := newNumberSchedule([]activeNumberRule{{node: node}})
+	if err != nil {
+		return nil, err
+	}
+
+	state := &search{maxSteps: ^uint64(0)}
+	candidates := make([]*jsonValue, 0)
+
+	_, err = state.walkNumberDeterministic(schedule, func(value *jsonValue) (bool, error) {
+		candidates = append(candidates, value)
+
+		return false, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return candidates, nil
 }
 
 // numberBoundaryQuantum returns one for integer schemas and the finest authored numeric unit otherwise.
 func numberBoundaryQuantum(node *schemaNode) (*exactNumber, error) {
-	if node.kind == schemaInteger {
-		return parseExactNumber("1")
+	schedule, err := newNumberSchedule([]activeNumberRule{{node: node}})
+	if err != nil {
+		return nil, err
 	}
 
-	var numbers []*exactNumber
-	if node.minimum != nil {
-		numbers = append(numbers, node.minimum)
-	}
-
-	if node.maximum != nil {
-		numbers = append(numbers, node.maximum)
-	}
-
-	if node.multipleOf != nil {
-		numbers = append(numbers, node.multipleOf)
-	}
-
-	if len(numbers) == 0 {
-		return parseExactNumber("1")
-	}
-
-	return exactQuantum(numbers...)
+	return schedule.quantum, nil
 }
 
-// appendNumberBoundaryTriplet appends one bound and its two directed quantum neighbors.
-func appendNumberBoundaryTriplet(
-	candidates *[]*jsonValue,
-	bound, quantum *exactNumber,
-	minimum bool,
-) error {
-	if bound == nil {
-		return nil
-	}
-
-	positive, err := addExactNumbers(bound, quantum)
-	if err != nil {
-		return err
-	}
-
-	negativeQuantum, err := newExactNumber(
-		new(big.Int).Neg(quantum.numerator),
-		quantum.denominator,
-		quantum.exponent,
-		quantum.scale,
-	)
-	if err != nil {
-		return err
-	}
-
-	negative, err := addExactNumbers(bound, negativeQuantum)
-	if err != nil {
-		return err
-	}
-
-	ordered := []*exactNumber{bound, positive, negative}
-	if !minimum {
-		ordered = []*exactNumber{bound, negative, positive}
-	}
-
-	for _, number := range ordered {
-		var appendErr error
-
-		*candidates, appendErr = appendUniqueJSONWitness(
-			*candidates,
-			&jsonValue{kind: jsonNumber, number: number},
-		)
-		if appendErr != nil {
-			return appendErr
-		}
-	}
-
-	return nil
-}
-
-// addExactNumbers adds scaled rationals without binary floating point.
+// addExactNumbers adds scaled rationals without binary floating point or fixed-width exponents.
 func addExactNumbers(left, right *exactNumber) (*exactNumber, error) {
 	if err := left.validate(); err != nil {
 		return nil, err
@@ -279,17 +360,11 @@ func addExactNumbers(left, right *exactNumber) (*exactNumber, error) {
 	}
 
 	leftShift := new(big.Int).Sub(left.exponent, exponent)
-
 	rightShift := new(big.Int).Sub(right.exponent, exponent)
-	if !leftShift.IsUint64() || !rightShift.IsUint64() {
-		return nil, errors.New("schematest: number boundary exponent difference does not fit uint64")
-	}
-
 	leftNumerator := new(big.Int).Mul(left.numerator, right.denominator)
-	leftNumerator.Mul(leftNumerator, decimalPower(leftShift.Uint64()))
-
+	leftNumerator.Mul(leftNumerator, new(big.Int).Exp(big.NewInt(decimalRadix), leftShift, nil))
 	rightNumerator := new(big.Int).Mul(right.numerator, left.denominator)
-	rightNumerator.Mul(rightNumerator, decimalPower(rightShift.Uint64()))
+	rightNumerator.Mul(rightNumerator, new(big.Int).Exp(big.NewInt(decimalRadix), rightShift, nil))
 
 	numerator := new(big.Int).Add(leftNumerator, rightNumerator)
 	denominator := new(big.Int).Mul(left.denominator, right.denominator)

@@ -27,42 +27,20 @@ func (s *search) walkActiveNumberRules(
 		return false, err
 	}
 
-	candidates := make([]*jsonValue, 0)
-	hasNumberRules := false
-
-	for _, rule := range rules {
-		if !nodeHasNumberCandidateRules(rule.node) {
-			continue
-		}
-
-		hasNumberRules = true
-
-		edges, err := numberDeterministicCandidates(rule.node)
-		if err != nil {
-			return false, err
-		}
-
-		for _, edge := range edges {
-			candidates, err = appendUniqueJSONWitness(candidates, edge)
-			if err != nil {
-				return false, err
-			}
-		}
+	schedule, err := newNumberSchedule(rules)
+	if err != nil {
+		return false, err
 	}
 
-	for _, candidate := range candidates {
-		if err := s.assign(); err != nil {
-			return false, err
-		}
+	emitter := numberCandidateEmitter{search: s, visit: visit}
 
-		complete, err := visit(candidate)
-		if err != nil || complete {
-			return complete, err
-		}
+	complete, err := emitter.walkDeterministic(schedule)
+	if err != nil || complete || !schedule.seeded {
+		return complete, err
 	}
 
-	if !hasNumberRules {
-		return false, nil
+	if s.steps == s.maxSteps {
+		return false, errMaxSteps
 	}
 
 	seedNode := node
@@ -88,14 +66,29 @@ func (s *search) walkActiveNumberRules(
 		return false, fmt.Errorf("schematest: canonicalize number search schema: %w", err)
 	}
 
+	seededVisit := func(value *jsonValue) (bool, error) {
+		for _, earlier := range emitter.seen {
+			comparison, compareErr := value.number.compare(earlier)
+			if compareErr != nil {
+				return false, compareErr
+			}
+
+			if comparison == 0 {
+				return false, nil
+			}
+		}
+
+		return visit(value)
+	}
+
 	return s.walkSeededNumberFrontier(
 		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
-		visit,
+		seededVisit,
 	)
 }
 
-// nodeHasNumberCandidateRules reports whether a node contributes an authored numeric edge.
-func nodeHasNumberCandidateRules(node *schemaNode) bool {
+// nodeHasNumberSearchRules reports whether a node requires the fair decimal frontier.
+func nodeHasNumberSearchRules(node *schemaNode) bool {
 	return node.minimum != nil || node.maximum != nil || node.multipleOf != nil ||
 		isNumericSchemaFormat(node.format)
 }
@@ -139,32 +132,81 @@ func collectActiveNumberRules(
 	return nil
 }
 
-// walkSeededNumberFrontier diagonally explores coefficient length and exponent.
+// walkSeededNumberFrontier diagonally explores seeded coefficient-length/exponent shells.
 func (s *search) walkSeededNumberFrontier(seed uint64, visit rowVisit) (bool, error) {
 	for complexity := uint64(1); ; complexity++ {
-		for digitLength := uint64(1); digitLength <= complexity; digitLength++ {
-			for exponentRadius := uint64(0); exponentRadius < complexity; exponentRadius++ {
-				if digitLength != complexity && exponentRadius+1 != complexity {
-					continue
-				}
-
-				if err := s.assign(); err != nil {
-					return false, err
-				}
-
-				complete, err := s.walkSeededNumberExponents(
-					digitLength, exponentRadius, seed, visit,
-				)
-				if err != nil || complete {
-					return complete, err
-				}
-			}
+		complete, err := s.walkSeededNumberShell(complexity, seed, visit)
+		if err != nil || complete {
+			return complete, err
 		}
 
 		if complexity == ^uint64(0) {
 			return false, nil
 		}
 	}
+}
+
+// walkSeededNumberShell visits every pair whose max(length, radius+1) is complexity.
+//
+//nolint:cyclop // Both seeded shell arms use the same charged pair traversal.
+func (s *search) walkSeededNumberShell(
+	complexity,
+	seed uint64,
+	visit rowVisit,
+) (bool, error) {
+	walkPair := func(digitLength, exponentRadius uint64) (bool, error) {
+		if err := s.assign(); err != nil {
+			return false, err
+		}
+
+		return s.walkSeededNumberExponents(digitLength, exponentRadius, seed, visit)
+	}
+
+	walkRadiusArm := func() (bool, error) {
+		rotation := (seed ^ complexity) % complexity
+		for offset := uint64(0); offset < complexity; offset++ {
+			complete, err := walkPair(complexity, (rotation+offset)%complexity)
+			if err != nil || complete {
+				return complete, err
+			}
+		}
+
+		return false, nil
+	}
+
+	walkLengthArm := func() (bool, error) {
+		if complexity == 1 {
+			return false, nil
+		}
+
+		count := complexity - 1
+
+		rotation := (seed>>8 ^ complexity) % count
+		for offset := uint64(0); offset < count; offset++ {
+			length := 1 + (rotation+offset)%count
+
+			complete, err := walkPair(length, complexity-1)
+			if err != nil || complete {
+				return complete, err
+			}
+		}
+
+		return false, nil
+	}
+
+	arms := []func() (bool, error){walkRadiusArm, walkLengthArm}
+	if seed>>16^complexity&1 != 0 {
+		arms[0], arms[1] = arms[1], arms[0]
+	}
+
+	for _, walk := range arms {
+		complete, err := walk()
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	return false, nil
 }
 
 // walkSeededNumberExponents assigns both signs of one exponent radius.

@@ -352,6 +352,140 @@ func TestWalkScalarChargesBoundaryCandidates(t *testing.T) {
 	require.Equal(t, []string{"1", "1.01"}, seen)
 }
 
+// TestWalkScalarCompilesOneActiveNumericSchedule pins conjunction order and one global quantum.
+func TestWalkScalarCompilesOneActiveNumericSchedule(t *testing.T) {
+	t.Parallel()
+
+	selected := &schemaNode{schemaShape: &schemaShape{
+		kind:       schemaNumber,
+		multipleOf: requireExactNumber(t, "0.01"),
+	}}
+	inactive := &schemaNode{schemaShape: &schemaShape{
+		kind:    schemaNumber,
+		minimum: requireExactNumber(t, "100"),
+	}}
+	root := &schemaNode{schemaShape: &schemaShape{
+		kind:    schemaNumber,
+		minimum: requireExactNumber(t, "1.2"),
+		allOf: []*schemaNode{{schemaShape: &schemaShape{
+			kind:    schemaNumber,
+			maximum: requireExactNumber(t, "2.345"),
+		}}},
+		anyOf:      []*schemaNode{selected, inactive},
+		schemaJSON: requireStrictJSONValue(t, `{"type":"number"}`),
+	}}
+	occurrence := schemaOccurrence{usePointer: "#/schema", instanceTemplate: "#"}
+	pins := []applicabilityPin{
+		{
+			occurrence: schemaOccurrence{
+				usePointer: "#/schema/anyOf/0", instanceTemplate: "#",
+			},
+			composition: "anyOf", branch: 0, truth: true, hasBranch: true,
+		},
+		{
+			occurrence: schemaOccurrence{
+				usePointer: "#/schema/anyOf/1", instanceTemplate: "#",
+			},
+			composition: "anyOf", branch: 1, truth: false, hasBranch: true,
+		},
+	}
+
+	state := &search{maxSteps: 100}
+	seen := make([]string, 0, 11)
+	complete, err := state.walkScalar(
+		root, occurrence, pins, rowSearchContext{}, jsonNumber,
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			seen = append(seen, string(encoded))
+
+			return len(seen) == 11, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{
+		"1.2", "1.201", "1.199",
+		"2.345", "2.344", "2.346",
+		"0", "0.01", "-0.01", "0.011", "9e-3",
+	}, seen)
+	require.Equal(t, uint64(len(seen)), state.steps)
+}
+
+// TestWalkScalarUsesIntegerKindFromActiveSibling verifies q=1 for the complete conjunction.
+func TestWalkScalarUsesIntegerKindFromActiveSibling(t *testing.T) {
+	t.Parallel()
+
+	root := &schemaNode{schemaShape: &schemaShape{
+		kind:    schemaNumber,
+		minimum: requireExactNumber(t, "1.20"),
+		allOf: []*schemaNode{{schemaShape: &schemaShape{
+			kind: schemaInteger,
+		}}},
+		schemaJSON: requireStrictJSONValue(t, `{"type":"number"}`),
+	}}
+	state := &search{maxSteps: 3}
+	seen := make([]string, 0, 3)
+	complete, err := state.walkScalar(
+		root,
+		schemaOccurrence{usePointer: "#/schema", instanceTemplate: "#"},
+		nil,
+		rowSearchContext{},
+		jsonNumber,
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			seen = append(seen, string(encoded))
+
+			return len(seen) == 3, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []string{"1.2", "2.2", "0.2"}, seen)
+	require.Equal(t, uint64(3), state.steps)
+}
+
+// TestBuildStopsBeforeConstructingHugeExponentNeighbor exercises incremental public search.
+func TestBuildStopsBeforeConstructingHugeExponentNeighbor(t *testing.T) {
+	t.Parallel()
+
+	for _, exponent := range []string{"18446744073709551616", "1000000000"} {
+		document := []byte(documentWithJSONSchema(
+			`{"type":"number","minimum":1e` + exponent + `}`,
+		))
+		cases := make([]Case, 0, 1)
+		report, err := Build(
+			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 2},
+			func(testCase Case) error {
+				cases = append(cases, testCase)
+
+				return nil
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, MaxStepsReached, report.Stop)
+		require.Equal(t, uint64(2), report.Steps)
+		require.Equal(t, []Case{{JSON: []byte("1e" + exponent), Valid: true}}, cases)
+	}
+}
+
+// requireStrictJSONValue parses one test-only canonical schema value.
+func requireStrictJSONValue(t *testing.T, source string) *jsonValue {
+	t.Helper()
+
+	value, err := parseStrictJSON([]byte(source))
+	require.NoError(t, err)
+
+	return value
+}
+
 // marshalNumberCandidates renders candidate wire bytes for golden assertions.
 func marshalNumberCandidates(t *testing.T, candidates []*jsonValue) []string {
 	t.Helper()
