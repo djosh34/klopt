@@ -134,6 +134,8 @@ func TestLockedPublicAPIGuardRejectsGrowth(t *testing.T) {
 		{name: "exported method", suffix: `func (Input) Extra() {}`},
 		{name: "alias receiver method", suffix: `type inputAlias = Input; func (inputAlias) Extra() {}`},
 		{name: "exported field", suffix: `type ExtraInput struct { Extra string }`},
+		{name: "StopReason alias"},
+		{name: "Input alias"},
 	}
 
 	for _, test := range tests {
@@ -141,8 +143,13 @@ func TestLockedPublicAPIGuardRejectsGrowth(t *testing.T) {
 			t.Parallel()
 
 			source := base + test.suffix
-			if test.name == "exported field" {
+			switch test.name {
+			case "exported field":
 				source = strings.Replace(base, "MaxSteps uint64", "MaxSteps uint64; Extra string", 1)
+			case "StopReason alias":
+				source = strings.Replace(base, "type StopReason string", "type StopReason = string", 1)
+			case "Input alias":
+				source = strings.Replace(base, "type Input struct", "type Input = struct", 1)
 			}
 
 			guardPackage := parseGuardPackage(t, map[string]string{"meta.go": source})
@@ -237,15 +244,28 @@ func TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes(t *testing.T) {
 		`package schematest; type Case struct{}; var saved []Case; func Build() {}`,
 		`package schematest; type Case struct{}; var saved = []Case{}; func Build() {}`,
 		`package schematest; type Case struct{}; func Build() { saved := []Case{}; saved = append(saved, Case{}) }`,
+		`package schematest; type Case struct{}; var saved [][]Case; func Build() {}`,
+		`package schematest; type Case struct{}; var saved map[string][]Case; func Build() {}`,
+		`package schematest; type Case struct{}; type savedCase struct { value Case }; ` +
+			`var saved []savedCase; func Build() {}`,
 		`package schematest; type Case struct{}; type caseList []Case; var saved caseList; func Build() {}`,
 		`package schematest; type Case struct{}; type caseList = []Case; var saved caseList; func Build() {}`,
 		`package schematest; type Case struct{}; func Build() { var saved []Case; ` +
 			`_ = func(c Case) { saved = append(saved, c) } }`,
-		`package schematest; type jsonValue struct{}; func Build() { parents := []*jsonValue{}; _ = parents }`,
-		`package schematest; type jsonValue struct{}; type buildState struct { outputs []*jsonValue }; ` +
-			`func Build() { state := new(buildState); _ = state }`,
-		`package schematest; type buildState struct { encoded [][]byte }; ` +
-			`func Build() { state := new(buildState); _ = state }`,
+		`package schematest; type savedBody struct { encoded []byte }; var saved []savedBody; func Build() {}`,
+		`package schematest; type jsonValue struct{}; type savedValue struct { value *jsonValue }; ` +
+			`var saved []savedValue; func Build() {}`,
+		`package schematest; type jsonValue struct{}; func Build() { parents := []jsonValue{}; _ = parents }`,
+		`package schematest; type jsonValue struct{}; func Build() { parents := [][]*jsonValue{}; _ = parents }`,
+		`package schematest; type jsonValue struct{}; func Build(yield func()) { stream(yield) }; ` +
+			`func stream(yield func()) { outputs := []*jsonValue{}; ` +
+			`for range 2 { outputs = append(outputs, new(jsonValue)); yield() }; _ = outputs }`,
+		`package schematest; type Case struct{}; type helperState struct { saved []Case }; ` +
+			`func Build(yield func()) { stream(yield) }; func stream(yield func()) { ` +
+			`state := new(helperState); yield(); _ = state }`,
+		`package schematest; type helperState struct { encoded [][]byte }; ` +
+			`func Build(yield func()) { stream(yield) }; func stream(yield func()) { ` +
+			`state := new(helperState); yield(); _ = state }`,
 	}
 	for _, source := range tests {
 		guardPackage := parseGuardPackage(t, map[string]string{"meta.go": source})
@@ -316,7 +336,7 @@ func publicAPIViolations(files []*ast.File) []string {
 	}
 
 	stopReason, ok := types["StopReason"]
-	if !ok || expressionName(stopReason.Type) != "string" {
+	if !ok || stopReason.Assign.IsValid() || expressionName(stopReason.Type) != "string" {
 		violations = append(violations, "StopReason is not a defined string")
 	}
 
@@ -335,7 +355,7 @@ type fieldShape struct {
 
 // structHasExactFields reports whether a public struct exactly matches its locked fields.
 func structHasExactFields(specification *ast.TypeSpec, want []fieldShape) bool {
-	if specification == nil {
+	if specification == nil || specification.Assign.IsValid() {
 		return false
 	}
 
@@ -621,25 +641,8 @@ func corpusOwnershipViolations(guardPackage *sourceGuardPackage) []string {
 
 	for _, name := range guardPackage.pkg.Scope().Names() {
 		variable, ok := guardPackage.pkg.Scope().Lookup(name).(*types.Var)
-		if ok && forbiddenOwnedCollection(variable.Type(), caseType, jsonValueType, true) {
+		if ok && forbiddenOwnedCollection(variable.Type(), variable.Name(), caseType, jsonValueType, true) {
 			violations = append(violations, "package corpus owner: "+variable.Name())
-		}
-	}
-
-	ownerTypes := buildOwnedTypes(guardPackage)
-	for owner := range ownerTypes {
-		structure, ok := types.Unalias(owner.Type()).Underlying().(*types.Struct)
-		if !ok {
-			continue
-		}
-
-		for index := range structure.NumFields() {
-			field := structure.Field(index)
-
-			allowModelValue := owner.Name() == "jsonValue" || owner.Name() == "schemaShape"
-			if forbiddenOwnedCollection(field.Type(), caseType, jsonValueType, !allowModelValue) {
-				violations = append(violations, "corpus-bearing field: "+owner.Name()+"."+field.Name())
-			}
 		}
 	}
 
@@ -651,9 +654,50 @@ func corpusOwnershipViolations(guardPackage *sourceGuardPackage) []string {
 		return append(violations, "Build function is missing from typed package")
 	}
 
-	pending := []*types.Func{build}
+	reachable := reachableGuardFunctions(guardPackage, functions, build)
+	streaming := streamingGuardFunctions(guardPackage, functions, reachable, build)
+	ownerTypes := reachableOwnerTypes(guardPackage, functions, streaming)
+	authorized := authorizedOwnerTypes(guardPackage)
+
+	for owner := range ownerTypes {
+		structure, structureOK := types.Unalias(owner.Type()).Underlying().(*types.Struct)
+		if !structureOK {
+			continue
+		}
+
+		for index := range structure.NumFields() {
+			field := structure.Field(index)
+			if forbiddenOwnedCollection(
+				field.Type(), field.Name(), caseType, jsonValueType, !authorized[owner],
+			) {
+				violations = append(violations, "corpus-bearing field: "+owner.Name()+"."+field.Name())
+			}
+		}
+	}
+
+	for function := range reachable {
+		declaration := functions[function]
+		if declaration == nil {
+			continue
+		}
+
+		violations = append(violations, reachableLocalOwnershipViolations(
+			guardPackage, declaration, streaming[function], authorized, caseType, jsonValueType,
+		)...)
+	}
+
+	return violations
+}
+
+// reachableGuardFunctions computes the complete same-package call graph below Build.
+func reachableGuardFunctions(
+	guardPackage *sourceGuardPackage,
+	functions map[*types.Func]*ast.FuncDecl,
+	build *types.Func,
+) map[*types.Func]bool {
 	reachable := make(map[*types.Func]bool)
 
+	pending := []*types.Func{build}
 	for len(pending) > 0 {
 		function := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
@@ -669,52 +713,184 @@ func corpusOwnershipViolations(guardPackage *sourceGuardPackage) []string {
 			continue
 		}
 
-		violations = append(violations, reachableLocalOwnershipViolations(
-			guardPackage, declaration, function == build, caseType, jsonValueType,
-		)...)
-
-		called := calledGuardFunctions(guardPackage, declaration.Body)
-		if function == build {
-			called = slices.DeleteFunc(called, func(candidate *types.Func) bool {
-				return candidate.Name() == "parseInput" || candidate.Name() == "makePlan"
-			})
-		}
-
-		pending = append(pending, called...)
+		pending = append(pending, calledGuardFunctions(guardPackage, declaration.Body)...)
 	}
 
-	return violations
+	return reachable
 }
 
-// buildOwnedTypes follows named private state types rooted in Build's local ownership.
-func buildOwnedTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
-	owned := make(map[*types.TypeName]bool)
+// streamingGuardFunctions propagates callback ownership through Build-reachable call arguments.
+//
+//nolint:cyclop,gocognit // Callback dataflow reaches parameters through calls and captured closure arguments.
+func streamingGuardFunctions(
+	guardPackage *sourceGuardPackage,
+	functions map[*types.Func]*ast.FuncDecl,
+	reachable map[*types.Func]bool,
+	build *types.Func,
+) map[*types.Func]bool {
+	callbacks := make(map[*types.Func]map[*types.Var]bool)
+	callbacks[build] = functionTypedParameters(build)
 
-	buildObject, ok := guardPackage.pkg.Scope().Lookup("Build").(*types.Func)
-	if !ok {
-		return owned
-	}
+	changed := true
+	for changed {
+		changed = false
 
-	declaration := guardFunctions(guardPackage)[buildObject]
-	if declaration == nil {
-		return owned
-	}
+		for function, callbackVariables := range callbacks {
+			declaration := functions[function]
+			if declaration == nil {
+				continue
+			}
 
-	ast.Inspect(declaration.Body, func(node ast.Node) bool {
-		identifier, ok := node.(*ast.Ident)
-		if !ok {
-			return true
+			ast.Inspect(declaration.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+
+				called := calledGuardFunction(guardPackage, call)
+				if called == nil || !reachable[called] {
+					return true
+				}
+
+				signature, ok := called.Type().(*types.Signature)
+				if !ok {
+					return true
+				}
+
+				for index, argument := range call.Args {
+					if index >= signature.Params().Len() || !expressionUsesVariables(
+						guardPackage, argument, callbackVariables,
+					) {
+						continue
+					}
+
+					if callbacks[called] == nil {
+						callbacks[called] = make(map[*types.Var]bool)
+					}
+
+					parameter := signature.Params().At(index)
+					if !callbacks[called][parameter] {
+						callbacks[called][parameter] = true
+						changed = true
+					}
+				}
+
+				return true
+			})
 		}
+	}
 
-		variable, ok := guardPackage.info.Defs[identifier].(*types.Var)
+	streaming := make(map[*types.Func]bool, len(callbacks))
+	for function := range callbacks {
+		streaming[function] = true
+	}
+
+	return streaming
+}
+
+// functionTypedParameters returns Build's function-typed callback parameters.
+func functionTypedParameters(function *types.Func) map[*types.Var]bool {
+	parameters := make(map[*types.Var]bool)
+
+	signature, ok := function.Type().(*types.Signature)
+	if !ok {
+		return parameters
+	}
+
+	for index := range signature.Params().Len() {
+		parameter := signature.Params().At(index)
+		if _, callback := types.Unalias(parameter.Type()).Underlying().(*types.Signature); callback {
+			parameters[parameter] = true
+		}
+	}
+
+	return parameters
+}
+
+// calledGuardFunction resolves one direct same-package call.
+func calledGuardFunction(guardPackage *sourceGuardPackage, call *ast.CallExpr) *types.Func {
+	var object types.Object
+
+	switch called := call.Fun.(type) {
+	case *ast.Ident:
+		object = guardPackage.info.Uses[called]
+	case *ast.SelectorExpr:
+		object = guardPackage.info.Uses[called.Sel]
+	}
+
+	function, ok := object.(*types.Func)
+	if !ok || function.Pkg() != guardPackage.pkg {
+		return nil
+	}
+
+	return function
+}
+
+// expressionUsesVariables reports whether an argument forwards a callback variable or captures it in a closure.
+func expressionUsesVariables(
+	guardPackage *sourceGuardPackage,
+	expression ast.Expr,
+	variables map[*types.Var]bool,
+) bool {
+	found := false
+
+	ast.Inspect(expression, func(node ast.Node) bool {
+		identifier, ok := node.(*ast.Ident)
 		if ok {
-			collectNamedOwnerTypes(variable.Type(), owned)
+			variable, variableOK := guardPackage.info.Uses[identifier].(*types.Var)
+			if variableOK && variables[variable] {
+				found = true
+
+				return false
+			}
 		}
 
 		return true
 	})
 
+	return found
+}
+
+// reachableOwnerTypes follows state allocated by every callback-carrying streaming function.
+func reachableOwnerTypes(
+	guardPackage *sourceGuardPackage,
+	functions map[*types.Func]*ast.FuncDecl,
+	streaming map[*types.Func]bool,
+) map[*types.TypeName]bool {
+	owned := make(map[*types.TypeName]bool)
+
+	for function := range streaming {
+		declaration := functions[function]
+		if declaration == nil {
+			continue
+		}
+
+		ast.Inspect(declaration.Body, func(node ast.Node) bool {
+			identifier, identifierOK := node.(*ast.Ident)
+			if !identifierOK {
+				return true
+			}
+
+			variable, variableOK := guardPackage.info.Defs[identifier].(*types.Var)
+			if variableOK {
+				collectNamedOwnerTypes(variable.Type(), owned)
+			}
+
+			return true
+		})
+	}
+
 	return owned
+}
+
+// authorizedOwnerTypes identifies only parsed model, plan, current value, and bounded search state graphs.
+func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
+	authorized := make(map[*types.TypeName]bool)
+	for _, root := range []string{"schemaModel", "searchPlan", "jsonValue", "search"} {
+		collectNamedOwnerTypes(packageObjectType(guardPackage, root), authorized)
+	}
+
+	return authorized
 }
 
 // collectNamedOwnerTypes recursively follows fields from one named Build-owned type.
@@ -804,7 +980,8 @@ func calledGuardFunctions(guardPackage *sourceGuardPackage, body *ast.BlockStmt)
 func reachableLocalOwnershipViolations(
 	guardPackage *sourceGuardPackage,
 	declaration *ast.FuncDecl,
-	build bool,
+	streaming bool,
+	authorized map[*types.TypeName]bool,
 	caseType,
 	jsonValueType types.Type,
 ) []string {
@@ -821,7 +998,9 @@ func reachableLocalOwnershipViolations(
 			return true
 		}
 
-		if forbiddenOwnedCollection(variable.Type(), caseType, jsonValueType, build) {
+		if !guardTypeIsAuthorized(variable.Type(), authorized) && forbiddenOwnedCollection(
+			variable.Type(), variable.Name(), caseType, jsonValueType, streaming,
+		) {
 			violations = append(violations, "reachable local corpus: "+variable.Name())
 		}
 
@@ -831,21 +1010,123 @@ func reachableLocalOwnershipViolations(
 	return violations
 }
 
+// guardTypeIsAuthorized reports whether a local is one explicit model, plan, current-value, or search category.
+func guardTypeIsAuthorized(owned types.Type, authorized map[*types.TypeName]bool) bool {
+	owned = types.Unalias(owned)
+	if pointer, ok := owned.(*types.Pointer); ok {
+		owned = types.Unalias(pointer.Elem())
+	}
+
+	named, ok := owned.(*types.Named)
+
+	return ok && authorized[named.Obj()]
+}
+
 // forbiddenOwnedCollection classifies corpus ownership through named and aliased collection types.
 func forbiddenOwnedCollection(
 	owned types.Type,
+	name string,
 	caseType,
 	jsonValueType types.Type,
 	checkGeneratedValues bool,
 ) bool {
-	elements, collection := collectionElementTypes(owned)
-	if !collection {
+	if _, collection := collectionElementTypes(owned); collection &&
+		checkGeneratedValues && forbiddenCorpusCategoryName(name) {
+		return true
+	}
+
+	return recursivelyOwnsForbidden(
+		owned, caseType, jsonValueType, checkGeneratedValues,
+		0, false, make(map[types.Type]bool),
+	)
+}
+
+// recursivelyOwnsForbidden traverses nested collections, wrappers, aliases, pointers, and value forms.
+//
+//nolint:cyclop // Every Go ownership type form must participate in the recursive classification.
+func recursivelyOwnsForbidden(
+	owned,
+	caseType,
+	jsonValueType types.Type,
+	checkGeneratedValues bool,
+	collectionDepth int,
+	directCollectionElement bool,
+	visiting map[types.Type]bool,
+) bool {
+	owned = types.Unalias(owned)
+	if collectionDepth > 0 && sameGuardType(owned, caseType) {
+		return true
+	}
+
+	if collectionDepth > 0 && checkGeneratedValues && sameGuardType(owned, jsonValueType) {
+		return true
+	}
+
+	if visiting[owned] {
 		return false
 	}
 
-	for _, element := range elements {
-		if sameGuardType(element, caseType) || isByteCollection(element) ||
-			checkGeneratedValues && isPointerToGuardType(element, jsonValueType) {
+	visiting[owned] = true
+	defer delete(visiting, owned)
+
+	switch typed := owned.Underlying().(type) {
+	case *types.Basic:
+		return collectionDepth > 1 && directCollectionElement && typed.Kind() == types.Byte
+	case *types.Pointer:
+		return recursivelyOwnsForbidden(
+			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			collectionDepth, directCollectionElement, visiting,
+		)
+	case *types.Slice:
+		return recursivelyOwnsForbidden(
+			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			collectionDepth+1, true, visiting,
+		)
+	case *types.Array:
+		return recursivelyOwnsForbidden(
+			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			collectionDepth+1, true, visiting,
+		)
+	case *types.Map:
+		return recursivelyOwnsForbidden(
+			typed.Key(), caseType, jsonValueType, checkGeneratedValues,
+			collectionDepth+1, true, visiting,
+		) || recursivelyOwnsForbidden(
+			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			collectionDepth+1, true, visiting,
+		)
+	case *types.Chan:
+		return recursivelyOwnsForbidden(
+			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			collectionDepth+1, true, visiting,
+		)
+	case *types.Struct:
+		for index := range typed.NumFields() {
+			field := typed.Field(index)
+			if _, collection := collectionElementTypes(field.Type()); collection &&
+				checkGeneratedValues && forbiddenCorpusCategoryName(field.Name()) {
+				return true
+			}
+
+			if recursivelyOwnsForbidden(
+				field.Type(), caseType, jsonValueType,
+				checkGeneratedValues, collectionDepth, false, visiting,
+			) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// forbiddenCorpusCategoryName identifies prohibited corpus ownership roles in streaming state.
+func forbiddenCorpusCategoryName(name string) bool {
+	lower := strings.ToLower(name)
+	for _, category := range []string{
+		"corpus", "case", "output", "parent", "derivative", "pair", "visited", "witness", "guidance",
+	} {
+		if strings.Contains(lower, category) {
 			return true
 		}
 	}
@@ -868,20 +1149,6 @@ func collectionElementTypes(owned types.Type) ([]types.Type, bool) {
 	default:
 		return nil, false
 	}
-}
-
-// isByteCollection reports whether one collection element is itself a byte collection.
-func isByteCollection(owned types.Type) bool {
-	elements, collection := collectionElementTypes(owned)
-
-	return collection && len(elements) == 1 && sameGuardType(elements[0], types.Typ[types.Byte])
-}
-
-// isPointerToGuardType reports whether a collection element points to one package type.
-func isPointerToGuardType(owned, wanted types.Type) bool {
-	pointer, ok := types.Unalias(owned).Underlying().(*types.Pointer)
-
-	return ok && sameGuardType(pointer.Elem(), wanted)
 }
 
 // sameGuardType compares types after resolving aliases.
