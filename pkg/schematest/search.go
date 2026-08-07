@@ -13,9 +13,10 @@ var errMaxSteps = errors.New("schematest: maximum steps reached")
 
 // search owns one never-reset assignment budget and the selected clean model.
 type search struct {
-	model    *schemaModel
-	maxSteps uint64
-	steps    uint64
+	model           *schemaModel
+	maxSteps        uint64
+	steps           uint64
+	stringObjective *stringSearchObjective
 }
 
 // assign charges one structural, kind, composition, enum, or scalar choice.

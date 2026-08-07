@@ -98,7 +98,7 @@ func (s *search) walkArrayElements(
 	}
 
 	return s.walkNode(item, occurrence, pins, func(value *jsonValue) (bool, error) {
-		usable, err := rowChildValueUsable(item, occurrence, pins, value)
+		usable, err := s.rowChildValueUsable(item, occurrence, pins, value)
 		if err != nil || !usable {
 			return false, err
 		}
@@ -576,7 +576,7 @@ func (s *search) walkRowMemberValues(
 		}
 
 		complete, err := s.walkNode(candidate.node, candidate.occurrence, pins, func(value *jsonValue) (bool, error) {
-			usable, err := rowChildValueUsable(candidate.node, candidate.occurrence, pins, value)
+			usable, err := s.rowChildValueUsable(candidate.node, candidate.occurrence, pins, value)
 			if err != nil || !usable {
 				return false, err
 			}

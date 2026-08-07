@@ -230,7 +230,7 @@ func rowDirectValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 }
 
 // rowChildValueUsable prunes locally invalid children unless a pinned anyOf branch must be false.
-func rowChildValueUsable(
+func (s *search) rowChildValueUsable(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
@@ -243,6 +243,11 @@ func rowChildValueUsable(
 
 	if result.valid {
 		return true, nil
+	}
+
+	allowed, err := s.allowsDirectedStringChild(result, occurrence)
+	if err != nil || allowed {
+		return allowed, err
 	}
 
 	for _, pin := range pins {

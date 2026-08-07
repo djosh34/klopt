@@ -18,6 +18,11 @@ func (s *search) walkScalar(
 	visit rowVisit,
 ) (bool, error) {
 	if kind == jsonString {
+		handled, complete, err := s.walkDirectedStringObjective(node, occurrence, pins, visit)
+		if err != nil || handled {
+			return complete, err
+		}
+
 		patterns, supported, err := activeBasicStringPatterns(node, occurrence, pins)
 		if err != nil {
 			return false, err

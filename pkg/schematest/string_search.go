@@ -48,6 +48,7 @@ type basicStringMachine struct {
 	hasSurrogate bool
 	restart      bool
 	expected     bool
+	required     bool
 }
 
 type basicStringPatternState struct {
@@ -338,36 +339,87 @@ func collectActiveBasicStringPatterns(
 }
 
 func newBasicStringProduct(patterns []*patternAST) (*basicStringProduct, error) {
+	return newBasicStringProductForFailure(patterns, -1, -1)
+}
+
+//nolint:cyclop // Compilation, one directed alternative, and exact bounds are one product operation.
+func newBasicStringProductForFailure(
+	patterns []*patternAST,
+	directedPattern,
+	failureAlternative int,
+) (*basicStringProduct, error) {
 	if len(patterns) == 0 {
 		return nil, errors.New("schematest: basic string product has no patterns")
 	}
 
 	product := &basicStringProduct{machines: make([]basicStringMachine, 0, len(patterns))}
-	for _, pattern := range patterns {
+	for patternIndex, pattern := range patterns {
 		machines, err := compileBasicStringPatternMachines(pattern)
 		if err != nil {
 			return nil, err
 		}
 
-		for _, machine := range machines {
-			product.hasSurrogate = product.hasSurrogate || machine.hasSurrogate
-			if machine.expected {
-				if machine.unbounded {
-					product.unbounded = true
-				} else {
-					if product.maxUnits > ^uint64(0)-machine.maxUnits {
-						return nil, errors.New("schematest: basic pattern witness length overflows uint64")
-					}
-
-					product.maxUnits += machine.maxUnits
-				}
+		if patternIndex == directedPattern {
+			if failureAlternative < 0 || failureAlternative >= len(machines) {
+				return nil, errors.New("schematest: pattern failure alternative is out of range")
 			}
 
-			product.machines = append(product.machines, machine)
+			for index := range machines {
+				switch {
+				case index < failureAlternative:
+				case index == failureAlternative:
+					machines[index].expected = !machines[index].expected
+				default:
+					machines[index].required = false
+				}
+			}
 		}
+
+		product.machines = append(product.machines, machines...)
+	}
+
+	if directedPattern >= len(patterns) {
+		return nil, errors.New("schematest: directed pattern is out of range")
+	}
+
+	if err := product.setBounds(); err != nil {
+		return nil, err
 	}
 
 	return product, nil
+}
+
+func (product *basicStringProduct) setBounds() error {
+	hasPositiveRequirement := false
+
+	for index := range product.machines {
+		machine := &product.machines[index]
+
+		product.hasSurrogate = product.hasSurrogate || machine.hasSurrogate
+		if !machine.required || !machine.expected {
+			continue
+		}
+
+		hasPositiveRequirement = true
+
+		if machine.unbounded {
+			product.unbounded = true
+
+			continue
+		}
+
+		if product.maxUnits > ^uint64(0)-machine.maxUnits {
+			return errors.New("schematest: basic pattern witness length overflows uint64")
+		}
+
+		product.maxUnits += machine.maxUnits
+	}
+
+	if !hasPositiveRequirement {
+		product.unbounded = true
+	}
+
+	return nil
 }
 
 func compileBasicStringPatternMachines(pattern *patternAST) ([]basicStringMachine, error) {
@@ -414,6 +466,7 @@ func compileBasicStringExpressionMachine(
 		unbounded: unbounded,
 		restart:   restart,
 		expected:  expected,
+		required:  true,
 	}
 	machine.states = make([][]basicStringEdge, machine.accept+1)
 
@@ -870,7 +923,7 @@ func (product *basicStringProduct) eachActiveUnitEdge(
 ) {
 	for patternIndex := range product.machines {
 		machine := &product.machines[patternIndex]
-		if state.patterns[patternIndex].matched {
+		if !machine.required || state.patterns[patternIndex].matched {
 			continue
 		}
 
@@ -1013,6 +1066,10 @@ func basicStringSeed(schemaPointer string, canonicalSchemaJSON []byte, rule, lev
 
 func (product *basicStringProduct) accepting(state basicStringProductState) bool {
 	for index, pattern := range state.patterns {
+		if !product.machines[index].required {
+			continue
+		}
+
 		matched := pattern.matched
 		if !matched {
 			machine := &product.machines[index]
@@ -1056,6 +1113,16 @@ func (s *search) walkBasicStringWitnessesForLengths(
 		return false, err
 	}
 
+	return s.walkBasicStringProductForLengths(product, lengths, objective, seed, visit)
+}
+
+func (s *search) walkBasicStringProductForLengths(
+	product *basicStringProduct,
+	lengths basicStringLengths,
+	objective basicStringLengthObjective,
+	seed uint64,
+	visit rowVisit,
+) (bool, error) {
 	var (
 		complete bool
 		walkErr  error
