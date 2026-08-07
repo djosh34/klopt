@@ -31,20 +31,36 @@ func (s *search) walkScalar(
 		}
 	}
 
-	if kind != jsonString || node.enum != nil {
+	if node.enum != nil {
 		return false, nil
 	}
 
-	return s.walkActiveStringPinAlternatives(
-		node,
-		occurrence,
-		append([]applicabilityPin(nil), pins...),
-		func(activePins []applicabilityPin) (bool, error) {
-			return s.walkActiveStringRules(
-				node, occurrence, activePins, context.validTarget, visit,
-			)
-		},
-	)
+	switch kind {
+	case jsonNumber:
+		return s.walkActiveScalarPinAlternatives(
+			node,
+			occurrence,
+			append([]applicabilityPin(nil), pins...),
+			func(activePins []applicabilityPin) (bool, error) {
+				return s.walkActiveNumberRules(
+					node, occurrence, activePins, context.validTarget, visit,
+				)
+			},
+		)
+	case jsonString:
+		return s.walkActiveScalarPinAlternatives(
+			node,
+			occurrence,
+			append([]applicabilityPin(nil), pins...),
+			func(activePins []applicabilityPin) (bool, error) {
+				return s.walkActiveStringRules(
+					node, occurrence, activePins, context.validTarget, visit,
+				)
+			},
+		)
+	default:
+		return false, nil
+	}
 }
 
 // walkActiveStringRules searches one canonical applicable rule view.
@@ -86,7 +102,7 @@ func (s *search) walkActiveStringRules(
 
 	seedPointer := occurrence.usePointer
 	if target != nil {
-		if targetNode, found := stringTargetNode(node, occurrence, target.expected.occurrence); found {
+		if targetNode, found := scalarTargetNode(node, occurrence, target.expected.occurrence); found {
 			seedNode = targetNode
 			rule = target.expected.rule
 			level = target.expected.level
@@ -112,13 +128,13 @@ func (s *search) walkActiveStringRules(
 		product,
 		lengths,
 		basicStringLengthObjective{},
-		basicStringSeed(seedPointer, canonicalSchemaJSON, rule, level),
+		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
 		visit,
 	)
 }
 
-// stringTargetNode resolves the valid target occurrence used to lock the string seed.
-func stringTargetNode(
+// scalarTargetNode resolves the valid target occurrence used to lock a scalar seed.
+func scalarTargetNode(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	target schemaOccurrence,
@@ -131,7 +147,7 @@ func stringTargetNode(
 		childOccurrence := rebasePlanOccurrence(
 			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if found, ok := stringTargetNode(child, childOccurrence, target); ok {
+		if found, ok := scalarTargetNode(child, childOccurrence, target); ok {
 			return found, true
 		}
 	}
@@ -140,7 +156,7 @@ func stringTargetNode(
 		childOccurrence := rebasePlanOccurrence(
 			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if found, ok := stringTargetNode(child, childOccurrence, target); ok {
+		if found, ok := scalarTargetNode(child, childOccurrence, target); ok {
 			return found, true
 		}
 	}
@@ -160,9 +176,7 @@ func rowScalarValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 
 	var err error
 
-	hasDeterministicNumberCandidates := kind == jsonNumber &&
-		(node.minimum != nil || node.maximum != nil || node.multipleOf != nil ||
-			node.format == schemaFormatInt32 || node.format == schemaFormatInt64)
+	hasDeterministicNumberCandidates := kind == jsonNumber && nodeHasNumberCandidateRules(node)
 	if hasDeterministicNumberCandidates {
 		candidates, err = numberDeterministicCandidates(node)
 	} else {

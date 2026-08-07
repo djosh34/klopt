@@ -195,13 +195,13 @@ func (lengths basicStringLengths) each(
 	}
 }
 
-func (s *search) walkActiveStringPinAlternatives(
+func (s *search) walkActiveScalarPinAlternatives(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
 	visit func([]applicabilityPin) (bool, error),
 ) (bool, error) {
-	anyOfNode, anyOfOccurrence, found := firstUnpinnedStringAnyOf(node, occurrence, pins)
+	anyOfNode, anyOfOccurrence, found := firstUnpinnedScalarAnyOf(node, occurrence, pins)
 	if !found {
 		return visit(pins)
 	}
@@ -228,7 +228,7 @@ func (s *search) walkActiveStringPinAlternatives(
 			})
 		}
 
-		complete, err := s.walkActiveStringPinAlternatives(node, occurrence, pins, visit)
+		complete, err := s.walkActiveScalarPinAlternatives(node, occurrence, pins, visit)
 		pins = pins[:pathLength]
 
 		if err != nil || complete {
@@ -239,7 +239,7 @@ func (s *search) walkActiveStringPinAlternatives(
 	return false, nil
 }
 
-func firstUnpinnedStringAnyOf(
+func firstUnpinnedScalarAnyOf(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
@@ -258,7 +258,7 @@ func firstUnpinnedStringAnyOf(
 			childOccurrence := rebasePlanOccurrence(
 				child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
 			)
-			if foundNode, foundOccurrence, found := firstUnpinnedStringAnyOf(
+			if foundNode, foundOccurrence, found := firstUnpinnedScalarAnyOf(
 				child, childOccurrence, pins,
 			); found {
 				return foundNode, foundOccurrence, true
@@ -270,7 +270,7 @@ func firstUnpinnedStringAnyOf(
 		childOccurrence := rebasePlanOccurrence(
 			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if foundNode, foundOccurrence, found := firstUnpinnedStringAnyOf(
+		if foundNode, foundOccurrence, found := firstUnpinnedScalarAnyOf(
 			child, childOccurrence, pins,
 		); found {
 			return foundNode, foundOccurrence, true
@@ -1096,7 +1096,7 @@ func eachBasicStringIntervalCandidate(
 	return visit(uint16(candidate))
 }
 
-func basicStringSeed(schemaPointer string, canonicalSchemaJSON []byte, rule, level string) uint64 {
+func searchSeed(schemaPointer string, canonicalSchemaJSON []byte, rule, level string) uint64 {
 	input := []byte("schematest-v1\x00")
 	input = append(input, schemaPointer...)
 	input = append(input, 0)

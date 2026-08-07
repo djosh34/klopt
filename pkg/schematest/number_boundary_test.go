@@ -130,6 +130,41 @@ func TestNumberIntegerFormatCandidates(t *testing.T) {
 	}
 }
 
+// TestNumberFloatFormatCandidates pins the exact finite-overflow edges without float conversion.
+func TestNumberFloatFormatCandidates(t *testing.T) {
+	t.Parallel()
+
+	for _, format := range []schemaFormat{schemaFormatFloat, schemaFormatDouble} {
+		t.Run(itoa(int(format)), func(t *testing.T) {
+			t.Parallel()
+
+			node := &schemaNode{schemaShape: &schemaShape{kind: schemaNumber, format: format}}
+			candidates, err := numberDeterministicCandidates(node)
+			require.NoError(t, err)
+			require.Len(t, candidates, 5)
+			require.Equal(t, "0", marshalNumberCandidates(t, candidates[:1])[0])
+
+			wantMatches := []bool{true, false, true, false}
+
+			for index, candidate := range candidates[1:] {
+				matches, matchErr := numericFormatMatches(candidate.number, format)
+				require.NoError(t, matchErr)
+				require.Equal(t, wantMatches[index], matches)
+
+				encoded, marshalErr := marshalStrict(candidate)
+				require.NoError(t, marshalErr)
+
+				parsed, parseErr := parseStrictJSON(encoded)
+				require.NoError(t, parseErr)
+
+				comparison, compareErr := parsed.number.compare(candidate.number)
+				require.NoError(t, compareErr)
+				require.Zero(t, comparison)
+			}
+		})
+	}
+}
+
 // TestWalkScalarFindsDirectedExactNonmultiple verifies sibling bounds survive a divisibility objective.
 func TestWalkScalarFindsDirectedExactNonmultiple(t *testing.T) {
 	t.Parallel()

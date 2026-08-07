@@ -45,7 +45,7 @@ func numberDeterministicCandidates(node *schemaNode) ([]*jsonValue, error) {
 		return nil, err
 	}
 
-	if err := appendNumberIntegerFormatCandidates(&candidates, node.format); err != nil {
+	if err := appendNumberFormatCandidates(&candidates, node.format); err != nil {
 		return nil, err
 	}
 
@@ -106,8 +106,8 @@ func appendNumberMultipleCandidates(
 	return nil
 }
 
-// appendNumberIntegerFormatCandidates appends exact signed edges and one-step outside values.
-func appendNumberIntegerFormatCandidates(candidates *[]*jsonValue, format schemaFormat) error {
+// appendNumberFormatCandidates appends exact signed format edges and outside values.
+func appendNumberFormatCandidates(candidates *[]*jsonValue, format schemaFormat) error {
 	var sources []string
 
 	switch format {
@@ -118,6 +118,8 @@ func appendNumberIntegerFormatCandidates(candidates *[]*jsonValue, format schema
 			"-9223372036854775808", "-9223372036854775809",
 			"9223372036854775807", "9223372036854775808",
 		}
+	case schemaFormatFloat, schemaFormatDouble:
+		return appendNumberFloatFormatCandidates(candidates, format)
 	default:
 		return nil
 	}
@@ -128,6 +130,51 @@ func appendNumberIntegerFormatCandidates(candidates *[]*jsonValue, format schema
 			return err
 		}
 
+		*candidates, err = appendUniqueJSONWitness(
+			*candidates,
+			&jsonValue{kind: jsonNumber, number: number},
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// appendNumberFloatFormatCandidates uses the exact finite-overflow cutoff.
+func appendNumberFloatFormatCandidates(candidates *[]*jsonValue, format schemaFormat) error {
+	limit, err := exactBinaryFloatOverflowLimit(format)
+	if err != nil {
+		return err
+	}
+
+	one, err := parseExactNumber("1")
+	if err != nil {
+		return err
+	}
+
+	negativeOne, err := parseExactNumber("-1")
+	if err != nil {
+		return err
+	}
+
+	positiveInside, err := addExactNumbers(limit, negativeOne)
+	if err != nil {
+		return err
+	}
+
+	negativeLimit, err := newExactRational(new(big.Int).Neg(limit.numerator), limit.denominator)
+	if err != nil {
+		return err
+	}
+
+	negativeInside, err := addExactNumbers(negativeLimit, one)
+	if err != nil {
+		return err
+	}
+
+	for _, number := range []*exactNumber{negativeInside, negativeLimit, positiveInside, limit} {
 		*candidates, err = appendUniqueJSONWitness(
 			*candidates,
 			&jsonValue{kind: jsonNumber, number: number},
