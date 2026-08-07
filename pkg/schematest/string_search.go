@@ -42,6 +42,8 @@ type basicStringMachine struct {
 	maxUnits    uint64
 	unbounded   bool
 	hasBoundary bool
+	restart     bool
+	expected    bool
 }
 
 type basicStringPatternState struct {
@@ -89,12 +91,14 @@ func collectActiveBasicStringPatterns(
 	}
 
 	if node.pattern != nil {
-		if len(node.pattern.leadingAssertions) != 0 {
+		if _, _, ok := basicStringExpressionLength(node.pattern.expression); !ok {
 			return false, nil
 		}
 
-		if _, _, ok := basicStringExpressionLength(node.pattern.expression); !ok {
-			return false, nil
+		for _, assertion := range node.pattern.leadingAssertions {
+			if _, _, ok := basicStringExpressionLength(assertion.expression); !ok {
+				return false, nil
+			}
 		}
 
 		*patterns = append(*patterns, node.pattern)
@@ -145,41 +149,79 @@ func newBasicStringProduct(patterns []*patternAST) (*basicStringProduct, error) 
 
 	product := &basicStringProduct{machines: make([]basicStringMachine, 0, len(patterns))}
 	for _, pattern := range patterns {
-		machine, err := compileBasicStringMachine(pattern)
+		machines, err := compileBasicStringPatternMachines(pattern)
 		if err != nil {
 			return nil, err
 		}
 
-		if machine.unbounded {
-			product.unbounded = true
-		} else {
-			if product.maxUnits > ^uint64(0)-machine.maxUnits {
-				return nil, errors.New("schematest: basic pattern witness length overflows uint64")
+		for _, machine := range machines {
+			if machine.expected {
+				if machine.unbounded {
+					product.unbounded = true
+				} else {
+					if product.maxUnits > ^uint64(0)-machine.maxUnits {
+						return nil, errors.New("schematest: basic pattern witness length overflows uint64")
+					}
+
+					product.maxUnits += machine.maxUnits
+				}
 			}
 
-			product.maxUnits += machine.maxUnits
+			product.machines = append(product.machines, machine)
 		}
-
-		product.machines = append(product.machines, machine)
 	}
 
 	return product, nil
 }
 
-func compileBasicStringMachine(pattern *patternAST) (basicStringMachine, error) {
-	if pattern == nil || pattern.expression == nil || len(pattern.leadingAssertions) != 0 {
-		return basicStringMachine{}, errors.New("schematest: pattern is not a basic string expression")
+func compileBasicStringPatternMachines(pattern *patternAST) ([]basicStringMachine, error) {
+	if pattern == nil || pattern.expression == nil {
+		return nil, errors.New("schematest: pattern is not a basic string expression")
 	}
 
-	maximum, unbounded, ok := basicStringExpressionLength(pattern.expression)
+	machines := make([]basicStringMachine, 0, len(pattern.leadingAssertions)+1)
+	for _, assertion := range pattern.leadingAssertions {
+		machine, err := compileBasicStringExpressionMachine(assertion.expression, false, assertion.positive)
+		if err != nil {
+			return nil, err
+		}
+
+		machines = append(machines, machine)
+	}
+
+	machine, err := compileBasicStringExpressionMachine(
+		pattern.expression,
+		len(pattern.leadingAssertions) == 0,
+		true,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(machines, machine), nil
+}
+
+func compileBasicStringExpressionMachine(
+	expression *patternExpression,
+	restart,
+	expected bool,
+) (basicStringMachine, error) {
+	maximum, unbounded, ok := basicStringExpressionLength(expression)
 	if !ok {
 		return basicStringMachine{}, errors.New("schematest: pattern is not a searchable string expression")
 	}
 
-	machine := basicStringMachine{start: 0, accept: 1, maxUnits: maximum, unbounded: unbounded}
+	machine := basicStringMachine{
+		start:     0,
+		accept:    1,
+		maxUnits:  maximum,
+		unbounded: unbounded,
+		restart:   restart,
+		expected:  expected,
+	}
 	machine.states = make([][]basicStringEdge, machine.accept+1)
 
-	if err := machine.compileExpression(pattern.expression, machine.start, machine.accept); err != nil {
+	if err := machine.compileExpression(expression, machine.start, machine.accept); err != nil {
 		return basicStringMachine{}, err
 	}
 
@@ -508,7 +550,7 @@ func (product *basicStringProduct) advance(
 			}
 		}
 
-		targets = appendUniqueBasicStringState(targets, machine.start)
+		targets = machine.appendRestartState(targets)
 		targets = machine.closure(targets, position+1, length, false, false)
 		next.patterns[index] = basicStringPatternState{
 			active:  targets,
@@ -517,6 +559,14 @@ func (product *basicStringProduct) advance(
 	}
 
 	return next
+}
+
+func (machine *basicStringMachine) appendRestartState(states []int) []int {
+	if !machine.restart {
+		return states
+	}
+
+	return appendUniqueBasicStringState(states, machine.start)
 }
 
 //nolint:cyclop // Zero-width edge conditions are deliberately explicit.
@@ -747,18 +797,20 @@ func basicStringSeed(schemaPointer string, canonicalSchemaJSON []byte, rule, lev
 
 func (product *basicStringProduct) accepting(state basicStringProductState) bool {
 	for index, pattern := range state.patterns {
-		if pattern.matched {
-			continue
+		matched := pattern.matched
+		if !matched {
+			machine := &product.machines[index]
+			active := machine.closure(
+				pattern.active,
+				state.position,
+				state.length,
+				state.previousWord,
+				true,
+			)
+			matched = containsBasicStringState(active, machine.accept)
 		}
 
-		active := product.machines[index].closure(
-			pattern.active,
-			state.position,
-			state.length,
-			state.previousWord,
-			true,
-		)
-		if !containsBasicStringState(active, product.machines[index].accept) {
+		if matched != product.machines[index].expected {
 			return false
 		}
 	}

@@ -234,6 +234,100 @@ func TestBasicStringProductSearchesQuantifiersAnchorsAndBoundaries(t *testing.T)
 	}
 }
 
+func TestBasicStringProductSearchesLeadingAssertionsInAuthoredOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pattern string
+		want    string
+		steps   uint64
+	}{
+		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 6},
+		{name: "negative", pattern: `^(?!a)[a-b]$`, want: "b", steps: 4},
+		{name: "mixed consecutive", pattern: `^(?=a)(?!b)[a-c]$`, want: "a", steps: 3},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			searchState := &search{maxSteps: 100}
+			witness, found, err := searchState.findBasicStringWitness(
+				parseBasicSearchPatterns(t, test.pattern),
+			)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, test.want, witness)
+			require.Equal(t, test.steps, searchState.steps)
+		})
+	}
+}
+
+func TestBasicStringProductLeadingAssertionObjectivesKeepAuthoredOrder(t *testing.T) {
+	t.Parallel()
+
+	product, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^(?=a)(?!b)a$`))
+	require.NoError(t, err)
+	require.Len(t, product.machines, 3)
+	require.Equal(t, []bool{true, false, true}, []bool{
+		product.machines[0].expected,
+		product.machines[1].expected,
+		product.machines[2].expected,
+	})
+	require.False(t, product.machines[0].restart)
+	require.False(t, product.machines[1].restart)
+	require.False(t, product.machines[2].restart)
+}
+
+func TestBasicStringProductNegativeAssertionPreservesSiblingPattern(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 100}
+	witness, found, err := searchState.findBasicStringWitness(
+		parseBasicSearchPatterns(t, `^(?!a)[a-b]$`, `^b$`),
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "b", witness)
+	require.Equal(t, uint64(4), searchState.steps)
+}
+
+func TestBasicStringProductLeadingAssertionContradictionStopsAtBudget(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 4}
+	witness, found, err := searchState.findBasicStringWitness(
+		parseBasicSearchPatterns(t, `^(?=a)(?!a)a$`),
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, found)
+	require.Empty(t, witness)
+	require.Equal(t, uint64(4), searchState.steps)
+}
+
+func TestBuildSearchesLeadingAssertionsWithoutFallbackCandidates(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"pattern":"^(?=ab)(?!ac)a.$"
+	}`))
+	cases := make([]Case, 0)
+
+	report, err := Build(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`"ab"`), Valid: true})
+	require.Equal(t, SpaceExhausted, report.Stop)
+}
+
 func TestBasicStringProductUsesExactES51WhitespaceSet(t *testing.T) {
 	t.Parallel()
 
