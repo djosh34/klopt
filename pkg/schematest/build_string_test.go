@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -82,7 +83,7 @@ func TestBuildStreamsValidFormatTargets(t *testing.T) {
 	}, cases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 36,
+		Steps: 28,
 		Covered: []string{
 			schemaPointer + "|#|type|level:string",
 			schemaPointer + "|#|minLength|level:valid",
@@ -109,13 +110,13 @@ func TestBuildSearchesFormatsAtActiveLengths(t *testing.T) {
 		{
 			name:   "date-time 24",
 			schema: `{"type":"string","format":"date-time","minLength":24,"maxLength":24}`,
-			want:   `"1970-01-01T00:00:00.000Z"`,
+			want:   `"1000-01-01T00:00:00.000Z"`,
 		},
-		{name: "email 4", schema: `{"type":"string","format":"email","minLength":4,"maxLength":4}`, want: `"a@bb"`},
-		{name: "ipv4 8", schema: `{"type":"string","format":"ipv4","minLength":8,"maxLength":8}`, want: `"10.0.0.0"`},
-		{name: "ipv4 9", schema: `{"type":"string","format":"ipv4","minLength":9,"maxLength":9}`, want: `"100.0.0.0"`},
-		{name: "base64 minimum 5", schema: `{"type":"string","format":"byte","minLength":5}`, want: `"AAAAAA=="`},
-		{name: "date pattern", schema: `{"type":"string","format":"date","pattern":"^2024"}`, want: `"2024-01-01"`},
+		{name: "email 4", schema: `{"type":"string","format":"email","minLength":4,"maxLength":4}`, want: `"a@aa"`},
+		{name: "ipv4 8", schema: `{"type":"string","format":"ipv4","minLength":8,"maxLength":8}`, want: `"0.0.0.10"`},
+		{name: "ipv4 9", schema: `{"type":"string","format":"ipv4","minLength":9,"maxLength":9}`, want: `"0.0.0.100"`},
+		{name: "base64 minimum 5", schema: `{"type":"string","format":"byte","minLength":5}`, want: `"++++++++"`},
+		{name: "date pattern", schema: `{"type":"string","format":"date","pattern":"^2025"}`, want: `"2025-01-01"`},
 	}
 
 	for _, test := range tests {
@@ -143,6 +144,105 @@ func TestBuildEnumeratesUnpinnedAnyOfStringRules(t *testing.T) {
 
 	require.Contains(t, cases, Case{JSON: []byte(`"a"`), Valid: true})
 	require.Contains(t, cases, Case{JSON: []byte(`"b"`), Valid: true})
+}
+
+func TestBuildSearchesIncrementalFormatState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+		check  func(*testing.T, string)
+	}{
+		{
+			name:   "cidr exact length 10",
+			schema: `{"type":"string","format":"cidr","minLength":10,"maxLength":10}`,
+			check: func(t *testing.T, value string) {
+				require.Len(t, value, 10)
+			},
+		},
+		{
+			name:   "email exact length 67",
+			schema: `{"type":"string","format":"email","minLength":67,"maxLength":67}`,
+			check: func(t *testing.T, value string) {
+				require.Len(t, value, 67)
+			},
+		},
+		{
+			name:   "email exact length 100",
+			schema: `{"type":"string","format":"email","minLength":100,"maxLength":100}`,
+			check: func(t *testing.T, value string) {
+				require.Len(t, value, 100)
+			},
+		},
+		{
+			name:   "date pattern",
+			schema: `{"type":"string","format":"date","pattern":"^2025"}`,
+			check: func(t *testing.T, value string) {
+				require.Equal(t, "2025-01-01", value)
+			},
+		},
+		{
+			name:   "byte pattern",
+			schema: `{"type":"string","format":"byte","pattern":"^YWI=$"}`,
+			check: func(t *testing.T, value string) {
+				require.Equal(t, "YWI=", value)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(test.schema)), 1_000_000)
+			require.NotEmpty(t, cases)
+			value, err := parseStrictJSON(cases[0].JSON)
+			require.NoError(t, err)
+			test.check(t, value.text)
+		})
+	}
+}
+
+func TestBuildChargesUnpinnedAnyOfDFSBeforeRetainingSiblingPaths(t *testing.T) {
+	t.Parallel()
+
+	const count = 25
+
+	children := make([]string, count)
+	for index := range children {
+		children[index] = `{"anyOf":[{"pattern":"^a$"},{"pattern":"^b$"}]}`
+	}
+
+	schema := `{"type":"string","allOf":[` + strings.Join(children, ",") + `]}`
+
+	cases, report := buildStringCases(t, []byte(documentWithJSONSchema(schema)), 10)
+	for _, testCase := range cases {
+		require.True(t, testCase.Valid)
+	}
+
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, uint64(10), report.Steps)
+}
+
+func TestBuildTriesAuthoredStringEnumBeforeUnboundedProduct(t *testing.T) {
+	t.Parallel()
+
+	cases, report := buildStringCases(t, []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"enum":["z"],
+		"pattern":"^.*$"
+	}`)), 20)
+	require.Contains(t, cases, Case{JSON: []byte(`"z"`), Valid: true})
+	require.Less(t, report.Steps, uint64(20))
+
+	rejected, rejectedReport := buildStringCases(t, []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"enum":["z"],
+		"allOf":[{"pattern":"^a$"}]
+	}`)), 100)
+	require.Empty(t, rejected)
+	require.Equal(t, SpaceExhausted, rejectedReport.Stop)
 }
 
 func TestBuildDoesNotStreamDirectedStringFaults(t *testing.T) {

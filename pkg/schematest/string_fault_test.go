@@ -97,7 +97,7 @@ func TestFindStringFaultRowPinsMaxLengthFailureAtSiblingMinimum(t *testing.T) {
 	row, found, err := findStringFaultRow(target, searchState)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, "aaaaa", row.text)
+	require.Equal(t, "\x00\x00\x00\x00\x00", row.text)
 }
 
 func TestFindStringFaultRowRejectsEmptyMaxLengthFailureRange(t *testing.T) {
@@ -115,25 +115,6 @@ func TestFindStringFaultRowRejectsEmptyMaxLengthFailureRange(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 	require.Nil(t, row)
-}
-
-func TestFindStringFaultRowMatchesWildcardArrayPath(t *testing.T) {
-	t.Parallel()
-
-	model, plan := parseStringFaultPlan(t, `{
-		"type":"array",
-		"minItems":1,
-		"maxItems":1,
-		"items":{"type":"string","pattern":"^a$"}
-	}`)
-	target := findFaultTarget(t, plan, "/items|#/*|pattern|fault:pattern")
-	searchState := &search{model: model, maxSteps: 1_000}
-
-	row, found, err := findStringFaultRow(target, searchState)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Len(t, row.array, 1)
-	require.NotEqual(t, "a", row.array[0].text)
 }
 
 func TestFindStringFaultRowDirectsLengthWithoutAnAuthoredPattern(t *testing.T) {
@@ -171,28 +152,75 @@ func TestFindStringFaultRowLeavesContradictoryObjectiveUncovered(t *testing.T) {
 	require.Less(t, searchState.steps, searchState.maxSteps)
 }
 
-func TestFindStringFaultRowCarriesNestedFailureToCompleteOracleCheck(t *testing.T) {
+func TestFindStringFaultRowSearchesFormatsIncrementally(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		fault      string
+		checkValue func(*testing.T, string)
+	}{
+		{
+			name: "date pattern false",
+			schema: `{"type":"string","format":"date",` +
+				`"pattern":"^(?:1970|2000|1900|9999|2024)-[0-9]{2}-[0-9]{2}$"}`,
+			fault: "|pattern|fault:pattern",
+			checkValue: func(t *testing.T, value string) {
+				require.Equal(t, "1000-01-01", value)
+			},
+		},
+		{
+			name:   "email pattern false",
+			schema: `{"type":"string","format":"email","pattern":"^a@b$"}`,
+			fault:  "|pattern|fault:pattern",
+			checkValue: func(t *testing.T, value string) {
+				require.NotEqual(t, "a@b", value)
+			},
+		},
+		{
+			name: "ipv4 format false",
+			schema: `{"type":"string","format":"ipv4",` +
+				`"pattern":"^(?:1\\.2\\.3\\.4|999\\.999\\.999\\.999)$"}`,
+			fault: "|format|fault:format",
+			checkValue: func(t *testing.T, value string) {
+				require.Equal(t, "999.999.999.999", value)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, plan := parseStringFaultPlan(t, test.schema)
+			target := findFaultTarget(t, plan, test.fault)
+			searchState := &search{model: model, maxSteps: 1_000_000}
+			row, found, err := findStringFaultRow(target, searchState)
+			require.NoError(t, err)
+			require.True(t, found)
+			test.checkValue(t, row.text)
+			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+		})
+	}
+}
+
+func TestFindStringFaultRowDirectedFalseExpandsSurrogates(t *testing.T) {
 	t.Parallel()
 
 	model, plan := parseStringFaultPlan(t, `{
-		"type":"object",
-		"required":["value"],
-		"properties":{
-			"value":{
-				"type":"string",
-				"pattern":"^a$",
-				"maxLength":1
-			}
-		}
+		"type":"string",
+		"minLength":1,
+		"maxLength":1,
+		"pattern":"^[^]$"
 	}`)
-	target := findFaultTarget(t, plan, "/properties/value|#/value|pattern|fault:pattern")
-	searchState := &search{model: model, maxSteps: 1000}
+	target := findFaultTarget(t, plan, "|pattern|fault:pattern")
+	searchState := &search{model: model, maxSteps: 10_000}
 
 	row, found, err := findStringFaultRow(target, searchState)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, "", row.object["value"].text)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, "𐀀", row.text)
 }
 
 func TestFindStringFaultRowChargesRetriesGlobally(t *testing.T) {

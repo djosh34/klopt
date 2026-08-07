@@ -134,6 +134,7 @@ func collectActiveStringRules(
 	return nil
 }
 
+//nolint:cyclop // Objective admission, scalar traversal, and exact closure verification form one seam.
 func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bool, error) {
 	if searchState == nil || searchState.model == nil || searchState.model.root == nil {
 		return nil, false, errors.New("schematest: string fault search has no model")
@@ -152,15 +153,20 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 		level:      target.obligation.component,
 	}
 
+	root := searchState.model.root
+	if !nodeAcceptsKindForTarget(root, jsonString) {
+		return nil, false, nil
+	}
+
 	var found *jsonValue
 
-	complete, err := searchState.walkNode(
-		searchState.model.root,
-		searchState.model.root.occurrence,
+	handled, complete, err := searchState.walkDirectedStringObjective(
+		root,
+		root.occurrence,
 		target.pins,
-		rowSearchContext{stringObjective: objective},
+		objective,
 		func(value *jsonValue) (bool, error) {
-			result := evaluate(searchState.model, value)
+			result := evaluateNode(root, value, root.occurrence)
 			if result.err != nil {
 				return false, fmt.Errorf("evaluate directed string fault: %w", result.err)
 			}
@@ -177,6 +183,10 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 	)
 	if err != nil {
 		return nil, false, err
+	}
+
+	if !handled {
+		return nil, false, nil
 	}
 
 	return found, complete, nil
@@ -334,8 +344,10 @@ func (s *search) walkDirectedStringObjective(
 			return true, false, productErr
 		}
 
-		product.formats = formats
-		product.directedFormat = formatIndex
+		if formatErr := product.addFormats(formats, formatIndex); formatErr != nil {
+			return true, false, formatErr
+		}
+
 		complete, walkErr := s.walkBasicStringProductForLengths(
 			product,
 			lengths,
@@ -354,8 +366,9 @@ func (s *search) walkDirectedStringObjective(
 			return true, false, productErr
 		}
 
-		product.formats = formats
-		product.directedFormat = -1
+		if formatErr := product.addFormats(formats, -1); formatErr != nil {
+			return true, false, formatErr
+		}
 
 		complete, walkErr := s.walkBasicStringProductForLengths(
 			product,
@@ -469,44 +482,6 @@ func directedBasicStringLengths(
 	}
 
 	return lengths, lengthObjective, true, nil
-}
-
-func directedStringChildUsable(
-	objective *stringSearchObjective,
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	value *jsonValue,
-) (bool, error) {
-	if objective == nil || !stringObjectiveWithin(objective, occurrence) {
-		return false, nil
-	}
-
-	result := evaluateNode(node, value, occurrence)
-	if result.err != nil {
-		return false, result.err
-	}
-
-	if len(result.failures) == 0 {
-		return false, nil
-	}
-
-	for _, failure := range result.failures {
-		found := false
-
-		for _, expected := range objective.closure {
-			if failure.rule == expected.rule && ruleOccurrenceMatches(failure.occurrence, expected.occurrence) {
-				found = true
-
-				break
-			}
-		}
-
-		if !found {
-			return false, nil
-		}
-	}
-
-	return true, nil
 }
 
 func stringObjectiveWithin(objective *stringSearchObjective, occurrence schemaOccurrence) bool {

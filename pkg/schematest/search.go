@@ -20,8 +20,7 @@ type search struct {
 
 // rowSearchContext explicitly carries private directed and valid-target search inputs.
 type rowSearchContext struct {
-	stringObjective *stringSearchObjective
-	validTarget     *validTarget
+	validTarget *validTarget
 }
 
 // assign charges one structural, kind, composition, enum, or scalar choice.

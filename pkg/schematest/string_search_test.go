@@ -175,7 +175,7 @@ func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "ab", witness)
-	require.Equal(t, uint64(19), searchState.steps)
+	require.Equal(t, uint64(55), searchState.steps)
 }
 
 func TestBasicStringProductPadsContextualPatterns(t *testing.T) {
@@ -186,10 +186,10 @@ func TestBasicStringProductPadsContextualPatterns(t *testing.T) {
 		want    string
 	}{
 		{pattern: `\Ba\B`, want: "0a0"},
-		{pattern: `^a\B`, want: "aa"},
-		{pattern: `\Ba`, want: "aa"},
-		{pattern: `^(?!a$)a`, want: "aa"},
-		{pattern: `^(?![^]{0,2}$)a`, want: "aaa"},
+		{pattern: `^a\B`, want: "a0"},
+		{pattern: `\Ba`, want: "0a"},
+		{pattern: `^(?!a$)a`, want: "a\x00"},
+		{pattern: `^(?![^]{0,2}$)a`, want: "a𐀀"},
 	}
 
 	for _, test := range tests {
@@ -267,6 +267,59 @@ func TestBasicStringProductHugeLengthStopsBeforeAllocation(t *testing.T) {
 	require.Equal(t, uint64(3), searchState.steps)
 }
 
+func TestBasicStringProductPreservesMixedAlternativeAnchors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		patterns []string
+		want     string
+	}{
+		{name: "restart unanchored alternative", patterns: []string{`^a|b$`, `^xb$`}, want: "xb"},
+		{name: "anchored prefix", patterns: []string{`^a|b$`, `^ac$`}, want: "ac"},
+		{name: "finite sibling", patterns: []string{`^a|b$`, `^..$`}, want: "\x00b"},
+		{name: "boundary restart", patterns: []string{`^z|\Bb`, `^ab$`}, want: "ab"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			searchState := &search{maxSteps: 10_000}
+			witness, found, err := searchState.findBasicStringWitness(
+				parseBasicSearchPatterns(t, test.patterns...),
+			)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, test.want, witness)
+		})
+	}
+}
+
+func TestBasicStringProductNegativeAssertionExpandsSurrogates(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 10_000}
+	witness, found, err := searchState.findBasicStringWitnessAtLength(
+		parseBasicSearchPatterns(t, `^(?![^]$)`), 1,
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "𐀀", witness)
+}
+
+func TestBasicStringProductPaddingUsesNormativeIntervalOrder(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 10_000}
+	witness, found, err := searchState.findBasicStringWitness(
+		parseBasicSearchPatterns(t, `^(?!z$)[^]$`),
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "\x00", witness)
+}
+
 func TestBasicStringProductChargesBeforeEveryEdge(t *testing.T) {
 	t.Parallel()
 
@@ -336,9 +389,9 @@ func TestBasicStringProductSearchesLeadingAssertionsInAuthoredOrder(t *testing.T
 		want    string
 		steps   uint64
 	}{
-		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 18},
+		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 21},
 		{name: "negative", pattern: `^(?!a)[a-b]$`, want: "b", steps: 7},
-		{name: "mixed consecutive", pattern: `^(?=a)(?!b)[a-c]$`, want: "a", steps: 3},
+		{name: "mixed consecutive", pattern: `^(?=a)(?!b)[a-c]$`, want: "a", steps: 6},
 	}
 
 	for _, test := range tests {
@@ -368,9 +421,9 @@ func TestBasicStringProductLeadingAssertionObjectivesKeepAuthoredOrder(t *testin
 		product.machines[1].expected,
 		product.machines[2].expected,
 	})
-	require.False(t, product.machines[0].restart)
-	require.False(t, product.machines[1].restart)
-	require.False(t, product.machines[2].restart)
+	require.Empty(t, product.machines[0].restartStates)
+	require.Empty(t, product.machines[1].restartStates)
+	require.Empty(t, product.machines[2].restartStates)
 }
 
 func TestBasicStringProductNegativeAssertionPreservesSiblingPattern(t *testing.T) {

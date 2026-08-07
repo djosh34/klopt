@@ -107,10 +107,7 @@ func (s *search) walkArrayElements(
 		}
 
 		if !usable {
-			usable, err = directedStringChildUsable(context.stringObjective, item, occurrence, value)
-			if err != nil || !usable {
-				return false, err
-			}
+			return false, nil
 		}
 
 		elements[index] = value
@@ -599,12 +596,7 @@ func (s *search) walkRowMemberValues(
 				}
 
 				if !usable {
-					usable, err = directedStringChildUsable(
-						context.stringObjective, candidate.node, candidate.occurrence, value,
-					)
-					if err != nil || !usable {
-						return false, err
-					}
+					return false, nil
 				}
 
 				return visit(value)

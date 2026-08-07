@@ -24,7 +24,7 @@ func TestSimpleStringFormatWitnessesAreCanonicalAndDeterministic(t *testing.T) {
 		},
 		{
 			name: "date", format: schemaFormatDate,
-			positive: []string{"1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31", "2024-01-01"},
+			positive: []string{"1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31"},
 			negative: []string{"2001-02-29", "1900-02-29", "1970-13-01", "1970-01-32"},
 		},
 		{
@@ -150,7 +150,7 @@ func TestFindStringFaultRowDirectsFormatAndPreservesSiblingPattern(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "YQ=", row.text)
-	require.Equal(t, uint64(8), searchState.steps)
+	require.Equal(t, uint64(10), searchState.steps)
 	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
 }
 
@@ -168,27 +168,27 @@ func TestFindStringFaultRowDirectsRemainingFormatsAndPreservesSiblings(t *testin
 			schema: `{"type":"string","format":"email","pattern":"^a\\.\\.b@example\\.com$",` +
 				`"minLength":16,"maxLength":16}`,
 			witness: "a..b@example.com",
-			steps:   18,
+			steps:   17,
 		},
 		{
 			name:    "ipv4",
 			schema:  `{"type":"string","format":"ipv4","pattern":"^00\\.0\\.0\\.0$","minLength":8,"maxLength":8}`,
 			witness: "00.0.0.0",
-			steps:   10,
+			steps:   9,
 		},
 		{
 			name: "cidr",
 			schema: `{"type":"string","format":"cidr","pattern":"^192\\.0\\.2\\.7/33$",` +
 				`"minLength":12,"maxLength":12}`,
 			witness: "192.0.2.7/33",
-			steps:   14,
+			steps:   13,
 		},
 		{
 			name: "ipv4-cidr",
 			schema: `{"type":"string","format":"ipv4-cidr","pattern":"^192\\.0\\.2\\.7/33$",` +
 				`"minLength":12,"maxLength":12}`,
 			witness: "192.0.2.7/33",
-			steps:   14,
+			steps:   13,
 		},
 	}
 

@@ -2,10 +2,8 @@
 package schematest
 
 import (
-	"encoding/base64"
+	"fmt"
 	"strings"
-	"unicode/utf16"
-	"unicode/utf8"
 )
 
 type activeStringFormat struct {
@@ -28,7 +26,7 @@ func simpleStringFormatWitnesses(format schemaFormat, valid bool) []string {
 		case schemaFormatByte:
 			return []string{"YQ=="}
 		case schemaFormatDate:
-			return []string{"1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31", "2024-01-01"}
+			return []string{"1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31"}
 		case schemaFormatDateTime:
 			return []string{
 				"1970-01-01T00:00:00Z",
@@ -118,181 +116,106 @@ func basicStringLengthsFromActive(constraints []activeStringLength) (basicString
 	return lengths, nil
 }
 
-//nolint:gocognit,mnd // Each retained format has a small explicit length construction.
-func stringFormatWitnessAtLength(format schemaFormat, length uint64) (string, bool) {
-	if length > uint64(^uint(0)>>1) {
-		return "", false
-	}
-
-	size := int(length)
+func basicStringFormatPattern(format schemaFormat) (string, bool) {
+	date := `[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])`
+	octet := `(?:0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])`
 
 	switch format {
 	case schemaFormatByte:
-		if size == 0 {
-			return "", true
-		}
-
-		if size%4 != 0 {
-			return "", false
-		}
-
-		decodedLength := size/4*3 - 2
-		for decodedLength <= size/4*3 {
-			candidate := base64.StdEncoding.EncodeToString(make([]byte, decodedLength))
-			if len(candidate) == size {
-				return candidate, true
-			}
-
-			decodedLength++
-		}
+		return `^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$`, true
 	case schemaFormatDate:
-		if size == len("1970-01-01") {
-			return "1970-01-01", true
-		}
+		return `^` + date + `$`, true
 	case schemaFormatDateTime:
-		if size == len("1970-01-01T00:00:00Z") {
-			return "1970-01-01T00:00:00Z", true
-		}
-
-		if size >= len("1970-01-01T00:00:00.0Z") {
-			return "1970-01-01T00:00:00." + strings.Repeat("0", size-21) + "Z", true
-		}
+		return `^` + date + `T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]` +
+			`(?:\.[0-9]+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$`, true
 	case schemaFormatEmail:
-		if size >= 3 {
-			return "a@" + strings.Repeat("b", size-2), true
-		}
+		return `^[a-z]{1,64}@[a-z]{1,63}(?:\.[a-z]{1,63})*$`, true
 	case schemaFormatIPv4:
-		if size >= 7 && size <= 15 {
-			remaining := size - 3
-
-			parts := make([]string, 4)
-			for index := range parts {
-				digits := min(3, remaining-(len(parts)-index-1))
-				switch digits {
-				case 1:
-					parts[index] = "0"
-				case 2:
-					parts[index] = "10"
-				case 3:
-					parts[index] = "100"
-				}
-
-				remaining -= digits
-			}
-
-			return strings.Join(parts, "."), true
-		}
-	case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
-		if size == 36 {
-			return "00000000-0000-4000-8000-000000000000", true
-		}
+		return `^` + octet + `\.` + octet + `\.` + octet + `\.` + octet + `$`, true
+	case schemaFormatUUID:
+		return `^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`, true
+	case schemaFormatUUIDv4, schemaFormatUUIDDashV4:
+		return `^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$`, true
 	case schemaFormatCIDR, schemaFormatIPv4CIDR:
-		for _, candidate := range []string{"0.0.0.0/0", "192.0.2.7/32"} {
-			if len(candidate) == size {
-				return candidate, true
-			}
-		}
+		return `^` + octet + `\.` + octet + `\.` + octet + `\.` + octet +
+			`/(?:0|[1-9]|[12][0-9]|3[0-2])$`, true
+	default:
+		return "", false
 	}
-
-	return "", false
 }
 
-//nolint:gocognit // Candidate construction, deduplication, edge charging, and product traversal are one phase.
-func (s *search) walkBasicStringFormatCandidates(
-	product *basicStringProduct,
-	runeLength uint64,
-	_ uint64,
-	visit rowVisit,
-) (bool, error) {
-	if len(product.formats) == 0 || runeLength > s.maxSteps-s.steps {
-		return false, nil
-	}
+func (product *basicStringProduct) addFormats(formats []activeStringFormat, directed int) error {
+	product.formats = formats
+	product.directedFormat = directed
 
-	candidates := make([]string, 0, len(product.formats))
-	for index, format := range product.formats {
-		valid := index != product.directedFormat
-		if valid {
-			candidate, exists := stringFormatWitnessAtLength(format.format, runeLength)
-			if exists {
-				candidates = append(candidates, candidate)
-			}
-
-			for _, candidate := range simpleStringFormatWitnesses(format.format, true) {
-				if uint64(utf8.RuneCountInString(candidate)) == runeLength {
-					candidates = append(candidates, candidate)
-				}
-			}
-
+	for index, format := range formats {
+		if index == directed {
 			continue
 		}
 
-		for _, candidate := range simpleStringFormatWitnesses(format.format, false) {
-			if uint64(utf8.RuneCountInString(candidate)) == runeLength {
-				candidates = append(candidates, candidate)
-			}
-		}
-	}
-
-	for index, candidate := range candidates {
-		duplicate := false
-
-		for _, earlier := range candidates[:index] {
-			if earlier == candidate {
-				duplicate = true
-
-				break
-			}
+		source, ok := basicStringFormatPattern(format.format)
+		if !ok {
+			return fmt.Errorf("schematest: format %d has no string product", format.format)
 		}
 
-		if duplicate {
-			continue
-		}
-
-		allowed, err := simpleStringCandidateAllowed(candidate, product.formats, product.directedFormat)
+		pattern, err := parseECMAPattern(source)
 		if err != nil {
-			return false, err
+			return fmt.Errorf("schematest: parse format %d product: %w", format.format, err)
+		}
+
+		machines, err := compileBasicStringPatternMachines(pattern)
+		if err != nil {
+			return fmt.Errorf("schematest: compile format %d product: %w", format.format, err)
+		}
+
+		product.machines = append(product.machines, machines...)
+	}
+
+	return product.setBounds()
+}
+
+//nolint:mnd // Retained format grammar lengths are normative.
+func (product *basicStringProduct) formatsAllowLength(length uint64) bool {
+	for index, format := range product.formats {
+		if index == product.directedFormat {
+			continue
+		}
+
+		allowed := true
+
+		switch format.format {
+		case schemaFormatByte:
+			allowed = length%4 == 0
+		case schemaFormatDate:
+			allowed = length == 10
+		case schemaFormatDateTime:
+			allowed = length >= 20
+		case schemaFormatEmail:
+			allowed = length >= 3 && length <= 254
+		case schemaFormatIPv4:
+			allowed = length >= 7 && length <= 15
+		case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
+			allowed = length == 36
+		case schemaFormatCIDR, schemaFormatIPv4CIDR:
+			allowed = length >= 9 && length <= 18
 		}
 
 		if !allowed {
-			continue
-		}
-
-		units := utf16.Encode([]rune(candidate))
-
-		state := product.start(len(units))
-		for position, unit := range units {
-			if assignErr := s.assign(); assignErr != nil {
-				return false, assignErr
-			}
-
-			state = product.advance(state, unit, position, len(units))
-		}
-
-		if !product.accepting(state) {
-			continue
-		}
-
-		complete, err := visit(&jsonValue{kind: jsonString, text: candidate})
-		if err != nil || complete {
-			return complete, err
+			return false
 		}
 	}
 
-	return false, nil
+	return true
 }
 
-func simpleStringCandidateAllowed(
-	candidate string,
-	formats []activeStringFormat,
-	directedFormat int,
-) (bool, error) {
-	for index, format := range formats {
+func (product *basicStringProduct) formatsAccept(candidate string) (bool, error) {
+	for index, format := range product.formats {
 		matches, err := cleanStringFormatMatches(candidate, format.format)
 		if err != nil {
 			return false, err
 		}
 
-		if matches == (index == directedFormat) {
+		if matches == (index == product.directedFormat) {
 			return false, nil
 		}
 	}

@@ -8,8 +8,6 @@ import (
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
-//
-//nolint:cyclop,nestif // String search and the existing scalar frontier share one dispatch seam.
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -18,31 +16,6 @@ func (s *search) walkScalar(
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
-	if kind == jsonString {
-		handled, complete, err := s.walkDirectedStringObjective(
-			node, occurrence, pins, context.stringObjective, visit,
-		)
-		if err != nil || handled {
-			return complete, err
-		}
-
-		pinAlternatives := activeStringPinAlternatives(node, occurrence, pins)
-		for _, activePins := range pinAlternatives {
-			if len(pinAlternatives) > 1 {
-				if err := s.assign(); err != nil {
-					return false, err
-				}
-			}
-
-			complete, err := s.walkActiveStringRules(
-				node, occurrence, activePins, context.validTarget, visit,
-			)
-			if err != nil || complete {
-				return complete, err
-			}
-		}
-	}
-
 	candidates, err := rowScalarValues(node, kind)
 	if err != nil {
 		return false, err
@@ -59,7 +32,20 @@ func (s *search) walkScalar(
 		}
 	}
 
-	return false, nil
+	if kind != jsonString {
+		return false, nil
+	}
+
+	return s.walkActiveStringPinAlternatives(
+		node,
+		occurrence,
+		append([]applicabilityPin(nil), pins...),
+		func(activePins []applicabilityPin) (bool, error) {
+			return s.walkActiveStringRules(
+				node, occurrence, activePins, context.validTarget, visit,
+			)
+		},
+	)
 }
 
 // walkActiveStringRules searches one canonical applicable rule view.
@@ -119,7 +105,9 @@ func (s *search) walkActiveStringRules(
 		return false, err
 	}
 
-	product.formats = rules.formats
+	if err := product.addFormats(rules.formats, -1); err != nil {
+		return false, err
+	}
 
 	return s.walkBasicStringProductForLengths(
 		product,

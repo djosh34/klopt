@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"unicode/utf16"
 )
 
@@ -40,17 +39,17 @@ type basicStringInterval struct {
 }
 
 type basicStringMachine struct {
-	states       [][]basicStringEdge
-	start        int
-	accept       int
-	maxUnits     uint64
-	unbounded    bool
-	hasBoundary  bool
-	hasSurrogate bool
-	restart      bool
-	expected     bool
-	required     bool
-	wholeBound   bool
+	states        [][]basicStringEdge
+	start         int
+	accept        int
+	maxUnits      uint64
+	unbounded     bool
+	hasBoundary   bool
+	hasSurrogate  bool
+	restartStates []int
+	expected      bool
+	required      bool
+	wholeBound    bool
 }
 
 type basicStringPatternState struct {
@@ -64,7 +63,6 @@ type basicStringProductState struct {
 	length       int
 	previousWord bool
 	pendingHigh  bool
-	previousUnit uint16
 }
 
 type basicStringProduct struct {
@@ -75,8 +73,6 @@ type basicStringProduct struct {
 	needsPadding   bool
 	formats        []activeStringFormat
 	directedFormat int
-	paddingUnit    uint16
-	fixedPadding   bool
 }
 
 type basicStringLengthObjective struct {
@@ -199,48 +195,48 @@ func (lengths basicStringLengths) each(
 	}
 }
 
-func activeStringPinAlternatives(
+func (s *search) walkActiveStringPinAlternatives(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
-) [][]applicabilityPin {
-	queue := [][]applicabilityPin{append([]applicabilityPin(nil), pins...)}
-	complete := make([][]applicabilityPin, 0, 1)
+	visit func([]applicabilityPin) (bool, error),
+) (bool, error) {
+	anyOfNode, anyOfOccurrence, found := firstUnpinnedStringAnyOf(node, occurrence, pins)
+	if !found {
+		return visit(pins)
+	}
 
-	for len(queue) > 0 {
-		candidate := queue[0]
-		queue = queue[1:]
+	for selected := range anyOfNode.anyOf {
+		pathLength := len(pins)
 
-		anyOfNode, anyOfOccurrence, found := firstUnpinnedStringAnyOf(node, occurrence, candidate)
-		if !found {
-			complete = append(complete, candidate)
-
-			continue
-		}
-
-		for selected := range anyOfNode.anyOf {
-			alternative := append([]applicabilityPin(nil), candidate...)
-
-			for branch, child := range anyOfNode.anyOf {
-				branchOccurrence := rebasePlanOccurrence(
-					child,
-					anyOfOccurrence.usePointer+"/anyOf/"+itoa(branch),
-					anyOfOccurrence.instanceTemplate,
-				)
-				alternative = append(alternative, applicabilityPin{
-					occurrence:  branchOccurrence,
-					composition: "anyOf",
-					branch:      branch,
-					truth:       branch == selected,
-					hasBranch:   true,
-				})
+		for branch, child := range anyOfNode.anyOf {
+			if err := s.assign(); err != nil {
+				return false, err
 			}
 
-			queue = append(queue, alternative)
+			branchOccurrence := rebasePlanOccurrence(
+				child,
+				anyOfOccurrence.usePointer+"/anyOf/"+itoa(branch),
+				anyOfOccurrence.instanceTemplate,
+			)
+			pins = append(pins, applicabilityPin{
+				occurrence:  branchOccurrence,
+				composition: "anyOf",
+				branch:      branch,
+				truth:       branch == selected,
+				hasBranch:   true,
+			})
+		}
+
+		complete, err := s.walkActiveStringPinAlternatives(node, occurrence, pins, visit)
+		pins = pins[:pathLength]
+
+		if err != nil || complete {
+			return complete, err
 		}
 	}
 
-	return complete
+	return false, nil
 }
 
 func firstUnpinnedStringAnyOf(
@@ -297,7 +293,6 @@ func newBasicStringProductForFailure(
 	product := &basicStringProduct{
 		machines:       make([]basicStringMachine, 0, len(patterns)),
 		directedFormat: -1,
-		paddingUnit:    'a',
 	}
 	if len(patterns) == 0 {
 		product.unbounded = true
@@ -307,11 +302,6 @@ func newBasicStringProductForFailure(
 	}
 
 	for patternIndex, pattern := range patterns {
-		if strings.HasPrefix(pattern.source, `\B`) && strings.HasSuffix(pattern.source, `\B`) {
-			product.paddingUnit = '0'
-			product.fixedPadding = true
-		}
-
 		machines, err := compileBasicStringPatternMachines(pattern)
 		if err != nil {
 			return nil, err
@@ -350,11 +340,15 @@ func newBasicStringProductForFailure(
 //nolint:cyclop // Whole-string bounds and padding metadata share one machine pass.
 func (product *basicStringProduct) setBounds() error {
 	bounded := false
+	product.maxUnits = 0
+	product.unbounded = false
+	product.hasSurrogate = false
+	product.needsPadding = len(product.machines) == 0
 
 	for index := range product.machines {
 		machine := &product.machines[index]
-		product.hasSurrogate = product.hasSurrogate || machine.expected && machine.hasSurrogate
-		product.needsPadding = product.needsPadding || !machine.wholeBound
+		product.hasSurrogate = product.hasSurrogate || machine.required && machine.hasSurrogate
+		product.needsPadding = product.needsPadding || machine.required && (!machine.expected || !machine.wholeBound)
 
 		if !machine.required || !machine.expected || machine.unbounded || !machine.wholeBound {
 			continue
@@ -378,7 +372,7 @@ func compileBasicStringPatternMachines(pattern *patternAST) ([]basicStringMachin
 
 	machines := make([]basicStringMachine, 0, len(pattern.leadingAssertions)+1)
 	for _, assertion := range pattern.leadingAssertions {
-		machine, err := compileBasicStringExpressionMachine(assertion.expression, false, assertion.positive)
+		machine, err := compileBasicStringExpressionMachine(assertion.expression, assertion.positive)
 		if err != nil {
 			return nil, err
 		}
@@ -386,14 +380,7 @@ func compileBasicStringPatternMachines(pattern *patternAST) ([]basicStringMachin
 		machines = append(machines, machine)
 	}
 
-	anchoredStart, anchoredEnd := basicStringWholeAnchors(pattern.source)
-	machine, err := compileBasicStringExpressionMachine(
-		pattern.expression,
-		!anchoredStart,
-		true,
-	)
-	machine.wholeBound = anchoredStart && anchoredEnd
-
+	machine, err := compileBasicStringTopLevelMachine(pattern.expression)
 	if err != nil {
 		return nil, err
 	}
@@ -401,25 +388,52 @@ func compileBasicStringPatternMachines(pattern *patternAST) ([]basicStringMachin
 	return append(machines, machine), nil
 }
 
-//nolint:mnd // Two skips the terminal dollar while counting preceding escapes.
-func basicStringWholeAnchors(source string) (bool, bool) {
-	if !strings.HasPrefix(source, "^") || !strings.HasSuffix(source, "$") {
-		return false, false
-	}
-
-	backslashes := 0
-	for index := len(source) - 2; index >= 0 && source[index] == '\\'; index-- {
-		backslashes++
-	}
-
-	return true, backslashes%2 == 0
-}
-
 func compileBasicStringExpressionMachine(
 	expression *patternExpression,
-	restart,
 	expected bool,
 ) (basicStringMachine, error) {
+	machine, err := newBasicStringMachine(expression, expected)
+	if err != nil {
+		return basicStringMachine{}, err
+	}
+
+	if err := machine.compileExpression(expression, machine.start, machine.accept); err != nil {
+		return basicStringMachine{}, err
+	}
+
+	return machine, nil
+}
+
+func compileBasicStringTopLevelMachine(expression *patternExpression) (basicStringMachine, error) {
+	machine, err := newBasicStringMachine(expression, true)
+	if err != nil {
+		return basicStringMachine{}, err
+	}
+
+	machine.wholeBound = len(expression.alternatives) > 0
+	for _, alternative := range expression.alternatives {
+		alternativeStart := machine.newState()
+		alternativeEnd := machine.newState()
+		machine.addEdge(machine.start, basicStringEdge{kind: basicStringEpsilon, target: alternativeStart})
+
+		if err := machine.compileSequence(alternative, alternativeStart, alternativeEnd); err != nil {
+			return basicStringMachine{}, err
+		}
+
+		machine.addEdge(alternativeEnd, basicStringEdge{kind: basicStringEpsilon, target: machine.accept})
+
+		startAnchored, endAnchored := basicStringSequenceAnchors(alternative)
+		if !startAnchored {
+			machine.restartStates = append(machine.restartStates, alternativeStart)
+		}
+
+		machine.wholeBound = machine.wholeBound && startAnchored && endAnchored
+	}
+
+	return machine, nil
+}
+
+func newBasicStringMachine(expression *patternExpression, expected bool) (basicStringMachine, error) {
 	maximum, unbounded, ok := basicStringExpressionLength(expression)
 	if !ok {
 		return basicStringMachine{}, errors.New("schematest: pattern is not a searchable string expression")
@@ -430,17 +444,50 @@ func compileBasicStringExpressionMachine(
 		accept:    1,
 		maxUnits:  maximum,
 		unbounded: unbounded,
-		restart:   restart,
 		expected:  expected,
 		required:  true,
 	}
 	machine.states = make([][]basicStringEdge, machine.accept+1)
 
-	if err := machine.compileExpression(expression, machine.start, machine.accept); err != nil {
-		return basicStringMachine{}, err
+	return machine, nil
+}
+
+func basicStringSequenceAnchors(sequence *patternSequence) (bool, bool) {
+	if sequence == nil || len(sequence.terms) == 0 {
+		return false, false
 	}
 
-	return machine, nil
+	return basicStringTermAnchor(sequence.terms[0], true),
+		basicStringTermAnchor(sequence.terms[len(sequence.terms)-1], false)
+}
+
+//nolint:cyclop // Start/end direction and nested alternatives share one structural proof.
+func basicStringTermAnchor(term *patternTerm, start bool) bool {
+	if term == nil || term.atom == nil || term.quantified && term.minimum == 0 {
+		return false
+	}
+
+	if start {
+		if term.atom.kind == patternStart {
+			return true
+		}
+	} else if term.atom.kind == patternEnd {
+		return true
+	}
+
+	if term.atom.kind != patternGroup || term.atom.expression == nil ||
+		len(term.atom.expression.alternatives) == 0 {
+		return false
+	}
+
+	for _, alternative := range term.atom.expression.alternatives {
+		anchoredStart, anchoredEnd := basicStringSequenceAnchors(alternative)
+		if start && !anchoredStart || !start && !anchoredEnd {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (machine *basicStringMachine) compileExpression(expression *patternExpression, from, to int) error {
@@ -745,7 +792,6 @@ func (product *basicStringProduct) advance(
 		length:       length,
 		previousWord: isPatternWordUnit(unit),
 		pendingHigh:  unit >= 0xd800 && unit <= 0xdbff,
-		previousUnit: unit,
 	}
 
 	for index := range product.machines {
@@ -783,11 +829,11 @@ func (product *basicStringProduct) advance(
 }
 
 func (machine *basicStringMachine) appendRestartState(states []int) []int {
-	if !machine.restart {
-		return states
+	for _, restartState := range machine.restartStates {
+		states = appendUniqueBasicStringState(states, restartState)
 	}
 
-	return appendUniqueBasicStringState(states, machine.start)
+	return states
 }
 
 //nolint:cyclop // Zero-width edge conditions are deliberately explicit.
@@ -871,10 +917,21 @@ func (product *basicStringProduct) nextIntervalLow(
 	return low, found
 }
 
+//nolint:cyclop // Structural, boundary, and active-edge partitions share one ordered endpoint.
 func (product *basicStringProduct) intervalHigh(state basicStringProductState, low uint16) uint16 {
 	high := basicStringMaxUnit
 
-	for _, boundary := range []uint16{0xd7ff, 0xdbff, 0xdfff} {
+	boundaries := []uint16{0xd7ff, 0xdbff, 0xdfff}
+
+	for _, machine := range product.machines {
+		if machine.required && machine.hasBoundary {
+			boundaries = []uint16{47, 57, 64, 90, 94, 95, 96, 122, 0xd7ff, 0xdbff, 0xdfff}
+
+			break
+		}
+	}
+
+	for _, boundary := range boundaries {
 		if low <= boundary {
 			high = boundary
 
@@ -973,7 +1030,7 @@ func eachBasicStringWordIntersection(edge basicStringEdge, word bool, visit func
 	}
 }
 
-//nolint:cyclop,mnd // UTF-16 structural boundaries and deterministic padding are explicit.
+//nolint:mnd // UTF-16 structural boundaries and deterministic padding are explicit.
 func (product *basicStringProduct) eachTransition(
 	state basicStringProductState,
 	seed uint64,
@@ -992,28 +1049,11 @@ func (product *basicStringProduct) eachTransition(
 	}
 
 	if includePadding {
-		preferred := product.paddingUnit
-		if state.position > 0 && !product.fixedPadding {
-			preferred = state.previousUnit
-		}
-
-		if visitWellFormed(preferred) {
-			return
-		}
-
-		visitPadding := func(unit uint16) bool {
-			if unit == preferred {
-				return false
-			}
-
-			return visitWellFormed(unit)
-		}
-
 		var low uint32
 		for low <= uint32(basicStringMaxUnit) {
 			high := product.intervalHigh(state, uint16(low))
 			if eachBasicStringIntervalCandidate(
-				basicStringInterval{low: uint16(low), high: high}, seed, visitPadding,
+				basicStringInterval{low: uint16(low), high: high}, seed, visitWellFormed,
 			) {
 				return
 			}
@@ -1068,6 +1108,17 @@ func basicStringSeed(schemaPointer string, canonicalSchemaJSON []byte, rule, lev
 	digest := sha256.Sum256(input)
 
 	return binary.BigEndian.Uint64(digest[:8])
+}
+
+func (product *basicStringProduct) viable(state basicStringProductState) bool {
+	for index, pattern := range state.patterns {
+		machine := &product.machines[index]
+		if machine.required && machine.expected && !pattern.matched && len(pattern.active) == 0 {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (product *basicStringProduct) accepting(state basicStringProductState) bool {
@@ -1153,13 +1204,16 @@ func (s *search) walkBasicStringProductForLengths(
 	return complete, walkErr
 }
 
-//nolint:cyclop // Format candidates and UTF-16 unit lengths share one rune-length assignment.
 func (s *search) walkBasicStringRuneLength(
 	product *basicStringProduct,
 	runeLength uint64,
 	seed uint64,
 	visit rowVisit,
 ) (bool, error) {
+	if !product.formatsAllowLength(runeLength) {
+		return false, nil
+	}
+
 	maxInt := uint64(^uint(0) >> 1)
 	if runeLength > maxInt {
 		return false, nil
@@ -1173,15 +1227,6 @@ func (s *search) walkBasicStringRuneLength(
 		}
 	}
 
-	complete, err := s.walkBasicStringFormatCandidates(product, runeLength, seed, visit)
-	if err != nil || complete {
-		return complete, err
-	}
-
-	if len(product.formats) > 0 {
-		return false, nil
-	}
-
 	for unitLength := runeLength; unitLength <= maximumUnits; unitLength++ {
 		length := int(unitLength)
 
@@ -1189,7 +1234,7 @@ func (s *search) walkBasicStringRuneLength(
 
 		includePadding := product.needsPadding || !product.unbounded && unitLength > product.maxUnits
 
-		complete, err = s.walkBasicStringProduct(
+		complete, err := s.walkBasicStringProduct(
 			product,
 			product.start(length),
 			units,
@@ -1223,7 +1268,14 @@ func (s *search) walkBasicStringProduct(
 			return false, nil
 		}
 
-		return visit(&jsonValue{kind: jsonString, text: string(utf16.Decode(units))})
+		candidate := string(utf16.Decode(units))
+
+		formatsAccept, err := product.formatsAccept(candidate)
+		if err != nil || !formatsAccept {
+			return false, err
+		}
+
+		return visit(&jsonValue{kind: jsonString, text: candidate})
 	}
 
 	var (
@@ -1238,10 +1290,15 @@ func (s *search) walkBasicStringProduct(
 			return true
 		}
 
+		nextState := product.advance(state, unit, len(units), length)
+		if !product.viable(nextState) {
+			return false
+		}
+
 		nextUnits := append(units, unit)
 		complete, walkErr = s.walkBasicStringProduct(
 			product,
-			product.advance(state, unit, len(units), length),
+			nextState,
 			nextUnits,
 			length,
 			runeLength,
