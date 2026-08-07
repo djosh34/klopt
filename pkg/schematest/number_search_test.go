@@ -179,9 +179,8 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("-1"), Valid: false},
 			},
-			wantSteps: 31,
+			wantSteps: 46,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:0",
 			},
@@ -201,7 +200,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("4"), Valid: false},
 			},
-			wantSteps: 78,
+			wantSteps: 95,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:1",
 				"/allOf/1|#|minimum|level:valid",

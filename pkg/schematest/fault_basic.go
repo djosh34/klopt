@@ -17,10 +17,6 @@ func streamBasicFaults(
 	yield func(Case) error,
 ) (StopReason, error) {
 	for _, fault := range plan.faultTargets {
-		if faultHasCompositionPins(fault) && !faultIsCompositionTarget(fault) {
-			continue
-		}
-
 		if err := streamBasicFault(plan, fault, s, covered, yield); err != nil {
 			if errors.Is(err, errMaxSteps) {
 				return MaxStepsReached, nil
@@ -31,32 +27,6 @@ func streamBasicFaults(
 	}
 
 	return SpaceExhausted, nil
-}
-
-// faultHasCompositionPins reports whether a fault has composition context.
-func faultHasCompositionPins(fault faultTarget) bool {
-	for _, pin := range fault.pins {
-		if pin.hasBranch {
-			return true
-		}
-	}
-
-	return false
-}
-
-// faultIsCompositionTarget reports whether the composition phase owns the fault.
-func faultIsCompositionTarget(fault faultTarget) bool {
-	if faultNeedsCompositionSearch(fault) {
-		return true
-	}
-
-	for _, pin := range fault.pins {
-		if pin.hasBranch && pin.composition == "allOf" && !pin.truth {
-			return true
-		}
-	}
-
-	return false
 }
 
 // streamBasicFault replays, applies, verifies, and emits one fault derivative.
@@ -173,7 +143,7 @@ func parentReplayPins(fault faultTarget) []applicabilityPin {
 				pins[index].presence = planPinPresent
 			case oracleRuleAdditionalProperties:
 				pins[index].presence = planPinAbsent
-			default:
+			case oracleRuleType:
 				pins[index].hasKind = false
 			}
 		}

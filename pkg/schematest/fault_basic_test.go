@@ -95,6 +95,71 @@ func TestBuildDiscardsBasicFaultAtCutoff(t *testing.T) {
 	}
 }
 
+func TestRegenerateParentPreservesFaultKindPins(t *testing.T) {
+	t.Parallel()
+
+	for name, schema := range map[string]string{
+		"typeless minLength":       `{"minLength":2}`,
+		"mixed enum and minLength": `{"enum":["ok",1],"minLength":2}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			model, plan := compositionFaultModel(t, schema)
+			fault := findFaultTarget(t, plan, "|minLength|fault:minLength")
+			searchState := &search{model: model, maxSteps: 100_000}
+
+			first, found, err := regenerateParent(plan, fault, searchState)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, jsonString, first.kind)
+			firstJSON := marshalFaultTestValue(t, first)
+
+			second, found, err := regenerateParent(plan, fault, searchState)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, firstJSON, marshalFaultTestValue(t, second))
+		})
+	}
+}
+
+func TestBuildVisitsMaximumFaultInsideAnyOfContext(t *testing.T) {
+	t.Parallel()
+
+	var cases []Case
+
+	report, err := Build(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"number","maximum":100,"anyOf":[{"type":"number"}]
+		}`)),
+		OperationID: "selected",
+		MaxSteps:    1_000_000,
+	}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []Case{
+		{JSON: []byte(`100`), Valid: true},
+		{JSON: []byte(`100`), Valid: true},
+		{JSON: []byte(`100`), Valid: true},
+		{JSON: []byte(`100`), Valid: true},
+		{JSON: []byte(`101`), Valid: false},
+	}, cases)
+	require.Equal(t, Report{
+		Stop:  SpaceExhausted,
+		Steps: 21,
+		Covered: []string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:number",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maximum|level:valid",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maximum|fault:maximum",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:1",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/anyOf/0|#|type|level:number",
+		},
+	}, report)
+}
+
 func marshalFaultTestValue(t *testing.T, value *jsonValue) []byte {
 	t.Helper()
 

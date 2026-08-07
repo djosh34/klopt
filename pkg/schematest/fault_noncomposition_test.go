@@ -91,6 +91,90 @@ func TestMaxPropertiesFaultBuildsAValidTypedAdditionalMember(t *testing.T) {
 	require.Equal(t, `{"__schematest_extra__":false}`, string(marshalFaultTestValue(t, derivative)))
 }
 
+func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		faultID    string
+		derivative string
+	}{
+		{
+			name: "alternate composed item witness",
+			schema: `{"type":"array","maxItems":0,"items":{"enum":["bad","ok"]},` +
+				`"allOf":[{"items":{"enum":["ok"]}}]}`,
+			faultID:    "|maxItems|fault:maxItems",
+			derivative: `["ok"]`,
+		},
+		{
+			name: "composed required member survives shrinking",
+			schema: `{"type":"object","minProperties":2,"properties":{"a":{},"b":{}},` +
+				`"allOf":[{"required":["a"]}]}`,
+			faultID:    "|minProperties|fault:minProperties",
+			derivative: `{"a":null}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, plan := compositionFaultModel(t, test.schema)
+			fault := findFaultTarget(t, plan, test.faultID)
+			searchState := &search{model: model, maxSteps: 100_000}
+			parent, found, err := regenerateParent(plan, fault, searchState)
+			require.NoError(t, err)
+			require.True(t, found)
+
+			derivative, err := applyFault(parent, fault, searchState)
+			require.NoError(t, err)
+			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
+		})
+	}
+}
+
+func TestAdditionalPropertyFaultUsesActiveSiblingValueSchema(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"allOf":[
+			{"additionalProperties":false},
+			{"additionalProperties":{"type":"string"}}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "/allOf/0|#/*|additionalProperties|fault:additionalProperties")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `{"__schematest_extra__":""}`, string(marshalFaultTestValue(t, derivative)))
+}
+
+func TestLargeCountFaultsStopBeforeMaterialization(t *testing.T) {
+	t.Parallel()
+
+	for name, schema := range map[string]string{
+		"array":  `{"type":"array","maxItems":1000000000000,"items":{}}`,
+		"object": `{"type":"object","maxProperties":1000000000000}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			report, err := Build(Input{
+				OpenAPI: []byte(documentWithJSONSchema(schema)), OperationID: "selected", MaxSteps: 20,
+			}, func(Case) error { return nil })
+			require.NoError(t, err)
+			require.Equal(t, MaxStepsReached, report.Stop)
+			require.Equal(t, uint64(20), report.Steps)
+		})
+	}
+}
+
 func TestNestedFaultsDoNotStackAndUseConcreteInstanceIdentities(t *testing.T) {
 	t.Parallel()
 
