@@ -78,6 +78,8 @@ func (parser *oasParser) parseSchemaObject(
 	object map[string]*jsonValue,
 	pointer string,
 ) error {
+	node.schemaJSON = &jsonValue{kind: jsonObject, object: object}
+
 	if err := validateSchemaKeywords(object, pointer); err != nil {
 		return err
 	}

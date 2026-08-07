@@ -2,13 +2,14 @@ package schematest
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
 //
-//nolint:cyclop // Basic pattern search and the existing scalar frontier share one dispatch seam.
+//nolint:cyclop,nestif // Basic pattern search and the existing scalar frontier share one dispatch seam.
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -23,7 +24,19 @@ func (s *search) walkScalar(
 		}
 
 		if supported && len(patterns) > 0 {
-			complete, walkErr := s.walkBasicStringWitnesses(patterns, visit)
+			canonicalSchemaJSON, marshalErr := marshalStrict(node.schemaJSON)
+			if marshalErr != nil {
+				return false, fmt.Errorf("schematest: canonicalize string search schema: %w", marshalErr)
+			}
+
+			seed := basicStringSeed(
+				occurrence.usePointer,
+				canonicalSchemaJSON,
+				oracleRulePattern,
+				oracleStringValidLevel,
+			)
+
+			complete, walkErr := s.walkBasicStringWitnesses(patterns, seed, visit)
 			if walkErr != nil || complete {
 				return complete, walkErr
 			}

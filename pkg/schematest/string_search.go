@@ -2,6 +2,8 @@
 package schematest
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sort"
@@ -17,10 +19,18 @@ const (
 	basicStringEnd
 )
 
+const basicStringMaxUnit = uint16(0xffff)
+
 type basicStringEdge struct {
 	kind   basicStringEdgeKind
-	unit   uint16
+	low    uint16
+	high   uint16
 	target int
+}
+
+type basicStringInterval struct {
+	low  uint16
+	high uint16
 }
 
 type basicStringMachine struct {
@@ -208,10 +218,22 @@ func (machine *basicStringMachine) compileSequence(sequence *patternSequence, fr
 	return nil
 }
 
+//nolint:mnd // Dot's four exact ES5.1 line-terminator boundaries are normative.
 func (machine *basicStringMachine) compileAtom(atom *patternAtom, from, to int) error {
+	var ranges []patternRange
+
 	switch atom.kind {
 	case patternLiteral:
-		machine.addEdge(from, basicStringEdge{kind: basicStringUnit, unit: atom.literal, target: to})
+		ranges = []patternRange{{low: atom.literal, high: atom.literal}}
+	case patternDot:
+		ranges = []patternRange{
+			{low: 0x0000, high: 0x0009},
+			{low: 0x000b, high: 0x000c},
+			{low: 0x000e, high: 0x2027},
+			{low: 0x202a, high: 0xffff},
+		}
+	case patternClassAtom:
+		ranges = basicStringClassRanges(atom.class)
 	case patternStart:
 		machine.addEdge(from, basicStringEdge{kind: basicStringStart, target: to})
 	case patternEnd:
@@ -222,7 +244,59 @@ func (machine *basicStringMachine) compileAtom(atom *patternAtom, from, to int) 
 		return fmt.Errorf("schematest: pattern atom %d is not a basic string atom", atom.kind)
 	}
 
+	for _, characterRange := range ranges {
+		machine.addEdge(from, basicStringEdge{
+			kind:   basicStringUnit,
+			low:    characterRange.low,
+			high:   characterRange.high,
+			target: to,
+		})
+	}
+
 	return nil
+}
+
+func basicStringClassRanges(class patternClass) []patternRange {
+	ranges := make([]patternRange, 0)
+
+	for _, part := range class.parts {
+		partRanges := mergePatternRanges(append([]patternRange(nil), part.ranges...))
+		if part.negated {
+			partRanges = complementBasicStringRanges(partRanges)
+		}
+
+		ranges = append(ranges, partRanges...)
+	}
+
+	ranges = mergePatternRanges(ranges)
+	if class.negated {
+		return complementBasicStringRanges(ranges)
+	}
+
+	return ranges
+}
+
+func complementBasicStringRanges(ranges []patternRange) []patternRange {
+	ranges = mergePatternRanges(ranges)
+	complement := make([]patternRange, 0, len(ranges)+1)
+
+	var next uint32
+
+	for _, excluded := range ranges {
+		if next < uint32(excluded.low) {
+			complement = append(complement, patternRange{low: uint16(next), high: excluded.low - 1})
+		}
+
+		if excluded.high == basicStringMaxUnit {
+			return complement
+		}
+
+		next = uint32(excluded.high) + 1
+	}
+
+	complement = append(complement, patternRange{low: uint16(next), high: basicStringMaxUnit})
+
+	return complement
 }
 
 func (machine *basicStringMachine) newState() int {
@@ -271,7 +345,7 @@ func basicStringSequenceMaxUnits(sequence *patternSequence) (uint64, bool) {
 		var atomLength uint64
 
 		switch term.atom.kind {
-		case patternLiteral:
+		case patternLiteral, patternDot, patternClassAtom:
 			atomLength = 1
 		case patternStart, patternEnd:
 		case patternGroup:
@@ -324,7 +398,7 @@ func (product *basicStringProduct) advance(
 		if !patternState.matched {
 			for _, active := range patternState.active {
 				for _, edge := range machine.states[active] {
-					if edge.kind == basicStringUnit && edge.unit == unit {
+					if edge.kind == basicStringUnit && unit >= edge.low && unit <= edge.high {
 						targets = appendUniqueBasicStringState(targets, edge.target)
 					}
 				}
@@ -369,51 +443,134 @@ func (machine *basicStringMachine) closure(states []int, position, length int) [
 	return closed
 }
 
-// eachTransition incrementally selects the next ordered product edge without
-// constructing a Cartesian product of the active machines' alternatives.
-//
-//nolint:cyclop // The nested scan incrementally selects one edge across the product state.
-func (product *basicStringProduct) eachTransition(
+// eachInterval incrementally partitions active edges wherever their transition
+// truth can change, without constructing a Cartesian product of machines.
+func (product *basicStringProduct) eachInterval(
 	state basicStringProductState,
-	visit func(uint16) bool,
+	visit func(basicStringInterval) bool,
 ) {
-	var (
-		previous     uint16
-		havePrevious bool
-	)
+	var nextLow uint32
 
-	for {
-		var (
-			next  uint16
-			found bool
-		)
-
-		for patternIndex, machine := range product.machines {
-			if state.patterns[patternIndex].matched {
-				continue
-			}
-
-			for _, active := range state.patterns[patternIndex].active {
-				for _, edge := range machine.states[active] {
-					if edge.kind != basicStringUnit || havePrevious && edge.unit <= previous {
-						continue
-					}
-
-					if !found || edge.unit < next {
-						next = edge.unit
-						found = true
-					}
-				}
-			}
-		}
-
-		if !found || visit(next) {
+	for nextLow <= uint32(basicStringMaxUnit) {
+		low, found := product.nextIntervalLow(state, nextLow)
+		if !found {
 			return
 		}
 
-		previous = next
-		havePrevious = true
+		high := product.intervalHigh(state, low)
+		if visit(basicStringInterval{low: low, high: high}) {
+			return
+		}
+
+		nextLow = uint32(high) + 1
 	}
+}
+
+func (product *basicStringProduct) nextIntervalLow(
+	state basicStringProductState,
+	minimum uint32,
+) (uint16, bool) {
+	var (
+		low   uint16
+		found bool
+	)
+
+	product.eachActiveUnitEdge(state, func(edge basicStringEdge) {
+		candidate := max(minimum, uint32(edge.low))
+		if candidate > uint32(edge.high) || found && candidate >= uint32(low) {
+			return
+		}
+
+		low = uint16(candidate)
+		found = true
+	})
+
+	return low, found
+}
+
+func (product *basicStringProduct) intervalHigh(state basicStringProductState, low uint16) uint16 {
+	high := basicStringMaxUnit
+
+	product.eachActiveUnitEdge(state, func(edge basicStringEdge) {
+		switch {
+		case low >= edge.low && low <= edge.high && edge.high < high:
+			high = edge.high
+		case edge.low > low && edge.low-1 < high:
+			high = edge.low - 1
+		}
+	})
+
+	return high
+}
+
+func (product *basicStringProduct) eachActiveUnitEdge(
+	state basicStringProductState,
+	visit func(basicStringEdge),
+) {
+	for patternIndex, machine := range product.machines {
+		if state.patterns[patternIndex].matched {
+			continue
+		}
+
+		for _, active := range state.patterns[patternIndex].active {
+			for _, edge := range machine.states[active] {
+				if edge.kind == basicStringUnit {
+					visit(edge)
+				}
+			}
+		}
+	}
+}
+
+func (product *basicStringProduct) eachTransition(
+	state basicStringProductState,
+	seed uint64,
+	visit func(uint16) bool,
+) {
+	product.eachInterval(state, func(interval basicStringInterval) bool {
+		return eachBasicStringIntervalCandidate(interval, seed, visit)
+	})
+}
+
+func eachBasicStringIntervalCandidate(
+	interval basicStringInterval,
+	seed uint64,
+	visit func(uint16) bool,
+) bool {
+	if visit(interval.low) {
+		return true
+	}
+
+	if interval.high == interval.low {
+		return false
+	}
+
+	if visit(interval.high) {
+		return true
+	}
+
+	if uint32(interval.high)-uint32(interval.low) == 1 {
+		return false
+	}
+
+	interiorCount := uint32(interval.high) - uint32(interval.low) - 1
+	candidate := uint32(interval.low) + 1 + uint32(seed%uint64(interiorCount))
+
+	return visit(uint16(candidate))
+}
+
+func basicStringSeed(schemaPointer string, canonicalSchemaJSON []byte, rule, level string) uint64 {
+	input := []byte("schematest-v1\x00")
+	input = append(input, schemaPointer...)
+	input = append(input, 0)
+	input = append(input, canonicalSchemaJSON...)
+	input = append(input, 0)
+	input = append(input, rule...)
+	input = append(input, 0)
+	input = append(input, level...)
+	digest := sha256.Sum256(input)
+
+	return binary.BigEndian.Uint64(digest[:8])
 }
 
 func (product *basicStringProduct) accepting(state basicStringProductState) bool {
@@ -426,7 +583,7 @@ func (product *basicStringProduct) accepting(state basicStringProductState) bool
 	return true
 }
 
-func (s *search) walkBasicStringWitnesses(patterns []*patternAST, visit rowVisit) (bool, error) {
+func (s *search) walkBasicStringWitnesses(patterns []*patternAST, seed uint64, visit rowVisit) (bool, error) {
 	product, err := newBasicStringProduct(patterns)
 	if err != nil {
 		return false, err
@@ -440,7 +597,7 @@ func (s *search) walkBasicStringWitnesses(patterns []*patternAST, visit rowVisit
 	for length := 0; length <= int(product.maxUnits); length++ {
 		units := make([]uint16, 0, length)
 
-		complete, walkErr := s.walkBasicStringProduct(product, product.start(length), units, length, visit)
+		complete, walkErr := s.walkBasicStringProduct(product, product.start(length), units, length, seed, visit)
 		if walkErr != nil || complete {
 			return complete, walkErr
 		}
@@ -454,6 +611,7 @@ func (s *search) walkBasicStringProduct(
 	state basicStringProductState,
 	units []uint16,
 	length int,
+	seed uint64,
 	visit rowVisit,
 ) (bool, error) {
 	if len(units) == length {
@@ -469,7 +627,7 @@ func (s *search) walkBasicStringProduct(
 		walkErr  error
 	)
 
-	product.eachTransition(state, func(unit uint16) bool {
+	product.eachTransition(state, seed, func(unit uint16) bool {
 		if err := s.assign(); err != nil {
 			walkErr = err
 
@@ -482,6 +640,7 @@ func (s *search) walkBasicStringProduct(
 			product.advance(state, unit, len(units), length),
 			nextUnits,
 			length,
+			seed,
 			visit,
 		)
 
