@@ -157,6 +157,186 @@ func TestSeededNumberFrontierStopsOnlyAtGlobalBudget(t *testing.T) {
 	require.Positive(t, seen)
 }
 
+// TestBuildPreservesComposedNumericEnums verifies the active finite enum path.
+func TestBuildPreservesComposedNumericEnums(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		schema    string
+		wantCases []Case
+		wantSteps uint64
+		covered   []string
+	}{
+		{
+			name: "allOf enum",
+			schema: `{
+				"type":"number",
+				"allOf":[{"enum":[5]}]
+			}`,
+			wantCases: []Case{
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+			},
+			wantSteps: 27,
+			covered: []string{
+				"/allOf/0|#|enum|level:member:0",
+			},
+		},
+		{
+			name: "intersecting enum and minimum",
+			schema: `{
+				"type":"number",
+				"allOf":[{"enum":[4,5]},{"minimum":5}]
+			}`,
+			wantCases: []Case{
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+			},
+			wantSteps: 68,
+			covered: []string{
+				"/allOf/0|#|enum|level:member:1",
+				"/allOf/1|#|minimum|level:valid",
+			},
+		},
+		{
+			name: "selected anyOf enums",
+			schema: `{
+				"type":"number",
+				"anyOf":[{"enum":[5]},{"enum":[7]}]
+			}`,
+			wantCases: []Case{
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("7"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("7"), Valid: true},
+				{JSON: []byte("7"), Valid: true},
+			},
+			wantSteps: 51,
+			covered: []string{
+				"|#|anyOf|level:mask:1",
+				"|#|anyOf|level:mask:2",
+				"/anyOf/0|#|enum|level:member:0",
+				"/anyOf/1|#|enum|level:member:0",
+			},
+		},
+	}
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cases := make([]Case, 0, len(test.wantCases))
+			report, err := Build(
+				Input{
+					OpenAPI:     []byte(documentWithJSONSchema(test.schema)),
+					OperationID: "selected",
+					MaxSteps:    10000,
+				},
+				func(testCase Case) error {
+					cases = append(cases, testCase)
+
+					return nil
+				},
+			)
+			require.NoError(t, err)
+			require.Equal(t, SpaceExhausted, report.Stop)
+			require.Equal(t, test.wantSteps, report.Steps)
+			require.Equal(t, test.wantCases, cases)
+
+			for _, suffix := range test.covered {
+				require.Contains(t, report.Covered, schemaPointer+suffix)
+			}
+		})
+	}
+}
+
+// TestBuildSearchesNumericFalseBranchObjectives verifies realizable exact anyOf masks.
+func TestBuildSearchesNumericFalseBranchObjectives(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		schema    string
+		wantCases []Case
+		masks     []string
+	}{
+		{
+			name:   "unconstrained true branch",
+			schema: `{"type":"number","anyOf":[{}, {"maximum":0}]}`,
+			wantCases: []Case{
+				{JSON: []byte("9"), Valid: true},
+				{JSON: []byte("7"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
+			},
+			masks: []string{"1", "3"},
+		},
+		{
+			name:   "true and false numeric rules",
+			schema: `{"type":"number","anyOf":[{"minimum":1},{"maximum":0}]}`,
+			wantCases: []Case{
+				{JSON: []byte("1"), Valid: true},
+				{JSON: []byte("1"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
+				{JSON: []byte("1"), Valid: true},
+			},
+			masks: []string{"1", "2"},
+		},
+	}
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			build := func() ([]Case, Report) {
+				cases := make([]Case, 0, len(test.wantCases))
+				report, err := Build(
+					Input{
+						OpenAPI:     []byte(documentWithJSONSchema(test.schema)),
+						OperationID: "selected",
+						MaxSteps:    10000,
+					},
+					func(testCase Case) error {
+						cases = append(cases, testCase)
+
+						return nil
+					},
+				)
+				require.NoError(t, err)
+
+				return cases, report
+			}
+
+			firstCases, firstReport := build()
+			secondCases, secondReport := build()
+
+			require.Equal(t, test.wantCases, firstCases)
+			require.Equal(t, firstCases, secondCases)
+			require.Equal(t, firstReport, secondReport)
+			require.Equal(t, MaxStepsReached, firstReport.Stop)
+			require.Equal(t, uint64(10000), firstReport.Steps)
+
+			for _, mask := range test.masks {
+				require.Contains(
+					t, firstReport.Covered, schemaPointer+"|#|anyOf|level:mask:"+mask,
+				)
+			}
+		})
+	}
+}
+
 // TestBuildFindsSeededExactNumberAcrossAllOf verifies complete-oracle Build integration.
 func TestBuildFindsSeededExactNumberAcrossAllOf(t *testing.T) {
 	t.Parallel()

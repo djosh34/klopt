@@ -23,7 +23,11 @@ func (s *search) walkActiveNumberRules(
 	visit rowVisit,
 ) (bool, error) {
 	rules := make([]activeNumberRule, 0)
-	if err := collectActiveNumberRules(node, occurrence, pins, &rules); err != nil {
+
+	falseBranchObjective := false
+	if err := collectActiveNumberRules(
+		node, occurrence, pins, &rules, &falseBranchObjective,
+	); err != nil {
 		return false, err
 	}
 
@@ -32,9 +36,9 @@ func (s *search) walkActiveNumberRules(
 		return false, err
 	}
 
-	emitter := numberCandidateEmitter{search: s, visit: visit}
+	schedule.seeded = schedule.seeded || falseBranchObjective && !schedule.hasEnum
 
-	complete, err := emitter.walkDeterministic(schedule)
+	complete, err := s.walkNumberDeterministic(schedule, visit)
 	if err != nil || complete || !schedule.seeded {
 		return complete, err
 	}
@@ -67,15 +71,9 @@ func (s *search) walkActiveNumberRules(
 	}
 
 	seededVisit := func(value *jsonValue) (bool, error) {
-		for _, earlier := range emitter.seen {
-			comparison, compareErr := value.number.compare(earlier)
-			if compareErr != nil {
-				return false, compareErr
-			}
-
-			if comparison == 0 {
-				return false, nil
-			}
+		replayed, replayErr := schedule.containsNumber(value.number)
+		if replayErr != nil || replayed {
+			return false, replayErr
 		}
 
 		return visit(value)
@@ -93,12 +91,38 @@ func nodeHasNumberSearchRules(node *schemaNode) bool {
 		isNumericSchemaFormat(node.format)
 }
 
+// nodeHasNumberObjective reports numeric work anywhere below one composition branch.
+func nodeHasNumberObjective(node *schemaNode) bool {
+	if node == nil || node.schemaShape == nil {
+		return false
+	}
+
+	if nodeHasNumberSearchRules(node) || node.enum != nil {
+		return true
+	}
+
+	for _, child := range node.allOf {
+		if nodeHasNumberObjective(child) {
+			return true
+		}
+	}
+
+	for _, child := range node.anyOf {
+		if nodeHasNumberObjective(child) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // collectActiveNumberRules follows allOf and the selected anyOf truth view.
 func collectActiveNumberRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
 	rules *[]activeNumberRule,
+	falseBranchObjective *bool,
 ) error {
 	if node == nil || node.schemaShape == nil {
 		return errors.New("schematest: active number schema has no shape")
@@ -110,7 +134,9 @@ func collectActiveNumberRules(
 		childOccurrence := rebasePlanOccurrence(
 			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if err := collectActiveNumberRules(child, childOccurrence, pins, rules); err != nil {
+		if err := collectActiveNumberRules(
+			child, childOccurrence, pins, rules, falseBranchObjective,
+		); err != nil {
 			return err
 		}
 	}
@@ -118,13 +144,17 @@ func collectActiveNumberRules(
 	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
 		if pinned && !states[index] {
+			*falseBranchObjective = *falseBranchObjective || nodeHasNumberObjective(child)
+
 			continue
 		}
 
 		childOccurrence := rebasePlanOccurrence(
 			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if err := collectActiveNumberRules(child, childOccurrence, pins, rules); err != nil {
+		if err := collectActiveNumberRules(
+			child, childOccurrence, pins, rules, falseBranchObjective,
+		); err != nil {
 			return err
 		}
 	}

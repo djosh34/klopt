@@ -3,21 +3,37 @@ package schematest
 import (
 	"errors"
 	"math/big"
+	"sort"
 )
 
-// numberRuleValueCount is the count of scale-bearing numeric rule values.
-const numberRuleValueCount = 3
+const (
+	// numberRuleValueCount is the count of scale-bearing numeric rule values.
+	numberRuleValueCount = 3
+	// numberEdgeTermCount is the maximum compact terms in one edge comparison.
+	numberEdgeTermCount = 4
+)
+
+// errNumberEdgeStop ends metadata replay without exposing a search error.
+var errNumberEdgeStop = errors.New("schematest: stop numeric edge metadata")
 
 // numberSchedule is the exact numeric conjunction for one pinned composition view.
 type numberSchedule struct {
 	rules   []activeNumberRule
 	quantum *exactNumber
 	seeded  bool
+	hasEnum bool
+}
+
+// numberEdge describes one exact choice without constructing a boundary neighbor.
+type numberEdge struct {
+	base      *exactNumber
+	increment *exactNumber
+	sign      int64
 }
 
 // newNumberSchedule compiles one active conjunction and its shared quantum.
 //
-//nolint:cyclop // Active kind, scale, and frontier policy are compiled in one pass.
+//nolint:cyclop // Active kind, scale, enum, and frontier policy are compiled in one pass.
 func newNumberSchedule(rules []activeNumberRule) (numberSchedule, error) {
 	if len(rules) == 0 {
 		return numberSchedule{}, errors.New("schematest: number schedule has no active schemas")
@@ -25,16 +41,19 @@ func newNumberSchedule(rules []activeNumberRule) (numberSchedule, error) {
 
 	integer := false
 	seeded := false
-
+	hasEnum := false
 	numbers := make([]*exactNumber, 0, len(rules)*numberRuleValueCount)
+
 	for _, rule := range rules {
 		if rule.node == nil || rule.node.schemaShape == nil {
 			return numberSchedule{}, errors.New("schematest: number boundary schema has no shape")
 		}
 
 		integer = integer || rule.node.kind == schemaInteger
-
 		seeded = seeded || nodeHasNumberSearchRules(rule.node)
+
+		hasEnum = hasEnum || rule.node.enum != nil
+
 		for _, number := range []*exactNumber{rule.node.minimum, rule.node.maximum, rule.node.multipleOf} {
 			if number != nil {
 				numbers = append(numbers, number)
@@ -56,120 +75,214 @@ func newNumberSchedule(rules []activeNumberRule) (numberSchedule, error) {
 		return numberSchedule{}, err
 	}
 
-	return numberSchedule{rules: rules, quantum: quantum, seeded: seeded}, nil
+	return numberSchedule{
+		rules: rules, quantum: quantum, seeded: seeded && !hasEnum, hasEnum: hasEnum,
+	}, nil
 }
 
-// numberCandidateEmitter incrementally deduplicates and assigns exact scalar choices.
-type numberCandidateEmitter struct {
-	search *search
-	visit  rowVisit
-	seen   []*exactNumber
+// materialize constructs one selected exact edge after its assignment is charged.
+func (edge numberEdge) materialize() (*exactNumber, error) {
+	if edge.base == nil {
+		return nil, errors.New("schematest: numeric edge has no base")
+	}
+
+	if edge.increment == nil {
+		return edge.base, nil
+	}
+
+	return addSignedExactNumbers(edge.base, edge.increment, edge.sign)
 }
 
-// emit charges and visits one first-occurrence exact edge.
-func (emitter *numberCandidateEmitter) emit(number *exactNumber) (bool, error) {
-	for _, earlier := range emitter.seen {
-		equal, err := number.compare(earlier)
-		if err != nil {
-			return false, err
-		}
-
-		if equal == 0 {
-			return false, nil
-		}
-	}
-
-	if err := emitter.search.assign(); err != nil {
-		return false, err
-	}
-
-	emitter.seen = append(emitter.seen, number)
-
-	return emitter.visit(&jsonValue{kind: jsonNumber, number: number})
+// exactDecimalTerm is one compact signed term in an edge-equality equation.
+type exactDecimalTerm struct {
+	coefficient *big.Int
+	exponent    *big.Int
 }
 
-// makeAndEmit checks the global stop before constructing the next exact neighbor.
-func (emitter *numberCandidateEmitter) makeAndEmit(
-	makeNumber func() (*exactNumber, error),
-) (bool, error) {
-	if emitter.search.steps == emitter.search.maxSteps {
-		return false, errMaxSteps
-	}
+// numberEdgesEqual compares descriptors without constructing either neighbor.
+func numberEdgesEqual(left, right numberEdge) (bool, error) {
+	terms := make([]exactDecimalTerm, 0, numberEdgeTermCount)
 
-	number, err := makeNumber()
+	var err error
+
+	terms, err = appendExactDecimalTerm(terms, left.base, 1)
 	if err != nil {
 		return false, err
 	}
 
-	return emitter.emit(number)
-}
-
-// walkNumberDeterministic emits global boundary phases in canonical active-rule order.
-func (s *search) walkNumberDeterministic(
-	schedule numberSchedule,
-	visit rowVisit,
-) (bool, error) {
-	emitter := numberCandidateEmitter{search: s, visit: visit}
-
-	return emitter.walkDeterministic(schedule)
-}
-
-// walkDeterministic emits all finite phases in their required global order.
-//
-//nolint:cyclop // The required numeric phases are deliberately explicit and ordered.
-func (emitter *numberCandidateEmitter) walkDeterministic(
-	schedule numberSchedule,
-) (bool, error) {
-	for _, rule := range schedule.rules {
-		complete, err := emitter.walkBoundary(rule.node.minimum, schedule.quantum, true)
-		if err != nil || complete {
-			return complete, err
-		}
+	terms, err = appendExactDecimalTerm(terms, left.increment, left.sign)
+	if err != nil {
+		return false, err
 	}
 
-	for _, rule := range schedule.rules {
-		complete, err := emitter.walkBoundary(rule.node.maximum, schedule.quantum, false)
-		if err != nil || complete {
-			return complete, err
-		}
+	terms, err = appendExactDecimalTerm(terms, right.base, -1)
+	if err != nil {
+		return false, err
 	}
 
-	complete, err := emitter.makeAndEmit(func() (*exactNumber, error) {
-		return parseExactNumber("0")
+	terms, err = appendExactDecimalTerm(terms, right.increment, -right.sign)
+	if err != nil {
+		return false, err
+	}
+
+	return exactDecimalTermsSumToZero(terms), nil
+}
+
+// appendExactDecimalTerm appends one compact finite-decimal term.
+func appendExactDecimalTerm(
+	terms []exactDecimalTerm,
+	number *exactNumber,
+	sign int64,
+) ([]exactDecimalTerm, error) {
+	if number == nil || number.numerator.Sign() == 0 || sign == 0 {
+		return terms, nil
+	}
+
+	coefficient, exponent, err := number.finiteDecimal()
+	if err != nil {
+		return nil, err
+	}
+
+	if sign < 0 {
+		coefficient.Neg(coefficient)
+	}
+
+	return append(terms, exactDecimalTerm{coefficient: coefficient, exponent: exponent}), nil
+}
+
+// exactDecimalTermsSumToZero folds sparse decimal terms upward without expanding exponent gaps.
+func exactDecimalTermsSumToZero(terms []exactDecimalTerm) bool {
+	if len(terms) == 0 {
+		return true
+	}
+
+	sort.Slice(terms, func(left, right int) bool {
+		return terms[left].exponent.Cmp(terms[right].exponent) < 0
 	})
-	if err != nil || complete {
-		return complete, err
-	}
 
-	for _, rule := range schedule.rules {
-		complete, err = emitter.walkMultiple(rule.node.multipleOf, schedule.quantum)
-		if err != nil || complete {
-			return complete, err
+	coefficient := new(big.Int).Set(terms[0].coefficient)
+	exponent := new(big.Int).Set(terms[0].exponent)
+
+	for _, term := range terms[1:] {
+		if term.exponent.Cmp(exponent) == 0 {
+			coefficient.Add(coefficient, term.coefficient)
+
+			continue
 		}
-	}
 
-	for _, rule := range schedule.rules {
-		complete, err = emitter.walkFormat(rule.node.format)
-		if err != nil || complete {
-			return complete, err
+		if coefficient.Sign() != 0 {
+			gap := new(big.Int).Sub(term.exponent, exponent)
+
+			zeros := decimalTrailingZeros(new(big.Int).Abs(coefficient))
+			if gap.Cmp(new(big.Int).SetUint64(zeros)) > 0 {
+				return false
+			}
+
+			coefficient.Quo(coefficient, decimalPower(gap.Uint64()))
 		}
+
+		coefficient.Add(coefficient, term.coefficient)
+		exponent.Set(term.exponent)
 	}
 
-	return false, nil
+	return coefficient.Sign() == 0
 }
 
-// walkBoundary emits a bound followed by its directed exact neighbors.
-func (emitter *numberCandidateEmitter) walkBoundary(
+// eachEdge streams schedule metadata in exact required order.
+//
+//nolint:cyclop,gocognit // Enum and the five deterministic phases are deliberately explicit.
+func (schedule numberSchedule) eachEdge(visit func(numberEdge) (bool, error)) error {
+	if schedule.hasEnum {
+		for _, rule := range schedule.rules {
+			for _, member := range rule.node.enum {
+				if member == nil {
+					return errors.New("schematest: nil numeric enum member")
+				}
+
+				if member.kind != jsonNumber {
+					continue
+				}
+
+				stop, err := visit(numberEdge{base: member.number})
+				if err != nil || stop {
+					return err
+				}
+			}
+		}
+
+		return nil
+	}
+
+	for _, rule := range schedule.rules {
+		err := eachNumberBoundaryEdge(rule.node.minimum, schedule.quantum, true, visit)
+		if errors.Is(err, errNumberEdgeStop) {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, rule := range schedule.rules {
+		err := eachNumberBoundaryEdge(rule.node.maximum, schedule.quantum, false, visit)
+		if errors.Is(err, errNumberEdgeStop) {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	zero, err := parseExactNumber("0")
+	if err != nil {
+		return err
+	}
+
+	if stop, visitErr := visit(numberEdge{base: zero}); visitErr != nil || stop {
+		return visitErr
+	}
+
+	for _, rule := range schedule.rules {
+		err := eachNumberMultipleEdge(rule.node.multipleOf, schedule.quantum, visit)
+		if errors.Is(err, errNumberEdgeStop) {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, rule := range schedule.rules {
+		err := eachNumberFormatEdge(rule.node.format, visit)
+		if errors.Is(err, errNumberEdgeStop) {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// eachNumberBoundaryEdge streams one bound and its directed neighbors as metadata.
+func eachNumberBoundaryEdge(
 	bound, quantum *exactNumber,
 	minimum bool,
-) (bool, error) {
+	visit func(numberEdge) (bool, error),
+) error {
 	if bound == nil {
-		return false, nil
+		return nil
 	}
 
-	complete, err := emitter.emit(bound)
-	if err != nil || complete {
-		return complete, err
+	if stop, err := visit(numberEdge{base: bound}); err != nil {
+		return err
+	} else if stop {
+		return errNumberEdgeStop
 	}
 
 	firstSign := int64(1)
@@ -178,43 +291,55 @@ func (emitter *numberCandidateEmitter) walkBoundary(
 	}
 
 	for _, sign := range []int64{firstSign, -firstSign} {
-		complete, err = emitter.makeAndEmit(func() (*exactNumber, error) {
-			return addSignedExactNumbers(bound, quantum, sign)
-		})
-		if err != nil || complete {
-			return complete, err
+		stop, err := visit(numberEdge{base: bound, increment: quantum, sign: sign})
+		if err != nil {
+			return err
+		}
+
+		if stop {
+			return errNumberEdgeStop
 		}
 	}
 
-	return false, nil
+	return nil
 }
 
-// walkMultiple emits the divisor, its negative, and directed neighbors.
-func (emitter *numberCandidateEmitter) walkMultiple(
+// eachNumberMultipleEdge streams the divisor and its directed edges as metadata.
+func eachNumberMultipleEdge(
 	divisor, quantum *exactNumber,
-) (bool, error) {
+	visit func(numberEdge) (bool, error),
+) error {
 	if divisor == nil {
-		return false, nil
+		return nil
 	}
 
-	factories := []func() (*exactNumber, error){
-		func() (*exactNumber, error) { return divisor, nil },
-		func() (*exactNumber, error) { return negateExactNumber(divisor) },
-		func() (*exactNumber, error) { return addSignedExactNumbers(divisor, quantum, 1) },
-		func() (*exactNumber, error) { return addSignedExactNumbers(divisor, quantum, -1) },
+	negative, err := negateExactNumber(divisor)
+	if err != nil {
+		return err
 	}
-	for _, factory := range factories {
-		complete, err := emitter.makeAndEmit(factory)
-		if err != nil || complete {
-			return complete, err
+
+	edges := []numberEdge{
+		{base: divisor},
+		{base: negative},
+		{base: divisor, increment: quantum, sign: 1},
+		{base: divisor, increment: quantum, sign: -1},
+	}
+	for _, edge := range edges {
+		stop, visitErr := visit(edge)
+		if visitErr != nil {
+			return visitErr
+		}
+
+		if stop {
+			return errNumberEdgeStop
 		}
 	}
 
-	return false, nil
+	return nil
 }
 
-// walkFormat emits the active format's exact inside and outside edges.
-func (emitter *numberCandidateEmitter) walkFormat(format schemaFormat) (bool, error) {
+// eachNumberFormatEdge streams exact format-edge metadata.
+func eachNumberFormatEdge(format schemaFormat, visit func(numberEdge) (bool, error)) error {
 	var sources []string
 
 	switch format {
@@ -226,69 +351,166 @@ func (emitter *numberCandidateEmitter) walkFormat(format schemaFormat) (bool, er
 			"9223372036854775807", "9223372036854775808",
 		}
 	case schemaFormatFloat, schemaFormatDouble:
-		return emitter.walkFloatFormat(format)
+		return eachNumberFloatFormatEdge(format, visit)
 	default:
-		return false, nil
+		return nil
 	}
 
 	for _, source := range sources {
-		value := source
+		number, err := parseExactNumber(source)
+		if err != nil {
+			return err
+		}
 
-		complete, err := emitter.makeAndEmit(func() (*exactNumber, error) {
-			return parseExactNumber(value)
-		})
-		if err != nil || complete {
-			return complete, err
+		if stop, visitErr := visit(numberEdge{base: number}); visitErr != nil {
+			return visitErr
+		} else if stop {
+			return errNumberEdgeStop
 		}
 	}
 
-	return false, nil
+	return nil
 }
 
-// walkFloatFormat emits exact finite-overflow edges incrementally.
-func (emitter *numberCandidateEmitter) walkFloatFormat(format schemaFormat) (bool, error) {
-	if emitter.search.steps == emitter.search.maxSteps {
-		return false, errMaxSteps
+// eachNumberFloatFormatEdge streams exact finite-overflow metadata.
+func eachNumberFloatFormatEdge(
+	format schemaFormat,
+	visit func(numberEdge) (bool, error),
+) error {
+	limit, err := exactBinaryFloatOverflowLimit(format)
+	if err != nil {
+		return err
 	}
 
-	limit, err := exactBinaryFloatOverflowLimit(format)
+	negativeLimit, err := negateExactNumber(limit)
+	if err != nil {
+		return err
+	}
+
+	one, err := parseExactNumber("1")
+	if err != nil {
+		return err
+	}
+
+	edges := []numberEdge{
+		{base: negativeLimit, increment: one, sign: 1},
+		{base: negativeLimit},
+		{base: limit, increment: one, sign: -1},
+		{base: limit},
+	}
+	for _, edge := range edges {
+		stop, visitErr := visit(edge)
+		if visitErr != nil {
+			return visitErr
+		}
+
+		if stop {
+			return errNumberEdgeStop
+		}
+	}
+
+	return nil
+}
+
+// edgeDuplicate reports exact first-occurrence replay without retaining witnesses.
+func (schedule numberSchedule) edgeDuplicate(current numberEdge, currentIndex uint64) (bool, error) {
+	var (
+		index     uint64
+		duplicate bool
+	)
+
+	err := schedule.eachEdge(func(earlier numberEdge) (bool, error) {
+		if index == currentIndex {
+			return true, nil
+		}
+
+		index++
+
+		equal, compareErr := numberEdgesEqual(current, earlier)
+		if compareErr != nil {
+			return false, compareErr
+		}
+
+		duplicate = equal
+
+		return duplicate, nil
+	})
+
+	return duplicate, err
+}
+
+// containsNumber reports whether a seeded candidate replays a deterministic edge.
+func (schedule numberSchedule) containsNumber(number *exactNumber) (bool, error) {
+	found := false
+	err := schedule.eachEdge(func(edge numberEdge) (bool, error) {
+		equal, compareErr := numberEdgesEqual(edge, numberEdge{base: number})
+		if compareErr != nil {
+			return false, compareErr
+		}
+
+		found = equal
+
+		return found, nil
+	})
+
+	return found, err
+}
+
+// numberCandidateEmitter assigns streamed edge metadata without retaining candidates.
+type numberCandidateEmitter struct {
+	search   *search
+	visit    rowVisit
+	schedule numberSchedule
+	index    uint64
+}
+
+// walk charges each first-occurrence edge before materializing it.
+func (emitter *numberCandidateEmitter) walk() (bool, error) {
+	var (
+		complete bool
+		walkErr  error
+	)
+
+	err := emitter.schedule.eachEdge(func(edge numberEdge) (bool, error) {
+		duplicate, duplicateErr := emitter.schedule.edgeDuplicate(edge, emitter.index)
+		emitter.index++
+
+		if duplicateErr != nil {
+			return false, duplicateErr
+		}
+
+		if duplicate {
+			return false, nil
+		}
+
+		if assignErr := emitter.search.assign(); assignErr != nil {
+			return false, assignErr
+		}
+
+		number, materializeErr := edge.materialize()
+		if materializeErr != nil {
+			return false, materializeErr
+		}
+
+		complete, walkErr = emitter.visit(&jsonValue{kind: jsonNumber, number: number})
+
+		return complete || walkErr != nil, walkErr
+	})
 	if err != nil {
 		return false, err
 	}
 
-	factories := []func() (*exactNumber, error){
-		func() (*exactNumber, error) {
-			negativeLimit, negateErr := negateExactNumber(limit)
-			if negateErr != nil {
-				return nil, negateErr
-			}
+	return complete, walkErr
+}
 
-			one, oneErr := parseExactNumber("1")
-			if oneErr != nil {
-				return nil, oneErr
-			}
+// walkNumberDeterministic emits the finite exact schedule.
+func (s *search) walkNumberDeterministic(
+	schedule numberSchedule,
+	visit rowVisit,
+) (bool, error) {
+	emitter := numberCandidateEmitter{search: s, visit: visit, schedule: schedule}
 
-			return addSignedExactNumbers(negativeLimit, one, 1)
-		},
-		func() (*exactNumber, error) { return negateExactNumber(limit) },
-		func() (*exactNumber, error) {
-			one, oneErr := parseExactNumber("1")
-			if oneErr != nil {
-				return nil, oneErr
-			}
-
-			return addSignedExactNumbers(limit, one, -1)
-		},
-		func() (*exactNumber, error) { return limit, nil },
-	}
-	for _, factory := range factories {
-		complete, walkErr := emitter.makeAndEmit(factory)
-		if walkErr != nil || complete {
-			return complete, walkErr
-		}
-	}
-
-	return false, nil
+	return emitter.walk()
 }
 
 // negateExactNumber returns the exact additive inverse.

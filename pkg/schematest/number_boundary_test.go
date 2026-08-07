@@ -452,6 +452,34 @@ func TestWalkScalarUsesIntegerKindFromActiveSibling(t *testing.T) {
 	require.Equal(t, uint64(3), state.steps)
 }
 
+// TestBuildChargesExclusiveHugeExponentNeighborBeforeConstruction reaches the neighbor path.
+func TestBuildChargesExclusiveHugeExponentNeighborBeforeConstruction(t *testing.T) {
+	t.Parallel()
+
+	const exponent = 10000
+
+	document := []byte(documentWithJSONSchema(
+		`{"type":"number","minimum":1e10000,"exclusiveMinimum":true}`,
+	))
+	cases := make([]Case, 0, 1)
+	report, err := Build(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 3},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, uint64(3), report.Steps)
+	require.Len(t, cases, 1)
+	require.True(t, cases[0].Valid)
+	require.Len(t, cases[0].JSON, exponent+1)
+	require.Equal(t, byte('1'), cases[0].JSON[0])
+	require.Equal(t, byte('1'), cases[0].JSON[len(cases[0].JSON)-1])
+}
+
 // TestBuildStopsBeforeConstructingHugeExponentNeighbor exercises incremental public search.
 func TestBuildStopsBeforeConstructingHugeExponentNeighbor(t *testing.T) {
 	t.Parallel()

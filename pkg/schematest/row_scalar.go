@@ -7,8 +7,6 @@ import (
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
-//
-//nolint:cyclop // Enum, number, string, and finite primitive paths share one scalar seam.
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -17,7 +15,7 @@ func (s *search) walkScalar(
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
-	if node.enum == nil && kind == jsonNumber {
+	if kind == jsonNumber {
 		return s.walkActiveScalarPinAlternatives(
 			node,
 			occurrence,
