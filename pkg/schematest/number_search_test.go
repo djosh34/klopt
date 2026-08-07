@@ -337,6 +337,101 @@ func TestBuildSearchesNumericFalseBranchObjectives(t *testing.T) {
 	}
 }
 
+// TestBuildSearchesIntegerFalseBranchObjectives verifies integer-only skipped branches.
+func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		schema    string
+		wantCases []Case
+		wantStop  StopReason
+		wantSteps uint64
+		masks     []string
+	}{
+		{
+			name:   "explicit number with integer branch",
+			schema: `{"type":"number","anyOf":[{}, {"type":"integer"}]}`,
+			wantCases: []Case{
+				{JSON: []byte("-0.7"), Valid: true},
+				{JSON: []byte("-0.7"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
+			},
+			wantStop:  MaxStepsReached,
+			wantSteps: 10000,
+			masks:     []string{"1", "3"},
+		},
+		{
+			name:   "planner integer and number branches",
+			schema: `{"anyOf":[{"type":"integer"},{"type":"number"}]}`,
+			wantCases: []Case{
+				{JSON: []byte("-0.8"), Valid: true},
+				{JSON: []byte("0.2"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
+			},
+			wantStop:  SpaceExhausted,
+			wantSteps: 108,
+			masks:     []string{"2", "3"},
+		},
+		{
+			name:   "nested integer branch",
+			schema: `{"type":"number","anyOf":[{}, {"allOf":[{"type":"integer"}]}]}`,
+			wantCases: []Case{
+				{JSON: []byte("-0.2"), Valid: true},
+				{JSON: []byte("0.9"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
+			},
+			wantStop:  MaxStepsReached,
+			wantSteps: 10000,
+			masks:     []string{"1", "3"},
+		},
+	}
+
+	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			build := func() ([]Case, Report) {
+				cases := make([]Case, 0, len(test.wantCases))
+				report, err := Build(
+					Input{
+						OpenAPI:     []byte(documentWithJSONSchema(test.schema)),
+						OperationID: "selected",
+						MaxSteps:    10000,
+					},
+					func(testCase Case) error {
+						cases = append(cases, testCase)
+
+						return nil
+					},
+				)
+				require.NoError(t, err)
+
+				return cases, report
+			}
+
+			firstCases, firstReport := build()
+			secondCases, secondReport := build()
+
+			require.Equal(t, test.wantCases, firstCases)
+			require.Equal(t, firstCases, secondCases)
+			require.Equal(t, firstReport, secondReport)
+			require.Equal(t, test.wantStop, firstReport.Stop)
+			require.Equal(t, test.wantSteps, firstReport.Steps)
+
+			for _, mask := range test.masks {
+				require.Contains(
+					t, firstReport.Covered, schemaPointer+"|#|anyOf|level:mask:"+mask,
+				)
+			}
+		})
+	}
+}
+
 // TestBuildFindsSeededExactNumberAcrossAllOf verifies complete-oracle Build integration.
 func TestBuildFindsSeededExactNumberAcrossAllOf(t *testing.T) {
 	t.Parallel()

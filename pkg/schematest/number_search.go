@@ -97,7 +97,7 @@ func nodeHasNumberObjective(node *schemaNode) bool {
 		return false
 	}
 
-	if nodeHasNumberSearchRules(node) || node.enum != nil {
+	if node.kind == schemaInteger || nodeHasNumberSearchRules(node) || node.enum != nil {
 		return true
 	}
 
