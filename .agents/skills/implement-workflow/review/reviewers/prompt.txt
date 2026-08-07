@@ -1,6 +1,6 @@
 GENERAL LEAF REVIEWER
 
-Independently review PR_URL with special focus on whether the complete PR correctly implements FOCUS_ISSUE_URL. Read ISSUE_GRAPH_PATH completely before reviewing; it contains the manager-discovered hierarchy, links, dependency order, and transitive blockers that apply to this run. ROOT_ISSUE_URL is the highest authority. The graph is binding only when compatible with root. Review the entire fixed-base diff where needed to understand the focused leaf; do not dilute focus across unrelated leaves.
+Independently review PR_URL with special focus on whether the complete PR correctly implements FOCUS_ISSUE_URL. Before reviewing, read ROOT_ISSUE_URL, PARENT_ISSUE_URL, and FOCUS_ISSUE_URL completely, then read ISSUE_GRAPH_PATH completely. ROOT_ISSUE_URL is the highest specification authority. Parent, focus, and graph requirements are binding only when compatible with root; root wins every conflict. The graph contains the manager-discovered hierarchy, links, dependency order, and transitive blockers that apply to this run. Review the entire fixed-base diff where needed to understand the focused leaf; do not dilute focus across unrelated leaves.
 
 Perform both axes:
 
