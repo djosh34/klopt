@@ -44,11 +44,7 @@ func parseInput(input Input) (*schemaModel, error) {
 		return nil, err
 	}
 
-	return &schemaModel{
-		root:          node,
-		schemaPointer: pointer,
-		schemaValue:   schema,
-	}, nil
+	return &schemaModel{root: node}, nil
 }
 
 func validateOpenAPIVersion(root map[string]*jsonValue) error {
@@ -415,7 +411,10 @@ func (parser *oasParser) parseSchemaOccurrence(
 			targetPointer:    authoredPointer,
 			instanceTemplate: instanceTemplate,
 		},
-		schemaShape: &schemaShape{allowAdditionalProperties: true},
+		schemaShape: &schemaShape{
+			source:                    value,
+			allowAdditionalProperties: true,
+		},
 	}
 
 	if err := parser.parseSchemaObject(node, object, authoredPointer); err != nil {

@@ -67,11 +67,14 @@ const (
 type schemaNode struct {
 	*schemaShape
 
-	occurrence schemaOccurrence
+	occurrence                schemaOccurrence
+	syntheticAllOfOccurrences []schemaOccurrence
 }
 
 // schemaShape contains the semantics shared by references to one target.
 type schemaShape struct {
+	source *jsonValue // Original decoded Schema Object; seed hashing canonicalizes it lazily.
+
 	kind         schemaKind
 	nullable     bool
 	enum         []*jsonValue
@@ -109,8 +112,5 @@ type schemaShape struct {
 
 // schemaModel is the selected application/json request body's private model.
 type schemaModel struct {
-	root                *schemaNode
-	schemaPointer       string
-	schemaValue         *jsonValue
-	canonicalSchemaJSON string
+	root *schemaNode
 }

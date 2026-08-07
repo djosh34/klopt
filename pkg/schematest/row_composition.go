@@ -352,12 +352,22 @@ func mergeRowSchemaSources(sources []rowSchemaSource) (rowSchemaChoice, bool, er
 	shape := *sources[0].node.schemaShape
 	shape.allOf = append([]*schemaNode(nil), shape.allOf...)
 
+	allOfOccurrences := append([]schemaOccurrence(nil), sources[0].node.syntheticAllOfOccurrences...)
+	for len(allOfOccurrences) < len(shape.allOf) {
+		allOfOccurrences = append(allOfOccurrences, schemaOccurrence{})
+	}
+
 	for _, source := range sources[1:] {
 		shape.allOf = append(shape.allOf, source.node)
+		allOfOccurrences = append(allOfOccurrences, source.occurrence)
 	}
 
 	return rowSchemaChoice{
-		node:       &schemaNode{schemaShape: &shape, occurrence: sources[0].occurrence},
+		node: &schemaNode{
+			schemaShape:               &shape,
+			occurrence:                sources[0].occurrence,
+			syntheticAllOfOccurrences: allOfOccurrences,
+		},
 		occurrence: sources[0].occurrence,
 	}, true, nil
 }

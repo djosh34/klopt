@@ -14,7 +14,7 @@ func (s *search) walkScalar(
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
-	if kind == jsonString && node.enum == nil {
+	if kind == jsonString {
 		return s.walkString(node, occurrence, pins, visit)
 	}
 

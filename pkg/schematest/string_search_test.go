@@ -90,6 +90,23 @@ func TestBuildContradictoryFiniteStringProductExhausts(t *testing.T) {
 	require.Empty(t, cases)
 }
 
+func TestBuildContradictoryFiniteLeadingAssertionProductExhausts(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"allOf":[{"pattern":"^(?=a$).*"},{"pattern":"^b*$"}]
+	}`))
+
+	var cases []Case
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1_000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Empty(t, cases)
+}
+
 func TestBuildPreservesPinnedFalseAnyOfStringBranches(t *testing.T) {
 	document := []byte(documentWithJSONSchema(`{
 		"type":"string",
@@ -176,17 +193,17 @@ func TestStringProductPinnedFalseRulesFindMaskTwoWitnesses(t *testing.T) {
 			pins := anyOfMaskPins(model.root.occurrence, 2, big.NewInt(2))
 			product, err := buildStringProduct(model.root, model.root.occurrence, pins)
 			require.NoError(t, err)
-			product.model = model
-			objectives := stringProductObjectives(product, oracleRuleAnyOf, planLevelMask+"2")
-			require.NotEmpty(t, objectives)
-
 			state := &search{model: model, maxSteps: 10000}
 			var value *jsonValue
-			complete, err := state.searchStringObjective(product, objectives[0], func(candidate *jsonValue) (bool, error) {
-				value = candidate
+			complete, err := state.searchStringObjective(
+				product,
+				firstStringAllTrueObjective(t, product, oracleRuleAnyOf, planLevelMask+"2"),
+				func(candidate *jsonValue) (bool, error) {
+					value = candidate
 
-				return true, nil
-			})
+					return true, nil
+				},
+			)
 			require.NoError(t, err)
 			require.True(t, complete)
 			require.NotNil(t, value)
@@ -204,6 +221,39 @@ func TestStringProductPinnedFalseRulesFindMaskTwoWitnesses(t *testing.T) {
 			}))
 		})
 	}
+}
+
+func TestBuildPreservesNestedAnyOfTruthStructure(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[
+			{"anyOf":[{"pattern":"^a$"},{"pattern":"^b$"}]},
+			{"pattern":"^c$"}
+		]
+	}`))
+
+	var cases []Case
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 10_000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:1")
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:2")
+	require.True(t, containsCaseJSON(cases, `"a"`) || containsCaseJSON(cases, `"b"`))
+	require.True(t, containsCaseJSON(cases, `"c"`))
+}
+
+func containsCaseJSON(cases []Case, wanted string) bool {
+	for _, testCase := range cases {
+		if string(testCase.JSON) == wanted {
+			return true
+		}
+	}
+
+	return false
 }
 
 func TestBuildAnyOfConjunctiveFalseBranchUsesOneFailure(t *testing.T) {
@@ -314,7 +364,6 @@ func TestStringProductObjectivesKeepDirectedSiblingsTrue(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 100}
 	var objectives []stringObjective
@@ -345,13 +394,12 @@ func TestStringProductDirectedPatternUsesTargetIntervalsForFalseWitnesses(t *tes
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 100}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectivePatternFalse, index: 0, rule: "pattern", level: "false"},
+		mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -383,9 +431,7 @@ func TestStringProductDirectedLengthObjectivesKeepStringClosure(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
-	objectives := stringProductObjectives(product, "pattern", "valid")
 	for _, test := range []struct {
 		name      string
 		objective stringObjective
@@ -393,12 +439,12 @@ func TestStringProductDirectedLengthObjectivesKeepStringClosure(t *testing.T) {
 	}{
 		{
 			name:      "minimum",
-			objective: objectives[len(objectives)-4],
+			objective: mustStringDirectedObjective(t, product, stringObjectiveLengthFalse, 0),
 			want:      "a",
 		},
 		{
 			name:      "maximum",
-			objective: objectives[len(objectives)-3],
+			objective: mustStringDirectedObjective(t, product, stringObjectiveLengthFalse, 1),
 			want:      "aaaa",
 		},
 	} {
@@ -426,6 +472,61 @@ func TestStringProductDirectedLengthObjectivesKeepStringClosure(t *testing.T) {
 	}
 }
 
+func TestStringProductDirectedPatternUsesEnumMember(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"enum":["a","b"],
+			"maxLength":1,
+			"pattern":"^a$"
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	state := &search{model: model, maxSteps: 100}
+	var value string
+	complete, err := state.searchStringObjective(
+		product,
+		mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0),
+		func(candidate *jsonValue) (bool, error) {
+			value = candidate.text
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, "b", value)
+}
+
+func TestStringProductDirectedPatternRequiresExactCleanFailureClosure(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"enum":["a"],
+			"maxLength":1,
+			"pattern":"^a$"
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 100}
+	complete, err := searchState.searchStringObjective(
+		product,
+		mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0),
+		func(*jsonValue) (bool, error) { return true, nil },
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+}
+
 func TestStringProductUnsatisfiableDirectedPatternStaysUncovered(t *testing.T) {
 	model, err := parseInput(Input{
 		OpenAPI: []byte(documentWithJSONSchema(`{
@@ -438,13 +539,12 @@ func TestStringProductUnsatisfiableDirectedPatternStaysUncovered(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 100}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectivePatternFalse, index: 0, rule: "pattern", level: "false"},
+		mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -470,13 +570,12 @@ func TestStringProductUnsatisfiableDirectedLengthStaysUncovered(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 100}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveLengthFalse, index: 0, rule: "minLength", level: "false"},
+		mustStringDirectedObjective(t, product, stringObjectiveLengthFalse, 0),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -500,14 +599,14 @@ func TestStringProductDirectedPatternRetriesUseGlobalAssignments(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 5}
+	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectivePatternFalse, index: 0, rule: "pattern", level: "false"},
-		func(*jsonValue) (bool, error) {
-			t.Fatal("budget cutoff produced a partial directed witness")
+		mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0),
+		func(value *jsonValue) (bool, error) {
+			values = append(values, value.text)
 
 			return false, nil
 		},
@@ -515,6 +614,7 @@ func TestStringProductDirectedPatternRetriesUseGlobalAssignments(t *testing.T) {
 	require.False(t, complete)
 	require.ErrorIs(t, err, errMaxSteps)
 	require.Equal(t, uint64(5), searchState.steps)
+	require.NotEmpty(t, values)
 }
 
 func TestBuildStringFormatWitnessesUseCleanLanguages(t *testing.T) {
@@ -591,13 +691,12 @@ func TestStringProductLeadingAssertionsConstrainWitnesses(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, product.patterns, 1)
 	require.Len(t, product.patterns[0].assertions, 2)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 100}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		stringAllTrueObjective(product, "pattern", "valid"),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -621,13 +720,12 @@ func TestStringProductLeadingAssertionsUseTheNextUTF16Unit(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 100}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		stringAllTrueObjective(product, "pattern", "valid"),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -648,12 +746,11 @@ func TestStringProductLeadingAssertionsStopContradictionsAtTheGlobalBudget(t *te
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 8}
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		stringAllTrueObjective(product, "pattern", "valid"),
 		func(*jsonValue) (bool, error) {
 			t.Fatal("contradictory assertions produced a witness")
 
@@ -812,13 +909,12 @@ func TestStringFormatProductGoldenWitnesses(t *testing.T) {
 
 			product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 			require.NoError(t, err)
-			product.model = model
 
 			state := &search{model: model, maxSteps: 100}
 			var values []string
 			complete, err := state.searchStringObjective(
 				product,
-				stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+				stringAllTrueObjective(product, "format", "valid"),
 				func(value *jsonValue) (bool, error) {
 					values = append(values, value.text)
 
@@ -846,7 +942,6 @@ func TestStringFormatNegativeKeepsStringSiblingsGolden(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 	require.Equal(
 		t,
 		[]stringObjectiveKind{
@@ -855,14 +950,14 @@ func TestStringFormatNegativeKeepsStringSiblingsGolden(t *testing.T) {
 			stringObjectiveFormatFalse,
 			stringObjectiveLengthFalse,
 		},
-		objectiveKinds(stringProductObjectives(product, "format", "valid")),
+		stringScheduleKinds(t, product),
 	)
 
 	state := &search{model: model, maxSteps: 100}
 	var values []string
 	complete, err := state.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveFormatFalse, index: 0, rule: "format", level: "false"},
+		mustStringDirectedObjective(t, product, stringObjectiveFormatFalse, 0),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -893,13 +988,12 @@ func TestStringProductRetainedFormatNegativesKeepPatternAndLengths(t *testing.T)
 
 			product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 			require.NoError(t, err)
-			product.model = model
 
 			state := &search{model: model, maxSteps: 100}
 			var values []string
 			complete, err := state.searchStringObjective(
 				product,
-				stringObjective{kind: stringObjectiveFormatFalse, index: 0, rule: "format", level: "false"},
+				mustStringDirectedObjective(t, product, stringObjectiveFormatFalse, 0),
 				func(value *jsonValue) (bool, error) {
 					values = append(values, value.text)
 
@@ -933,19 +1027,18 @@ func TestPasswordFormatDoesNotEnterStringProduct(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 	require.Empty(t, product.formats)
 	require.Equal(
 		t,
 		[]stringObjectiveKind{stringObjectiveAllTrue},
-		objectiveKinds(stringProductObjectives(product, "format", "valid")),
+		stringScheduleKinds(t, product),
 	)
 
 	state := &search{model: model, maxSteps: 10}
 	var values []string
 	complete, err := state.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+		stringAllTrueObjective(product, "format", "valid"),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -967,7 +1060,6 @@ func TestStringProductObjectivesPreserveFormatAndPatternSiblings(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 1000}
 	var objectives []stringObjective
@@ -996,13 +1088,12 @@ func TestStringBoundedQuantifiersUseFiniteProductFrontiers(t *testing.T) {
 	require.Len(t, product.patterns, 1)
 	require.True(t, product.patterns[0].finite)
 	require.Equal(t, uint64(3), product.patterns[0].maximum)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 100}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		stringAllTrueObjective(product, "pattern", "valid"),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -1024,13 +1115,12 @@ func TestStringBoundedQuantifierContradictionEndsAtPatternMaximum(t *testing.T) 
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 100}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		stringAllTrueObjective(product, "pattern", "valid"),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -1052,13 +1142,12 @@ func TestStringQuantifierEdgesUseTheGlobalAssignmentBudget(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 8}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "pattern", level: "valid"},
+		stringAllTrueObjective(product, "pattern", "valid"),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -1120,7 +1209,6 @@ func TestStringProductObjectivesUseLengthBoundaries(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 1000}
 	var values []string
@@ -1150,13 +1238,12 @@ func TestStringProductTriesRelevantLengthBoundariesBeforeFairLengths(t *testing.
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 1000}
 	var lengths []int
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "minLength", level: "valid"},
+		stringAllTrueObjective(product, "minLength", "valid"),
 		func(value *jsonValue) (bool, error) {
 			length := len([]rune(value.text))
 			if len(lengths) == 0 || lengths[len(lengths)-1] != length {
@@ -1184,13 +1271,12 @@ func TestStringProductDirectedFormatFalseIgnoresItsFiniteMaximum(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 1000}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveFormatFalse, index: 0, rule: "format", level: "false"},
+		mustStringDirectedObjective(t, product, stringObjectiveFormatFalse, 0),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -1217,13 +1303,12 @@ func TestStringProductEmailPrefixKeepsDottedLocalPartsReachable(t *testing.T) {
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	searchState := &search{model: model, maxSteps: 1000}
 	var values []string
 	complete, err := searchState.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+		stringAllTrueObjective(product, "format", "valid"),
 		func(value *jsonValue) (bool, error) {
 			values = append(values, value.text)
 
@@ -1248,13 +1333,12 @@ func TestStringProductEmailEscapedQuotesKeepTheSMTPWitnessReachable(t *testing.T
 
 	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 	require.NoError(t, err)
-	product.model = model
 
 	state := &search{model: model, maxSteps: 100_000}
 	var values []string
 	complete, err := state.searchStringObjective(
 		product,
-		stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+		stringAllTrueObjective(product, "format", "valid"),
 		func(candidate *jsonValue) (bool, error) {
 			values = append(values, candidate.text)
 
@@ -1286,13 +1370,12 @@ func TestStringProductIPv4PrefixKeepsCompletableOctetsReachable(t *testing.T) {
 
 			product, err := buildStringProduct(model.root, model.root.occurrence, nil)
 			require.NoError(t, err)
-			product.model = model
 
 			searchState := &search{model: model, maxSteps: 1000}
 			var values []string
 			complete, err := searchState.searchStringObjective(
 				product,
-				stringObjective{kind: stringObjectiveAllTrue, rule: "format", level: "valid"},
+				stringAllTrueObjective(product, "format", "valid"),
 				func(value *jsonValue) (bool, error) {
 					values = append(values, value.text)
 
@@ -1306,18 +1389,89 @@ func TestStringProductIPv4PrefixKeepsCompletableOctetsReachable(t *testing.T) {
 	}
 }
 
-func TestStringSearchSeedUsesCanonicalSchemaInputs(t *testing.T) {
-	model := &schemaModel{
-		schemaPointer:       "#/schema",
-		canonicalSchemaJSON: `{"type":"string"}`,
+func TestStringObjectiveSeedUsesOwningSchemaOccurrence(t *testing.T) {
+	buildObjectives := func(siblingPattern string) (stringObjective, stringObjective) {
+		model, err := parseInput(Input{
+			OpenAPI: []byte(documentWithJSONSchema(`{
+				"type":"string",
+				"allOf":[{"pattern":"^a$"},{"pattern":` + strconv.Quote(siblingPattern) + `}]
+			}`)),
+			OperationID: "selected",
+		})
+		require.NoError(t, err)
+
+		product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+		require.NoError(t, err)
+
+		return mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0),
+			mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 1)
 	}
-	objective := stringObjective{rule: "pattern", level: "valid"}
+
+	firstLeft, firstRight := buildObjectives("^b$")
+	changedLeft, changedRight := buildObjectives("^c$")
+	firstLeftSeed, err := stringSearchSeed(firstLeft)
+	require.NoError(t, err)
+	firstRightSeed, err := stringSearchSeed(firstRight)
+	require.NoError(t, err)
+	changedLeftSeed, err := stringSearchSeed(changedLeft)
+	require.NoError(t, err)
+	changedRightSeed, err := stringSearchSeed(changedRight)
+	require.NoError(t, err)
+
+	require.NotEqual(t, firstLeft.owner.occurrence.usePointer, firstRight.owner.occurrence.usePointer)
+	require.Equal(t, firstLeftSeed, changedLeftSeed)
+	require.NotEqual(t, firstRightSeed, changedRightSeed)
+}
+
+func TestStringSearchSeedUsesReferenceUseSite(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(`{
+			"openapi":"3.0.0",
+			"components":{"schemas":{"shared":{"type":"string","pattern":"^a$"}}},
+			"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{"allOf":[
+				{"$ref":"#/components/schemas/shared"},
+				{"$ref":"#/components/schemas/shared"}
+			]}}}}}}}
+		}`),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	left := mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0)
+	right := mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 1)
+	leftSeed, err := stringSearchSeed(left)
+	require.NoError(t, err)
+	rightSeed, err := stringSearchSeed(right)
+	require.NoError(t, err)
+
+	require.Equal(t, left.owner.source, right.owner.source)
+	require.NotEqual(t, left.owner.occurrence.usePointer, right.owner.occurrence.usePointer)
+	require.NotEqual(t, leftSeed, rightSeed)
+}
+
+func TestStringSearchSeedUsesCanonicalSchemaInputs(t *testing.T) {
+	source := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{
+		"type": {kind: jsonString, text: "string"},
+	}}
+	objective := stringObjective{
+		rule:  "pattern",
+		level: "valid",
+		owner: stringObjectiveOwner{
+			node:       &schemaNode{schemaShape: &schemaShape{source: source}},
+			occurrence: schemaOccurrence{usePointer: "#/schema"},
+			source:     source,
+		},
+	}
 
 	payload := []byte("schematest-v1\x00#/schema\x00{\"type\":\"string\"}\x00pattern\x00valid")
 	digest := sha256.Sum256(payload)
 	want := binary.BigEndian.Uint64(digest[:8])
 
-	require.Equal(t, want, stringSearchSeed(model, objective))
+	got, err := stringSearchSeed(objective)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
 }
 
 func TestStringUTF16IntervalsKeepTheLockedBoundaries(t *testing.T) {
@@ -1375,6 +1529,360 @@ func TestBuildStringClassesEscapesAndPairedUnicode(t *testing.T) {
 			require.True(t, utf8.Valid(cases[0].JSON))
 		})
 	}
+}
+
+func TestMergedPropertyProductRunsDirectedScheduleAtLastAuthoredTarget(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"object",
+			"allOf":[
+				{"properties":{"x":{"type":"string","pattern":"^a$"}}},
+				{"properties":{"x":{"pattern":"^a{2}$"}}}
+			]
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	choices, err := rowChildSchemaChoices(
+		model.root,
+		model.root.occurrence,
+		nil,
+		rowChildProperty,
+		"x",
+	)
+	require.NoError(t, err)
+	require.Len(t, choices, 1)
+	product, err := buildStringProduct(choices[0].node, choices[0].occurrence, nil)
+	require.NoError(t, err)
+
+	targetNode := model.root.allOf[1].properties["x"]
+	targetOccurrence := rebasePlanOccurrence(
+		targetNode,
+		model.root.occurrence.usePointer+"/allOf/1/properties/x",
+		appendInstanceToken(model.root.occurrence.instanceTemplate, "x"),
+	)
+	last, err := stringProductTargetIsLast(product, makeRuleIdentity(targetOccurrence, oracleRulePattern))
+	require.NoError(t, err)
+	require.True(t, last)
+
+	state := &search{model: model, maxSteps: 100}
+	var kinds []stringObjectiveKind
+	_, err = state.runStringObjectiveSchedule(
+		product,
+		product.defaultOwner,
+		oracleRulePattern,
+		"valid",
+		last,
+		func(objective stringObjective, _ *jsonValue) (bool, error) {
+			kinds = append(kinds, objective.kind)
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, []stringObjectiveKind{
+		stringObjectivePatternFalse,
+		stringObjectivePatternFalse,
+	}, kinds)
+}
+
+func TestStringProductAnyOfPartialPinsLeaveSiblingsUnconstrained(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"anyOf":[{"pattern":"^a$"},{"pattern":"^a$"}]
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	find := func(pins []applicabilityPin) (string, bool) {
+		t.Helper()
+
+		product, productErr := buildStringProduct(model.root, model.root.occurrence, pins)
+		require.NoError(t, productErr)
+		state := &search{model: model, maxSteps: 100}
+		var value string
+		complete, searchErr := state.searchStringObjective(
+			product,
+			firstStringAllTrueObjective(t, product, oracleRuleAnyOf, planLevelMask+"1"),
+			func(candidate *jsonValue) (bool, error) {
+				value = candidate.text
+
+				return true, nil
+			},
+		)
+		require.NoError(t, searchErr)
+
+		return value, complete
+	}
+
+	partial, complete := find(anyOfValidPins(model.root.occurrence, 0))
+	require.True(t, complete)
+	require.Equal(t, "a", partial)
+
+	_, complete = find(anyOfMaskPins(model.root.occurrence, 2, big.NewInt(1)))
+	require.False(t, complete)
+
+	exact, complete := find(anyOfMaskPins(model.root.occurrence, 2, big.NewInt(3)))
+	require.True(t, complete)
+	require.Equal(t, "a", exact)
+}
+
+func TestBuildAnyOfFirstFalseAlternativeDoesNotStarveLaterMask(t *testing.T) {
+	for _, pattern := range []string{".*", "(?:a*)"} {
+		t.Run(pattern, func(t *testing.T) {
+			document := []byte(documentWithJSONSchema(`{
+				"type":"string",
+				"anyOf":[
+					{"allOf":[{"pattern":` + strconv.Quote(pattern) + `},{"pattern":"^b$"}]},
+					{"minLength":1}
+				]
+			}`))
+
+			var cases []Case
+			report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1_000}, func(testCase Case) error {
+				cases = append(cases, testCase)
+
+				return nil
+			})
+			require.NoError(t, err)
+			require.NotEmpty(t, cases)
+			require.Contains(
+				t,
+				report.Covered,
+				"#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:2",
+			)
+		})
+	}
+}
+
+func TestBuildAnyOfEnumFalseBranchCoversMaskFour(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[
+			{"enum":["b"],"pattern":"^a$"},
+			{"pattern":"^b$"},
+			{"pattern":"^a$"}
+		]
+	}`))
+
+	var cases []Case
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 10_000}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`"a"`), Valid: true})
+	require.Contains(t, report.Covered, "#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:4")
+}
+
+func TestDirectedStringObjectiveRejectsExtraFailureClosure(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"enum":["a"],
+			"minLength":1,
+			"maxLength":1,
+			"pattern":"^a$"
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	objective := mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0)
+	objective.term = &stringTruthTerm{assignments: []stringTruthAssignment{
+		{constraint: stringConstraintRef{kind: stringConstraintEnum, index: 0}, truth: false},
+		{constraint: stringConstraintRef{kind: stringConstraintLength, index: 0}, truth: true},
+		{constraint: stringConstraintRef{kind: stringConstraintLength, index: 1}, truth: true},
+		{constraint: stringConstraintRef{kind: stringConstraintPattern, index: 0}, truth: false},
+	}}
+
+	state := &search{model: model, maxSteps: 100}
+	complete, err := state.searchStringObjective(product, objective, func(*jsonValue) (bool, error) {
+		return true, nil
+	})
+	require.NoError(t, err)
+	require.False(t, complete)
+}
+
+func TestDirectedStringObjectiveUsesOwnerOracle(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"object",
+			"properties":{"x":{"type":"string","minLength":1,"maxLength":1,"pattern":"^a$"}}
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	node := model.root.properties["x"]
+	occurrence := rebasePlanOccurrence(
+		node,
+		model.root.occurrence.usePointer+"/properties/x",
+		appendInstanceToken(model.root.occurrence.instanceTemplate, "x"),
+	)
+	product, err := buildStringProduct(node, occurrence, nil)
+	require.NoError(t, err)
+	state := &search{model: model, maxSteps: 100}
+	var value string
+	complete, err := state.searchStringObjective(
+		product,
+		mustStringDirectedObjective(t, product, stringObjectivePatternFalse, 0),
+		func(candidate *jsonValue) (bool, error) {
+			value = candidate.text
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, "\x00", value)
+}
+
+func TestStringObjectiveMaximumKeepsTighterEnumBound(t *testing.T) {
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"string",
+			"enum":["a"],
+			"pattern":"^.{0,100}$"
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	maximum, finite, err := stringObjectiveMaximumLength(
+		product,
+		firstStringAllTrueObjective(t, product, oracleRuleEnum, "valid"),
+	)
+	require.NoError(t, err)
+	require.True(t, finite)
+	require.Equal(t, uint64(1), maximum)
+}
+
+func TestStringObjectiveSeedRejectsMissingOwner(t *testing.T) {
+	_, err := stringSearchSeed(stringObjective{rule: "pattern", level: "valid"})
+	require.Error(t, err)
+}
+
+func TestBuildStringTruthSetupIsLazyForSharedYAMLDAG(t *testing.T) {
+	const choice = "                - &choice\n                    anyOf:\n                      - pattern: ^a$\n                      - pattern: ^a$\n"
+	const alias = "                - *choice\n"
+	document := "openapi: 3.0.0\npaths:\n  /:\n    post:\n      operationId: selected\n      requestBody:\n        content:\n          application/json:\n            schema:\n              type: string\n              allOf:\n" + choice + strings.Repeat(alias, 20)
+
+	report, err := Build(Input{OpenAPI: []byte(document), OperationID: "selected", MaxSteps: 1}, func(Case) error {
+		t.Fatal("tiny shared-DAG budget emitted a case")
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, uint64(1), report.Steps)
+}
+
+func TestStringProductIterativeLargeExactLength(t *testing.T) {
+	const length = 4096
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"string","minLength":4096,"maxLength":4096}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+
+	product, err := buildStringProduct(model.root, model.root.occurrence, nil)
+	require.NoError(t, err)
+	state := &search{model: model, maxSteps: length + 1}
+	var value string
+	complete, err := state.searchStringObjective(
+		product,
+		stringAllTrueObjective(product, "minLength", "valid"),
+		func(candidate *jsonValue) (bool, error) {
+			value = candidate.text
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Len(t, []rune(value), length)
+	require.Equal(t, uint64(length+1), state.steps)
+}
+
+func stringAllTrueObjective(product stringProduct, rule, level string) stringObjective {
+	return stringObjective{
+		kind:  stringObjectiveAllTrue,
+		rule:  rule,
+		level: level,
+		owner: product.defaultOwner,
+	}
+}
+
+func firstStringAllTrueObjective(
+	t *testing.T,
+	product stringProduct,
+	rule, level string,
+) stringObjective {
+	t.Helper()
+
+	current := stringTruthTerm{}
+	var selected []stringTruthAssignment
+	stopped, err := enumerateStringTruth(product.truth, true, &current, func(term *stringTruthTerm) (bool, error) {
+		selected = append([]stringTruthAssignment(nil), term.assignments...)
+
+		return true, nil
+	})
+	require.NoError(t, err)
+	require.True(t, stopped)
+
+	return stringObjective{
+		kind:  stringObjectiveAllTrue,
+		rule:  rule,
+		level: level,
+		owner: product.defaultOwner,
+		term:  &stringTruthTerm{assignments: selected},
+	}
+}
+
+func mustStringDirectedObjective(
+	t *testing.T,
+	product stringProduct,
+	kind stringObjectiveKind,
+	index int,
+) stringObjective {
+	t.Helper()
+
+	objective, err := newStringDirectedObjective(product, kind, index)
+	require.NoError(t, err)
+
+	return objective
+}
+
+func stringScheduleKinds(t *testing.T, product stringProduct) []stringObjectiveKind {
+	t.Helper()
+
+	kinds := make([]stringObjectiveKind, 0)
+	_, err := enumerateStringTruth(product.truth, true, &stringTruthTerm{}, func(*stringTruthTerm) (bool, error) {
+		kinds = append(kinds, stringObjectiveAllTrue)
+
+		return false, nil
+	})
+	require.NoError(t, err)
+	for range product.patterns {
+		kinds = append(kinds, stringObjectivePatternFalse)
+	}
+	for range product.formats {
+		kinds = append(kinds, stringObjectiveFormatFalse)
+	}
+	for range product.lengths {
+		kinds = append(kinds, stringObjectiveLengthFalse)
+	}
+
+	return kinds
 }
 
 func objectiveKinds(objectives []stringObjective) []stringObjectiveKind {

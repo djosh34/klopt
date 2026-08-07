@@ -545,26 +545,7 @@ func stringEmailAddressLiteralActive(prefix []uint16) bool {
 func stringEmailAddressLiteralIntervals(body string) []stringUnitInterval {
 	separator := strings.IndexByte(body, ':')
 	if separator < 0 {
-		characters := ""
-		if stringEmailAddressTagPartial(body) {
-			characters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-			if body != "" {
-				characters += "-"
-			}
-		}
-		if body != "" && stringEmailIPv4AddressPrefixAllowed(body) {
-			characters += "0123456789."
-		}
-
-		intervals := stringASCIIIntervals(characters)
-		if stringEmailAddressTagPrefix(body) {
-			intervals = append(intervals, stringUnitInterval{low: ':', high: ':'})
-		}
-		if stringEmailAddressLiteralCanClose(body) {
-			intervals = append(intervals, stringUnitInterval{low: ']', high: ']'})
-		}
-
-		return sortedStringEmailIntervals(intervals)
+		return stringEmailAddressLiteralPrefixIntervals(body)
 	}
 
 	if !strings.EqualFold(body[:separator], "ipv6") && !stringEmailAddressTagPrefix(body[:separator]) {
@@ -578,6 +559,29 @@ func stringEmailAddressLiteralIntervals(body string) []stringUnitInterval {
 		intervals = stringASCIIIntervals("!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz{|}~")
 	}
 
+	if stringEmailAddressLiteralCanClose(body) {
+		intervals = append(intervals, stringUnitInterval{low: ']', high: ']'})
+	}
+
+	return sortedStringEmailIntervals(intervals)
+}
+
+func stringEmailAddressLiteralPrefixIntervals(body string) []stringUnitInterval {
+	characters := ""
+	if stringEmailAddressTagPartial(body) {
+		characters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		if body != "" {
+			characters += "-"
+		}
+	}
+	if body != "" && stringEmailIPv4AddressPrefixAllowed(body) {
+		characters += "0123456789."
+	}
+
+	intervals := stringASCIIIntervals(characters)
+	if stringEmailAddressTagPrefix(body) {
+		intervals = append(intervals, stringUnitInterval{low: ':', high: ':'})
+	}
 	if stringEmailAddressLiteralCanClose(body) {
 		intervals = append(intervals, stringUnitInterval{low: ']', high: ']'})
 	}

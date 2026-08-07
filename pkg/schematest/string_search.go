@@ -2,8 +2,6 @@
 package schematest
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"strconv"
@@ -12,397 +10,6 @@ import (
 )
 
 const maxStringSearchUint64 = ^uint64(0)
-
-type stringRuleKind uint8
-
-const (
-	stringRuleMinLength stringRuleKind = iota
-	stringRuleMaxLength
-)
-
-type stringPatternAssertionConstraint struct {
-	positive bool
-	graph    *stringPatternGraph
-}
-
-type stringConstraintKind uint8
-
-const (
-	stringConstraintPattern stringConstraintKind = iota
-	stringConstraintFormat
-	stringConstraintLength
-)
-
-type stringConstraintRef struct {
-	kind  stringConstraintKind
-	index int
-}
-
-type stringPatternConstraint struct {
-	identity     ruleIdentity
-	pattern      *patternAST
-	graph        *stringPatternGraph
-	assertions   []stringPatternAssertionConstraint
-	failureGroup int
-
-	finite  bool
-	maximum uint64
-}
-
-type stringFormatConstraint struct {
-	identity     ruleIdentity
-	format       schemaFormat
-	failureGroup int
-}
-
-type stringLengthConstraint struct {
-	identity     ruleIdentity
-	kind         stringRuleKind
-	bound        *exactCount
-	failureGroup int
-}
-
-type stringPinnedLength struct {
-	value uint64
-	kind  stringObjectiveKind
-	index int
-}
-
-type stringProduct struct {
-	model *schemaModel
-
-	patterns []stringPatternConstraint
-	formats  []stringFormatConstraint
-	lengths  []stringLengthConstraint
-
-	failureGroups [][]stringConstraintRef
-	enumValues    []*jsonValue
-	fixedLengths  []stringPinnedLength
-	seedUnits     []uint16
-}
-
-type stringObjectiveKind uint8
-
-const (
-	stringObjectiveAllTrue stringObjectiveKind = iota
-	stringObjectivePatternFalse
-	stringObjectiveFormatFalse
-	stringObjectiveLengthFalse
-)
-
-type stringObjective struct {
-	kind             stringObjectiveKind
-	index            int
-	rule             string
-	level            string
-	falseConstraints []stringConstraintRef
-}
-
-type stringProductRuntime struct {
-	patterns []stringPatternRuntime
-}
-
-type stringProductTransition struct {
-	interval         stringUnitInterval
-	targets          [][]int
-	assertionTargets [][][]int
-}
-
-// buildStringProduct collects every string rule active in one target state.
-func buildStringProduct(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-) (stringProduct, error) {
-	if node == nil || node.schemaShape == nil {
-		return stringProduct{}, errors.New("string product has no schema shape")
-	}
-
-	product := stringProduct{}
-	if err := collectStringProductRules(
-		&product, node, occurrence, pins, make(map[*schemaNode]bool), -1,
-	); err != nil {
-		return stringProduct{}, err
-	}
-
-	for index := range product.patterns {
-		pattern := &product.patterns[index]
-		graph, err := compileStringPatternGraph(pattern.pattern)
-		if err != nil {
-			return stringProduct{}, fmt.Errorf("compile string pattern %s: %w", pattern.identity, err)
-		}
-
-		pattern.graph = graph
-		for _, assertion := range pattern.pattern.leadingAssertions {
-			assertionGraph, assertionErr := compileStringPatternExpressionGraph(assertion.expression, true)
-			if assertionErr != nil {
-				return stringProduct{}, fmt.Errorf("compile string assertion %s: %w", pattern.identity, assertionErr)
-			}
-
-			pattern.assertions = append(pattern.assertions, stringPatternAssertionConstraint{
-				positive: assertion.positive,
-				graph:    assertionGraph,
-			})
-		}
-
-		product.seedUnits = appendUniqueUint16(
-			product.seedUnits,
-			stringPatternSeedUnits(product.patterns[index].pattern)...,
-		)
-	}
-
-	for index, format := range product.formats {
-		for _, length := range stringFormatPinnedLengths(format.format) {
-			product.fixedLengths = append(product.fixedLengths, stringPinnedLength{
-				value: length,
-				kind:  stringObjectiveFormatFalse,
-				index: index,
-			})
-		}
-		product.seedUnits = appendUniqueUint16(
-			product.seedUnits,
-			stringFormatSeedUnits(format.format)...,
-		)
-	}
-
-	for index, pattern := range product.patterns {
-		if maximum, finite := stringPatternMaximumRuneLength(pattern.pattern); finite {
-			product.patterns[index].finite = true
-			product.patterns[index].maximum = maximum
-		}
-
-		if lengths, exact := stringPatternExactRuneLengths(pattern.pattern); exact {
-			for _, length := range lengths {
-				product.fixedLengths = append(product.fixedLengths, stringPinnedLength{
-					value: length,
-					kind:  stringObjectivePatternFalse,
-					index: index,
-				})
-			}
-		}
-	}
-
-	product.fixedLengths = uniqueStringPinnedLengths(product.fixedLengths)
-
-	return product, nil
-}
-
-func collectStringProductRules(
-	product *stringProduct,
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	visiting map[*schemaNode]bool,
-	failureGroup int,
-) error {
-	if node == nil || node.schemaShape == nil {
-		return errors.New("string product child has no schema shape")
-	}
-
-	if visiting[node] {
-		return fmt.Errorf("recursive string product at %s", occurrence.usePointer)
-	}
-
-	visiting[node] = true
-	defer delete(visiting, node)
-
-	if node.enum != nil {
-		for _, enumValue := range node.enum {
-			if enumValue == nil {
-				return errors.New("string product enum value is nil")
-			}
-			if enumValue.kind != jsonString {
-				continue
-			}
-
-			var err error
-			product.enumValues, err = appendUniqueJSONWitness(product.enumValues, enumValue)
-			if err != nil {
-				return fmt.Errorf("collect string product enum: %w", err)
-			}
-		}
-	}
-
-	if nodeCanHaveKind(node, jsonString) {
-		if node.minLength != nil {
-			product.lengths = append(product.lengths, stringLengthConstraint{
-				identity:     makeRuleIdentity(occurrence, oracleRuleMinLength),
-				kind:         stringRuleMinLength,
-				bound:        node.minLength,
-				failureGroup: failureGroup,
-			})
-			appendStringConstraintToFailureGroup(product, failureGroup, stringConstraintRef{
-				kind:  stringConstraintLength,
-				index: len(product.lengths) - 1,
-			})
-		}
-
-		if node.maxLength != nil {
-			product.lengths = append(product.lengths, stringLengthConstraint{
-				identity:     makeRuleIdentity(occurrence, oracleRuleMaxLength),
-				kind:         stringRuleMaxLength,
-				bound:        node.maxLength,
-				failureGroup: failureGroup,
-			})
-			appendStringConstraintToFailureGroup(product, failureGroup, stringConstraintRef{
-				kind:  stringConstraintLength,
-				index: len(product.lengths) - 1,
-			})
-		}
-
-		if node.pattern != nil {
-			product.patterns = append(product.patterns, stringPatternConstraint{
-				identity:     makeRuleIdentity(occurrence, oracleRulePattern),
-				pattern:      node.pattern,
-				failureGroup: failureGroup,
-			})
-			appendStringConstraintToFailureGroup(product, failureGroup, stringConstraintRef{
-				kind:  stringConstraintPattern,
-				index: len(product.patterns) - 1,
-			})
-		}
-
-		if isStringSchemaFormat(node.format) && node.format != schemaFormatPassword {
-			product.formats = append(product.formats, stringFormatConstraint{
-				identity:     makeRuleIdentity(occurrence, oracleRuleFormat),
-				format:       node.format,
-				failureGroup: failureGroup,
-			})
-			appendStringConstraintToFailureGroup(product, failureGroup, stringConstraintRef{
-				kind:  stringConstraintFormat,
-				index: len(product.formats) - 1,
-			})
-		}
-	}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting, failureGroup); err != nil {
-			return err
-		}
-	}
-
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	for index, child := range node.anyOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence.usePointer+"/anyOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		childFailureGroup := failureGroup
-		if pinned && !states[index] && childFailureGroup < 0 {
-			childFailureGroup = len(product.failureGroups)
-			product.failureGroups = append(product.failureGroups, nil)
-		}
-		if err := collectStringProductRules(product, child, childOccurrence, pins, visiting, childFailureGroup); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func appendStringConstraintToFailureGroup(product *stringProduct, group int, constraint stringConstraintRef) {
-	if group < 0 {
-		return
-	}
-
-	product.failureGroups[group] = append(product.failureGroups[group], constraint)
-}
-
-func stringProductFailureAlternatives(product stringProduct) [][]stringConstraintRef {
-	alternatives := [][]stringConstraintRef{{}}
-	for _, group := range product.failureGroups {
-		if len(group) == 0 {
-			continue
-		}
-
-		next := make([][]stringConstraintRef, 0, len(alternatives)*len(group))
-		for _, alternative := range alternatives {
-			for _, constraint := range group {
-				combined := append(append([]stringConstraintRef(nil), alternative...), constraint)
-				next = append(next, combined)
-			}
-		}
-		alternatives = next
-	}
-
-	return alternatives
-}
-
-func stringProductObjectives(product stringProduct, rule, level string) []stringObjective {
-	objectives := make([]stringObjective, 0, 1+len(product.patterns)+len(product.formats)+len(product.lengths))
-	failureAlternatives := stringProductFailureAlternatives(product)
-	if len(failureAlternatives) == 0 {
-		return objectives
-	}
-	for _, alternative := range failureAlternatives {
-		objectives = append(objectives, stringObjective{
-			kind:             stringObjectiveAllTrue,
-			rule:             rule,
-			level:            level,
-			falseConstraints: alternative,
-		})
-	}
-
-	for index, pattern := range product.patterns {
-		objectives = append(objectives, stringObjective{
-			kind:  stringObjectivePatternFalse,
-			index: index,
-			rule:  pattern.identity.rule,
-			level: "false",
-		})
-	}
-
-	for index, format := range product.formats {
-		objectives = append(objectives, stringObjective{
-			kind:  stringObjectiveFormatFalse,
-			index: index,
-			rule:  format.identity.rule,
-			level: "false",
-		})
-	}
-
-	for index, length := range product.lengths {
-		objectives = append(objectives, stringObjective{
-			kind:  stringObjectiveLengthFalse,
-			index: index,
-			rule:  length.identity.rule,
-			level: "false",
-		})
-	}
-
-	return objectives
-}
-
-func stringProductTargetIsLast(product stringProduct, target ruleIdentity) (bool, error) {
-	identities := make([]ruleIdentity, 0, len(product.patterns)+len(product.formats)+len(product.lengths))
-	for _, pattern := range product.patterns {
-		identities = append(identities, pattern.identity)
-	}
-	for _, format := range product.formats {
-		identities = append(identities, format.identity)
-	}
-	for _, length := range product.lengths {
-		identities = append(identities, length.identity)
-	}
-
-	for _, identity := range identities {
-		comparison, err := compareRuleIdentities(target, identity)
-		if err != nil {
-			return false, err
-		}
-		if comparison < 0 {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
 
 // walkString searches the ordered string objectives for one row target.
 func (s *search) walkString(
@@ -416,7 +23,7 @@ func (s *search) walkString(
 		return false, err
 	}
 
-	if len(product.patterns) == 0 && len(product.formats) == 0 && len(product.lengths) == 0 {
+	if !product.hasStringRules() {
 		candidates, candidateErr := rowScalarValues(node, jsonString)
 		if candidateErr != nil {
 			return false, candidateErr
@@ -429,8 +36,9 @@ func (s *search) walkString(
 		}
 
 		for _, candidate := range candidates {
-			if err := s.assign(); err != nil {
-				return false, err
+			assignErr := s.assign()
+			if assignErr != nil {
+				return false, assignErr
 			}
 
 			complete, visitErr := visit(candidate)
@@ -441,58 +49,33 @@ func (s *search) walkString(
 
 		return false, nil
 	}
+	if !s.hasStringTarget {
+		return false, errors.New("string search has no target")
+	}
 
-	if err := ensureStringSearchCanonicalSchema(s.model); err != nil {
+	owner, err := product.ownerFor(s.stringTarget)
+	if err != nil {
+		return false, err
+	}
+	last, err := stringProductTargetIsLast(product, s.stringTarget)
+	if err != nil {
 		return false, err
 	}
 
-	product.model = s.model
-	objectives := stringProductObjectives(product, s.stringRule, s.stringLevel)
-	if len(objectives) == 0 {
-		return false, nil
-	}
+	return s.runStringObjectiveSchedule(
+		product,
+		owner,
+		s.stringRule,
+		s.stringLevel,
+		last,
+		func(objective stringObjective, value *jsonValue) (bool, error) {
+			if objective.kind != stringObjectiveAllTrue {
+				return true, nil
+			}
 
-	if s.hasStringTarget {
-		last, lastErr := stringProductTargetIsLast(product, s.stringTarget)
-		if lastErr != nil {
-			return false, lastErr
-		}
-		if !last {
-			return s.searchStringObjective(product, objectives[0], visit)
-		}
-	}
-
-	complete := false
-	err = s.searchStringObjectives(product, s.stringRule, s.stringLevel, func(
-		objective stringObjective,
-		value *jsonValue,
-	) (bool, error) {
-		if objective.kind != stringObjectiveAllTrue {
-			return true, nil
-		}
-
-		var visitErr error
-		complete, visitErr = visit(value)
-
-		return complete, visitErr
-	})
-
-	return complete, err
-}
-
-func ensureStringSearchCanonicalSchema(model *schemaModel) error {
-	if model == nil || model.canonicalSchemaJSON != "" || model.schemaValue == nil {
-		return nil
-	}
-
-	canonical, err := marshalCanonicalJSON(model.schemaValue)
-	if err != nil {
-		return fmt.Errorf("canonicalize string schema: %w", err)
-	}
-
-	model.canonicalSchemaJSON = string(canonical)
-
-	return nil
+			return visit(value)
+		},
+	)
 }
 
 // searchStringObjectives streams the ordered clean objectives without retaining witnesses.
@@ -501,20 +84,9 @@ func (s *search) searchStringObjectives(
 	rule, level string,
 	visit func(stringObjective, *jsonValue) (bool, error),
 ) error {
-	if visit == nil {
-		return errors.New("nil string objective callback")
-	}
+	_, err := s.runStringObjectiveSchedule(product, product.defaultOwner, rule, level, true, visit)
 
-	for _, objective := range stringProductObjectives(product, rule, level) {
-		_, err := s.searchStringObjective(product, objective, func(value *jsonValue) (bool, error) {
-			return visit(objective, value)
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return err
 }
 
 func (s *search) searchStringObjective(
@@ -522,8 +94,17 @@ func (s *search) searchStringObjective(
 	objective stringObjective,
 	visit rowVisit,
 ) (bool, error) {
-	if err := ensureStringSearchCanonicalSchema(product.model); err != nil {
+	seed, err := stringSearchSeed(objective)
+	if err != nil {
 		return false, err
+	}
+
+	impossible, err := stringObjectiveIsImpossible(product, objective)
+	if err != nil {
+		return false, err
+	}
+	if impossible {
+		return false, nil
 	}
 
 	pinnedLengths, err := stringPinnedLengths(product, objective)
@@ -565,18 +146,7 @@ func (s *search) searchStringObjective(
 			runtime.patterns = append(runtime.patterns, patternRuntime)
 		}
 
-		return s.walkStringLength(
-			product,
-			objective,
-			runtime,
-			length,
-			0,
-			0,
-			false,
-			nil,
-			nil,
-			visit,
-		)
+		return s.walkStringLength(product, objective, runtime, length, seed, visit)
 	}
 
 	for _, candidate := range product.enumValues {
@@ -585,6 +155,14 @@ func (s *search) searchStringObjective(
 			return false, matchErr
 		}
 		if !matches {
+			continue
+		}
+
+		oracleMatches, oracleErr := stringObjectiveMatchesOracle(objective, candidate)
+		if oracleErr != nil {
+			return false, oracleErr
+		}
+		if !oracleMatches {
 			continue
 		}
 
@@ -634,25 +212,6 @@ func (s *search) searchStringObjective(
 	}
 }
 
-func stringObjectiveFalseConstraint(objective stringObjective, constraint stringConstraintRef) bool {
-	for _, falseConstraint := range objective.falseConstraints {
-		if falseConstraint == constraint {
-			return true
-		}
-	}
-
-	switch constraint.kind {
-	case stringConstraintPattern:
-		return objective.kind == stringObjectivePatternFalse && objective.index == constraint.index
-	case stringConstraintFormat:
-		return objective.kind == stringObjectiveFormatFalse && objective.index == constraint.index
-	case stringConstraintLength:
-		return objective.kind == stringObjectiveLengthFalse && objective.index == constraint.index
-	default:
-		return false
-	}
-}
-
 func stringPinnedLengthConstraint(pinned stringPinnedLength) stringConstraintRef {
 	switch pinned.kind {
 	case stringObjectivePatternFalse:
@@ -664,136 +223,224 @@ func stringPinnedLengthConstraint(pinned stringPinnedLength) stringConstraintRef
 	}
 }
 
+type stringDFSFrame struct {
+	runtime      stringProductRuntime
+	position     uint64
+	runeLength   uint64
+	previous     uint16
+	hasPrevious  bool
+	pendingHigh  bool
+	prefixLength int
+
+	initialized     bool
+	transitions     []stringProductTransition
+	transitionIndex int
+	candidates      []uint16
+	candidateIndex  int
+}
+
 func (s *search) walkStringLength(
 	product stringProduct,
 	objective stringObjective,
 	runtime stringProductRuntime,
-	targetLength uint64,
-	position uint64,
-	runeLength uint64,
-	hasPrevious bool,
-	previous *uint16,
-	units []uint16,
+	targetLength, seed uint64,
 	visit rowVisit,
 ) (bool, error) {
-	pendingHigh := len(units) > 0 && units[len(units)-1] >= 0xd800 && units[len(units)-1] <= 0xdbff
-	if runeLength == targetLength && !pendingHigh {
-		return s.finishStringCandidate(
-			product, objective, runtime, position, previous, hasPrevious,
-			units, visit,
-		)
+	units := make([]uint16, 0)
+	frames := []stringDFSFrame{{runtime: runtime}}
+
+	pop := func() bool {
+		frames = frames[:len(frames)-1]
+		if len(frames) == 0 {
+			return false
+		}
+		units = units[:frames[len(frames)-1].prefixLength]
+
+		return true
 	}
 
-	if runeLength > targetLength {
-		return false, nil
-	}
-
-	previousUnit := uint16(0)
-	if hasPrevious && previous != nil {
-		previousUnit = *previous
-	}
-
-	transitions := stringProductTransitions(
-		product, objective, runtime, units, int(position), previousUnit, hasPrevious,
-	)
-	for _, transition := range transitions {
-		candidates := stringIntervalCandidates(
-			transition.interval,
-			s.stringSearchSeedForInterval(product, objective, transition.interval),
-			product.seedUnits,
-		)
-
-		for _, unit := range candidates {
-			if pendingHigh {
-				if unit < 0xdc00 || unit > 0xdfff {
-					continue
-				}
-			} else if unit >= 0xdc00 && unit <= 0xdfff {
-				continue
-			}
-
-			if err := s.assign(); err != nil {
-				return false, err
-			}
-
-			nextUnits := append(append([]uint16(nil), units...), unit)
-			nextRuntime := stringProductRuntime{
-				patterns: make([]stringPatternRuntime, len(runtime.patterns)),
-			}
-
-			nextRuneLength := runeLength
-			if !pendingHigh {
-				nextRuneLength++
-			}
-			nextPendingHigh := unit >= 0xd800 && unit <= 0xdbff
-			nextAtEnd := nextRuneLength == targetLength && !nextPendingHigh
-
-			invalidAssertion := false
-			for index, pattern := range runtime.patterns {
-				// A false constraint still tracks its graph, but never rejects a unit.
-
-				directedPattern := stringObjectiveFalseConstraint(objective, stringConstraintRef{
-					kind:  stringConstraintPattern,
-					index: index,
-				})
-				nextPattern := stringPatternRuntime{
-					graph: pattern.graph,
-					raw:   append([]int(nil), transition.targets[index]...),
-				}
-
-				for assertionIndex, assertion := range pattern.assertions {
-					nextAssertion := stringPatternAssertionRuntime{
-						graph:    assertion.graph,
-						positive: assertion.positive,
-					}
-					if assertion.matched {
-						nextAssertion.raw = append([]int(nil), assertion.raw...)
-						nextAssertion.matched = true
-					} else {
-						targets := transition.assertionTargets[index]
-						if assertionIndex < len(targets) {
-							nextAssertion.raw = append([]int(nil), targets[assertionIndex]...)
-						}
-						nextAssertion.matched = nextAssertion.acceptsAt(
-							int(position+1), unit, true, nil, nextAtEnd,
-						)
-						if nextAssertion.matched && !nextAssertion.positive && !directedPattern {
-							invalidAssertion = true
-						}
-					}
-
-					nextPattern.assertions = append(nextPattern.assertions, nextAssertion)
-				}
-
-				nextRuntime.patterns[index] = nextPattern
-			}
-
-			if invalidAssertion {
-				continue
-			}
-
-			complete, err := s.walkStringLength(
+	for len(frames) > 0 {
+		frame := &frames[len(frames)-1]
+		if !frame.initialized {
+			complete, shouldPop, err := s.initializeStringDFSFrame(
+				frame,
 				product,
 				objective,
-				nextRuntime,
 				targetLength,
-				position+1,
-				nextRuneLength,
-				true,
-				&unit,
-				nextUnits,
+				units,
 				visit,
 			)
 			if err != nil || complete {
 				return complete, err
 			}
+			if shouldPop {
+				if !pop() {
+					return false, nil
+				}
+
+				continue
+			}
 		}
+
+		for frame.transitionIndex < len(frame.transitions) {
+			if frame.candidates == nil {
+				frame.candidates = stringIntervalCandidates(
+					frame.transitions[frame.transitionIndex].interval,
+					stringSearchSeedForInterval(seed, frame.transitions[frame.transitionIndex].interval),
+					product.seedUnits,
+				)
+			}
+			if frame.candidateIndex < len(frame.candidates) {
+				break
+			}
+			frame.transitionIndex++
+			frame.candidates = nil
+			frame.candidateIndex = 0
+		}
+		if frame.transitionIndex == len(frame.transitions) {
+			if !pop() {
+				return false, nil
+			}
+
+			continue
+		}
+
+		transition := frame.transitions[frame.transitionIndex]
+		unit := frame.candidates[frame.candidateIndex]
+		frame.candidateIndex++
+		if !stringUTF16UnitAllowed(frame.pendingHigh, unit) {
+			continue
+		}
+		if err := s.assign(); err != nil {
+			return false, err
+		}
+
+		nextRuneLength := frame.runeLength
+		if !frame.pendingHigh {
+			nextRuneLength++
+		}
+		nextPendingHigh := unit >= 0xd800 && unit <= 0xdbff
+		nextAtEnd := nextRuneLength == targetLength && !nextPendingHigh
+		nextRuntime, valid := stringNextProductRuntime(
+			objective,
+			frame.runtime,
+			transition,
+			unit,
+			frame.position,
+			nextAtEnd,
+		)
+		if !valid {
+			continue
+		}
+
+		units = append(units, unit)
+		frames = append(frames, stringDFSFrame{
+			runtime:      nextRuntime,
+			position:     frame.position + 1,
+			runeLength:   nextRuneLength,
+			previous:     unit,
+			hasPrevious:  true,
+			pendingHigh:  nextPendingHigh,
+			prefixLength: len(units),
+		})
 	}
 
 	return false, nil
 }
 
-//nolint:gocyclo // Pattern, assertion, and format frontiers share one interval partition.
+func (s *search) initializeStringDFSFrame(
+	frame *stringDFSFrame,
+	product stringProduct,
+	objective stringObjective,
+	targetLength uint64,
+	units []uint16,
+	visit rowVisit,
+) (bool, bool, error) {
+	frame.initialized = true
+	if frame.runeLength == targetLength && !frame.pendingHigh {
+		complete, err := s.finishStringCandidate(
+			product,
+			objective,
+			frame.runtime,
+			frame.position,
+			frame.previous,
+			frame.hasPrevious,
+			units,
+			visit,
+		)
+
+		return complete, true, err
+	}
+	if frame.runeLength > targetLength {
+		return false, true, nil
+	}
+
+	frame.transitions = stringProductTransitions(
+		product,
+		objective,
+		frame.runtime,
+		units,
+		int(frame.position),
+		frame.previous,
+		frame.hasPrevious,
+	)
+
+	return false, false, nil
+}
+
+func stringUTF16UnitAllowed(pendingHigh bool, unit uint16) bool {
+	if pendingHigh {
+		return unit >= 0xdc00 && unit <= 0xdfff
+	}
+
+	return unit < 0xdc00 || unit > 0xdfff
+}
+
+func stringNextProductRuntime(
+	objective stringObjective,
+	runtime stringProductRuntime,
+	transition stringProductTransition,
+	unit uint16,
+	position uint64,
+	atEnd bool,
+) (stringProductRuntime, bool) {
+	next := stringProductRuntime{patterns: make([]stringPatternRuntime, len(runtime.patterns))}
+	for index, pattern := range runtime.patterns {
+		patternRequired := stringObjectiveRequiresConstraint(objective, stringConstraintRef{
+			kind: stringConstraintPattern, index: index,
+		})
+		nextPattern := stringPatternRuntime{
+			graph: pattern.graph,
+			raw:   append([]int(nil), transition.targets[index]...),
+		}
+
+		for assertionIndex, assertion := range pattern.assertions {
+			nextAssertion := stringPatternAssertionRuntime{
+				graph:    assertion.graph,
+				positive: assertion.positive,
+			}
+			if assertion.matched {
+				nextAssertion.raw = append([]int(nil), assertion.raw...)
+				nextAssertion.matched = true
+			} else {
+				targets := transition.assertionTargets[index]
+				if assertionIndex < len(targets) {
+					nextAssertion.raw = append([]int(nil), targets[assertionIndex]...)
+				}
+				nextAssertion.matched = nextAssertion.acceptsAt(int(position+1), unit, true, nil, atEnd)
+				if nextAssertion.matched && !nextAssertion.positive && patternRequired {
+					return stringProductRuntime{}, false
+				}
+			}
+
+			nextPattern.assertions = append(nextPattern.assertions, nextAssertion)
+		}
+		next.patterns[index] = nextPattern
+	}
+
+	return next, true
+}
+
 func stringProductTransitions(
 	product stringProduct,
 	objective stringObjective,
@@ -803,68 +450,13 @@ func stringProductTransitions(
 	previous uint16,
 	hasPrevious bool,
 ) []stringProductTransition {
-	patternTransitions := make([][]stringPatternTransition, len(runtime.patterns))
-	assertionTransitions := make([][][]stringPatternTransition, len(runtime.patterns))
-	boundaries := []int{0, stringUTF16UnitCount}
+	patternTransitions, assertionTransitions, boundaries := stringPatternTransitionFrontiers(
+		runtime, position, previous, hasPrevious,
+	)
+	formatTransitions, formatBoundaries := stringFormatTransitionFrontiers(product, objective, prefix)
+	boundaries = sortedInts(append(boundaries, formatBoundaries...))
 
-	// Directed patterns remain in the interval partition so their complements are reachable.
-	for index, pattern := range runtime.patterns {
-		patternTransitions[index] = pattern.outgoing(position, previous, hasPrevious)
-		for _, transition := range patternTransitions[index] {
-			boundaries = append(
-				boundaries,
-				int(transition.interval.low),
-				int(transition.interval.high)+1,
-			)
-		}
-
-		assertionTransitions[index] = make([][]stringPatternTransition, len(pattern.assertions))
-		for assertionIndex, assertion := range pattern.assertions {
-			if assertion.matched {
-				continue
-			}
-
-			assertionTransitions[index][assertionIndex] = stringPatternRuntime{
-				graph: assertion.graph,
-				raw:   assertion.raw,
-			}.outgoing(position, previous, hasPrevious)
-			for _, transition := range assertionTransitions[index][assertionIndex] {
-				boundaries = append(
-					boundaries,
-					int(transition.interval.low),
-					int(transition.interval.high)+1,
-				)
-			}
-		}
-	}
-
-	preserveEmailAddressPartitions := false
-	if stringEmailAddressLiteralActive(prefix) {
-		for _, format := range product.formats {
-			if format.format == schemaFormatEmail {
-				preserveEmailAddressPartitions = true
-
-				break
-			}
-		}
-	}
-
-	formatTransitions := make([][]stringUnitInterval, len(product.formats))
-	for index, format := range product.formats {
-		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
-			kind:  stringConstraintFormat,
-			index: index,
-		}) {
-			continue
-		}
-
-		formatTransitions[index] = stringFormatIntervals(format.format, prefix)
-		for _, interval := range formatTransitions[index] {
-			boundaries = append(boundaries, int(interval.low), int(interval.high)+1)
-		}
-	}
-
-	boundaries = sortedInts(boundaries)
+	preserveEmailPartitions := stringProductPreservesEmailPartitions(product, prefix)
 	transitions := make([]stringProductTransition, 0, len(boundaries))
 	for index := 0; index+1 < len(boundaries); index++ {
 		low := boundaries[index]
@@ -872,112 +464,203 @@ func stringProductTransitions(
 		if low > high || low >= stringUTF16UnitCount {
 			continue
 		}
-
 		if high >= stringUTF16UnitCount {
 			high = stringUTF16UnitCount - 1
 		}
 
-		unit := uint16(low)
-		allowed := true
-		for formatIndex, intervals := range formatTransitions {
-			if stringObjectiveFalseConstraint(objective, stringConstraintRef{
-				kind:  stringConstraintFormat,
-				index: formatIndex,
-			}) {
-				continue
-			}
-
-			if !intervalContains(intervals, unit) {
-				allowed = false
-
-				break
-			}
-		}
-
+		transition, allowed := stringProductTransitionForInterval(
+			objective, runtime, patternTransitions, assertionTransitions, formatTransitions, low, high,
+		)
 		if !allowed {
 			continue
 		}
-
-		targets := make([][]int, len(patternTransitions))
-		assertionTargets := make([][][]int, len(patternTransitions))
-		for patternIndex, candidates := range patternTransitions {
-			directedPattern := stringObjectiveFalseConstraint(objective, stringConstraintRef{
-				kind:  stringConstraintPattern,
-				index: patternIndex,
-			})
-
-			for _, candidate := range candidates {
-				if unit < candidate.interval.low || unit > candidate.interval.high {
-					continue
-				}
-
-				targets[patternIndex] = candidate.targets
-
-				break
-			}
-
-			if len(targets[patternIndex]) == 0 && !directedPattern {
-				allowed = false
-
-				break
-			}
-
-			assertionTargets[patternIndex] = make([][]int, len(assertionTransitions[patternIndex]))
-			for assertionIndex, candidates := range assertionTransitions[patternIndex] {
-				if runtime.patterns[patternIndex].assertions[assertionIndex].matched {
-					continue
-				}
-
-				for _, candidate := range candidates {
-					if unit < candidate.interval.low || unit > candidate.interval.high {
-						continue
-					}
-
-					assertionTargets[patternIndex][assertionIndex] = candidate.targets
-
-					break
-				}
-
-				if len(assertionTargets[patternIndex][assertionIndex]) == 0 &&
-					runtime.patterns[patternIndex].assertions[assertionIndex].positive && !directedPattern {
-					allowed = false
-
-					break
-				}
-			}
-
-			if !allowed {
-				break
-			}
-		}
-
-		if !allowed {
-			continue
-		}
-
-		transition := stringProductTransition{
-			interval:         stringUnitInterval{low: unit, high: uint16(high)},
-			targets:          copyPatternTargets(targets),
-			assertionTargets: copyPatternAssertionTargets(assertionTargets),
-		}
-		if len(transitions) > 0 &&
-			!preserveEmailAddressPartitions &&
-			transitions[len(transitions)-1].interval.high+1 == transition.interval.low &&
-			patternTargetsEqual(
-				transitions[len(transitions)-1].targets,
-				transition.targets,
-				transitions[len(transitions)-1].assertionTargets,
-				transition.assertionTargets,
-			) {
+		if stringTransitionsCanMerge(transitions, transition, preserveEmailPartitions) {
 			transitions[len(transitions)-1].interval.high = transition.interval.high
 
 			continue
 		}
-
 		transitions = append(transitions, transition)
 	}
 
 	return transitions
+}
+
+func stringPatternTransitionFrontiers(
+	runtime stringProductRuntime,
+	position int,
+	previous uint16,
+	hasPrevious bool,
+) ([][]stringPatternTransition, [][][]stringPatternTransition, []int) {
+	patterns := make([][]stringPatternTransition, len(runtime.patterns))
+	assertions := make([][][]stringPatternTransition, len(runtime.patterns))
+	boundaries := []int{0, stringUTF16UnitCount}
+
+	for index, pattern := range runtime.patterns {
+		patterns[index] = pattern.outgoing(position, previous, hasPrevious)
+		boundaries = appendStringTransitionBoundaries(boundaries, patterns[index])
+
+		assertions[index] = make([][]stringPatternTransition, len(pattern.assertions))
+		for assertionIndex, assertion := range pattern.assertions {
+			if assertion.matched {
+				continue
+			}
+			assertions[index][assertionIndex] = stringPatternRuntime{
+				graph: assertion.graph,
+				raw:   assertion.raw,
+			}.outgoing(position, previous, hasPrevious)
+			boundaries = appendStringTransitionBoundaries(boundaries, assertions[index][assertionIndex])
+		}
+	}
+
+	return patterns, assertions, boundaries
+}
+
+func appendStringTransitionBoundaries(boundaries []int, transitions []stringPatternTransition) []int {
+	for _, transition := range transitions {
+		boundaries = append(boundaries, int(transition.interval.low), int(transition.interval.high)+1)
+	}
+
+	return boundaries
+}
+
+func stringFormatTransitionFrontiers(
+	product stringProduct,
+	objective stringObjective,
+	prefix []uint16,
+) ([][]stringUnitInterval, []int) {
+	transitions := make([][]stringUnitInterval, len(product.formats))
+	var boundaries []int
+	for index, format := range product.formats {
+		if !stringObjectiveRequiresConstraint(objective, stringConstraintRef{
+			kind: stringConstraintFormat, index: index,
+		}) {
+			continue
+		}
+		transitions[index] = stringFormatIntervals(format.format, prefix)
+		for _, interval := range transitions[index] {
+			boundaries = append(boundaries, int(interval.low), int(interval.high)+1)
+		}
+	}
+
+	return transitions, boundaries
+}
+
+func stringProductPreservesEmailPartitions(product stringProduct, prefix []uint16) bool {
+	if !stringEmailAddressLiteralActive(prefix) {
+		return false
+	}
+	for _, format := range product.formats {
+		if format.format == schemaFormatEmail {
+			return true
+		}
+	}
+
+	return false
+}
+
+func stringProductTransitionForInterval(
+	objective stringObjective,
+	runtime stringProductRuntime,
+	patternTransitions [][]stringPatternTransition,
+	assertionTransitions [][][]stringPatternTransition,
+	formatTransitions [][]stringUnitInterval,
+	low int,
+	high int,
+) (stringProductTransition, bool) {
+	unit := uint16(low)
+	if !stringFormatsAllowUnit(objective, formatTransitions, unit) {
+		return stringProductTransition{}, false
+	}
+
+	targets := make([][]int, len(patternTransitions))
+	assertionTargets := make([][][]int, len(patternTransitions))
+	for patternIndex, candidates := range patternTransitions {
+		patternRequired := stringObjectiveRequiresConstraint(objective, stringConstraintRef{
+			kind: stringConstraintPattern, index: patternIndex,
+		})
+		targets[patternIndex] = stringPatternTargetsAtUnit(candidates, unit)
+		if len(targets[patternIndex]) == 0 && patternRequired {
+			return stringProductTransition{}, false
+		}
+
+		var allowed bool
+		assertionTargets[patternIndex], allowed = stringAssertionTargetsAtUnit(
+			runtime.patterns[patternIndex], assertionTransitions[patternIndex], unit, patternRequired,
+		)
+		if !allowed {
+			return stringProductTransition{}, false
+		}
+	}
+
+	return stringProductTransition{
+		interval:         stringUnitInterval{low: unit, high: uint16(high)},
+		targets:          copyPatternTargets(targets),
+		assertionTargets: copyPatternAssertionTargets(assertionTargets),
+	}, true
+}
+
+func stringFormatsAllowUnit(
+	objective stringObjective,
+	transitions [][]stringUnitInterval,
+	unit uint16,
+) bool {
+	for index, intervals := range transitions {
+		if !stringObjectiveRequiresConstraint(objective, stringConstraintRef{
+			kind: stringConstraintFormat, index: index,
+		}) {
+			continue
+		}
+		if !intervalContains(intervals, unit) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func stringPatternTargetsAtUnit(transitions []stringPatternTransition, unit uint16) []int {
+	for _, transition := range transitions {
+		if unit >= transition.interval.low && unit <= transition.interval.high {
+			return transition.targets
+		}
+	}
+
+	return nil
+}
+
+func stringAssertionTargetsAtUnit(
+	pattern stringPatternRuntime,
+	transitions [][]stringPatternTransition,
+	unit uint16,
+	patternRequired bool,
+) ([][]int, bool) {
+	targets := make([][]int, len(transitions))
+	for index, candidates := range transitions {
+		if pattern.assertions[index].matched {
+			continue
+		}
+		targets[index] = stringPatternTargetsAtUnit(candidates, unit)
+		if len(targets[index]) == 0 && pattern.assertions[index].positive && patternRequired {
+			return nil, false
+		}
+	}
+
+	return targets, true
+}
+
+func stringTransitionsCanMerge(
+	transitions []stringProductTransition,
+	next stringProductTransition,
+	preserveEmailPartitions bool,
+) bool {
+	if len(transitions) == 0 || preserveEmailPartitions {
+		return false
+	}
+	previous := transitions[len(transitions)-1]
+
+	return previous.interval.high+1 == next.interval.low && patternTargetsEqual(
+		previous.targets, next.targets, previous.assertionTargets, next.assertionTargets,
+	)
 }
 
 func copyPatternTargets(targets [][]int) [][]int {
@@ -1035,29 +718,24 @@ func (s *search) finishStringCandidate(
 	objective stringObjective,
 	runtime stringProductRuntime,
 	position uint64,
-	previous *uint16,
+	previous uint16,
 	hasPrevious bool,
 	units []uint16,
 	visit rowVisit,
 ) (bool, error) {
-	previousUnit := uint16(0)
-	if hasPrevious && previous != nil {
-		previousUnit = *previous
-	}
-
 	if position > uint64(^uint(0)>>1) {
 		return false, errors.New("string graph position overflows int")
 	}
 
 	for index, pattern := range runtime.patterns {
-		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+		if !stringObjectiveRequiresConstraint(objective, stringConstraintRef{
 			kind:  stringConstraintPattern,
 			index: index,
 		}) {
 			continue
 		}
 
-		if !pattern.accepts(int(position), previousUnit, hasPrevious) {
+		if !pattern.accepts(int(position), previous, hasPrevious) {
 			return false, nil
 		}
 
@@ -1078,7 +756,13 @@ func (s *search) finishStringCandidate(
 		return false, nil
 	}
 
-	return visit(&jsonValue{kind: jsonString, text: text})
+	candidate := &jsonValue{kind: jsonString, text: text}
+	oracleMatches, oracleErr := stringObjectiveMatchesOracle(objective, candidate)
+	if oracleErr != nil || !oracleMatches {
+		return false, oracleErr
+	}
+
+	return visit(candidate)
 }
 
 func stringObjectiveMatches(
@@ -1086,16 +770,36 @@ func stringObjectiveMatches(
 	objective stringObjective,
 	text string,
 ) (bool, error) {
+	for index, constraint := range product.enums {
+		want, constrained := stringObjectiveConstraintTruth(objective, stringConstraintRef{
+			kind: stringConstraintEnum, index: index,
+		})
+		if !constrained {
+			continue
+		}
+
+		matches, err := stringEnumConstraintMatches(constraint, text)
+		if err != nil {
+			return false, err
+		}
+		if matches != want {
+			return false, nil
+		}
+	}
+
 	for index, pattern := range product.patterns {
+		want, constrained := stringObjectiveConstraintTruth(objective, stringConstraintRef{
+			kind:  stringConstraintPattern,
+			index: index,
+		})
+		if !constrained {
+			continue
+		}
+
 		matches, err := cleanPatternMatches(pattern.pattern, text)
 		if err != nil {
 			return false, err
 		}
-
-		want := !stringObjectiveFalseConstraint(objective, stringConstraintRef{
-			kind:  stringConstraintPattern,
-			index: index,
-		})
 
 		if matches != want {
 			return false, nil
@@ -1103,17 +807,17 @@ func stringObjectiveMatches(
 	}
 
 	for index, format := range product.formats {
+		want, constrained := stringObjectiveConstraintTruth(objective, stringConstraintRef{
+			kind:  stringConstraintFormat,
+			index: index,
+		})
+		if !constrained {
+			continue
+		}
+
 		matches, err := cleanStringFormatMatches(text, format.format)
 		if err != nil {
 			return false, err
-		}
-
-		want := true
-		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
-			kind:  stringConstraintFormat,
-			index: index,
-		}) {
-			want = false
 		}
 
 		if matches != want {
@@ -1123,24 +827,73 @@ func stringObjectiveMatches(
 
 	length := uint64(len([]rune(text)))
 	for index, constraint := range product.lengths {
+		want, constrained := stringObjectiveConstraintTruth(objective, stringConstraintRef{
+			kind:  stringConstraintLength,
+			index: index,
+		})
+		if !constrained {
+			continue
+		}
+
 		matches, err := stringLengthConstraintMatches(constraint, length)
 		if err != nil {
 			return false, err
 		}
 
-		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
-			kind:  stringConstraintLength,
-			index: index,
-		}) {
-			matches = !matches
-		}
-
-		if !matches {
+		if matches != want {
 			return false, nil
 		}
 	}
 
 	return true, nil
+}
+
+func stringEnumConstraintMatches(constraint stringEnumConstraint, text string) (bool, error) {
+	candidate := &jsonValue{kind: jsonString, text: text}
+	for _, member := range constraint.members {
+		matches, err := jsonSemanticEqual(candidate, member)
+		if err != nil {
+			return false, err
+		}
+		if matches {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func stringObjectiveMatchesOracle(objective stringObjective, candidate *jsonValue) (bool, error) {
+	if len(objective.closure) == 0 {
+		return true, nil
+	}
+	if objective.owner.node == nil || objective.owner.node.schemaShape == nil {
+		return false, errors.New("schematest invariant: directed string objective has no owner")
+	}
+
+	result := evaluateNode(objective.owner.node, candidate, objective.owner.occurrence)
+	if result.err != nil {
+		return false, fmt.Errorf("evaluate directed string candidate: %w", result.err)
+	}
+
+	return exactFailureClosureMatches(result, objective.closure), nil
+}
+
+func exactFailureClosureMatches(result evaluation, expected []failureIdentity) bool {
+	if result.records == nil || result.records.failures.count != len(expected) {
+		return false
+	}
+
+	index := 0
+	matches := true
+	result.records.failures.forEach(func(actual failureIdentity) {
+		if index >= len(expected) || actual != expected[index] {
+			matches = false
+		}
+		index++
+	})
+
+	return matches && index == len(expected)
 }
 
 func stringLengthConstraintMatches(constraint stringLengthConstraint, length uint64) (bool, error) {
@@ -1158,19 +911,20 @@ func stringLengthConstraintMatches(constraint stringLengthConstraint, length uin
 
 func stringLengthMatchesObjective(product stringProduct, objective stringObjective, length uint64) (bool, error) {
 	for index, constraint := range product.lengths {
+		want, constrained := stringObjectiveConstraintTruth(objective, stringConstraintRef{
+			kind:  stringConstraintLength,
+			index: index,
+		})
+		if !constrained {
+			continue
+		}
+
 		matches, err := stringLengthConstraintMatches(constraint, length)
 		if err != nil {
 			return false, err
 		}
 
-		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
-			kind:  stringConstraintLength,
-			index: index,
-		}) {
-			matches = !matches
-		}
-
-		if !matches {
+		if matches != want {
 			return false, nil
 		}
 	}
@@ -1215,6 +969,24 @@ func stringPinnedLengths(product stringProduct, objective stringObjective) ([]ui
 
 		if matches {
 			appendLength(pinned.value)
+		}
+	}
+
+	for index, pattern := range product.patterns {
+		if !pattern.finite || pattern.maximum == maxStringSearchUint64 || !stringObjectiveFalseConstraint(
+			objective,
+			stringConstraintRef{kind: stringConstraintPattern, index: index},
+		) {
+			continue
+		}
+
+		candidate := pattern.maximum + 1
+		matches, err := stringLengthMatchesObjective(product, objective, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if matches {
+			appendLength(candidate)
 		}
 	}
 
@@ -1265,140 +1037,212 @@ func stringPinnedLengths(product stringProduct, objective stringObjective) ([]ui
 	return lengths, nil
 }
 
+func stringObjectiveIsImpossible(product stringProduct, objective stringObjective) (bool, error) {
+	for index, pattern := range product.patterns {
+		truth, constrained := stringObjectiveConstraintTruth(objective, stringConstraintRef{
+			kind:  stringConstraintPattern,
+			index: index,
+		})
+		if constrained && !truth && stringPatternMatchesEveryString(pattern.pattern) {
+			return true, nil
+		}
+	}
+
+	for index, constraint := range product.lengths {
+		truth, constrained := stringObjectiveConstraintTruth(objective, stringConstraintRef{
+			kind:  stringConstraintLength,
+			index: index,
+		})
+		if !constrained || truth {
+			continue
+		}
+
+		bound, fits, err := exactCountUint64(constraint.bound)
+		if err != nil {
+			return false, err
+		}
+		if !fits {
+			continue
+		}
+		if (constraint.kind == stringRuleMinLength && bound == 0) ||
+			(constraint.kind == stringRuleMaxLength && bound == maxStringSearchUint64) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func stringPatternMatchesEveryString(pattern *patternAST) bool {
+	if pattern == nil || len(pattern.leadingAssertions) != 0 || pattern.expression == nil {
+		return false
+	}
+
+	for _, alternative := range pattern.expression.alternatives {
+		if stringPatternSequenceCanMatchEmpty(alternative) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func stringPatternSequenceCanMatchEmpty(sequence *patternSequence) bool {
+	if sequence == nil {
+		return false
+	}
+
+	for _, term := range sequence.terms {
+		if !stringPatternTermCanMatchEmpty(term) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func stringPatternTermCanMatchEmpty(term *patternTerm) bool {
+	if term == nil || term.atom == nil {
+		return false
+	}
+	if term.quantified && term.minimum == 0 {
+		return true
+	}
+	if term.atom.kind != patternGroup || term.atom.expression == nil {
+		return false
+	}
+
+	for _, alternative := range term.atom.expression.alternatives {
+		if stringPatternSequenceCanMatchEmpty(alternative) {
+			return true
+		}
+	}
+
+	return false
+}
+
+type stringMaximumLength struct {
+	value uint64
+	found bool
+}
+
+func (maximum *stringMaximumLength) add(value uint64) {
+	if !maximum.found || value < maximum.value {
+		maximum.value = value
+		maximum.found = true
+	}
+}
+
 func stringObjectiveMaximumLength(
 	product stringProduct,
 	objective stringObjective,
 ) (uint64, bool, error) {
-	var maximum uint64
-	found := false
+	maximum := stringMaximumLength{}
+	addStringObjectiveEnumMaximum(&maximum, product, objective)
+	addStringObjectivePatternMaximum(&maximum, product, objective)
+	addStringObjectiveFormatMaximum(&maximum, product, objective)
+	if err := addStringObjectiveLengthMaximum(&maximum, product, objective); err != nil {
+		return 0, false, err
+	}
 
-	patternMaximum := uint64(0)
-	patternFound := false
+	return maximum.value, maximum.found, nil
+}
+
+func addStringObjectiveEnumMaximum(
+	maximum *stringMaximumLength,
+	product stringProduct,
+	objective stringObjective,
+) {
+	for index, constraint := range product.enums {
+		if !stringObjectiveRequiresConstraint(objective, stringConstraintRef{
+			kind: stringConstraintEnum, index: index,
+		}) {
+			continue
+		}
+
+		enumMaximum := uint64(0)
+		for _, member := range constraint.members {
+			length := uint64(len([]rune(member.text)))
+			if length > enumMaximum {
+				enumMaximum = length
+			}
+		}
+		maximum.add(enumMaximum)
+	}
+}
+
+func addStringObjectivePatternMaximum(
+	maximum *stringMaximumLength,
+	product stringProduct,
+	objective stringObjective,
+) {
 	for index, pattern := range product.patterns {
-		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+		if !pattern.finite || !stringObjectiveRequiresConstraint(objective, stringConstraintRef{
 			kind:  stringConstraintPattern,
 			index: index,
 		}) {
 			continue
 		}
 
-		if !pattern.finite {
-			continue
-		}
-
-		if !patternFound || pattern.maximum < patternMaximum {
-			patternMaximum = pattern.maximum
-			patternFound = true
-		}
+		maximum.add(pattern.maximum)
 	}
+}
 
-	if patternFound {
-		maximum = patternMaximum
-		found = true
-	}
-
+func addStringObjectiveFormatMaximum(
+	maximum *stringMaximumLength,
+	product stringProduct,
+	objective stringObjective,
+) {
 	for index, format := range product.formats {
-		if stringObjectiveFalseConstraint(objective, stringConstraintRef{
+		if !stringObjectiveRequiresConstraint(objective, stringConstraintRef{
 			kind:  stringConstraintFormat,
 			index: index,
 		}) {
 			continue
 		}
 
-		formatMaximum, formatFinite := stringFormatMaximumLength(format.format)
-		if !formatFinite {
-			continue
-		}
-
-		if !found || formatMaximum < maximum {
-			maximum = formatMaximum
-			found = true
+		formatMaximum, finite := stringFormatMaximumLength(format.format)
+		if finite {
+			maximum.add(formatMaximum)
 		}
 	}
+}
 
+func addStringObjectiveLengthMaximum(
+	maximum *stringMaximumLength,
+	product stringProduct,
+	objective stringObjective,
+) error {
 	for index, constraint := range product.lengths {
-		falseConstraint := stringObjectiveFalseConstraint(objective, stringConstraintRef{
+		truth, constrained := stringObjectiveConstraintTruth(objective, stringConstraintRef{
 			kind:  stringConstraintLength,
 			index: index,
 		})
-		if falseConstraint && constraint.kind == stringRuleMinLength {
-			bound, fits, err := exactCountUint64(constraint.bound)
-			if err != nil {
-				return 0, false, err
-			}
-			if !fits {
-				continue
-			}
-			if bound == 0 {
-				maximum = 0
-				found = true
-
-				continue
-			}
-			if !found || bound-1 < maximum {
-				maximum = bound - 1
-				found = true
-			}
-
-			continue
-		}
-
-		if constraint.kind != stringRuleMaxLength || falseConstraint {
+		if !constrained {
 			continue
 		}
 
 		bound, fits, err := exactCountUint64(constraint.bound)
 		if err != nil {
-			return 0, false, err
+			return err
 		}
-
 		if !fits {
-			return 0, false, nil
+			continue
 		}
 
-		if !found || bound < maximum {
-			maximum = bound
-			found = true
+		switch {
+		case !truth && constraint.kind == stringRuleMinLength:
+			if bound > 0 {
+				maximum.add(bound - 1)
+			} else {
+				maximum.add(0)
+			}
+		case truth && constraint.kind == stringRuleMaxLength:
+			maximum.add(bound)
 		}
 	}
 
-	return maximum, found, nil
-}
-
-func (s *search) stringSearchSeedForInterval(
-	product stringProduct,
-	objective stringObjective,
-	interval stringUnitInterval,
-) uint64 {
-	seed := stringSearchSeed(product.model, objective)
-	seed ^= uint64(interval.low)<<16 | uint64(interval.high)
-	seed ^= seed >> 29
-	seed *= 0x9e3779b97f4a7c15
-	seed ^= seed >> 32
-
-	return seed
-}
-
-func stringSearchSeed(model *schemaModel, objective stringObjective) uint64 {
-	schemaPointer := ""
-	canonicalSchemaJSON := ""
-	if model != nil {
-		schemaPointer = model.schemaPointer
-		canonicalSchemaJSON = model.canonicalSchemaJSON
-	}
-
-	payload := []byte("schematest-v1\x00")
-	payload = append(payload, schemaPointer...)
-	payload = append(payload, 0)
-	payload = append(payload, canonicalSchemaJSON...)
-	payload = append(payload, 0)
-	payload = append(payload, objective.rule...)
-	payload = append(payload, 0)
-	payload = append(payload, objective.level...)
-
-	digest := sha256.Sum256(payload)
-
-	return binary.BigEndian.Uint64(digest[:8])
+	return nil
 }
 
 func uniqueStringPinnedLengths(values []stringPinnedLength) []stringPinnedLength {
@@ -1457,14 +1301,40 @@ type stringPatternLengthSummary struct {
 	endsAtInput   bool
 }
 
-// stringPatternMaximumRuneLength identifies anchored patterns with bounded repetition.
+// stringPatternMaximumRuneLength identifies full-input and leading-assertion bounds.
 func stringPatternMaximumRuneLength(pattern *patternAST) (uint64, bool) {
 	if pattern == nil || pattern.expression == nil {
 		return 0, false
 	}
 
-	summary, finite := stringExpressionLengthSummary(pattern.expression)
+	maximum, bounded := stringFullExpressionMaximum(pattern.expression)
+	for _, assertion := range pattern.leadingAssertions {
+		if !assertion.positive {
+			continue
+		}
+
+		assertionMaximum, assertionBounded := stringLeadingAssertionMaximum(assertion.expression)
+		if assertionBounded && (!bounded || assertionMaximum < maximum) {
+			maximum = assertionMaximum
+			bounded = true
+		}
+	}
+
+	return maximum, bounded
+}
+
+func stringFullExpressionMaximum(expression *patternExpression) (uint64, bool) {
+	summary, finite := stringExpressionLengthSummary(expression)
 	if !finite || !summary.startsAtInput || !summary.endsAtInput {
+		return 0, false
+	}
+
+	return summary.maximum, true
+}
+
+func stringLeadingAssertionMaximum(expression *patternExpression) (uint64, bool) {
+	summary, finite := stringExpressionLengthSummary(expression)
+	if !finite || !summary.endsAtInput {
 		return 0, false
 	}
 
