@@ -84,6 +84,7 @@ func TestCorpusRuntimeVerdictsMatchBuild(t *testing.T) {
 
 				emitted := 0
 				observed := closedObjectObservations{}
+				anyOfAZObserved := false
 				report, buildErr := schematest.Build(
 					schematest.Input{OpenAPI: document, OperationID: operationID, MaxSteps: 10_000},
 					func(testCase schematest.Case) error {
@@ -92,6 +93,10 @@ func TestCorpusRuntimeVerdictsMatchBuild(t *testing.T) {
 
 						if isClosedObjectOperation(operationID) {
 							observed.record(testCase)
+						}
+
+						if operationID == "anyOfBodyAndParameters" {
+							anyOfAZObserved = anyOfAZObserved || testCase.Valid && string(testCase.JSON) == `"az"`
 						}
 
 						emitted++
@@ -111,6 +116,10 @@ func TestCorpusRuntimeVerdictsMatchBuild(t *testing.T) {
 						report.Stop,
 						operationID,
 					)
+				}
+
+				if operationID == "anyOfBodyAndParameters" {
+					require.True(t, anyOfAZObserved, operationID+`: valid "az"`)
 				}
 
 				require.Positive(t, emitted, operationID)
