@@ -3,6 +3,7 @@ package schematest
 
 import (
 	"errors"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -12,8 +13,14 @@ type activeStringFormat struct {
 	occurrence schemaOccurrence
 }
 
+const (
+	emailLocalLimit              = 64
+	emailDomainLabelLimit        = 63
+	emailFinalBoundaryLabelLimit = 61
+)
+
 // simpleStringFormatWitnesses returns the finite canonical frontier for the
-// simple retained formats implemented by this stage.
+// retained formats.
 func simpleStringFormatWitnesses(format schemaFormat, valid bool) []string {
 	if valid {
 		switch format {
@@ -30,6 +37,18 @@ func simpleStringFormatWitnesses(format schemaFormat, valid bool) []string {
 			}
 		case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
 			return []string{"00000000-0000-4000-8000-000000000000"}
+		case schemaFormatEmail:
+			return []string{
+				"a@b",
+				strings.Repeat("a", emailLocalLimit) + "@b",
+				strings.Repeat("a", emailLocalLimit) + "@" + strings.Repeat("b", emailDomainLabelLimit) + "." +
+					strings.Repeat("c", emailDomainLabelLimit) + "." +
+					strings.Repeat("d", emailFinalBoundaryLabelLimit),
+			}
+		case schemaFormatIPv4:
+			return []string{"0.0.0.0", "255.255.255.255"}
+		case schemaFormatCIDR, schemaFormatIPv4CIDR:
+			return []string{"192.0.2.7/0", "192.0.2.7/32"}
 		default:
 			return nil
 		}
@@ -51,6 +70,19 @@ func simpleStringFormatWitnesses(format schemaFormat, valid bool) []string {
 		return []string{"00000000-0000-1000-8000-000000000000"}
 	case schemaFormatUUIDv4, schemaFormatUUIDDashV4:
 		return []string{"00000000-0000-4000-7000-000000000000"}
+	case schemaFormatEmail:
+		return []string{
+			"a..b@example.com",
+			strings.Repeat("a", emailLocalLimit+1) + "@b",
+			strings.Repeat("a", emailLocalLimit) + "@" + strings.Repeat("b", emailDomainLabelLimit) + "." +
+				strings.Repeat("c", emailDomainLabelLimit) + "." +
+				strings.Repeat("d", emailFinalBoundaryLabelLimit+1),
+			"é@example.com",
+		}
+	case schemaFormatIPv4:
+		return []string{"00.0.0.0", "256.255.255.255"}
+	case schemaFormatCIDR, schemaFormatIPv4CIDR:
+		return []string{"192.0.2.7/33", "192.0.2.7/00"}
 	default:
 		return nil
 	}
