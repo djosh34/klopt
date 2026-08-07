@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type stringSearchObjectiveKind uint8
@@ -154,19 +155,29 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 	}
 
 	root := searchState.model.root
-	if !nodeAcceptsKindForTarget(root, jsonString) {
+
+	node, occurrence, foundTarget := resolveStringFaultTarget(
+		root, root.occurrence, target.obligation.occurrence,
+	)
+	if !foundTarget {
+		return nil, false, fmt.Errorf(
+			"schematest: string fault target %s was not found", target.obligation.String(),
+		)
+	}
+
+	if !nodeAcceptsKindForTarget(node, jsonString) {
 		return nil, false, nil
 	}
 
 	var found *jsonValue
 
 	handled, complete, err := searchState.walkDirectedStringObjective(
-		root,
-		root.occurrence,
+		node,
+		occurrence,
 		target.pins,
 		objective,
 		func(value *jsonValue) (bool, error) {
-			result := evaluateNode(root, value, root.occurrence)
+			result := evaluateNode(node, value, occurrence)
 			if result.err != nil {
 				return false, fmt.Errorf("evaluate directed string fault: %w", result.err)
 			}
@@ -190,6 +201,99 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 	}
 
 	return found, complete, nil
+}
+
+//nolint:cyclop,mnd // Structural child kinds share one target-resolution traversal.
+func resolveStringFaultTarget(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	target schemaOccurrence,
+) (*schemaNode, schemaOccurrence, bool) {
+	if instanceTemplateMatches(occurrence.instanceTemplate, target.instanceTemplate) &&
+		nodeAcceptsKindForTarget(node, jsonString) &&
+		stringFaultUseWithin(target.usePointer, occurrence.usePointer) {
+		return node, occurrence, true
+	}
+
+	type child struct {
+		node       *schemaNode
+		occurrence schemaOccurrence
+	}
+
+	children := make([]child, 0, len(node.allOf)+len(node.anyOf)+len(node.properties)+2)
+	if node.items != nil {
+		children = append(children, child{
+			node: node.items,
+			occurrence: rebasePlanOccurrence(
+				node.items,
+				occurrence.usePointer+"/items",
+				appendInstanceToken(occurrence.instanceTemplate, "*"),
+			),
+		})
+	}
+
+	for _, name := range sortedSchemaPropertyNames(node.properties) {
+		property := node.properties[name]
+		children = append(children, child{
+			node: property,
+			occurrence: rebasePlanOccurrence(
+				property,
+				occurrence.usePointer+"/properties/"+escapePointerToken(name),
+				appendInstanceToken(occurrence.instanceTemplate, name),
+			),
+		})
+	}
+
+	if node.additionalProperties != nil {
+		children = append(children, child{
+			node: node.additionalProperties,
+			occurrence: rebasePlanOccurrence(
+				node.additionalProperties,
+				occurrence.usePointer+"/additionalProperties",
+				appendInstanceToken(occurrence.instanceTemplate, "*"),
+			),
+		})
+	}
+
+	for index, composed := range node.allOf {
+		children = append(children, child{
+			node: composed,
+			occurrence: rebasePlanOccurrence(
+				composed,
+				occurrence.usePointer+"/allOf/"+itoa(index),
+				occurrence.instanceTemplate,
+			),
+		})
+	}
+
+	for index, composed := range node.anyOf {
+		children = append(children, child{
+			node: composed,
+			occurrence: rebasePlanOccurrence(
+				composed,
+				occurrence.usePointer+"/anyOf/"+itoa(index),
+				occurrence.instanceTemplate,
+			),
+		})
+	}
+
+	for _, candidate := range children {
+		if !stringFaultUseWithin(target.usePointer, candidate.occurrence.usePointer) {
+			continue
+		}
+
+		if foundNode, foundOccurrence, found := resolveStringFaultTarget(
+			candidate.node, candidate.occurrence, target,
+		); found {
+			return foundNode, foundOccurrence, true
+		}
+	}
+
+	return nil, schemaOccurrence{}, false
+}
+
+func stringFaultUseWithin(target, candidate string) bool {
+	return target == candidate || strings.HasPrefix(target, candidate+"/")
 }
 
 func stringFaultObjectiveKind(rule string) (stringSearchObjectiveKind, bool) {

@@ -117,6 +117,64 @@ func TestFindStringFaultRowRejectsEmptyMaxLengthFailureRange(t *testing.T) {
 	require.Nil(t, row)
 }
 
+func TestFindStringFaultRowResolvesNestedScalarTargets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+		fault  string
+		want   string
+	}{
+		{
+			name: "object property pattern",
+			schema: `{"type":"object","properties":{"value":{` +
+				`"type":"string","pattern":"^a$","maxLength":1}}}`,
+			fault: "/properties/value|#/value|pattern|fault:pattern",
+			want:  "",
+		},
+		{
+			name: "array item format",
+			schema: `{"type":"array","items":{"type":"string","format":"ipv4",` +
+				`"pattern":"^(?:1\\.2\\.3\\.4|999\\.999\\.999\\.999)$"}}`,
+			fault: "/items|#/*|format|fault:format",
+			want:  "999.999.999.999",
+		},
+		{
+			name: "additional property length",
+			schema: `{"type":"object","additionalProperties":{` +
+				`"type":"string","maxLength":2,"pattern":"^...$"}}`,
+			fault: "/additionalProperties|#/*|maxLength|fault:maxLength",
+			want:  "\x00\x00\x00",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, plan := parseStringFaultPlan(t, test.schema)
+			target := findFaultTarget(t, plan, test.fault)
+			searchState := &search{model: model, maxSteps: 100_000}
+
+			row, found, err := findStringFaultRow(target, searchState)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, test.want, row.text)
+
+			node, occurrence, resolved := resolveStringFaultTarget(
+				model.root, model.root.occurrence, target.obligation.occurrence,
+			)
+			require.True(t, resolved)
+
+			result := evaluateNode(node, row, occurrence)
+			matches, err := exactStringFailureClosure(result.failures, target.closure)
+			require.NoError(t, err)
+			require.True(t, matches)
+		})
+	}
+}
+
 func TestFindStringFaultRowDirectsLengthWithoutAnAuthoredPattern(t *testing.T) {
 	t.Parallel()
 
@@ -167,7 +225,7 @@ func TestFindStringFaultRowSearchesFormatsIncrementally(t *testing.T) {
 				`"pattern":"^(?:1970|2000|1900|9999|2024)-[0-9]{2}-[0-9]{2}$"}`,
 			fault: "|pattern|fault:pattern",
 			checkValue: func(t *testing.T, value string) {
-				require.Equal(t, "1000-01-01", value)
+				require.Equal(t, "0000-01-01", value)
 			},
 		},
 		{
@@ -203,6 +261,31 @@ func TestFindStringFaultRowSearchesFormatsIncrementally(t *testing.T) {
 			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
 		})
 	}
+}
+
+func TestFindStringFaultRowFindsNonLowercaseValidEmail(t *testing.T) {
+	t.Parallel()
+
+	model, plan := parseStringFaultPlan(t, `{
+		"type":"string",
+		"format":"email",
+		"pattern":"^[a-z]+@[a-z]+$"
+	}`)
+	target := findFaultTarget(t, plan, "|pattern|fault:pattern")
+	searchState := &search{model: model, maxSteps: 100_000}
+
+	row, found, err := findStringFaultRow(target, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	formatMatches, err := cleanStringFormatMatches(row.text, schemaFormatEmail)
+	require.NoError(t, err)
+	require.True(t, formatMatches)
+
+	patternMatches, err := cleanPatternMatches(model.root.pattern, row.text)
+	require.NoError(t, err)
+	require.False(t, patternMatches)
+	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
 }
 
 func TestFindStringFaultRowDirectedFalseExpandsSurrogates(t *testing.T) {

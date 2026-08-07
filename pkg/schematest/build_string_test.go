@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -110,9 +111,9 @@ func TestBuildSearchesFormatsAtActiveLengths(t *testing.T) {
 		{
 			name:   "date-time 24",
 			schema: `{"type":"string","format":"date-time","minLength":24,"maxLength":24}`,
-			want:   `"1000-01-01T00:00:00.000Z"`,
+			want:   `"0000-01-01T00:00:00.000Z"`,
 		},
-		{name: "email 4", schema: `{"type":"string","format":"email","minLength":4,"maxLength":4}`, want: `"a@aa"`},
+		{name: "email 4", schema: `{"type":"string","format":"email","minLength":4,"maxLength":4}`, want: `"!!@0"`},
 		{name: "ipv4 8", schema: `{"type":"string","format":"ipv4","minLength":8,"maxLength":8}`, want: `"0.0.0.10"`},
 		{name: "ipv4 9", schema: `{"type":"string","format":"ipv4","minLength":9,"maxLength":9}`, want: `"0.0.0.100"`},
 		{name: "base64 minimum 5", schema: `{"type":"string","format":"byte","minLength":5}`, want: `"++++++++"`},
@@ -204,6 +205,76 @@ func TestBuildSearchesIncrementalFormatState(t *testing.T) {
 	}
 }
 
+func TestBuildFormatProductCoversLockedLanguage(t *testing.T) {
+	t.Parallel()
+
+	emails := []struct {
+		name    string
+		pattern string
+		want    string
+	}{
+		{name: "uppercase", pattern: `^A@B$`, want: `A@B`},
+		{name: "digit", pattern: `^0@a$`, want: `0@a`},
+		{name: "mixed mailbox", pattern: `^John@x$`, want: `John@x`},
+		{name: "dot atom", pattern: `^a\.b@x$`, want: `a.b@x`},
+		{name: "quoted local", pattern: `^"a"@x$`, want: `"a"@x`},
+		{name: "quoted escape", pattern: `^"a\\""@x$`, want: `"a\""@x`},
+		{name: "hyphenated domain", pattern: `^a@a-b$`, want: `a@a-b`},
+		{name: "IPv4 literal", pattern: `^a@\[1\.2\.3\.4\]$`, want: `a@[1.2.3.4]`},
+		{name: "IPv6 literal", pattern: `^a@\[IPv6:::1\]$`, want: `a@[IPv6:::1]`},
+		{name: "general literal", pattern: `^a@\[tag:value\]$`, want: `a@[tag:value]`},
+	}
+	for _, test := range emails {
+		t.Run("email "+test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := `{"type":"string","format":"email","pattern":` + strconv.Quote(test.pattern) + `}`
+			cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(schema)), 100_000)
+			require.Contains(t, cases, Case{JSON: []byte(strconv.Quote(test.want)), Valid: true})
+		})
+	}
+
+	for _, test := range []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{
+			name:   "date year zero",
+			schema: `{"type":"string","format":"date","allOf":[{"pattern":"^0000-02-29$"}]}`,
+			want:   `"0000-02-29"`,
+		},
+		{
+			name: "date-time year zero",
+			schema: `{"type":"string","format":"date-time",` +
+				`"allOf":[{"pattern":"^0000-02-29T00:00:00Z$"}]}`,
+			want: `"0000-02-29T00:00:00Z"`,
+		},
+		{
+			name:   "uuid",
+			schema: `{"type":"string","format":"uuid","pattern":"^00000000-0000-4000-8000-000000000000$"}`,
+			want:   `"00000000-0000-4000-8000-000000000000"`,
+		},
+		{
+			name:   "uuidv4",
+			schema: `{"type":"string","format":"uuidv4","pattern":"^00000000-0000-4000-8000-000000000000$"}`,
+			want:   `"00000000-0000-4000-8000-000000000000"`,
+		},
+		{
+			name:   "uuid-v4",
+			schema: `{"type":"string","format":"uuid-v4","pattern":"^00000000-0000-4000-8000-000000000000$"}`,
+			want:   `"00000000-0000-4000-8000-000000000000"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(test.schema)), 100_000)
+			require.Contains(t, cases, Case{JSON: []byte(test.want), Valid: true})
+		})
+	}
+}
+
 func TestBuildChargesUnpinnedAnyOfDFSBeforeRetainingSiblingPaths(t *testing.T) {
 	t.Parallel()
 
@@ -239,10 +310,11 @@ func TestBuildTriesAuthoredStringEnumBeforeUnboundedProduct(t *testing.T) {
 	rejected, rejectedReport := buildStringCases(t, []byte(documentWithJSONSchema(`{
 		"type":"string",
 		"enum":["z"],
-		"allOf":[{"pattern":"^a$"}]
+		"pattern":"^a*$"
 	}`)), 100)
 	require.Empty(t, rejected)
 	require.Equal(t, SpaceExhausted, rejectedReport.Stop)
+	require.Equal(t, uint64(6), rejectedReport.Steps)
 }
 
 func TestBuildDoesNotStreamDirectedStringFaults(t *testing.T) {

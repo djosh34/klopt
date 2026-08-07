@@ -32,7 +32,7 @@ func (s *search) walkScalar(
 		}
 	}
 
-	if kind != jsonString {
+	if kind != jsonString || node.enum != nil {
 		return false, nil
 	}
 
