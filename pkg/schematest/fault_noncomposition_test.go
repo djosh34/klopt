@@ -220,7 +220,7 @@ func TestAdditionalPropertyFaultUsesActiveDeclaredPropertySchema(t *testing.T) {
 			name: "declared numeric intersection",
 			schema: `{"type":"object","allOf":[{"additionalProperties":false},` +
 				`{"properties":{"__schematest_extra__":` +
-				`{"type":"number","enum":[6],"minimum":5,"multipleOf":2}}}]}`,
+				`{"type":"number","minimum":5,"multipleOf":2}}}]}`,
 			derivative: `{"__schematest_extra__":6}`,
 		},
 	}

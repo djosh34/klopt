@@ -119,6 +119,10 @@ func findTypeDerivative(
 		}
 
 		withoutType := cloneWithoutFaultRule(container, occurrence, fault.obligation.occurrence, oracleRuleType)
+		if !activeSchemaAllowsKind(withoutType, occurrence, fault.pins, kind, make(map[*schemaNode]bool)) {
+			continue
+		}
+
 		derivative = nil
 
 		complete, err := s.walkNode(
@@ -191,6 +195,55 @@ func findEnumDerivative(
 	}
 
 	return nil, false, nil
+}
+
+//nolint:cyclop // Local, allOf, and pinned anyOf kind constraints form one conjunction.
+func activeSchemaAllowsKind(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	kind jsonKind,
+	visiting map[*schemaNode]bool,
+) bool {
+	if node == nil || node.schemaShape == nil || visiting[node] {
+		return false
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	if node.kind != schemaAny && !nodeAcceptsKindForTarget(node, kind) {
+		return false
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if !activeSchemaAllowsKind(child, childOccurrence, pins, kind, visiting) {
+			return false
+		}
+	}
+
+	if len(node.anyOf) == 0 {
+		return true
+	}
+
+	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	for index, child := range node.anyOf {
+		if pinned && !states[index] {
+			continue
+		}
+
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if activeSchemaAllowsKind(child, childOccurrence, pins, kind, visiting) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func cloneWithoutFaultRule(
