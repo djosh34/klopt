@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 )
 
 // applyCompositionFault searches for the smallest exact aggregate edit relative
@@ -86,6 +87,8 @@ func findCompositionFaultDerivative(
 }
 
 // applyCompositionPinEdits applies directly represented absent-presence pins.
+//
+//nolint:cyclop // Pin collection and deterministic subset search are one operation.
 func applyCompositionPinEdits(
 	parent *jsonValue,
 	fault faultTarget,
@@ -110,11 +113,25 @@ func applyCompositionPinEdits(
 		}
 	}
 
-	if len(edits) == 0 {
-		return nil, false, nil
+	for size := 1; size <= len(edits); size++ {
+		var derivative *jsonValue
+
+		found, err := visitCompositionEditSubsets(edits, size, func(selected []compositionEdit) (bool, error) {
+			candidate, matched, candidateErr := tryCompositionEdits(parent, fault, selected, s)
+			if candidateErr != nil || !matched {
+				return false, candidateErr
+			}
+
+			derivative = candidate
+
+			return true, nil
+		})
+		if err != nil || found {
+			return derivative, found, err
+		}
 	}
 
-	return tryCompositionEdits(parent, fault, edits, s)
+	return nil, false, nil
 }
 
 // tryCompositionEdits charges and verifies one transient edit set.
@@ -149,7 +166,7 @@ func tryCompositionEdits(
 		return nil, false, fmt.Errorf("compare composition fault closure: %w", matchErr)
 	}
 
-	if result.valid || !matches || !faultPinsMatch(result, candidate, fault.pins) {
+	if result.valid || !matches {
 		return nil, false, nil
 	}
 
@@ -200,11 +217,20 @@ func compositionDifference(parent, assignment *jsonValue, path []string) []compo
 
 		return edits
 	case jsonArray:
-		if jsonValuesEqual(parent, assignment) {
-			return nil
+		if len(parent.array) != len(assignment.array) {
+			return []compositionEdit{{path: append([]string(nil), path...), replacement: assignment}}
 		}
 
-		return []compositionEdit{{path: append([]string(nil), path...), replacement: assignment}}
+		var edits []compositionEdit
+
+		for index := range parent.array {
+			token := strconv.Itoa(index)
+			edits = append(edits, compositionDifference(
+				parent.array[index], assignment.array[index], append(pathCopy(path), token),
+			)...)
+		}
+
+		return edits
 	default:
 		if jsonValuesEqual(parent, assignment) {
 			return nil
@@ -246,6 +272,8 @@ func visitCompositionEditSubsets(
 }
 
 // applyCompositionEdit applies one edit to a transient parent copy.
+//
+//nolint:cyclop // Root, object, and array edits share one mutation boundary.
 func applyCompositionEdit(root *jsonValue, edit compositionEdit) error {
 	if len(edit.path) == 0 {
 		if edit.remove || edit.replacement == nil {
@@ -263,13 +291,17 @@ func applyCompositionEdit(root *jsonValue, edit compositionEdit) error {
 	}
 
 	parent := valueAtPath(root, edit.path[:len(edit.path)-1])
-	if parent == nil || parent.kind != jsonObject {
+	if parent == nil {
 		return errors.New("schematest: composition edit parent was not found")
 	}
 
-	name := edit.path[len(edit.path)-1]
+	token := edit.path[len(edit.path)-1]
 	if edit.remove {
-		delete(parent.object, name)
+		if parent.kind != jsonObject {
+			return errors.New("schematest: composition removal parent is not an object")
+		}
+
+		delete(parent.object, token)
 
 		return nil
 	}
@@ -279,7 +311,19 @@ func applyCompositionEdit(root *jsonValue, edit compositionEdit) error {
 		return err
 	}
 
-	parent.object[name] = replacement
+	switch parent.kind {
+	case jsonObject:
+		parent.object[token] = replacement
+	case jsonArray:
+		index, parseErr := strconv.Atoi(token)
+		if parseErr != nil || index < 0 || index >= len(parent.array) {
+			return errors.New("schematest: composition array edit index is invalid")
+		}
+
+		parent.array[index] = replacement
+	default:
+		return errors.New("schematest: composition edit parent is not a container")
+	}
 
 	return nil
 }

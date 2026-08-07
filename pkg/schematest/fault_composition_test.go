@@ -102,6 +102,46 @@ func TestAnyOfAggregateFaultPreservesUnrelatedParentPaths(t *testing.T) {
 	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 }
 
+func TestItemAnyOfAggregateFaultPreservesUnrelatedArrayElements(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"array","minItems":2,
+		"items":{
+			"type":"object",
+			"properties":{"a":{"type":"string"},"b":{"type":"string"}},
+			"anyOf":[{"required":["a"]},{"required":["b"]}]
+		}
+	}`)
+	fault := findFaultTarget(t, plan, "/items|#/*|anyOf|fault:anyOf")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, parent.array, 2)
+	parent.array[1] = &jsonValue{kind: jsonObject, object: map[string]*jsonValue{
+		"b": {kind: jsonString, text: "keep"},
+	}}
+	unrelatedJSON := marshalFaultTestValue(t, parent.array[1])
+	parentJSON := marshalFaultTestValue(t, parent)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, unrelatedJSON, marshalFaultTestValue(t, derivative.array[1]))
+	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
+
+	result := evaluate(model, derivative)
+	matches, err := exactFailureClosure(result.failures, fault.closure)
+	require.NoError(t, err)
+	require.True(t, matches)
+
+	cutoff := &search{model: model, maxSteps: searchState.steps}
+	cutoff.steps = cutoff.maxSteps
+	_, err = applyFault(parent, fault, cutoff)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
+}
+
 func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 	t.Parallel()
 
@@ -162,13 +202,13 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 		prefix + "/anyOf/1|#|type|level:string", prefix + "/anyOf/1|#|type|level:array",
 	}
 	require.Equal(t, Report{
-		Stop: SpaceExhausted, Steps: 519, Covered: expectedCovered, Uncovered: expectedUncovered,
+		Stop: SpaceExhausted, Steps: 525, Covered: expectedCovered, Uncovered: expectedUncovered,
 	}, report)
 
 	cutoffCases, cutoffReport := collect(report.Steps - 1)
 	require.Equal(t, cases[:len(cases)-1], cutoffCases)
 	require.Equal(t, Report{
-		Stop: MaxStepsReached, Steps: 518,
+		Stop: MaxStepsReached, Steps: 524,
 		Covered:   expectedCovered[:len(expectedCovered)-1],
 		Uncovered: append(append([]string(nil), expectedUncovered...), expectedCovered[len(expectedCovered)-1]),
 	}, cutoffReport)

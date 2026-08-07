@@ -46,7 +46,7 @@ func findNonCompositionDerivative(parent *jsonValue, fault faultTarget, s *searc
 		return findAdditionalPropertyDerivative(parent, fault, s)
 	}
 
-	node, occurrence, found := resolveExactFaultTarget(
+	node, _, found := resolveExactFaultTarget(
 		s.model.root, s.model.root.occurrence, fault.obligation.occurrence,
 	)
 	if !found {
@@ -62,19 +62,28 @@ func findNonCompositionDerivative(parent *jsonValue, fault faultTarget, s *searc
 		oracleRuleExclusiveMaximum, oracleRuleMultipleOf:
 		return findNumberDerivative(parent, fault, s)
 	case oracleRuleFormat:
-		if nodeCanHaveKind(node, jsonString) {
-			return findStringDerivative(parent, fault, s)
+		if formatHasNumericSemantics(node.format) {
+			return findNumberDerivative(parent, fault, s)
 		}
 
-		return findNumberDerivative(parent, fault, s)
+		return findStringDerivative(parent, fault, s)
 	case oracleRuleMinLength, oracleRuleMaxLength, oracleRulePattern:
 		return findStringDerivative(parent, fault, s)
 	case oracleRuleMinItems, oracleRuleMaxItems:
-		return findArrayCountDerivative(parent, fault, node, occurrence, s)
+		return findArrayCountDerivative(parent, fault, node, s)
 	case oracleRuleMinProperties, oracleRuleMaxProperties:
-		return findObjectCountDerivative(parent, fault, node, occurrence, s)
+		return findObjectCountDerivative(parent, fault, node, s)
 	default:
 		return nil, false, fmt.Errorf("schematest: unsupported fault rule %q", fault.obligation.rule)
+	}
+}
+
+func formatHasNumericSemantics(format schemaFormat) bool {
+	switch format {
+	case schemaFormatInt32, schemaFormatInt64, schemaFormatFloat, schemaFormatDouble:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -112,17 +121,83 @@ func findEnumDerivative(
 	s *search,
 ) (*jsonValue, bool, error) {
 	for _, kind := range enumFaultKinds(node) {
-		candidates, err := canonicalEnumFaultWitnesses(node, kind)
-		if err != nil {
-			return nil, false, err
+		seeded, seedErr := canonicalEnumFaultWitnesses(node, kind)
+		if seedErr != nil {
+			return nil, false, seedErr
 		}
 
-		if derivative, found, err := firstReplacementDerivative(parent, fault, candidates, model, s); err != nil || found {
-			return derivative, found, err
+		derivative, found, seedErr := firstReplacementDerivative(parent, fault, seeded, model, s)
+		if seedErr != nil || found {
+			return derivative, found, seedErr
+		}
+
+		container, occurrence, found := resolveFaultContainer(
+			model.root, model.root.occurrence, fault.obligation.occurrence, kind,
+		)
+		if !found {
+			continue
+		}
+
+		withoutEnum := cloneWithoutFaultRule(container, occurrence, fault.obligation.occurrence, oracleRuleEnum)
+		derivative = nil
+
+		complete, err := s.walkNode(
+			withoutEnum, occurrence, fault.pins, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
+				selected, matched, selectErr := firstReplacementDerivative(
+					parent, fault, []*jsonValue{candidate}, model, s,
+				)
+				if selectErr != nil || !matched {
+					return false, selectErr
+				}
+
+				derivative = selected
+
+				return true, nil
+			},
+		)
+		if err != nil || complete {
+			return derivative, complete, err
 		}
 	}
 
 	return nil, false, nil
+}
+
+func cloneWithoutFaultRule(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	target schemaOccurrence,
+	rule string,
+) *schemaNode {
+	if ruleOccurrenceMatches(occurrence, target) {
+		return schemaNodeWithoutLocalRule(node, rule)
+	}
+
+	shape := *node.schemaShape
+
+	shape.allOf = append([]*schemaNode(nil), node.allOf...)
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if target.usePointer == childOccurrence.usePointer ||
+			strings.HasPrefix(target.usePointer, childOccurrence.usePointer+"/") {
+			shape.allOf[index] = cloneWithoutFaultRule(child, childOccurrence, target, rule)
+		}
+	}
+
+	shape.anyOf = append([]*schemaNode(nil), node.anyOf...)
+	for index, child := range node.anyOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if target.usePointer == childOccurrence.usePointer ||
+			strings.HasPrefix(target.usePointer, childOccurrence.usePointer+"/") {
+			shape.anyOf[index] = cloneWithoutFaultRule(child, childOccurrence, target, rule)
+		}
+	}
+
+	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}
 }
 
 func findNumberDerivative(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, bool, error) {
@@ -207,12 +282,11 @@ func firstReplacementDerivative(
 	return nil, false, nil
 }
 
-//nolint:cyclop,gocognit // Exact count conversion, resize, and item repair are one mutation.
+//nolint:cyclop // Exact count conversion, resize, and item repair are one mutation.
 func findArrayCountDerivative(
 	parent *jsonValue,
 	fault faultTarget,
 	node *schemaNode,
-	occurrence schemaOccurrence,
 	s *search,
 ) (*jsonValue, bool, error) {
 	paths := matchingValuePaths(parent, fault.obligation.occurrence.instanceTemplate)
@@ -251,106 +325,149 @@ func findArrayCountDerivative(
 			desired++
 		}
 
-		witnesses := []*jsonValue{nil}
-		if len(value.array) < desired {
-			witnesses, err = activeItemWitnesses(s.model.root, occurrence.instanceTemplate)
-			if err != nil {
-				return nil, false, err
-			}
+		if len(value.array) >= desired {
+			return buildArrayCountDerivative(parent, path, desired, nil, fault, s)
 		}
 
-		for _, witness := range witnesses {
-			if err := s.assign(); err != nil {
-				return nil, false, err
-			}
+		container, containerOccurrence, found := resolveFaultContainer(
+			s.model.root, s.model.root.occurrence, fault.obligation.occurrence, jsonArray,
+		)
+		if !found {
+			continue
+		}
 
-			candidate, err := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
-			if err != nil {
-				return nil, false, err
-			}
+		var derivative *jsonValue
 
-			array := valueAtPath(candidate, path)
-			if len(array.array) > desired {
-				if err := s.assign(); err != nil {
-					return nil, false, err
+		complete, walkErr := walkActiveFaultChildValues(
+			container, containerOccurrence, fault.pins, rowChildItems, "", s,
+			func(witness *jsonValue) (bool, error) {
+				candidate, matched, candidateErr := buildArrayCountDerivative(
+					parent, path, desired, witness, fault, s,
+				)
+				if candidateErr != nil || !matched {
+					return false, candidateErr
 				}
 
-				array.array = array.array[:desired]
-			}
+				derivative = candidate
 
-			for len(array.array) < desired {
-				if err := s.assign(); err != nil {
-					return nil, false, err
-				}
-
-				item, err := copyJSONValue(witness, make(map[*jsonValue]*jsonValue))
-				if err != nil {
-					return nil, false, err
-				}
-
-				array.array = append(array.array, item)
-			}
-
-			matched, matchErr := derivativeHasClosure(s.model, candidate, fault.closure)
-			if matchErr != nil || matched {
-				return candidate, matched, matchErr
-			}
+				return true, nil
+			},
+		)
+		if walkErr != nil || complete {
+			return derivative, complete, walkErr
 		}
 	}
 
 	return nil, false, nil
 }
 
-func activeItemWitnesses(root *schemaNode, instancePointer string) ([]*jsonValue, error) {
-	var schemas []*schemaNode
-	collectItemSchemas(root, root.occurrence, instancePointer, &schemas)
+func buildArrayCountDerivative(
+	parent *jsonValue,
+	path []string,
+	desired int,
+	witness *jsonValue,
+	fault faultTarget,
+	s *search,
+) (*jsonValue, bool, error) {
+	if assignErr := s.assign(); assignErr != nil {
+		return nil, false, assignErr
+	}
 
-	var witnesses []*jsonValue
+	candidate, copyErr := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
+	if copyErr != nil {
+		return nil, false, copyErr
+	}
 
-	for _, schema := range schemas {
-		for _, kind := range canonicalJSONKinds() {
-			candidates, err := canonicalAnyOfWitnesses(schema, kind)
-			if err != nil {
-				return nil, err
+	array := valueAtPath(candidate, path)
+	if len(array.array) > desired {
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
+		}
+
+		array.array = array.array[:desired]
+	}
+
+	for len(array.array) < desired {
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
+		}
+
+		item, itemErr := copyJSONValue(witness, make(map[*jsonValue]*jsonValue))
+		if itemErr != nil {
+			return nil, false, itemErr
+		}
+
+		array.array = append(array.array, item)
+	}
+
+	matched, matchErr := derivativeHasClosure(s.model, candidate, fault.closure)
+
+	return candidate, matched, matchErr
+}
+
+//nolint:cyclop // Structural choice and complete child walking share one seam.
+func walkActiveFaultChildValues(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	kind rowChildKind,
+	name string,
+	s *search,
+	visit rowVisit,
+) (bool, error) {
+	if kind == rowChildProperty {
+		members, err := rowObjectMembers(node, occurrence, pins)
+		if err != nil {
+			return false, err
+		}
+
+		for _, member := range members {
+			if member.name == name {
+				return s.walkRowMemberValues(member, pins, rowSearchContext{}, visit)
+			}
+		}
+
+		return s.walkGenericValue(pins, visit)
+	}
+
+	choices, err := rowChildSchemaChoices(node, occurrence, pins, kind, name)
+	if err != nil {
+		return false, err
+	}
+
+	for _, choice := range choices {
+		if choice.node == nil {
+			complete, walkErr := s.walkGenericValue(pins, visit)
+			if walkErr != nil || complete {
+				return complete, walkErr
 			}
 
-			for _, candidate := range candidates {
-				witnesses, err = appendUniqueJSONWitness(witnesses, candidate)
-				if err != nil {
-					return nil, err
+			continue
+		}
+
+		complete, walkErr := s.walkNode(
+			choice.node, choice.occurrence, pins, rowSearchContext{}, func(value *jsonValue) (bool, error) {
+				usable, usableErr := s.rowChildValueUsable(choice.node, choice.occurrence, pins, value)
+				if usableErr != nil || !usable {
+					return false, usableErr
 				}
-			}
+
+				return visit(value)
+			},
+		)
+		if walkErr != nil || complete {
+			return complete, walkErr
 		}
 	}
 
-	if len(witnesses) == 0 {
-		return []*jsonValue{{kind: jsonNull}}, nil
-	}
-
-	return witnesses, nil
+	return false, nil
 }
 
-func collectItemSchemas(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	instancePointer string,
-	result *[]*schemaNode,
-) {
-	if instanceTemplateMatches(occurrence.instanceTemplate, instancePointer) && node.items != nil {
-		*result = append(*result, node.items)
-	}
-
-	for _, child := range faultSchemaChildren(node, occurrence) {
-		collectItemSchemas(child.node, child.occurrence, instancePointer, result)
-	}
-}
-
-//nolint:cyclop // Exact count conversion, resize, and member repair are one mutation.
+//nolint:cyclop,gocognit // Exact count conversion and active member search are one mutation.
 func findObjectCountDerivative(
 	parent *jsonValue,
 	fault faultTarget,
 	node *schemaNode,
-	occurrence schemaOccurrence,
 	s *search,
 ) (*jsonValue, bool, error) {
 	paths := matchingValuePaths(parent, fault.obligation.occurrence.instanceTemplate)
@@ -358,49 +475,81 @@ func findObjectCountDerivative(
 		return findObjectShrinkDerivative(parent, fault, node, paths, s)
 	}
 
+	count, fits, err := exactCountUint64(node.maxProperties)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !fits || count >= uint64(maxInt()) {
+		return nil, false, exhaustFaultStructuralBudget(s)
+	}
+
+	desired := int(count) + 1
+
+	container, containerOccurrence, found := resolveFaultContainer(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, jsonObject,
+	)
+	if !found {
+		return nil, false, nil
+	}
+
 	for _, path := range paths {
-		if err := s.assign(); err != nil {
-			return nil, false, err
-		}
-
-		candidate, err := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
-		if err != nil {
-			return nil, false, err
-		}
-
-		object := valueAtPath(candidate, path)
+		object := valueAtPath(parent, path)
 		if object == nil || object.kind != jsonObject {
 			continue
 		}
 
-		bound := node.maxProperties
-
-		count, fits, err := exactCountUint64(bound)
-		if err != nil {
-			return nil, false, err
-		}
-
-		if !fits || count > uint64(maxInt()) {
-			return nil, false, exhaustFaultStructuralBudget(s)
-		}
-
-		desired := int(count)
-		if desired == maxInt() {
-			return nil, false, exhaustFaultStructuralBudget(s)
-		}
-
-		desired++
-		if err := addValidObjectMembers(object, node, occurrence, fault.pins, desired, s); err != nil {
-			return nil, false, err
-		}
-
-		if len(object.object) != desired {
+		needed := desired - len(object.object)
+		if needed <= 0 {
 			continue
 		}
 
-		matched, matchErr := derivativeHasClosure(s.model, candidate, fault.closure)
-		if matchErr != nil || matched {
-			return candidate, matched, matchErr
+		if uint64(needed) > s.maxSteps-s.steps {
+			return nil, false, exhaustFaultStructuralBudget(s)
+		}
+
+		growthPins := append([]applicabilityPin(nil), fault.pins...)
+
+		members, memberErr := rowObjectMembers(container, containerOccurrence, growthPins)
+		if memberErr != nil {
+			return nil, false, memberErr
+		}
+
+		available := 0
+
+		for _, member := range members {
+			if _, exists := object.object[member.name]; !exists {
+				available++
+			}
+		}
+
+		base := additionalPropertyWitnessName(container)
+		for index := 0; available < needed; index++ {
+			name := base
+			if index > 0 {
+				name = fmt.Sprintf("%s_%d", base, index)
+			}
+
+			if _, exists := object.object[name]; exists {
+				continue
+			}
+
+			growthPins = append(growthPins, faultMemberPresencePin(containerOccurrence, name))
+			available++
+		}
+
+		if len(growthPins) != len(fault.pins) {
+			members, memberErr = rowObjectMembers(container, containerOccurrence, growthPins)
+			if memberErr != nil {
+				return nil, false, memberErr
+			}
+		}
+
+		derivative, found, searchErr := findObjectGrowthDerivative(
+			parent, path, desired, members, fault, growthPins, s,
+		)
+		if searchErr != nil || found {
+			return derivative, found, searchErr
 		}
 	}
 
@@ -506,124 +655,86 @@ func visitNameSubsets(names []string, size int, visit func([]string) (bool, erro
 	return walk(0)
 }
 
-//nolint:cyclop // Declared and additional member alternatives share one deterministic fill.
-func addValidObjectMembers(
-	object *jsonValue,
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+func faultMemberPresencePin(occurrence schemaOccurrence, name string) applicabilityPin {
+	return applicabilityPin{
+		occurrence: schemaOccurrence{
+			usePointer:       occurrence.usePointer + "/additionalProperties",
+			targetPointer:    occurrence.targetPointer,
+			instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, name),
+		},
+		presence: planPinPresent,
+	}
+}
+
+//nolint:cyclop // Member/value backtracking and closure checking form one DFS.
+func findObjectGrowthDerivative(
+	parent *jsonValue,
+	path []string,
 	desired int,
-	s *search,
-) error {
-	for _, name := range sortedSchemaPropertyNames(node.properties) {
-		if len(object.object) == desired {
-			return nil
-		}
-
-		if _, exists := object.object[name]; exists {
-			continue
-		}
-
-		property := node.properties[name]
-		propertyOccurrence := rebasePlanOccurrence(
-			property,
-			occurrence.usePointer+"/properties/"+escapePointerToken(name),
-			appendInstanceToken(occurrence.instanceTemplate, name),
-		)
-
-		value, found, err := firstValidNodeValue(property, propertyOccurrence, pins, s)
-		if err != nil {
-			return err
-		}
-
-		if !found {
-			continue
-		}
-
-		if err := s.assign(); err != nil {
-			return err
-		}
-
-		object.object[name] = value
-	}
-
-	for len(object.object) < desired &&
-		(node.allowAdditionalProperties || node.additionalProperties != nil) {
-		name := nextAdditionalPropertyName(node, object.object)
-		value := &jsonValue{kind: jsonNull}
-
-		if node.additionalProperties != nil {
-			additionalOccurrence := rebasePlanOccurrence(
-				node.additionalProperties,
-				occurrence.usePointer+"/additionalProperties",
-				appendInstanceToken(occurrence.instanceTemplate, name),
-			)
-
-			var err error
-
-			var found bool
-
-			value, found, err = firstValidNodeValue(node.additionalProperties, additionalOccurrence, pins, s)
-			if err != nil {
-				return err
-			}
-
-			if !found {
-				break
-			}
-		}
-
-		if err := s.assign(); err != nil {
-			return err
-		}
-
-		object.object[name] = value
-	}
-
-	return nil
-}
-
-func nextAdditionalPropertyName(node *schemaNode, members map[string]*jsonValue) string {
-	base := additionalPropertyWitnessName(node)
-	if _, exists := members[base]; !exists {
-		return base
-	}
-
-	for suffix := 1; ; suffix++ {
-		name := fmt.Sprintf("%s_%d", base, suffix)
-		if _, exists := members[name]; !exists {
-			return name
-		}
-	}
-}
-
-func firstValidNodeValue(
-	node *schemaNode,
-	occurrence schemaOccurrence,
+	members []rowMember,
+	fault faultTarget,
 	pins []applicabilityPin,
 	s *search,
 ) (*jsonValue, bool, error) {
-	var found *jsonValue
+	var derivative *jsonValue
 
-	complete, err := s.walkNode(node, occurrence, pins, rowSearchContext{}, func(value *jsonValue) (bool, error) {
-		result := evaluateNode(node, value, occurrence)
-		if result.err != nil || !result.valid {
-			return false, result.err
+	var walk func(*jsonValue, int) (bool, error)
+
+	walk = func(candidate *jsonValue, index int) (bool, error) {
+		object := valueAtPath(candidate, path)
+		if object == nil || object.kind != jsonObject {
+			return false, nil
 		}
 
-		found = value
+		if len(object.object) == desired {
+			matched, err := derivativeHasClosure(s.model, candidate, fault.closure)
+			if err != nil || !matched {
+				return false, err
+			}
 
-		return true, nil
-	})
-	if err != nil {
-		return nil, false, err
+			derivative = candidate
+
+			return true, nil
+		}
+
+		if index == len(members) || len(object.object) > desired {
+			return false, nil
+		}
+
+		member := members[index]
+		if _, exists := object.object[member.name]; !exists {
+			complete, err := s.walkRowMemberValues(
+				member, pins, rowSearchContext{}, func(value *jsonValue) (bool, error) {
+					if assignErr := s.assign(); assignErr != nil {
+						return false, assignErr
+					}
+
+					next, copyErr := copyJSONValue(candidate, make(map[*jsonValue]*jsonValue))
+					if copyErr != nil {
+						return false, copyErr
+					}
+
+					copiedValue, copyErr := copyJSONValue(value, make(map[*jsonValue]*jsonValue))
+					if copyErr != nil {
+						return false, copyErr
+					}
+
+					valueAtPath(next, path).object[member.name] = copiedValue
+
+					return walk(next, index+1)
+				},
+			)
+			if err != nil || complete {
+				return complete, err
+			}
+		}
+
+		return walk(candidate, index+1)
 	}
 
-	if !complete {
-		return nil, false, nil
-	}
+	found, err := walk(parent, 0)
 
-	return found, true, nil
+	return derivative, found, err
 }
 
 func findRequiredDerivative(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, bool, error) {
@@ -681,93 +792,114 @@ func findAdditionalPropertyDerivative(
 		return nil, false, errors.New("schematest: additional-property parent schema was not found")
 	}
 
-	witnesses, err := additionalPropertyWitnesses(s.model.root, parentPointer)
-	if err != nil {
-		return nil, false, err
+	containerTarget := fault.obligation.occurrence
+	containerTarget.instanceTemplate = parentPointer
+
+	container, containerOccurrence, found := resolveFaultContainer(
+		s.model.root, s.model.root.occurrence, containerTarget, jsonObject,
+	)
+	if !found {
+		return nil, false, nil
 	}
 
+	name := additionalPropertyWitnessName(node)
+
 	for _, path := range matchingValuePaths(parent, parentPointer) {
-		for _, witness := range witnesses {
-			if err := s.assign(); err != nil {
-				return nil, false, err
-			}
+		var derivative *jsonValue
 
-			candidate, err := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
-			if err != nil {
-				return nil, false, err
-			}
+		complete, err := walkActiveAdditionalPropertyValues(
+			container, containerOccurrence, fault.pins, name, s,
+			func(witness *jsonValue) (bool, error) {
+				if assignErr := s.assign(); assignErr != nil {
+					return false, assignErr
+				}
 
-			object := valueAtPath(candidate, path)
-			if object == nil || object.kind != jsonObject {
-				continue
-			}
+				candidate, copyErr := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
+				if copyErr != nil {
+					return false, copyErr
+				}
 
-			value, err := copyJSONValue(witness, make(map[*jsonValue]*jsonValue))
-			if err != nil {
-				return nil, false, err
-			}
+				value, copyErr := copyJSONValue(witness, make(map[*jsonValue]*jsonValue))
+				if copyErr != nil {
+					return false, copyErr
+				}
 
-			object.object[additionalPropertyWitnessName(node)] = value
+				object := valueAtPath(candidate, path)
+				if object == nil || object.kind != jsonObject {
+					return false, nil
+				}
 
-			matched, err := derivativeHasClosure(s.model, candidate, fault.closure)
-			if err != nil || matched {
-				return candidate, matched, err
-			}
+				object.object[name] = value
+
+				matched, matchErr := derivativeHasClosure(s.model, candidate, fault.closure)
+				if matchErr != nil || !matched {
+					return false, matchErr
+				}
+
+				derivative = candidate
+
+				return true, nil
+			},
+		)
+		if err != nil || complete {
+			return derivative, complete, err
 		}
 	}
 
 	return nil, false, nil
 }
 
-func additionalPropertyWitnesses(root *schemaNode, instancePointer string) ([]*jsonValue, error) {
-	var schemas []*schemaNode
-	collectAdditionalPropertySchemas(root, root.occurrence, instancePointer, &schemas)
-
-	var witnesses []*jsonValue
-
-	for _, schema := range schemas {
-		for _, kind := range canonicalJSONKinds() {
-			candidates, err := canonicalAnyOfWitnesses(schema, kind)
-			if err != nil {
-				return nil, err
-			}
-
-			for _, candidate := range candidates {
-				witnesses, err = appendUniqueJSONWitness(witnesses, candidate)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-
-	if len(witnesses) == 0 {
-		for _, kind := range canonicalJSONKinds() {
-			candidates, err := canonicalKindWitnesses(kind)
-			if err != nil {
-				return nil, err
-			}
-
-			witnesses = append(witnesses, candidates...)
-		}
-	}
-
-	return witnesses, nil
-}
-
-func collectAdditionalPropertySchemas(
+//nolint:cyclop // Active wildcard source merging and walking form one seam.
+func walkActiveAdditionalPropertyValues(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	instancePointer string,
-	result *[]*schemaNode,
-) {
-	if instanceTemplateMatches(occurrence.instanceTemplate, instancePointer) && node.additionalProperties != nil {
-		*result = append(*result, node.additionalProperties)
+	pins []applicabilityPin,
+	name string,
+	s *search,
+	visit rowVisit,
+) (bool, error) {
+	sets, err := rowAdditionalPropertySources(node, occurrence, pins)
+	if err != nil {
+		return false, err
 	}
 
-	for _, child := range faultSchemaChildren(node, occurrence) {
-		collectAdditionalPropertySchemas(child.node, child.occurrence, instancePointer, result)
+	for _, set := range sets {
+		sources := make([]rowSchemaSource, 0, len(set))
+		for _, additional := range set {
+			if additional.owner != nil {
+				if _, declared := additional.owner.properties[name]; declared {
+					continue
+				}
+			}
+
+			source := additional.source
+			source.occurrence = rebasePlanOccurrence(
+				source.node, source.occurrence.usePointer, appendInstanceToken(occurrence.instanceTemplate, name),
+			)
+			sources = append(sources, source)
+		}
+
+		choice, exists, mergeErr := mergeRowSchemaSources(rowPreferredSchemaSources(sources, pins))
+		if mergeErr != nil {
+			return false, mergeErr
+		}
+
+		if !exists {
+			complete, walkErr := s.walkGenericValue(pins, visit)
+			if walkErr != nil || complete {
+				return complete, walkErr
+			}
+
+			continue
+		}
+
+		complete, walkErr := s.walkNode(choice.node, choice.occurrence, pins, rowSearchContext{}, visit)
+		if walkErr != nil || complete {
+			return complete, walkErr
+		}
 	}
+
+	return false, nil
 }
 
 func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure []failureIdentity) (bool, error) {
@@ -1023,11 +1155,13 @@ func pointerFromTokens(tokens []string) string {
 }
 
 func exhaustFaultStructuralBudget(s *search) error {
-	for {
-		if err := s.assign(); err != nil {
-			return err
-		}
+	if s == nil {
+		return errors.New("schematest: nil search")
 	}
+
+	s.steps = s.maxSteps
+
+	return errMaxSteps
 }
 
 func maxInt() int {

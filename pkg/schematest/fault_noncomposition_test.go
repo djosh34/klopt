@@ -175,6 +175,125 @@ func TestLargeCountFaultsStopBeforeMaterialization(t *testing.T) {
 	}
 }
 
+func TestBuildFindsActiveConjunctionFaultWitnesses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		faultID    string
+		derivative string
+	}{
+		{
+			name: "intersecting item patterns",
+			schema: `{"maxItems":0,"items":{"type":"string","pattern":"^[a-z]+$"},` +
+				`"allOf":[{"items":{"pattern":"^z+$"}}]}`,
+			faultID:    "|maxItems|fault:maxItems",
+			derivative: `["z"]`,
+		},
+		{
+			name: "intersecting numeric additional property",
+			schema: `{"allOf":[{"additionalProperties":false},` +
+				`{"additionalProperties":{"type":"number","minimum":5}},` +
+				`{"additionalProperties":{"multipleOf":2}}]}`,
+			faultID:    "/allOf/0|#/*|additionalProperties|fault:additionalProperties",
+			derivative: `{"__schematest_extra__":6}`,
+		},
+		{
+			name: "composed string max property expansion",
+			schema: `{"maxProperties":0,` +
+				`"allOf":[{"additionalProperties":{"type":"string","minLength":2}}]}`,
+			faultID:    "|maxProperties|fault:maxProperties",
+			derivative: `{"__schematest_extra__":"text"}`,
+		},
+		{
+			name: "named property backtracking",
+			schema: `{"maxProperties":0,"properties":{"x":{"enum":["bad","good"]}},` +
+				`"allOf":[{"properties":{"x":{"enum":["good"]}}}]}`,
+			faultID:    "|maxProperties|fault:maxProperties",
+			derivative: `{"x":"good"}`,
+		},
+		{
+			name:       "enum fault from active sibling",
+			schema:     `{"type":"string","allOf":[{"enum":["bad"]},{"enum":["bad","good"]}]}`,
+			faultID:    "/allOf/0|#|enum|fault:enum",
+			derivative: `"good"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, plan := compositionFaultModel(t, test.schema)
+			fault := findFaultTarget(t, plan, test.faultID)
+			searchState := &search{model: model, maxSteps: 1_000_000}
+			parent, found, err := regenerateParent(plan, fault, searchState)
+			require.NoError(t, err)
+			require.True(t, found)
+
+			derivative, err := applyFault(parent, fault, searchState)
+			require.NoError(t, err)
+			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
+		})
+	}
+}
+
+func TestBuildTypelessNumericFormatFaults(t *testing.T) {
+	t.Parallel()
+
+	for _, format := range []string{"float", "double"} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+
+			var cases []Case
+
+			report, err := Build(Input{
+				OpenAPI:     []byte(documentWithJSONSchema(`{"format":"` + format + `"}`)),
+				OperationID: "selected",
+				MaxSteps:    1_000_000,
+			}, func(testCase Case) error {
+				cases = append(cases, testCase)
+
+				return nil
+			})
+			require.NoError(t, err)
+			require.Equal(t, SpaceExhausted, report.Stop)
+
+			foundNumericFault := false
+
+			for _, testCase := range cases {
+				if testCase.Valid || len(testCase.JSON) == 0 || testCase.JSON[0] == '"' ||
+					string(testCase.JSON) == "null" || string(testCase.JSON) == "true" ||
+					string(testCase.JSON) == "false" {
+					continue
+				}
+
+				foundNumericFault = true
+			}
+
+			require.True(t, foundNumericFault)
+		})
+	}
+}
+
+func TestOversizedCountFaultAdvancesToCutoffAnalytically(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"array","maxItems":184467440737095516160,"items":{}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxItems|fault:maxItems")
+	searchState := &search{model: model, maxSteps: 1 << 60}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	_, err = applyFault(parent, fault, searchState)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, searchState.maxSteps, searchState.steps)
+}
+
 func TestNestedFaultsDoNotStackAndUseConcreteInstanceIdentities(t *testing.T) {
 	t.Parallel()
 

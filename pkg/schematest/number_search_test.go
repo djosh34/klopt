@@ -179,8 +179,9 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("-1"), Valid: false},
 			},
-			wantSteps: 46,
+			wantSteps: 57,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:0",
 			},
@@ -198,9 +199,10 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("6"), Valid: false},
 				{JSON: []byte("4"), Valid: false},
 			},
-			wantSteps: 95,
+			wantSteps: 118,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:1",
 				"/allOf/1|#|minimum|level:valid",
@@ -252,8 +254,8 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 			)
 			require.NoError(t, err)
 			require.Equal(t, SpaceExhausted, report.Stop)
-			require.Equal(t, test.wantSteps, report.Steps)
 			require.Equal(t, test.wantCases, cases)
+			require.Equal(t, test.wantSteps, report.Steps)
 
 			for _, suffix := range test.covered {
 				require.Contains(t, report.Covered, schemaPointer+suffix)

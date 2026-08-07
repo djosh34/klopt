@@ -119,6 +119,8 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 }
 
 // parentReplayPins turns mutation-result presence into valid-parent presence.
+//
+//nolint:cyclop // Presence, type, and enum faults translate distinct pin dimensions.
 func parentReplayPins(fault faultTarget) []applicabilityPin {
 	pins := copyPlanPins(fault.pins)
 	for index := range pins {
@@ -145,6 +147,10 @@ func parentReplayPins(fault faultTarget) []applicabilityPin {
 				pins[index].presence = planPinAbsent
 			case oracleRuleType:
 				pins[index].hasKind = false
+			case oracleRuleEnum:
+				if rowOccurrenceMatches(pins[index].occurrence, failure.occurrence) {
+					pins[index].hasKind = false
+				}
 			}
 		}
 	}
