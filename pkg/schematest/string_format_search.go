@@ -2,8 +2,9 @@
 package schematest
 
 import (
-	"errors"
+	"encoding/base64"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -27,7 +28,7 @@ func simpleStringFormatWitnesses(format schemaFormat, valid bool) []string {
 		case schemaFormatByte:
 			return []string{"YQ=="}
 		case schemaFormatDate:
-			return []string{"1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31"}
+			return []string{"1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31", "2024-01-01"}
 		case schemaFormatDateTime:
 			return []string{
 				"1970-01-01T00:00:00Z",
@@ -88,53 +89,6 @@ func simpleStringFormatWitnesses(format schemaFormat, valid bool) []string {
 	}
 }
 
-func collectActiveStringFormats(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	objective *stringSearchObjective,
-	formats *[]activeStringFormat,
-) error {
-	if node == nil || node.schemaShape == nil {
-		return errors.New("schematest: string format schema has no shape")
-	}
-
-	if len(simpleStringFormatWitnesses(node.format, true)) > 0 {
-		*formats = append(*formats, activeStringFormat{
-			format: node.format, node: node, occurrence: occurrence,
-		})
-	}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		if err := collectActiveStringFormats(child, childOccurrence, pins, objective, formats); err != nil {
-			return err
-		}
-	}
-
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	for index, child := range node.anyOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence.usePointer+"/anyOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		if pinned && !states[index] && !stringObjectiveWithin(objective, childOccurrence) {
-			continue
-		}
-
-		if err := collectActiveStringFormats(child, childOccurrence, pins, objective, formats); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func directedStringFormatIndex(formats []activeStringFormat, objective *stringSearchObjective) int {
 	for index, format := range formats {
 		if rowOccurrenceMatches(format.occurrence, objective.occurrence) {
@@ -164,93 +118,118 @@ func basicStringLengthsFromActive(constraints []activeStringLength) (basicString
 	return lengths, nil
 }
 
-func simpleStringCandidateAllowed(
-	candidate string,
-	patterns []activeStringPattern,
-	lengths []activeStringLength,
-	formats []activeStringFormat,
-	directedFormat int,
-) (bool, error) {
-	for _, pattern := range patterns {
-		matches, err := cleanPatternMatches(pattern.pattern, candidate)
-		if err != nil {
-			return false, err
-		}
-
-		if !matches {
-			return false, nil
-		}
+//nolint:gocognit,mnd // Each retained format has a small explicit length construction.
+func stringFormatWitnessAtLength(format schemaFormat, length uint64) (string, bool) {
+	if length > uint64(^uint(0)>>1) {
+		return "", false
 	}
 
-	length := utf8.RuneCountInString(candidate)
+	size := int(length)
 
-	for _, constraint := range lengths {
-		bound, fits, err := exactCountUint64(constraint.count)
-		if err != nil {
-			return false, err
+	switch format {
+	case schemaFormatByte:
+		if size == 0 {
+			return "", true
 		}
 
-		if constraint.minimum {
-			if !fits || uint64(length) < bound {
-				return false, nil
+		if size%4 != 0 {
+			return "", false
+		}
+
+		decodedLength := size/4*3 - 2
+		for decodedLength <= size/4*3 {
+			candidate := base64.StdEncoding.EncodeToString(make([]byte, decodedLength))
+			if len(candidate) == size {
+				return candidate, true
 			}
-		} else if fits && uint64(length) > bound {
-			return false, nil
+
+			decodedLength++
+		}
+	case schemaFormatDate:
+		if size == len("1970-01-01") {
+			return "1970-01-01", true
+		}
+	case schemaFormatDateTime:
+		if size == len("1970-01-01T00:00:00Z") {
+			return "1970-01-01T00:00:00Z", true
+		}
+
+		if size >= len("1970-01-01T00:00:00.0Z") {
+			return "1970-01-01T00:00:00." + strings.Repeat("0", size-21) + "Z", true
+		}
+	case schemaFormatEmail:
+		if size >= 3 {
+			return "a@" + strings.Repeat("b", size-2), true
+		}
+	case schemaFormatIPv4:
+		if size >= 7 && size <= 15 {
+			remaining := size - 3
+
+			parts := make([]string, 4)
+			for index := range parts {
+				digits := min(3, remaining-(len(parts)-index-1))
+				switch digits {
+				case 1:
+					parts[index] = "0"
+				case 2:
+					parts[index] = "10"
+				case 3:
+					parts[index] = "100"
+				}
+
+				remaining -= digits
+			}
+
+			return strings.Join(parts, "."), true
+		}
+	case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
+		if size == 36 {
+			return "00000000-0000-4000-8000-000000000000", true
+		}
+	case schemaFormatCIDR, schemaFormatIPv4CIDR:
+		for _, candidate := range []string{"0.0.0.0/0", "192.0.2.7/32"} {
+			if len(candidate) == size {
+				return candidate, true
+			}
 		}
 	}
 
-	for index, format := range formats {
-		matches, err := cleanStringFormatMatches(candidate, format.format)
-		if err != nil {
-			return false, err
-		}
-
-		if matches == (index == directedFormat) {
-			return false, nil
-		}
-	}
-
-	return true, nil
+	return "", false
 }
 
-func (s *search) walkActiveSimpleStringFormats(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+//nolint:gocognit // Candidate construction, deduplication, edge charging, and product traversal are one phase.
+func (s *search) walkBasicStringFormatCandidates(
+	product *basicStringProduct,
+	runeLength uint64,
+	_ uint64,
 	visit rowVisit,
 ) (bool, error) {
-	formats := make([]activeStringFormat, 0)
-	if err := collectActiveStringFormats(node, occurrence, pins, nil, &formats); err != nil {
-		return false, err
-	}
-
-	if len(formats) == 0 {
+	if len(product.formats) == 0 || runeLength > s.maxSteps-s.steps {
 		return false, nil
 	}
 
-	patterns := make([]activeStringPattern, 0)
+	candidates := make([]string, 0, len(product.formats))
+	for index, format := range product.formats {
+		valid := index != product.directedFormat
+		if valid {
+			candidate, exists := stringFormatWitnessAtLength(format.format, runeLength)
+			if exists {
+				candidates = append(candidates, candidate)
+			}
 
-	lengths := make([]activeStringLength, 0)
-	if err := collectActiveStringConstraints(node, occurrence, pins, nil, &patterns, &lengths); err != nil {
-		return false, err
-	}
+			for _, candidate := range simpleStringFormatWitnesses(format.format, true) {
+				if uint64(utf8.RuneCountInString(candidate)) == runeLength {
+					candidates = append(candidates, candidate)
+				}
+			}
 
-	return s.walkSimpleStringFormatCandidates(patterns, lengths, formats, -1, visit)
-}
+			continue
+		}
 
-func (s *search) walkSimpleStringFormatCandidates(
-	patterns []activeStringPattern,
-	lengths []activeStringLength,
-	formats []activeStringFormat,
-	directedFormat int,
-	visit rowVisit,
-) (bool, error) {
-	candidates := make([]string, 0)
-	if directedFormat >= 0 {
-		candidates = append(candidates, simpleStringFormatWitnesses(formats[directedFormat].format, false)...)
-	} else {
-		for _, format := range formats {
-			candidates = append(candidates, simpleStringFormatWitnesses(format.format, true)...)
+		for _, candidate := range simpleStringFormatWitnesses(format.format, false) {
+			if uint64(utf8.RuneCountInString(candidate)) == runeLength {
+				candidates = append(candidates, candidate)
+			}
 		}
 	}
 
@@ -269,16 +248,27 @@ func (s *search) walkSimpleStringFormatCandidates(
 			continue
 		}
 
-		if err := s.assign(); err != nil {
-			return false, err
-		}
-
-		allowed, err := simpleStringCandidateAllowed(candidate, patterns, lengths, formats, directedFormat)
+		allowed, err := simpleStringCandidateAllowed(candidate, product.formats, product.directedFormat)
 		if err != nil {
 			return false, err
 		}
 
 		if !allowed {
+			continue
+		}
+
+		units := utf16.Encode([]rune(candidate))
+
+		state := product.start(len(units))
+		for position, unit := range units {
+			if assignErr := s.assign(); assignErr != nil {
+				return false, assignErr
+			}
+
+			state = product.advance(state, unit, position, len(units))
+		}
+
+		if !product.accepting(state) {
 			continue
 		}
 
@@ -289,4 +279,23 @@ func (s *search) walkSimpleStringFormatCandidates(
 	}
 
 	return false, nil
+}
+
+func simpleStringCandidateAllowed(
+	candidate string,
+	formats []activeStringFormat,
+	directedFormat int,
+) (bool, error) {
+	for index, format := range formats {
+		matches, err := cleanStringFormatMatches(candidate, format.format)
+		if err != nil {
+			return false, err
+		}
+
+		if matches == (index == directedFormat) {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }

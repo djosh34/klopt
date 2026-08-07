@@ -83,6 +83,59 @@ func TestFindStringFaultRowDirectsLengthBoundsAndPreservesPatterns(t *testing.T)
 	}
 }
 
+func TestFindStringFaultRowPinsMaxLengthFailureAtSiblingMinimum(t *testing.T) {
+	t.Parallel()
+
+	model, plan := parseStringFaultPlan(t, `{
+		"type":"string",
+		"maxLength":2,
+		"allOf":[{"minLength":5}]
+	}`)
+	target := findFaultTarget(t, plan, "|maxLength|fault:maxLength")
+	searchState := &search{model: model, maxSteps: 100}
+
+	row, found, err := findStringFaultRow(target, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "aaaaa", row.text)
+}
+
+func TestFindStringFaultRowRejectsEmptyMaxLengthFailureRange(t *testing.T) {
+	t.Parallel()
+
+	model, plan := parseStringFaultPlan(t, `{
+		"type":"string",
+		"maxLength":2,
+		"allOf":[{"minLength":5,"maxLength":4}]
+	}`)
+	target := findFaultTarget(t, plan, "|maxLength|fault:maxLength")
+	searchState := &search{model: model, maxSteps: 100}
+
+	row, found, err := findStringFaultRow(target, searchState)
+	require.NoError(t, err)
+	require.False(t, found)
+	require.Nil(t, row)
+}
+
+func TestFindStringFaultRowMatchesWildcardArrayPath(t *testing.T) {
+	t.Parallel()
+
+	model, plan := parseStringFaultPlan(t, `{
+		"type":"array",
+		"minItems":1,
+		"maxItems":1,
+		"items":{"type":"string","pattern":"^a$"}
+	}`)
+	target := findFaultTarget(t, plan, "/items|#/*|pattern|fault:pattern")
+	searchState := &search{model: model, maxSteps: 1_000}
+
+	row, found, err := findStringFaultRow(target, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, row.array, 1)
+	require.NotEqual(t, "a", row.array[0].text)
+}
+
 func TestFindStringFaultRowDirectsLengthWithoutAnAuthoredPattern(t *testing.T) {
 	t.Parallel()
 

@@ -3,6 +3,7 @@ package schematest
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,7 @@ func TestBasicStringProductTransitionsAreDeterministic(t *testing.T) {
 	require.Equal(t, []uint16{'a', 'b'}, product.transitions(state, 0, 2))
 
 	afterA := product.advance(state, 'a', 0, 2)
-	require.Equal(t, [][]int{{0, 2, 5, 7, 8}, {0, 2, 5}}, basicStringProductStateIDs(afterA))
+	require.Equal(t, [][]int{{5, 7, 8}, {5}}, basicStringProductStateIDs(afterA))
 	require.Equal(t, []uint16{'c'}, product.transitions(afterA, 1, 2))
 }
 
@@ -107,7 +108,10 @@ func TestBasicStringProductDotExcludesExactlyFourUTF16Units(t *testing.T) {
 		{low: 0x0000, high: 0x0009},
 		{low: 0x000b, high: 0x000c},
 		{low: 0x000e, high: 0x2027},
-		{low: 0x202a, high: 0xffff},
+		{low: 0x202a, high: 0xd7ff},
+		{low: 0xd800, high: 0xdbff},
+		{low: 0xdc00, high: 0xdfff},
+		{low: 0xe000, high: 0xffff},
 	}, product.intervals(product.start(1)))
 }
 
@@ -158,7 +162,7 @@ func TestBasicStringProductPreservesLiteralUTF16Units(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "😀x", witness)
-	require.Equal(t, uint64(11), searchState.steps)
+	require.Equal(t, uint64(10), searchState.steps)
 }
 
 func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) {
@@ -171,7 +175,96 @@ func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "ab", witness)
-	require.Equal(t, uint64(7), searchState.steps)
+	require.Equal(t, uint64(19), searchState.steps)
+}
+
+func TestBasicStringProductPadsContextualPatterns(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		pattern string
+		want    string
+	}{
+		{pattern: `\Ba\B`, want: "0a0"},
+		{pattern: `^a\B`, want: "aa"},
+		{pattern: `\Ba`, want: "aa"},
+		{pattern: `^(?!a$)a`, want: "aa"},
+		{pattern: `^(?![^]{0,2}$)a`, want: "aaa"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.pattern, func(t *testing.T) {
+			t.Parallel()
+
+			searchState := &search{maxSteps: 100_000}
+			witness, found, err := searchState.findBasicStringWitness(
+				parseBasicSearchPatterns(t, test.pattern),
+			)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, test.want, witness)
+		})
+	}
+}
+
+func TestBasicStringProductFindsAstralRuneThroughDotUnits(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 1_000}
+	witness, found, err := searchState.findBasicStringWitnessAtLength(
+		parseBasicSearchPatterns(t, `^..$`), 1,
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, 1, utf8.RuneCountInString(witness))
+	require.True(t, utf8.ValidString(witness))
+	require.Greater(t, []rune(witness)[0], rune(0xffff))
+}
+
+func TestBasicStringProductSearchesLengthAbove4096(t *testing.T) {
+	t.Parallel()
+
+	const length = 5_000
+
+	searchState := &search{maxSteps: length + 1}
+
+	var witness string
+
+	found, err := searchState.walkBasicStringProductForLengths(
+		&basicStringProduct{unbounded: true, needsPadding: true, directedFormat: -1},
+		basicStringLengths{boundaries: []uint64{length}, minimum: length},
+		basicStringLengthObjective{},
+		0,
+		func(value *jsonValue) (bool, error) {
+			witness = value.text
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, witness, length)
+	require.Equal(t, uint64(length+1), searchState.steps)
+}
+
+func TestBasicStringProductHugeLengthStopsBeforeAllocation(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 3}
+	found, err := searchState.walkBasicStringProductForLengths(
+		&basicStringProduct{unbounded: true, needsPadding: true, directedFormat: -1},
+		basicStringLengths{boundaries: []uint64{1_000_000_000}, minimum: 1_000_000_000},
+		basicStringLengthObjective{},
+		0,
+		func(*jsonValue) (bool, error) {
+			t.Fatal("huge candidate must not complete")
+
+			return false, nil
+		},
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, found)
+	require.Equal(t, uint64(3), searchState.steps)
 }
 
 func TestBasicStringProductChargesBeforeEveryEdge(t *testing.T) {
@@ -197,7 +290,7 @@ func TestBasicStringProductExhaustsContradictoryFinitePatterns(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 	require.Empty(t, witness)
-	require.Equal(t, uint64(7), searchState.steps)
+	require.Equal(t, uint64(4), searchState.steps)
 }
 
 func TestBasicStringProductSearchesQuantifiersAnchorsAndBoundaries(t *testing.T) {
@@ -243,8 +336,8 @@ func TestBasicStringProductSearchesLeadingAssertionsInAuthoredOrder(t *testing.T
 		want    string
 		steps   uint64
 	}{
-		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 6},
-		{name: "negative", pattern: `^(?!a)[a-b]$`, want: "b", steps: 4},
+		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 18},
+		{name: "negative", pattern: `^(?!a)[a-b]$`, want: "b", steps: 7},
 		{name: "mixed consecutive", pattern: `^(?=a)(?!b)[a-c]$`, want: "a", steps: 3},
 	}
 
@@ -290,7 +383,7 @@ func TestBasicStringProductNegativeAssertionPreservesSiblingPattern(t *testing.T
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "b", witness)
-	require.Equal(t, uint64(4), searchState.steps)
+	require.Equal(t, uint64(7), searchState.steps)
 }
 
 func TestBasicStringProductLeadingAssertionContradictionStopsAtBudget(t *testing.T) {
@@ -383,7 +476,7 @@ func TestBasicStringProductSearchesExactRuneLength(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "😀", witness)
-	require.Equal(t, uint64(4), searchState.steps)
+	require.Equal(t, uint64(3), searchState.steps)
 }
 
 func TestBasicStringProductRetriesChargeTheGlobalCounter(t *testing.T) {

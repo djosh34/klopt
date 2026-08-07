@@ -33,6 +33,7 @@ func (s *search) walkArray(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
+	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
 	lengths, err := rowArrayLengths(node, occurrence, pins)
@@ -63,6 +64,7 @@ func (s *search) walkArray(
 				itemChoice.node,
 				itemChoice.occurrence,
 				pins,
+				context,
 				elements,
 				0,
 				visit,
@@ -81,6 +83,7 @@ func (s *search) walkArrayElements(
 	item *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
+	context rowSearchContext,
 	elements []*jsonValue,
 	index int,
 	visit rowVisit,
@@ -93,19 +96,26 @@ func (s *search) walkArrayElements(
 		return s.walkGenericValue(pins, func(value *jsonValue) (bool, error) {
 			elements[index] = value
 
-			return s.walkArrayElements(item, occurrence, pins, elements, index+1, visit)
+			return s.walkArrayElements(item, occurrence, pins, context, elements, index+1, visit)
 		})
 	}
 
-	return s.walkNode(item, occurrence, pins, func(value *jsonValue) (bool, error) {
+	return s.walkNode(item, occurrence, pins, context, func(value *jsonValue) (bool, error) {
 		usable, err := s.rowChildValueUsable(item, occurrence, pins, value)
-		if err != nil || !usable {
+		if err != nil {
 			return false, err
+		}
+
+		if !usable {
+			usable, err = directedStringChildUsable(context.stringObjective, item, occurrence, value)
+			if err != nil || !usable {
+				return false, err
+			}
 		}
 
 		elements[index] = value
 
-		return s.walkArrayElements(item, occurrence, pins, elements, index+1, visit)
+		return s.walkArrayElements(item, occurrence, pins, context, elements, index+1, visit)
 	})
 }
 
@@ -480,6 +490,7 @@ func (s *search) walkObject(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
+	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
 	members, err := rowObjectMembers(node, occurrence, pins)
@@ -489,7 +500,7 @@ func (s *search) walkObject(
 
 	values := make(map[string]*jsonValue, len(members))
 
-	return s.walkObjectMembers(node, occurrence, pins, members, values, 0, visit)
+	return s.walkObjectMembers(node, occurrence, pins, context, members, values, 0, visit)
 }
 
 // walkObjectMembers performs deterministic presence and value backtracking.
@@ -497,6 +508,7 @@ func (s *search) walkObjectMembers(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
+	context rowSearchContext,
 	members []rowMember,
 	values map[string]*jsonValue,
 	index int,
@@ -524,7 +536,9 @@ func (s *search) walkObjectMembers(
 		if !present {
 			delete(values, member.name)
 
-			complete, err := s.walkObjectMembers(node, occurrence, pins, members, values, index+1, visit)
+			complete, err := s.walkObjectMembers(
+				node, occurrence, pins, context, members, values, index+1, visit,
+			)
 			if err != nil || complete {
 				return complete, err
 			}
@@ -535,10 +549,10 @@ func (s *search) walkObjectMembers(
 		walkValue := func(value *jsonValue) (bool, error) {
 			values[member.name] = value
 
-			return s.walkObjectMembers(node, occurrence, pins, members, values, index+1, visit)
+			return s.walkObjectMembers(node, occurrence, pins, context, members, values, index+1, visit)
 		}
 
-		complete, err := s.walkRowMemberValues(member, pins, walkValue)
+		complete, err := s.walkRowMemberValues(member, pins, context, walkValue)
 		if err != nil || complete {
 			return complete, err
 		}
@@ -553,6 +567,7 @@ func (s *search) walkObjectMembers(
 func (s *search) walkRowMemberValues(
 	member rowMember,
 	pins []applicabilityPin,
+	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
 	candidates := make([]rowMember, 0, 1+len(member.alternatives))
@@ -575,14 +590,26 @@ func (s *search) walkRowMemberValues(
 			continue
 		}
 
-		complete, err := s.walkNode(candidate.node, candidate.occurrence, pins, func(value *jsonValue) (bool, error) {
-			usable, err := s.rowChildValueUsable(candidate.node, candidate.occurrence, pins, value)
-			if err != nil || !usable {
-				return false, err
-			}
+		complete, err := s.walkNode(
+			candidate.node, candidate.occurrence, pins, context,
+			func(value *jsonValue) (bool, error) {
+				usable, err := s.rowChildValueUsable(candidate.node, candidate.occurrence, pins, value)
+				if err != nil {
+					return false, err
+				}
 
-			return visit(value)
-		})
+				if !usable {
+					usable, err = directedStringChildUsable(
+						context.stringObjective, candidate.node, candidate.occurrence, value,
+					)
+					if err != nil || !usable {
+						return false, err
+					}
+				}
+
+				return visit(value)
+			},
+		)
 		if err != nil || complete {
 			return complete, err
 		}

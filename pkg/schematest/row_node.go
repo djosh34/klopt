@@ -16,6 +16,7 @@ func (s *search) walkNode(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
+	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
 	if node == nil || node.schemaShape == nil {
@@ -37,7 +38,7 @@ func (s *search) walkNode(
 		}
 
 		if kindIsScalar(kind) {
-			complete, scalarErr := s.walkScalar(node, occurrence, pins, kind, visit)
+			complete, scalarErr := s.walkScalar(node, occurrence, pins, context, kind, visit)
 			if scalarErr != nil || complete {
 				return complete, scalarErr
 			}
@@ -52,9 +53,9 @@ func (s *search) walkNode(
 
 		switch kind {
 		case jsonArray:
-			complete, err = s.walkArray(node, occurrence, pins, visit)
+			complete, err = s.walkArray(node, occurrence, pins, context, visit)
 		case jsonObject:
-			complete, err = s.walkObject(node, occurrence, pins, visit)
+			complete, err = s.walkObject(node, occurrence, pins, context, visit)
 		default:
 			return false, fmt.Errorf("schematest: unsupported row kind %d", kind)
 		}
@@ -243,11 +244,6 @@ func (s *search) rowChildValueUsable(
 
 	if result.valid {
 		return true, nil
-	}
-
-	allowed, err := s.allowsDirectedStringChild(result, occurrence)
-	if err != nil || allowed {
-		return allowed, err
 	}
 
 	for _, pin := range pins {

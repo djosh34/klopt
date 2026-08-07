@@ -37,6 +37,103 @@ type activeStringLength struct {
 	minimum    bool
 }
 
+type activeStringRules struct {
+	patterns  []activeStringPattern
+	lengths   []activeStringLength
+	formats   []activeStringFormat
+	supported bool
+}
+
+func activeStringRulesFor(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	objective *stringSearchObjective,
+) (activeStringRules, error) {
+	rules := activeStringRules{supported: true}
+	if err := collectActiveStringRules(node, occurrence, pins, objective, &rules); err != nil {
+		return activeStringRules{}, err
+	}
+
+	return rules, nil
+}
+
+//nolint:cyclop,nestif // All string rules share one allOf/anyOf applicability traversal.
+func collectActiveStringRules(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	objective *stringSearchObjective,
+	rules *activeStringRules,
+) error {
+	if node == nil || node.schemaShape == nil {
+		return errors.New("schematest: active string schema has no shape")
+	}
+
+	if node.minLength != nil {
+		rules.lengths = append(rules.lengths, activeStringLength{
+			count: node.minLength, node: node, occurrence: occurrence, minimum: true,
+		})
+	}
+
+	if node.maxLength != nil {
+		rules.lengths = append(rules.lengths, activeStringLength{
+			count: node.maxLength, node: node, occurrence: occurrence,
+		})
+	}
+
+	if node.pattern != nil {
+		if _, _, ok := basicStringExpressionLength(node.pattern.expression); !ok {
+			rules.supported = false
+		} else {
+			for _, assertion := range node.pattern.leadingAssertions {
+				if _, _, ok := basicStringExpressionLength(assertion.expression); !ok {
+					rules.supported = false
+
+					break
+				}
+			}
+		}
+
+		if rules.supported {
+			rules.patterns = append(rules.patterns, activeStringPattern{
+				pattern: node.pattern, node: node, occurrence: occurrence,
+			})
+		}
+	}
+
+	if len(simpleStringFormatWitnesses(node.format, true)) > 0 {
+		rules.formats = append(rules.formats, activeStringFormat{
+			format: node.format, node: node, occurrence: occurrence,
+		})
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if err := collectActiveStringRules(child, childOccurrence, pins, objective, rules); err != nil {
+			return err
+		}
+	}
+
+	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	for index, child := range node.anyOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if !pinned || !states[index] && !stringObjectiveWithin(objective, childOccurrence) {
+			continue
+		}
+
+		if err := collectActiveStringRules(child, childOccurrence, pins, objective, rules); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bool, error) {
 	if searchState == nil || searchState.model == nil || searchState.model.root == nil {
 		return nil, false, errors.New("schematest: string fault search has no model")
@@ -54,12 +151,6 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 		rule:       target.obligation.rule,
 		level:      target.obligation.component,
 	}
-	previous := searchState.stringObjective
-
-	searchState.stringObjective = objective
-	defer func() {
-		searchState.stringObjective = previous
-	}()
 
 	var found *jsonValue
 
@@ -67,6 +158,7 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 		searchState.model.root,
 		searchState.model.root.occurrence,
 		target.pins,
+		rowSearchContext{stringObjective: objective},
 		func(value *jsonValue) (bool, error) {
 			result := evaluate(searchState.model, value)
 			if result.err != nil {
@@ -120,13 +212,24 @@ func exactStringFailureClosure(actual, expected []failureIdentity) (bool, error)
 		return false, nil
 	}
 
-	for index := range canonicalActual {
-		comparison, compareErr := compareRuleIdentities(canonicalActual[index], canonicalExpected[index])
-		if compareErr != nil {
-			return false, compareErr
+	matched := make([]bool, len(canonicalActual))
+
+	for _, expectedFailure := range canonicalExpected {
+		found := false
+
+		for index, actualFailure := range canonicalActual {
+			if matched[index] || actualFailure.rule != expectedFailure.rule ||
+				!ruleOccurrenceMatches(actualFailure.occurrence, expectedFailure.occurrence) {
+				continue
+			}
+
+			matched[index] = true
+			found = true
+
+			break
 		}
 
-		if comparison != 0 {
+		if !found {
 			return false, nil
 		}
 	}
@@ -139,31 +242,25 @@ func (s *search) walkDirectedStringObjective(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []applicabilityPin,
+	objective *stringSearchObjective,
 	visit rowVisit,
 ) (bool, bool, error) {
-	objective := s.stringObjective
 	if objective == nil {
 		return false, false, nil
 	}
 
-	patterns := make([]activeStringPattern, 0)
-
-	lengthConstraints := make([]activeStringLength, 0)
-	if err := collectActiveStringConstraints(
-		node,
-		occurrence,
-		pins,
-		objective,
-		&patterns,
-		&lengthConstraints,
-	); err != nil {
-		return true, false, err
+	rules, rulesErr := activeStringRulesFor(node, occurrence, pins, objective)
+	if rulesErr != nil {
+		return true, false, rulesErr
 	}
 
-	formats := make([]activeStringFormat, 0)
-	if err := collectActiveStringFormats(node, occurrence, pins, objective, &formats); err != nil {
-		return true, false, err
+	if !rules.supported {
+		return true, false, errors.New("schematest: directed pattern is not searchable")
 	}
+
+	patterns := rules.patterns
+	lengthConstraints := rules.lengths
+	formats := rules.formats
 
 	patternIndex := directedStringPatternIndex(patterns, objective)
 	formatIndex := directedStringFormatIndex(formats, objective)
@@ -177,13 +274,6 @@ func (s *search) walkDirectedStringObjective(
 	case stringSearchFormatFalse:
 		if formatIndex < 0 {
 			return false, false, nil
-		}
-
-		complete, walkErr := s.walkSimpleStringFormatCandidates(
-			patterns, lengthConstraints, formats, formatIndex, visit,
-		)
-		if walkErr != nil || complete {
-			return true, complete, walkErr
 		}
 	default:
 		if lengthIndex < 0 {
@@ -244,6 +334,8 @@ func (s *search) walkDirectedStringObjective(
 			return true, false, productErr
 		}
 
+		product.formats = formats
+		product.directedFormat = formatIndex
 		complete, walkErr := s.walkBasicStringProductForLengths(
 			product,
 			lengths,
@@ -262,6 +354,9 @@ func (s *search) walkDirectedStringObjective(
 			return true, false, productErr
 		}
 
+		product.formats = formats
+		product.directedFormat = -1
+
 		complete, walkErr := s.walkBasicStringProductForLengths(
 			product,
 			lengths,
@@ -278,10 +373,6 @@ func (s *search) walkDirectedStringObjective(
 }
 
 func newDirectedLengthProduct(patterns []*patternAST) (*basicStringProduct, error) {
-	if len(patterns) == 0 {
-		return &basicStringProduct{unbounded: true}, nil
-	}
-
 	return newBasicStringProduct(patterns)
 }
 
@@ -366,12 +457,12 @@ func directedBasicStringLengths(
 			return basicStringLengths{}, basicStringLengthObjective{}, false, nil
 		}
 
-		minimum := bound + 1
-		if minimum > lengths.minimum {
-			lengths.minimum = minimum
+		lengths.minimum = max(bound+1, lengths.minimum)
+		if lengths.hasMaximum && lengths.minimum > lengths.maximum {
+			return basicStringLengths{}, basicStringLengthObjective{}, false, nil
 		}
 
-		lengthObjective.length = minimum
+		lengthObjective.length = lengths.minimum
 	default:
 		return basicStringLengths{}, basicStringLengthObjective{}, false,
 			fmt.Errorf("schematest: unknown string objective %d", objective.kind)
@@ -380,103 +471,30 @@ func directedBasicStringLengths(
 	return lengths, lengthObjective, true, nil
 }
 
-//nolint:cyclop // Direct, allOf, and pinned anyOf constraints form one active traversal.
-func collectActiveStringConstraints(
+func directedStringChildUsable(
+	objective *stringSearchObjective,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	objective *stringSearchObjective,
-	patterns *[]activeStringPattern,
-	lengths *[]activeStringLength,
-) error {
-	if node == nil || node.schemaShape == nil {
-		return errors.New("schematest: directed string schema has no shape")
+	value *jsonValue,
+) (bool, error) {
+	if objective == nil || !stringObjectiveWithin(objective, occurrence) {
+		return false, nil
 	}
 
-	if node.minLength != nil {
-		*lengths = append(*lengths, activeStringLength{
-			count: node.minLength, node: node, occurrence: occurrence, minimum: true,
-		})
+	result := evaluateNode(node, value, occurrence)
+	if result.err != nil {
+		return false, result.err
 	}
 
-	if node.maxLength != nil {
-		*lengths = append(*lengths, activeStringLength{
-			count: node.maxLength, node: node, occurrence: occurrence,
-		})
-	}
-
-	if node.pattern != nil {
-		if _, _, ok := basicStringExpressionLength(node.pattern.expression); !ok {
-			return errors.New("schematest: directed pattern is not searchable")
-		}
-
-		for _, assertion := range node.pattern.leadingAssertions {
-			if _, _, ok := basicStringExpressionLength(assertion.expression); !ok {
-				return errors.New("schematest: directed assertion is not searchable")
-			}
-		}
-
-		*patterns = append(*patterns, activeStringPattern{
-			pattern: node.pattern, node: node, occurrence: occurrence,
-		})
-	}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		if err := collectActiveStringConstraints(
-			child, childOccurrence, pins, objective, patterns, lengths,
-		); err != nil {
-			return err
-		}
-	}
-
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	for index, child := range node.anyOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence.usePointer+"/anyOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		if pinned && !states[index] && !stringObjectiveWithin(objective, childOccurrence) {
-			continue
-		}
-
-		if err := collectActiveStringConstraints(
-			child, childOccurrence, pins, objective, patterns, lengths,
-		); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func stringObjectiveWithin(objective *stringSearchObjective, occurrence schemaOccurrence) bool {
-	if objective == nil {
-		return false
-	}
-
-	return rowInstancePrefixMatches(occurrence.instanceTemplate, objective.occurrence.instanceTemplate) &&
-		(objective.occurrence.usePointer == occurrence.usePointer ||
-			len(objective.occurrence.usePointer) > len(occurrence.usePointer) &&
-				objective.occurrence.usePointer[:len(occurrence.usePointer)+1] == occurrence.usePointer+"/")
-}
-
-func (s *search) allowsDirectedStringChild(result evaluation, occurrence schemaOccurrence) (bool, error) {
-	if s == nil || s.stringObjective == nil ||
-		!stringObjectiveWithin(s.stringObjective, occurrence) {
+	if len(result.failures) == 0 {
 		return false, nil
 	}
 
 	for _, failure := range result.failures {
 		found := false
 
-		for _, expected := range s.stringObjective.closure {
-			if failure.rule == expected.rule && rowOccurrenceMatches(failure.occurrence, expected.occurrence) {
+		for _, expected := range objective.closure {
+			if failure.rule == expected.rule && ruleOccurrenceMatches(failure.occurrence, expected.occurrence) {
 				found = true
 
 				break
@@ -488,5 +506,16 @@ func (s *search) allowsDirectedStringChild(result evaluation, occurrence schemaO
 		}
 	}
 
-	return len(result.failures) > 0, nil
+	return true, nil
+}
+
+func stringObjectiveWithin(objective *stringSearchObjective, occurrence schemaOccurrence) bool {
+	if objective == nil {
+		return false
+	}
+
+	return rowInstancePrefixMatches(occurrence.instanceTemplate, objective.occurrence.instanceTemplate) &&
+		(objective.occurrence.usePointer == occurrence.usePointer ||
+			len(objective.occurrence.usePointer) > len(occurrence.usePointer) &&
+				objective.occurrence.usePointer[:len(occurrence.usePointer)+1] == occurrence.usePointer+"/")
 }

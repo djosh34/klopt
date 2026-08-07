@@ -13,10 +13,15 @@ var errMaxSteps = errors.New("schematest: maximum steps reached")
 
 // search owns one never-reset assignment budget and the selected clean model.
 type search struct {
-	model           *schemaModel
-	maxSteps        uint64
-	steps           uint64
+	model    *schemaModel
+	maxSteps uint64
+	steps    uint64
+}
+
+// rowSearchContext explicitly carries private directed and valid-target search inputs.
+type rowSearchContext struct {
 	stringObjective *stringSearchObjective
+	validTarget     *validTarget
 }
 
 // assign charges one structural, kind, composition, enum, or scalar choice.
@@ -61,7 +66,13 @@ func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue,
 		return true, nil
 	}
 
-	complete, err := s.walkNode(s.model.root, s.model.root.occurrence, target.pins, visit)
+	complete, err := s.walkNode(
+		s.model.root,
+		s.model.root.occurrence,
+		target.pins,
+		rowSearchContext{validTarget: &target},
+		visit,
+	)
 	if err != nil {
 		return nil, false, err
 	}
