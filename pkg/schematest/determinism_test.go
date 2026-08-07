@@ -109,11 +109,6 @@ func TestBuildCutoffsChargeBeforeEveryAssignmentPhase(t *testing.T) {
 			maxSteps: 3,
 		},
 		{
-			name:     "string edge",
-			schema:   `{"type":"string","minLength":1,"pattern":"^a$"}`,
-			maxSteps: 2,
-		},
-		{
 			name:     "number edge",
 			schema:   `{"type":"number","minimum":1,"maximum":2}`,
 			maxSteps: 1,
@@ -162,6 +157,33 @@ func TestBuildCutoffsChargeBeforeEveryAssignmentPhase(t *testing.T) {
 		{JSON: []byte("false"), Valid: true},
 		{JSON: []byte("null"), Valid: false},
 	}, cases)
+}
+
+// TestBuildStringProductEdgeCutoff pins the assignment immediately before the
+// sole product transition. A character class prevents the finite scalar
+// frontier from supplying the satisfying witness.
+func TestBuildStringProductEdgeCutoff(t *testing.T) {
+	t.Parallel()
+
+	input := Input{
+		OpenAPI: []byte(documentWithJSONSchema(
+			`{"type":"string","minLength":1,"maxLength":1,"pattern":"^[q]$"}`,
+		)),
+		OperationID: "selected",
+		MaxSteps:    7,
+	}
+
+	cutoffCases, cutoffReport, err := collectDeterministicRun(input, nil)
+	require.NoError(t, err)
+	require.Empty(t, cutoffCases, "a cutoff before the product edge emits no partial case")
+	require.Equal(t, Report{Stop: MaxStepsReached, Steps: 7, Uncovered: cutoffReport.Uncovered}, cutoffReport)
+
+	input.MaxSteps++
+	adjacentCases, adjacentReport, err := collectDeterministicRun(input, nil)
+	require.NoError(t, err)
+	require.Equal(t, MaxStepsReached, adjacentReport.Stop)
+	require.Equal(t, uint64(8), adjacentReport.Steps)
+	require.Equal(t, []Case{{JSON: []byte(`"q"`), Valid: true}}, adjacentCases)
 }
 
 // TestBuildAdmissionErrorsAreDeterministic pins non-authoritative malformed and selection failures.

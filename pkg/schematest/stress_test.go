@@ -2,7 +2,6 @@ package schematest
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,7 +37,7 @@ func BenchmarkBuildStress(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			measurement, err := measureStressBuild(input, warmCases)
+			measurement, err := measureBuildMemory(input, warmCases)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -58,54 +57,22 @@ func BenchmarkBuildStress(b *testing.B) {
 			b.ReportMetric(float64(measurement.cases), "cases/op")
 			b.ReportMetric(float64(measurement.steps), "steps/op")
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N), "build-ns/op")
+			b.ReportMetric(float64(measurement.totalAllocated), "measured-alloc-B/op")
+			b.ReportMetric(float64(measurement.preRunHeap), "pre-heap-B")
+			b.ReportMetric(float64(measurement.callbackHeap), "callback-heap-B")
 			b.ReportMetric(float64(measurement.retained), "retained-B/op")
-			b.Logf("real Build stop: %s", measurement.stop)
+			b.Logf(
+				"real Build measurement: cases=%d steps=%d stop=%s allocation=%d retention=%d pre=%d callback=%d",
+				measurement.cases,
+				measurement.steps,
+				measurement.stop,
+				measurement.totalAllocated,
+				measurement.retained,
+				measurement.preRunHeap,
+				measurement.callbackHeap,
+			)
 		})
 	}
-}
-
-// stressBuildMeasurement records one instrumented real Build run.
-type stressBuildMeasurement struct {
-	cases    int
-	steps    uint64
-	stop     StopReason
-	retained uint64
-}
-
-// measureStressBuild records work and live heap while callback values are discarded.
-func measureStressBuild(input Input, measureAtCase int) (stressBuildMeasurement, error) {
-	runtime.GC()
-
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
-
-	measurement := stressBuildMeasurement{}
-
-	report, err := Build(input, func(Case) error {
-		measurement.cases++
-		if measurement.cases == measureAtCase {
-			runtime.GC()
-
-			var live runtime.MemStats
-			runtime.ReadMemStats(&live)
-
-			if live.HeapAlloc > before.HeapAlloc {
-				measurement.retained = live.HeapAlloc - before.HeapAlloc
-			}
-		}
-
-		return nil
-	})
-	if err != nil {
-		return stressBuildMeasurement{}, err
-	}
-
-	measurement.steps = report.Steps
-	measurement.stop = report.Stop
-
-	// The measured callback retained no prior bytes, so the live delta is the
-	// model, plan, active search state, and current value rather than a corpus.
-	return measurement, nil
 }
 
 // deepWideStressSchema constructs eight nested, eight-member object levels.

@@ -21,20 +21,17 @@ func TestBuildCallbackBytesRequireCallerCopyAndAreNotRetained(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, len(wantCases), 1)
 
-	var (
-		retainedCopies  []Case
-		callbackAliases [][]byte
-	)
+	var retainedCopies []Case
 
 	report, err := Build(input, func(testCase Case) error {
 		retainedCopies = append(retainedCopies, Case{
 			JSON:  bytes.Clone(testCase.JSON),
 			Valid: testCase.Valid,
 		})
-		callbackAliases = append(callbackAliases, testCase.JSON)
 
-		// Simulate callback-lifetime storage becoming unusable immediately on return.
-		// Later search, fault generation, and reporting must not consult these bytes.
+		// Callback bytes may be overwritten or reused immediately after return.
+		// Mutating them while they are valid proves later search and reporting do
+		// not consult prior callback storage; only caller-owned copies are read later.
 		for index := range testCase.JSON {
 			testCase.JSON[index] = 0xff
 		}
@@ -44,12 +41,4 @@ func TestBuildCallbackBytesRequireCallerCopyAndAreNotRetained(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, wantReport, report)
 	require.Equal(t, wantCases, retainedCopies)
-
-	for _, alias := range callbackAliases {
-		require.NotEmpty(t, alias)
-
-		for _, value := range alias {
-			require.Equal(t, byte(0xff), value, "uncopied callback bytes are not retained case storage")
-		}
-	}
 }

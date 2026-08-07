@@ -1,6 +1,7 @@
 package schematest
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -10,17 +11,23 @@ import (
 )
 
 // retainedMemoryNoiseTolerance absorbs per-process runtime measurement noise.
-const retainedMemoryNoiseTolerance = 512 << 10
+const retainedMemoryNoiseTolerance = int64(512 << 10)
 
-// buildMemoryMeasurement separates cumulative allocation from retained heap.
+// buildMemoryMeasurement uses one definition for tests and benchmarks: retained
+// is the signed difference between a post-GC pre-run HeapAlloc sample and the
+// post-GC HeapAlloc observed in the requested callback. Raw samples are kept so
+// runtime noise can never be hidden by clamping. TotalAllocated is cumulative
+// allocation between the pre-run sample and Build return.
 type buildMemoryMeasurement struct {
 	budget         uint64
 	cases          int
 	steps          uint64
 	stop           StopReason
 	emittedBytes   uint64
+	preRunHeap     uint64
+	callbackHeap   uint64
 	totalAllocated uint64
-	retained       uint64
+	retained       int64
 }
 
 // TestBuildRetainedMemoryIsFlatWithEmittedCount compares live execution state
@@ -48,8 +55,6 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	}`, padding)
 	document := []byte(documentWithJSONSchema(schema))
 
-	// Warm parser/runtime caches before comparing the two runs. Warmup callbacks
-	// count and discard exactly like measured callbacks.
 	for _, budget := range []uint64{100, 5_000} {
 		_, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: budget}, func(Case) error {
 			return nil
@@ -57,9 +62,13 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	short, err := measureBuildMemory(document, 100, 3)
+	short, err := measureBuildMemory(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100}, 3,
+	)
 	require.NoError(t, err)
-	long, err := measureBuildMemory(document, 5_000, 39)
+	long, err := measureBuildMemory(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 5_000}, 39,
+	)
 	require.NoError(t, err)
 
 	t.Logf("retention measurements: short=%+v long=%+v", short, long)
@@ -71,13 +80,14 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	require.Equal(t, uint64(2_901), long.steps, diagnostic, short, long)
 	require.Equal(t, MaxStepsReached, short.stop, diagnostic, short, long)
 	require.Equal(t, SpaceExhausted, long.stop, diagnostic, short, long)
+	require.NotZero(t, short.preRunHeap, diagnostic, short, long)
+	require.NotZero(t, short.callbackHeap, diagnostic, short, long)
+	require.NotZero(t, long.preRunHeap, diagnostic, short, long)
+	require.NotZero(t, long.callbackHeap, diagnostic, short, long)
+	require.Equal(t, signedHeapDifference(short.callbackHeap, short.preRunHeap), short.retained)
+	require.Equal(t, signedHeapDifference(long.callbackHeap, long.preRunHeap), long.retained)
 	require.Greater(t, long.emittedBytes-short.emittedBytes, uint64(1<<20), diagnostic, short, long)
 	require.Greater(t, long.totalAllocated, short.totalAllocated, diagnostic, short, long)
-
-	// A full GC at each run's final callback measures the model, plan, search
-	// state, and one current value while all prior callback values are
-	// unreachable. The 512 KiB allowance absorbs process/runtime measurement
-	// noise but remains well below the measured stream-size difference.
 	require.LessOrEqual(
 		t,
 		long.retained,
@@ -89,16 +99,23 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 }
 
 // measureBuildMemory counts and discards callback values. It retains only
-// scalar measurements, so the observer cannot turn the stream into a corpus.
-func measureBuildMemory(document []byte, budget uint64, measureAtCase int) (buildMemoryMeasurement, error) {
+// scalar raw measurements and fails unless the requested callback is observed.
+func measureBuildMemory(input Input, measureAtCase int) (buildMemoryMeasurement, error) {
+	if measureAtCase <= 0 {
+		return buildMemoryMeasurement{}, errors.New("memory sample callback must be positive")
+	}
+
 	runtime.GC()
 
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 
-	measurement := buildMemoryMeasurement{budget: budget}
+	measurement := buildMemoryMeasurement{
+		budget:     input.MaxSteps,
+		preRunHeap: before.HeapAlloc,
+	}
 
-	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: budget}, func(testCase Case) error {
+	report, err := Build(input, func(testCase Case) error {
 		measurement.cases++
 		measurement.emittedBytes += uint64(len(testCase.JSON))
 
@@ -107,13 +124,20 @@ func measureBuildMemory(document []byte, budget uint64, measureAtCase int) (buil
 
 			var live runtime.MemStats
 			runtime.ReadMemStats(&live)
-			measurement.retained = live.HeapAlloc
+			measurement.callbackHeap = live.HeapAlloc
+			measurement.retained = signedHeapDifference(live.HeapAlloc, before.HeapAlloc)
 		}
 
 		return nil
 	})
 	if err != nil {
 		return buildMemoryMeasurement{}, err
+	}
+
+	if measurement.callbackHeap == 0 {
+		return buildMemoryMeasurement{}, fmt.Errorf(
+			"memory sample callback %d was not reached; observed %d cases", measureAtCase, measurement.cases,
+		)
 	}
 
 	var after runtime.MemStats
@@ -124,4 +148,28 @@ func measureBuildMemory(document []byte, budget uint64, measureAtCase int) (buil
 	measurement.totalAllocated = after.TotalAlloc - before.TotalAlloc
 
 	return measurement, nil
+}
+
+// TestBuildMemoryMeasurementPreservesRawResultsAndRequiresItsSample pins the shared methodology.
+//
+//nolint:paralleltest // The helper reads process-wide memory statistics.
+func TestBuildMemoryMeasurementPreservesRawResultsAndRequiresItsSample(t *testing.T) {
+	require.Equal(t, int64(25), signedHeapDifference(125, 100))
+	require.Equal(t, int64(-25), signedHeapDifference(100, 125))
+
+	_, err := measureBuildMemory(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"boolean"}`)),
+		OperationID: "selected",
+		MaxSteps:    5,
+	}, 100)
+	require.ErrorContains(t, err, "memory sample callback 100 was not reached")
+}
+
+// signedHeapDifference preserves both positive and negative raw heap deltas.
+func signedHeapDifference(after, before uint64) int64 {
+	if after >= before {
+		return int64(after - before)
+	}
+
+	return -int64(before - after)
 }
