@@ -7,11 +7,29 @@ import (
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
+//
+//nolint:cyclop // Basic pattern search and the existing scalar frontier share one dispatch seam.
 func (s *search) walkScalar(
 	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
+	if kind == jsonString {
+		patterns, supported, err := activeBasicStringPatterns(node, occurrence, pins)
+		if err != nil {
+			return false, err
+		}
+
+		if supported && len(patterns) > 0 {
+			complete, walkErr := s.walkBasicStringWitnesses(patterns, visit)
+			if walkErr != nil || complete {
+				return complete, walkErr
+			}
+		}
+	}
+
 	candidates, err := rowScalarValues(node, kind)
 	if err != nil {
 		return false, err

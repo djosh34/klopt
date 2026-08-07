@@ -37,7 +37,7 @@ func (s *search) walkNode(
 		}
 
 		if kindIsScalar(kind) {
-			complete, scalarErr := s.walkScalar(node, kind, visit)
+			complete, scalarErr := s.walkScalar(node, occurrence, pins, kind, visit)
 			if scalarErr != nil || complete {
 				return complete, scalarErr
 			}
