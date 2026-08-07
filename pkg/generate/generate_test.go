@@ -275,7 +275,11 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 
 	probe := []byte(`package generatefixture
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/djosh34/klopt/pkg/schematest"
+)
 
 func TestGeneratedValidation(t *testing.T) {
 	enumValues := []string{
@@ -311,9 +315,69 @@ func TestGeneratedValidation(t *testing.T) {
 	if errs := RequestValidations["zetaRequest"].Body.Validate([]byte("true")); len(errs) != 0 {
 		t.Fatalf("zeta body: %v", errs)
 	}
+
+	isolated := []struct {
+		name        string
+		operationID string
+		body        string
+		valid       bool
+	}{
+		{name: "alpha nullable", operationID: "alphaRequest", body: "null", valid: true},
+		{
+			name: "alpha enum", operationID: "alphaRequest",
+			body: "{\"array\":[2],\"enum\":\"missing\",\"number\":1.5,\"text\":\"a@b.co\"}",
+		},
+		{
+			name: "alpha number", operationID: "alphaRequest",
+			body: "{\"array\":[2],\"enum\":false,\"number\":1,\"text\":\"a@b.co\"}",
+		},
+		{
+			name: "alpha required", operationID: "alphaRequest",
+			body: "{\"array\":[2],\"closed\":{},\"enum\":false,\"number\":1.5}",
+		},
+		{
+			name: "alpha additional property", operationID: "alphaRequest",
+			body: "{\"array\":[2],\"closed\":{\"extra\":true},\"enum\":false,\"number\":1.5,\"text\":\"a@b.co\"}",
+		},
+		{name: "alpha type", operationID: "alphaRequest", body: "7"},
+		{name: "zeta first branch", operationID: "zetaRequest", body: "true", valid: true},
+		{name: "zeta second branch", operationID: "zetaRequest", body: "false", valid: true},
+	}
+	for _, test := range isolated {
+		errs := RequestValidations[test.operationID].Body.Validate([]byte(test.body))
+		if (len(errs) == 0) != test.valid {
+			t.Fatalf("%s validity = %t, errors = %v", test.name, len(errs) == 0, errs)
+		}
+	}
+
+	for _, operationID := range []string{"alphaRequest", "zetaRequest"} {
+		emitted := 0
+		report, err := schematest.Build(
+			schematest.Input{OpenAPI: openAPI, OperationID: operationID, MaxSteps: 10_000},
+			func(testCase schematest.Case) error {
+				valid := len(RequestValidations[operationID].Body.Validate(testCase.JSON)) == 0
+				if valid != testCase.Valid {
+					t.Fatalf("%s body %s validity = %t, want %t", operationID, testCase.JSON, valid, testCase.Valid)
+				}
+				emitted++
+
+				return nil
+			},
+		)
+		if err != nil {
+			t.Fatalf("build %s: %v", operationID, err)
+		}
+		if report.Stop != schematest.SpaceExhausted && report.Stop != schematest.MaxStepsReached {
+			t.Fatalf("build %s stop = %q", operationID, report.Stop)
+		}
+		if emitted == 0 {
+			t.Fatalf("build %s emitted no cases", operationID)
+		}
+	}
 }
 `)
 	require.NoError(t, os.WriteFile(filepath.Join(output, "probe_test.go"), probe, 0o644))
+	writeRuntimeSpec(t, output, "generatefixture", spec)
 
 	command := exec.CommandContext(
 		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "TestGeneratedValidation",
