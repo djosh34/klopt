@@ -1,11 +1,15 @@
 package schematest
 
 import (
+	"bufio"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -70,19 +74,102 @@ func isGeneratedImport(path string) bool {
 func TestOnlyLockedDeclarationsArePublic(t *testing.T) {
 	t.Parallel()
 
-	allowed := map[string]bool{
-		"Build":           true,
-		"Case":            true,
-		"Input":           true,
-		"MaxStepsReached": true,
-		"Report":          true,
-		"SpaceExhausted":  true,
-		"StopReason":      true,
+	want := []string{
+		"Build",
+		"Case",
+		"Input",
+		"MaxStepsReached",
+		"Report",
+		"SpaceExhausted",
+		"StopReason",
 	}
 
+	var got []string
 	for _, file := range productionGoFiles(t) {
-		for _, name := range topLevelExportedNames(parseGoFile(t, file)) {
-			require.Truef(t, allowed[name], "unexpected public declaration %s in %s", name, file)
+		got = append(got, topLevelExportedNames(parseGoFile(t, file))...)
+	}
+
+	slices.Sort(got)
+	require.Equal(t, want, got)
+}
+
+// TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
+func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
+	t.Parallel()
+
+	fixtureOperationIDs := fixtureOperationIDs(t)
+
+	for _, file := range productionGoFiles(t) {
+		parsed := parseGoFile(t, file)
+		for _, literal := range stringLiteralValues(t, parsed) {
+			require.NotContainsf(t, literal, "testdata/", "%s refers to schematest fixtures", file)
+			require.NotContainsf(t, literal, "alpha_zeta", "%s refers to the alpha/zeta fixture", file)
+			require.NotContainsf(t, literal, "request_bodies", "%s refers to the request-body fixture", file)
+			require.Falsef(
+				t, fixtureOperationIDs[literal],
+				"%s contains fixture operationId %q; production must select generically", file, literal,
+			)
+		}
+
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			identifier, ok := node.(*ast.Ident)
+			if !ok {
+				return true
+			}
+
+			require.NotContainsf(
+				t, map[string]bool{"generatedValidations": true, "RequestValidations": true}, identifier.Name,
+				"%s contains generated implementation identifier %s", file, identifier.Name,
+			)
+
+			return true
+		})
+
+		source, err := os.ReadFile(file)
+		require.NoError(t, err)
+		require.NotContainsf(t, string(source), "Code generated", "%s copies generated implementation", file)
+		require.NotContainsf(t, string(source), "//go:generate", "%s introduces generated semantic code", file)
+	}
+}
+
+// TestBuildStateRetainsOnlyModelPlanCoverageAndActiveSearch locks the callback-lifetime state boundary.
+func TestBuildStateRetainsOnlyModelPlanCoverageAndActiveSearch(t *testing.T) {
+	t.Parallel()
+
+	requireStructFields(t, reflect.TypeFor[schemaModel](), map[string]reflect.Type{
+		"root": reflect.TypeFor[*schemaNode](),
+	})
+	requireStructFields(t, reflect.TypeFor[searchPlan](), map[string]reflect.Type{
+		"validTargets": reflect.TypeFor[[]validTarget](),
+		"faultTargets": reflect.TypeFor[[]faultTarget](),
+		"obligations":  reflect.TypeFor[[]obligation](),
+	})
+	requireStructFields(t, reflect.TypeFor[search](), map[string]reflect.Type{
+		"model":    reflect.TypeFor[*schemaModel](),
+		"maxSteps": reflect.TypeFor[uint64](),
+		"steps":    reflect.TypeFor[uint64](),
+	})
+
+	for _, file := range productionGoFiles(t) {
+		for _, declaration := range parseGoFile(t, file).Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok || general.Tok != token.VAR {
+				continue
+			}
+
+			for _, specification := range general.Specs {
+				value, valueOK := specification.(*ast.ValueSpec)
+				if !valueOK {
+					continue
+				}
+
+				for _, name := range value.Names {
+					require.Truef(
+						t, allowedPackageVariable(name.Name),
+						"%s declares package-lifetime state %s", file, name.Name,
+					)
+				}
+			}
 		}
 	}
 }
@@ -164,4 +251,83 @@ func parseGoFile(t *testing.T, file string) *ast.File {
 	require.NoError(t, err)
 
 	return parsed
+}
+
+// fixtureOperationIDs reads test-only selector values that production must never special-case.
+func fixtureOperationIDs(t *testing.T) map[string]bool {
+	t.Helper()
+
+	_, current, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+
+	files, err := filepath.Glob(filepath.Join(filepath.Dir(current), "testdata", "*.yaml"))
+	require.NoError(t, err)
+
+	identifiers := make(map[string]bool)
+
+	for _, file := range files {
+		source, openErr := os.Open(file)
+		require.NoError(t, openErr)
+
+		scanner := bufio.NewScanner(source)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if value, found := strings.CutPrefix(line, "operationId:"); found {
+				identifiers[strings.TrimSpace(value)] = true
+			}
+		}
+
+		require.NoError(t, scanner.Err())
+		require.NoError(t, source.Close())
+	}
+
+	return identifiers
+}
+
+// stringLiteralValues returns decoded source strings for fixture-coupling checks.
+func stringLiteralValues(t *testing.T, file *ast.File) []string {
+	t.Helper()
+
+	var values []string
+
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			return true
+		}
+
+		value, err := strconv.Unquote(literal.Value)
+		require.NoError(t, err)
+
+		values = append(values, value)
+
+		return true
+	})
+
+	return values
+}
+
+// requireStructFields pins the complete long-lived execution state of one private type.
+func requireStructFields(t *testing.T, structure reflect.Type, want map[string]reflect.Type) {
+	t.Helper()
+
+	require.Equal(t, len(want), structure.NumField())
+
+	for name, fieldType := range want {
+		field, found := structure.FieldByName(name)
+		require.Truef(t, found, "%s is missing state field %s", structure, name)
+		require.Equal(t, fieldType, field.Type)
+	}
+}
+
+// allowedPackageVariable identifies fixed admission vocabulary and immutable error sentinels.
+func allowedPackageVariable(name string) bool {
+	switch name {
+	case "operationMethods", "schemaFormats", "schemaKeywords", "schemaKinds",
+		"errBuildNotImplemented", "errCompositionEditInapplicable", "errFaultNotFound",
+		"errMaxSteps", "errNumberEdgeStop":
+		return true
+	default:
+		return false
+	}
 }
