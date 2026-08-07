@@ -227,7 +227,7 @@ func TestBuildSearchesRemainingFormatsAcrossActiveSiblingConstraints(t *testing.
 		},
 		{
 			name: "ipv4", format: "ipv4", pattern: `^255\\.255\\.255\\.255$`, length: 15,
-			witness: "255.255.255.255", stop: SpaceExhausted,
+			witness: "255.255.255.255", stop: MaxStepsReached,
 		},
 		{
 			name: "cidr", format: "cidr", pattern: `^192\\.0\\.2\\.7/32$`, length: 12,

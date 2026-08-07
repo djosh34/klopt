@@ -108,6 +108,15 @@ func Build(input Input, yield func(Case) error) (Report, error) {
 		}
 	}
 
+	if stop != SpaceExhausted {
+		return buildReport(plan, searchState.steps, stop, covered), nil
+	}
+
+	stop, err = streamBasicFaults(plan, searchState, covered, yield)
+	if err != nil {
+		return Report{}, err
+	}
+
 	return buildReport(plan, searchState.steps, stop, covered), nil
 }
 

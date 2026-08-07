@@ -182,7 +182,7 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 				return false, fmt.Errorf("evaluate directed string fault: %w", result.err)
 			}
 
-			matches, matchErr := exactStringFailureClosure(result.failures, target.closure)
+			matches, matchErr := exactFailureClosure(result.failures, target.closure)
 			if matchErr != nil || !matches {
 				return false, matchErr
 			}
@@ -311,7 +311,7 @@ func stringFaultObjectiveKind(rule string) (stringSearchObjectiveKind, bool) {
 	}
 }
 
-func exactStringFailureClosure(actual, expected []failureIdentity) (bool, error) {
+func exactFailureClosure(actual, expected []failureIdentity) (bool, error) {
 	canonicalActual, err := canonicalFailureClosure(actual)
 	if err != nil {
 		return false, err

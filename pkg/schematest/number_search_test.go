@@ -179,8 +179,9 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("-1"), Valid: false},
 			},
-			wantSteps: 27,
+			wantSteps: 4722,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:0",
 			},
@@ -198,8 +199,10 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("6"), Valid: false},
+				{JSON: []byte("4"), Valid: false},
 			},
-			wantSteps: 68,
+			wantSteps: 4793,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:1",
 				"/allOf/1|#|minimum|level:valid",
@@ -251,8 +254,8 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 			)
 			require.NoError(t, err)
 			require.Equal(t, SpaceExhausted, report.Stop)
-			require.Equal(t, test.wantSteps, report.Steps)
 			require.Equal(t, test.wantCases, cases)
+			require.Equal(t, test.wantSteps, report.Steps)
 
 			for _, suffix := range test.covered {
 				require.Contains(t, report.Covered, schemaPointer+suffix)
@@ -370,9 +373,12 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
+				{JSON: []byte("null"), Valid: false},
+				{JSON: []byte("null"), Valid: false},
+				{JSON: []byte("null"), Valid: false},
 			},
 			wantStop:  SpaceExhausted,
-			wantSteps: 108,
+			wantSteps: 147,
 			masks:     []string{"2", "3"},
 		},
 		{

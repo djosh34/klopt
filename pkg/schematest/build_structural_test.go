@@ -1,6 +1,7 @@
 package schematest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,7 +20,7 @@ func TestBuildStreamsArrayCountAndExistingIndexTargets(t *testing.T) {
 	collect := func() (Report, []Case, error) {
 		cases := make([]Case, 0)
 		report, err := Build(
-			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100},
+			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
 				cases = append(cases, testCase)
 
@@ -52,8 +53,8 @@ func TestBuildStreamsArrayCountAndExistingIndexTargets(t *testing.T) {
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
-	require.Equal(t, expectedReport, firstReport)
-	require.Equal(t, expectedCases, firstCases)
+	require.Equal(t, expectedReport.Covered, validCoveredOnly(firstReport.Covered))
+	require.Equal(t, expectedCases, validCasesOnly(firstCases))
 
 	secondReport, secondCases, err := collect()
 	require.NoError(t, err)
@@ -77,7 +78,7 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 	collect := func() (Report, []Case, error) {
 		cases := make([]Case, 0)
 		report, err := Build(
-			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100},
+			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
 				cases = append(cases, testCase)
 
@@ -122,8 +123,8 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
-	require.Equal(t, expectedReport, firstReport)
-	require.Equal(t, expectedCases, firstCases)
+	require.Equal(t, expectedReport.Covered, validCoveredOnly(firstReport.Covered))
+	require.Equal(t, expectedCases, validCasesOnly(firstCases))
 
 	secondReport, secondCases, err := collect()
 	require.NoError(t, err)
@@ -145,7 +146,7 @@ func TestBuildDoesNotCoverNonexistentArrayIndices(t *testing.T) {
 	collect := func() (Report, []Case, error) {
 		cases := make([]Case, 0)
 		report, err := Build(
-			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100},
+			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
 				cases = append(cases, testCase)
 
@@ -177,8 +178,8 @@ func TestBuildDoesNotCoverNonexistentArrayIndices(t *testing.T) {
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
-	require.Equal(t, expectedReport, firstReport)
-	require.Equal(t, expectedCases, firstCases)
+	require.Equal(t, expectedReport.Covered, validCoveredOnly(firstReport.Covered))
+	require.Equal(t, expectedCases, validCasesOnly(firstCases))
 
 	secondReport, secondCases, err := collect()
 	require.NoError(t, err)
@@ -243,8 +244,8 @@ func TestBuildRepairsCanonicalObjectPresenceForSuppliedProperty(t *testing.T) {
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
-	require.Equal(t, expectedReport, firstReport)
-	require.Equal(t, expectedCases, firstCases)
+	require.Equal(t, expectedReport.Covered, validCoveredOnly(firstReport.Covered))
+	require.Equal(t, expectedCases, validCasesOnly(firstCases))
 
 	secondReport, secondCases, err := collect()
 	require.NoError(t, err)
@@ -272,7 +273,7 @@ func TestBuildStreamsObjectPresenceAndPropertyTargets(t *testing.T) {
 	collect := func() (Report, []Case, error) {
 		cases := make([]Case, 0)
 		report, err := Build(
-			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100},
+			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
 				cases = append(cases, testCase)
 
@@ -317,12 +318,36 @@ func TestBuildStreamsObjectPresenceAndPropertyTargets(t *testing.T) {
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
-	require.Equal(t, expectedReport, firstReport)
-	require.Equal(t, expectedCases, firstCases)
+	require.Equal(t, expectedReport.Covered, validCoveredOnly(firstReport.Covered))
+	require.Equal(t, expectedCases, validCasesOnly(firstCases))
 
 	secondReport, secondCases, err := collect()
 	require.NoError(t, err)
 	require.Equal(t, firstReport, secondReport)
 	require.Equal(t, firstCases, secondCases)
 	require.Equal(t, firstReport.Stop, secondReport.Stop)
+}
+
+// validCasesOnly keeps the valid-phase prefix for valid-row assertions.
+func validCasesOnly(cases []Case) []Case {
+	valid := make([]Case, 0, len(cases))
+	for _, testCase := range cases {
+		if testCase.Valid {
+			valid = append(valid, testCase)
+		}
+	}
+
+	return valid
+}
+
+// validCoveredOnly keeps valid obligations for valid-row assertions.
+func validCoveredOnly(covered []string) []string {
+	valid := make([]string, 0, len(covered))
+	for _, identity := range covered {
+		if !strings.Contains(identity, "|fault:") {
+			valid = append(valid, identity)
+		}
+	}
+
+	return valid
 }

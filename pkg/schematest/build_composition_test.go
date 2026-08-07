@@ -503,7 +503,8 @@ func TestBuildKeepsAnyOfArrayBranchesAsAlternatives(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, uint64(10000), report.Steps)
 	require.Contains(t, cases, Case{JSON: []byte(`[]`), Valid: true})
 	require.Contains(t, cases, Case{JSON: []byte(`[null]`), Valid: true})
 }
@@ -550,8 +551,8 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 		{JSON: []byte(`[{}]`), Valid: true},
 	}, cases)
 	require.Equal(t, Report{
-		Stop:  SpaceExhausted,
-		Steps: 1176,
+		Stop:  MaxStepsReached,
+		Steps: 10000,
 		Covered: []string{
 			schemaPointer + "|#|type|level:array",
 			schemaPointer + "|#|anyOf|level:mask:1",

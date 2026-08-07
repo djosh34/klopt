@@ -39,6 +39,8 @@ func (s *search) assign() error {
 }
 
 // findTargetRow searches one target without retaining generated rows.
+//
+//nolint:cyclop // Structural impossibility and row search share one target boundary.
 func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue, bool, error) {
 	if plan == nil {
 		return nil, false, errors.New("schematest: nil search plan")
@@ -46,6 +48,11 @@ func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue,
 
 	if s == nil || s.model == nil || s.model.root == nil {
 		return nil, false, errors.New("schematest: search has no model")
+	}
+
+	forbidden, err := targetPresenceForbiddenByActiveSchema(s.model.root, target)
+	if err != nil || forbidden {
+		return nil, false, err
 	}
 
 	var found *jsonValue
@@ -77,6 +84,180 @@ func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue,
 	}
 
 	return found, complete, nil
+}
+
+// targetPresenceForbiddenByActiveSchema rejects impossible active member targets.
+//
+//nolint:cyclop // Root-kind and concrete-member contradictions share one preflight.
+func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validTarget) (bool, error) {
+	tokens, ok := rowPointerTokens(target.expected.occurrence.instanceTemplate)
+	if !ok {
+		return false, nil
+	}
+
+	if len(tokens) == 0 {
+		collision, err := activeSchemaHasForbiddenDeclaration(
+			root, root.occurrence, target.pins, make(map[*schemaNode]bool),
+		)
+		if err != nil || !collision {
+			return false, err
+		}
+
+		for _, pin := range target.pins {
+			if pin.hasKind && rowOccurrenceMatches(pin.occurrence, target.expected.occurrence) &&
+				root.kind != schemaAny && !nodeAcceptsKindForTarget(root, pin.kind) {
+				return true, nil
+			}
+		}
+
+		return false, nil
+	}
+
+	present := false
+
+	for _, pin := range target.pins {
+		if pin.presence == planPinPresent &&
+			instanceTemplateMatches(pin.occurrence.instanceTemplate, target.expected.occurrence.instanceTemplate) {
+			present = true
+
+			break
+		}
+	}
+
+	if !present {
+		return false, nil
+	}
+
+	parentPointer := pointerFromTokens(tokens[:len(tokens)-1])
+	containerTarget := target.expected.occurrence
+	containerTarget.instanceTemplate = parentPointer
+
+	container, occurrence, found := resolveFaultValueContainer(root, root.occurrence, containerTarget)
+	if !found {
+		return false, nil
+	}
+
+	return activeSchemaForbidsMember(
+		container, occurrence, target.pins, tokens[len(tokens)-1], make(map[*schemaNode]bool),
+	)
+}
+
+// activeSchemaHasForbiddenDeclaration detects a declared name rejected by an active sibling.
+func activeSchemaHasForbiddenDeclaration(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	visiting map[*schemaNode]bool,
+) (bool, error) {
+	names := make(map[string]bool)
+	if err := collectActiveSameInstancePropertyNames(node, occurrence, visiting, names); err != nil {
+		return false, err
+	}
+
+	for name := range names {
+		forbidden, err := activeSchemaForbidsMember(
+			node, occurrence, pins, name, make(map[*schemaNode]bool),
+		)
+		if err != nil || forbidden {
+			return forbidden, err
+		}
+	}
+
+	return false, nil
+}
+
+// collectActiveSameInstancePropertyNames collects names across same-instance allOf schemas.
+func collectActiveSameInstancePropertyNames(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	visiting map[*schemaNode]bool,
+	names map[string]bool,
+) error {
+	if node == nil || node.schemaShape == nil {
+		return nil
+	}
+
+	if visiting[node] {
+		return fmt.Errorf("schematest: recursive active declaration schema at %s", occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	for name := range node.properties {
+		names[name] = true
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if err := collectActiveSameInstancePropertyNames(child, childOccurrence, visiting, names); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// activeSchemaForbidsMember checks one name against the active conjunction.
+//
+//nolint:cyclop // Local, allOf, and pinned anyOf member rules form one conjunction.
+func activeSchemaForbidsMember(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	name string,
+	visiting map[*schemaNode]bool,
+) (bool, error) {
+	if node == nil || node.schemaShape == nil {
+		return false, nil
+	}
+
+	if visiting[node] {
+		return false, fmt.Errorf("schematest: recursive active member schema at %s", occurrence.usePointer)
+	}
+
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	if _, declared := node.properties[name]; !declared &&
+		!node.allowAdditionalProperties && node.additionalProperties == nil {
+		return true, nil
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+
+		forbidden, err := activeSchemaForbidsMember(child, childOccurrence, pins, name, visiting)
+		if err != nil || forbidden {
+			return forbidden, err
+		}
+	}
+
+	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	if !pinned {
+		return false, nil
+	}
+
+	for index, child := range node.anyOf {
+		if !states[index] {
+			continue
+		}
+
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+
+		forbidden, err := activeSchemaForbidsMember(child, childOccurrence, pins, name, visiting)
+		if err != nil || forbidden {
+			return forbidden, err
+		}
+	}
+
+	return false, nil
 }
 
 // targetRowMatches requires a complete valid value and the target's exact pins.
