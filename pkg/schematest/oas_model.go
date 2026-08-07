@@ -72,6 +72,8 @@ type schemaNode struct {
 
 // schemaShape contains the semantics shared by references to one target.
 type schemaShape struct {
+	schemaJSON *jsonValue
+
 	kind         schemaKind
 	nullable     bool
 	enum         []*jsonValue

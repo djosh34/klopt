@@ -61,9 +61,13 @@ func TestBuildEmitsOracleValidUUIDWitnesses(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, cases)
 
+	require.Contains(t, cases, Case{
+		JSON:  []byte(`"00000000-0000-4000-8000-000000000000"`),
+		Valid: true,
+	})
+
 	for _, testCase := range cases {
 		require.True(t, testCase.Valid)
-		require.Equal(t, `"00000000-0000-4000-8000-000000000000"`, string(testCase.JSON))
 	}
 
 	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"

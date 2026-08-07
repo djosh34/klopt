@@ -2,6 +2,7 @@ package schematest
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 )
@@ -9,6 +10,9 @@ import (
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
 func (s *search) walkScalar(
 	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	context rowSearchContext,
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
@@ -28,7 +32,121 @@ func (s *search) walkScalar(
 		}
 	}
 
-	return false, nil
+	if kind != jsonString || node.enum != nil {
+		return false, nil
+	}
+
+	return s.walkActiveStringPinAlternatives(
+		node,
+		occurrence,
+		append([]applicabilityPin(nil), pins...),
+		func(activePins []applicabilityPin) (bool, error) {
+			return s.walkActiveStringRules(
+				node, occurrence, activePins, context.validTarget, visit,
+			)
+		},
+	)
+}
+
+// walkActiveStringRules searches one canonical applicable rule view.
+//
+//nolint:cyclop // Rule collection, target seeding, and product construction form one search phase.
+func (s *search) walkActiveStringRules(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	target *validTarget,
+	visit rowVisit,
+) (bool, error) {
+	rules, err := activeStringRulesFor(node, occurrence, pins, nil)
+	if err != nil {
+		return false, err
+	}
+
+	if !rules.supported {
+		return false, nil
+	}
+
+	patterns := make([]*patternAST, 0, len(rules.patterns))
+	for _, pattern := range rules.patterns {
+		patterns = append(patterns, pattern.pattern)
+	}
+
+	lengths, err := basicStringLengthsFromActive(rules.lengths)
+	if err != nil {
+		return false, err
+	}
+
+	if len(patterns) == 0 && len(rules.formats) == 0 && len(lengths.boundaries) == 0 {
+		return false, nil
+	}
+
+	seedNode := node
+	rule := oracleRulePattern
+	level := oracleStringValidLevel
+
+	seedPointer := occurrence.usePointer
+	if target != nil {
+		if targetNode, found := stringTargetNode(node, occurrence, target.expected.occurrence); found {
+			seedNode = targetNode
+			rule = target.expected.rule
+			level = target.expected.level
+			seedPointer = target.expected.occurrence.usePointer
+		}
+	}
+
+	canonicalSchemaJSON, err := marshalStrict(seedNode.schemaJSON)
+	if err != nil {
+		return false, fmt.Errorf("schematest: canonicalize string search schema: %w", err)
+	}
+
+	product, err := newBasicStringProduct(patterns)
+	if err != nil {
+		return false, err
+	}
+
+	if err := product.addFormats(rules.formats, -1); err != nil {
+		return false, err
+	}
+
+	return s.walkBasicStringProductForLengths(
+		product,
+		lengths,
+		basicStringLengthObjective{},
+		basicStringSeed(seedPointer, canonicalSchemaJSON, rule, level),
+		visit,
+	)
+}
+
+// stringTargetNode resolves the valid target occurrence used to lock the string seed.
+func stringTargetNode(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	target schemaOccurrence,
+) (*schemaNode, bool) {
+	if ruleOccurrenceMatches(occurrence, target) {
+		return node, true
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if found, ok := stringTargetNode(child, childOccurrence, target); ok {
+			return found, true
+		}
+	}
+
+	for index, child := range node.anyOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if found, ok := stringTargetNode(child, childOccurrence, target); ok {
+			return found, true
+		}
+	}
+
+	return nil, false
 }
 
 // rowScalarValues builds a finite deterministic frontier for one primitive kind.
