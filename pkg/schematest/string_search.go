@@ -17,6 +17,8 @@ const (
 	basicStringUnit
 	basicStringStart
 	basicStringEnd
+	basicStringWordBoundary
+	basicStringNotWordBoundary
 )
 
 const basicStringMaxUnit = uint16(0xffff)
@@ -34,10 +36,12 @@ type basicStringInterval struct {
 }
 
 type basicStringMachine struct {
-	states   [][]basicStringEdge
-	start    int
-	accept   int
-	maxUnits uint64
+	states      [][]basicStringEdge
+	start       int
+	accept      int
+	maxUnits    uint64
+	unbounded   bool
+	hasBoundary bool
 }
 
 type basicStringPatternState struct {
@@ -46,12 +50,16 @@ type basicStringPatternState struct {
 }
 
 type basicStringProductState struct {
-	patterns []basicStringPatternState
+	patterns     []basicStringPatternState
+	position     int
+	length       int
+	previousWord bool
 }
 
 type basicStringProduct struct {
-	machines []basicStringMachine
-	maxUnits uint64
+	machines  []basicStringMachine
+	maxUnits  uint64
+	unbounded bool
 }
 
 func activeBasicStringPatterns(
@@ -85,7 +93,7 @@ func collectActiveBasicStringPatterns(
 			return false, nil
 		}
 
-		if _, ok := basicStringExpressionMaxUnits(node.pattern.expression); !ok {
+		if _, _, ok := basicStringExpressionLength(node.pattern.expression); !ok {
 			return false, nil
 		}
 
@@ -142,11 +150,16 @@ func newBasicStringProduct(patterns []*patternAST) (*basicStringProduct, error) 
 			return nil, err
 		}
 
-		if product.maxUnits > ^uint64(0)-machine.maxUnits {
-			return nil, errors.New("schematest: basic pattern witness length overflows uint64")
+		if machine.unbounded {
+			product.unbounded = true
+		} else {
+			if product.maxUnits > ^uint64(0)-machine.maxUnits {
+				return nil, errors.New("schematest: basic pattern witness length overflows uint64")
+			}
+
+			product.maxUnits += machine.maxUnits
 		}
 
-		product.maxUnits += machine.maxUnits
 		product.machines = append(product.machines, machine)
 	}
 
@@ -158,12 +171,12 @@ func compileBasicStringMachine(pattern *patternAST) (basicStringMachine, error) 
 		return basicStringMachine{}, errors.New("schematest: pattern is not a basic string expression")
 	}
 
-	maximum, ok := basicStringExpressionMaxUnits(pattern.expression)
+	maximum, unbounded, ok := basicStringExpressionLength(pattern.expression)
 	if !ok {
-		return basicStringMachine{}, errors.New("schematest: pattern is not a finite basic string expression")
+		return basicStringMachine{}, errors.New("schematest: pattern is not a searchable string expression")
 	}
 
-	machine := basicStringMachine{start: 0, accept: 1, maxUnits: maximum}
+	machine := basicStringMachine{start: 0, accept: 1, maxUnits: maximum, unbounded: unbounded}
 	machine.states = make([][]basicStringEdge, machine.accept+1)
 
 	if err := machine.compileExpression(pattern.expression, machine.start, machine.accept); err != nil {
@@ -201,11 +214,49 @@ func (machine *basicStringMachine) compileSequence(sequence *patternSequence, fr
 	current := from
 
 	for _, term := range sequence.terms {
-		if term == nil || term.atom == nil || term.quantified || term.minimum != 1 || term.maximum != 1 {
-			return errors.New("schematest: quantified term is not a basic pattern term")
+		if term == nil || term.atom == nil {
+			return errors.New("schematest: string pattern term is nil")
 		}
 
 		next := machine.newState()
+		if err := machine.compileTerm(term, current, next); err != nil {
+			return err
+		}
+
+		current = next
+	}
+
+	machine.addEdge(current, basicStringEdge{kind: basicStringEpsilon, target: to})
+
+	return nil
+}
+
+func (machine *basicStringMachine) compileTerm(term *patternTerm, from, to int) error {
+	if !term.quantified {
+		return machine.compileAtom(term.atom, from, to)
+	}
+
+	current := from
+
+	for range term.minimum {
+		next := machine.newState()
+		if err := machine.compileAtom(term.atom, current, next); err != nil {
+			return err
+		}
+
+		current = next
+	}
+
+	if term.unbounded {
+		machine.addEdge(current, basicStringEdge{kind: basicStringEpsilon, target: to})
+
+		return machine.compileAtom(term.atom, current, current)
+	}
+
+	for count := term.minimum; count < term.maximum; count++ {
+		next := machine.newState()
+		machine.addEdge(current, basicStringEdge{kind: basicStringEpsilon, target: next})
+
 		if err := machine.compileAtom(term.atom, current, next); err != nil {
 			return err
 		}
@@ -218,7 +269,7 @@ func (machine *basicStringMachine) compileSequence(sequence *patternSequence, fr
 	return nil
 }
 
-//nolint:mnd // Dot's four exact ES5.1 line-terminator boundaries are normative.
+//nolint:cyclop,mnd // Admitted atom kinds and dot's exact boundaries are normative.
 func (machine *basicStringMachine) compileAtom(atom *patternAtom, from, to int) error {
 	var ranges []patternRange
 
@@ -238,6 +289,12 @@ func (machine *basicStringMachine) compileAtom(atom *patternAtom, from, to int) 
 		machine.addEdge(from, basicStringEdge{kind: basicStringStart, target: to})
 	case patternEnd:
 		machine.addEdge(from, basicStringEdge{kind: basicStringEnd, target: to})
+	case patternWordBoundary:
+		machine.hasBoundary = true
+		machine.addEdge(from, basicStringEdge{kind: basicStringWordBoundary, target: to})
+	case patternNotWordBoundary:
+		machine.hasBoundary = true
+		machine.addEdge(from, basicStringEdge{kind: basicStringNotWordBoundary, target: to})
 	case patternGroup:
 		return machine.compileExpression(atom.expression, from, to)
 	default:
@@ -310,69 +367,102 @@ func (machine *basicStringMachine) addEdge(state int, edge basicStringEdge) {
 	machine.states[state] = append(machine.states[state], edge)
 }
 
-func basicStringExpressionMaxUnits(expression *patternExpression) (uint64, bool) {
+func basicStringExpressionLength(expression *patternExpression) (uint64, bool, bool) {
 	if expression == nil {
-		return 0, false
+		return 0, false, false
 	}
 
-	var maximum uint64
+	var (
+		maximum   uint64
+		unbounded bool
+	)
 
 	for _, alternative := range expression.alternatives {
-		length, ok := basicStringSequenceMaxUnits(alternative)
+		length, sequenceUnbounded, ok := basicStringSequenceLength(alternative)
 		if !ok {
-			return 0, false
+			return 0, false, false
 		}
 
 		maximum = max(maximum, length)
+		unbounded = unbounded || sequenceUnbounded
 	}
 
-	return maximum, true
+	return maximum, unbounded, true
 }
 
-//nolint:cyclop // Term validation and each admitted basic atom are one finite-length calculation.
-func basicStringSequenceMaxUnits(sequence *patternSequence) (uint64, bool) {
+//nolint:cyclop // Term validation and each admitted atom are one length calculation.
+func basicStringSequenceLength(sequence *patternSequence) (uint64, bool, bool) {
 	if sequence == nil {
-		return 0, false
+		return 0, false, false
 	}
 
-	var length uint64
+	var (
+		length    uint64
+		unbounded bool
+	)
 
 	for _, term := range sequence.terms {
-		if term == nil || term.atom == nil || term.quantified || term.minimum != 1 || term.maximum != 1 {
-			return 0, false
+		if term == nil || term.atom == nil {
+			return 0, false, false
 		}
 
-		var atomLength uint64
+		var (
+			atomLength    uint64
+			atomUnbounded bool
+		)
 
 		switch term.atom.kind {
 		case patternLiteral, patternDot, patternClassAtom:
 			atomLength = 1
-		case patternStart, patternEnd:
+		case patternStart, patternEnd, patternWordBoundary, patternNotWordBoundary:
 		case patternGroup:
 			var ok bool
 
-			atomLength, ok = basicStringExpressionMaxUnits(term.atom.expression)
+			atomLength, atomUnbounded, ok = basicStringExpressionLength(term.atom.expression)
 			if !ok {
-				return 0, false
+				return 0, false, false
 			}
 		default:
-			return 0, false
+			return 0, false, false
 		}
 
-		if length > ^uint64(0)-atomLength {
-			return 0, false
+		if atomUnbounded || term.unbounded && atomLength != 0 {
+			unbounded = true
 		}
 
-		length += atomLength
+		factor := term.maximum
+		if term.unbounded {
+			factor = term.minimum
+		}
+
+		if atomLength != 0 && factor > ^uint64(0)/atomLength {
+			return 0, false, false
+		}
+
+		termLength := atomLength * factor
+		if length > ^uint64(0)-termLength {
+			return 0, false, false
+		}
+
+		length += termLength
 	}
 
-	return length, true
+	return length, unbounded, true
 }
 
 func (product *basicStringProduct) start(length int) basicStringProductState {
-	state := basicStringProductState{patterns: make([]basicStringPatternState, len(product.machines))}
+	state := basicStringProductState{
+		patterns: make([]basicStringPatternState, len(product.machines)),
+		length:   length,
+	}
 	for index := range product.machines {
-		active := product.machines[index].closure([]int{product.machines[index].start}, 0, length)
+		active := product.machines[index].closure(
+			[]int{product.machines[index].start},
+			0,
+			length,
+			false,
+			false,
+		)
 		state.patterns[index] = basicStringPatternState{
 			active:  active,
 			matched: containsBasicStringState(active, product.machines[index].accept),
@@ -388,16 +478,29 @@ func (product *basicStringProduct) advance(
 	position,
 	length int,
 ) basicStringProductState {
-	next := basicStringProductState{patterns: make([]basicStringPatternState, len(product.machines))}
+	next := basicStringProductState{
+		patterns:     make([]basicStringPatternState, len(product.machines)),
+		position:     position + 1,
+		length:       length,
+		previousWord: isPatternWordUnit(unit),
+	}
 
 	for index := range product.machines {
 		machine := &product.machines[index]
 		patternState := state.patterns[index]
+		active := machine.closure(
+			patternState.active,
+			position,
+			length,
+			state.previousWord != isPatternWordUnit(unit),
+			true,
+		)
 		targets := make([]int, 0)
+		matched := patternState.matched || containsBasicStringState(active, machine.accept)
 
-		if !patternState.matched {
-			for _, active := range patternState.active {
-				for _, edge := range machine.states[active] {
+		if !matched {
+			for _, activeState := range active {
+				for _, edge := range machine.states[activeState] {
 					if edge.kind == basicStringUnit && unit >= edge.low && unit <= edge.high {
 						targets = appendUniqueBasicStringState(targets, edge.target)
 					}
@@ -406,17 +509,24 @@ func (product *basicStringProduct) advance(
 		}
 
 		targets = appendUniqueBasicStringState(targets, machine.start)
-		targets = machine.closure(targets, position+1, length)
+		targets = machine.closure(targets, position+1, length, false, false)
 		next.patterns[index] = basicStringPatternState{
 			active:  targets,
-			matched: patternState.matched || containsBasicStringState(targets, machine.accept),
+			matched: matched || containsBasicStringState(targets, machine.accept),
 		}
 	}
 
 	return next
 }
 
-func (machine *basicStringMachine) closure(states []int, position, length int) []int {
+//nolint:cyclop // Zero-width edge conditions are deliberately explicit.
+func (machine *basicStringMachine) closure(
+	states []int,
+	position,
+	length int,
+	wordBoundary,
+	boundariesKnown bool,
+) []int {
 	closed := append([]int(nil), states...)
 
 	seen := make([]bool, len(machine.states))
@@ -428,7 +538,9 @@ func (machine *basicStringMachine) closure(states []int, position, length int) [
 		for _, edge := range machine.states[closed[index]] {
 			follow := edge.kind == basicStringEpsilon ||
 				edge.kind == basicStringStart && position == 0 ||
-				edge.kind == basicStringEnd && position == length
+				edge.kind == basicStringEnd && position == length ||
+				boundariesKnown && edge.kind == basicStringWordBoundary && wordBoundary ||
+				boundariesKnown && edge.kind == basicStringNotWordBoundary && !wordBoundary
 			if !follow || seen[edge.target] {
 				continue
 			}
@@ -507,18 +619,78 @@ func (product *basicStringProduct) eachActiveUnitEdge(
 	state basicStringProductState,
 	visit func(basicStringEdge),
 ) {
-	for patternIndex, machine := range product.machines {
+	for patternIndex := range product.machines {
+		machine := &product.machines[patternIndex]
 		if state.patterns[patternIndex].matched {
 			continue
 		}
 
-		for _, active := range state.patterns[patternIndex].active {
-			for _, edge := range machine.states[active] {
+		if machine.hasBoundary {
+			product.eachActiveUnitEdgeForWordState(state, machine, patternIndex, false, visit)
+			product.eachActiveUnitEdgeForWordState(state, machine, patternIndex, true, visit)
+
+			continue
+		}
+
+		for _, activeState := range state.patterns[patternIndex].active {
+			for _, edge := range machine.states[activeState] {
 				if edge.kind == basicStringUnit {
 					visit(edge)
 				}
 			}
 		}
+	}
+}
+
+func (product *basicStringProduct) eachActiveUnitEdgeForWordState(
+	state basicStringProductState,
+	machine *basicStringMachine,
+	patternIndex int,
+	nextWord bool,
+	visit func(basicStringEdge),
+) {
+	active := machine.closure(
+		state.patterns[patternIndex].active,
+		state.position,
+		state.length,
+		state.previousWord != nextWord,
+		true,
+	)
+
+	for _, activeState := range active {
+		for _, edge := range machine.states[activeState] {
+			if edge.kind != basicStringUnit {
+				continue
+			}
+
+			eachBasicStringWordIntersection(edge, nextWord, visit)
+		}
+	}
+}
+
+func eachBasicStringWordIntersection(edge basicStringEdge, word bool, visit func(basicStringEdge)) {
+	ranges := []patternRange{
+		{low: '0', high: '9'},
+		{low: 'A', high: 'Z'},
+		{low: '_', high: '_'},
+		{low: 'a', high: 'z'},
+	}
+	if !word {
+		ranges = complementBasicStringRanges(ranges)
+	}
+
+	for _, characterRange := range ranges {
+		low := max(edge.low, characterRange.low)
+
+		high := min(edge.high, characterRange.high)
+		if low > high {
+			continue
+		}
+
+		candidate := edge
+		candidate.low = low
+		candidate.high = high
+		visit(candidate)
 	}
 }
 
@@ -574,8 +746,19 @@ func basicStringSeed(schemaPointer string, canonicalSchemaJSON []byte, rule, lev
 }
 
 func (product *basicStringProduct) accepting(state basicStringProductState) bool {
-	for _, pattern := range state.patterns {
-		if !pattern.matched {
+	for index, pattern := range state.patterns {
+		if pattern.matched {
+			continue
+		}
+
+		active := product.machines[index].closure(
+			pattern.active,
+			state.position,
+			state.length,
+			state.previousWord,
+			true,
+		)
+		if !containsBasicStringState(active, product.machines[index].accept) {
 			return false
 		}
 	}
@@ -590,11 +773,15 @@ func (s *search) walkBasicStringWitnesses(patterns []*patternAST, seed uint64, v
 	}
 
 	maxInt := uint64(^uint(0) >> 1)
-	if product.maxUnits > maxInt {
+	if !product.unbounded && product.maxUnits > maxInt {
 		return false, errors.New("schematest: basic pattern witness length overflows int")
 	}
 
-	for length := 0; length <= int(product.maxUnits); length++ {
+	for length := 0; product.unbounded || length <= int(product.maxUnits); length++ {
+		if err := s.assign(); err != nil {
+			return false, err
+		}
+
 		units := make([]uint16, 0, length)
 
 		complete, walkErr := s.walkBasicStringProduct(product, product.start(length), units, length, seed, visit)

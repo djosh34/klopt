@@ -145,7 +145,7 @@ func TestBasicStringProductFindsGroupedAlternationIntersection(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "ac", witness)
-	require.Equal(t, uint64(4), searchState.steps)
+	require.Equal(t, uint64(7), searchState.steps)
 }
 
 func TestBasicStringProductPreservesLiteralUTF16Units(t *testing.T) {
@@ -158,7 +158,7 @@ func TestBasicStringProductPreservesLiteralUTF16Units(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "😀x", witness)
-	require.Equal(t, uint64(6), searchState.steps)
+	require.Equal(t, uint64(10), searchState.steps)
 }
 
 func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) {
@@ -171,7 +171,7 @@ func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "ab", witness)
-	require.Equal(t, uint64(4), searchState.steps)
+	require.Equal(t, uint64(7), searchState.steps)
 }
 
 func TestBasicStringProductChargesBeforeEveryEdge(t *testing.T) {
@@ -197,7 +197,77 @@ func TestBasicStringProductExhaustsContradictoryFinitePatterns(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 	require.Empty(t, witness)
-	require.Equal(t, uint64(4), searchState.steps)
+	require.Equal(t, uint64(7), searchState.steps)
+}
+
+func TestBasicStringProductSearchesQuantifiersAnchorsAndBoundaries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		patterns []string
+		want     string
+		found    bool
+	}{
+		{name: "empty star", patterns: []string{`^a*$`}, want: "", found: true},
+		{name: "finite greedy", patterns: []string{`^a{2,3}$`}, want: "aa", found: true},
+		{name: "finite lazy", patterns: []string{`^a{2,3}?$`}, want: "aa", found: true},
+		{name: "unbounded plus", patterns: []string{`^a+$`, `^aaa$`}, want: "aaa", found: true},
+		{name: "unicode repetition", patterns: []string{`^(😀){2}$`}, want: "😀😀", found: true},
+		{name: "word boundary", patterns: []string{`^\ba\b$`}, want: "a", found: true},
+		{name: "non-word boundary", patterns: []string{`^\Ba\B$`}, found: false},
+		{name: "contradictory boundaries", patterns: []string{`^\ba$`, `^\Ba$`}, found: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			searchState := &search{maxSteps: 10_000}
+			witness, found, err := searchState.findBasicStringWitness(
+				parseBasicSearchPatterns(t, test.patterns...),
+			)
+			require.NoError(t, err)
+			require.Equal(t, test.found, found)
+			require.Equal(t, test.want, witness)
+		})
+	}
+}
+
+func TestBasicStringProductUsesExactES51WhitespaceSet(t *testing.T) {
+	t.Parallel()
+
+	whitespace := []uint16{
+		0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x0020, 0x00a0, 0x1680,
+		0x180e, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006,
+		0x2007, 0x2008, 0x2009, 0x200a, 0x200b, 0x2028, 0x2029, 0x202f,
+		0x3000, 0xfeff,
+	}
+	pattern := parseBasicSearchPatterns(t, `^\s$`)
+	product, err := newBasicStringProduct(pattern)
+	require.NoError(t, err)
+
+	state := product.start(1)
+	for _, unit := range whitespace {
+		require.True(t, product.accepting(product.advance(state, unit, 0, 1)), "U+%04X", unit)
+	}
+
+	for _, unit := range []uint16{0x0008, 0x000e, 0x005f, 0x180d, 0x180f, 0x200c, 0x205f, 0xff00} {
+		require.False(t, product.accepting(product.advance(state, unit, 0, 1)), "U+%04X", unit)
+	}
+}
+
+func TestBasicStringProductChargesLengthAndCountedRepeatEdges(t *testing.T) {
+	t.Parallel()
+
+	patterns := parseBasicSearchPatterns(t, `^a{2}$`)
+	searchState := &search{maxSteps: 5}
+
+	witness, found, err := searchState.findBasicStringWitness(patterns)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, found)
+	require.Empty(t, witness)
+	require.Equal(t, uint64(5), searchState.steps)
 }
 
 func TestBuildUsesOneBasicStringProductForActiveAllOfPatterns(t *testing.T) {
