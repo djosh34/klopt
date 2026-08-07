@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"go/types"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -260,6 +261,13 @@ func TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes(t *testing.T) {
 		`package schematest; type jsonValue struct{}; func Build(yield func()) { stream(yield) }; ` +
 			`func stream(yield func()) { outputs := []*jsonValue{}; ` +
 			`for range 2 { outputs = append(outputs, new(jsonValue)); yield() }; _ = outputs }`,
+		`package schematest; type jsonValue struct{}; func Build(yield func()) { ` +
+			`callback := yield; stream(callback) }; func stream(yield func()) { ` +
+			`rows := []*jsonValue{}; for range 2 { rows = append(rows, new(jsonValue)); yield() }; _ = rows }`,
+		`package schematest; type jsonValue struct{}; func Build() { stream() }; ` +
+			`func stream() { parents := []*jsonValue{}; parents = append(parents, new(jsonValue)); _ = parents }`,
+		`package schematest; type jsonValue struct{}; type helperState struct { outputs []*jsonValue }; ` +
+			`func Build() { stream() }; func stream() { state := new(helperState); _ = state }`,
 		`package schematest; type Case struct{}; type helperState struct { saved []Case }; ` +
 			`func Build(yield func()) { stream(yield) }; func stream(yield func()) { ` +
 			`state := new(helperState); yield(); _ = state }`,
@@ -641,7 +649,9 @@ func corpusOwnershipViolations(guardPackage *sourceGuardPackage) []string {
 
 	for _, name := range guardPackage.pkg.Scope().Names() {
 		variable, ok := guardPackage.pkg.Scope().Lookup(name).(*types.Var)
-		if ok && forbiddenOwnedCollection(variable.Type(), variable.Name(), caseType, jsonValueType, true) {
+		if ok && forbiddenOwnedCollection(
+			variable.Type(), variable.Name(), caseType, jsonValueType, nil, true, true,
+		) {
 			violations = append(violations, "package corpus owner: "+variable.Name())
 		}
 	}
@@ -655,8 +665,9 @@ func corpusOwnershipViolations(guardPackage *sourceGuardPackage) []string {
 	}
 
 	reachable := reachableGuardFunctions(guardPackage, functions, build)
+	runtimeFunctions := runtimeGuardFunctions(guardPackage, functions, build)
 	streaming := streamingGuardFunctions(guardPackage, functions, reachable, build)
-	ownerTypes := reachableOwnerTypes(guardPackage, functions, streaming)
+	ownerTypes := reachableOwnerTypes(guardPackage, functions, runtimeFunctions)
 	authorized := authorizedOwnerTypes(guardPackage)
 
 	for owner := range ownerTypes {
@@ -668,7 +679,8 @@ func corpusOwnershipViolations(guardPackage *sourceGuardPackage) []string {
 		for index := range structure.NumFields() {
 			field := structure.Field(index)
 			if forbiddenOwnedCollection(
-				field.Type(), field.Name(), caseType, jsonValueType, !authorized[owner],
+				field.Type(), field.Name(), caseType, jsonValueType, authorized,
+				!authorized[owner], !authorized[owner],
 			) {
 				violations = append(violations, "corpus-bearing field: "+owner.Name()+"."+field.Name())
 			}
@@ -682,7 +694,8 @@ func corpusOwnershipViolations(guardPackage *sourceGuardPackage) []string {
 		}
 
 		violations = append(violations, reachableLocalOwnershipViolations(
-			guardPackage, declaration, streaming[function], authorized, caseType, jsonValueType,
+			guardPackage, declaration, runtimeFunctions[function], streaming[function],
+			authorized, caseType, jsonValueType,
 		)...)
 	}
 
@@ -719,6 +732,41 @@ func reachableGuardFunctions(
 	return reachable
 }
 
+// runtimeGuardFunctions identifies Build execution excluding only explicit admission and planning roots.
+func runtimeGuardFunctions(
+	guardPackage *sourceGuardPackage,
+	functions map[*types.Func]*ast.FuncDecl,
+	build *types.Func,
+) map[*types.Func]bool {
+	runtimeFunctions := map[*types.Func]bool{build: true}
+
+	declaration := functions[build]
+	if declaration == nil {
+		return runtimeFunctions
+	}
+
+	pending := slices.DeleteFunc(calledGuardFunctions(guardPackage, declaration.Body), func(function *types.Func) bool {
+		return function.Name() == "parseInput" || function.Name() == "makePlan"
+	})
+	for len(pending) > 0 {
+		function := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+
+		if runtimeFunctions[function] {
+			continue
+		}
+
+		runtimeFunctions[function] = true
+
+		calledDeclaration := functions[function]
+		if calledDeclaration != nil {
+			pending = append(pending, calledGuardFunctions(guardPackage, calledDeclaration.Body)...)
+		}
+	}
+
+	return runtimeFunctions
+}
+
 // streamingGuardFunctions propagates callback ownership through Build-reachable call arguments.
 //
 //nolint:cyclop,gocognit // Callback dataflow reaches parameters through calls and captured closure arguments.
@@ -740,6 +788,9 @@ func streamingGuardFunctions(
 			if declaration == nil {
 				continue
 			}
+
+			callbackVariables = expandedCallbackVariables(guardPackage, declaration.Body, callbackVariables)
+			callbacks[function] = callbackVariables
 
 			ast.Inspect(declaration.Body, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
@@ -786,6 +837,85 @@ func streamingGuardFunctions(
 	}
 
 	return streaming
+}
+
+// expandedCallbackVariables follows callback identity through local declarations and assignments.
+//
+//nolint:cyclop,gocognit // Declarations and assignments share one callback-alias fixed-point pass.
+func expandedCallbackVariables(
+	guardPackage *sourceGuardPackage,
+	body *ast.BlockStmt,
+	initial map[*types.Var]bool,
+) map[*types.Var]bool {
+	variables := maps.Clone(initial)
+
+	changed := true
+	for changed {
+		changed = false
+
+		ast.Inspect(body, func(node ast.Node) bool {
+			switch typed := node.(type) {
+			case *ast.AssignStmt:
+				for index, right := range typed.Rhs {
+					if index < len(typed.Lhs) && expressionUsesVariables(guardPackage, right, variables) {
+						changed = addCallbackVariable(
+							assignedGuardVariable(guardPackage, typed.Lhs[index]), variables,
+						) || changed
+					}
+				}
+			case *ast.ValueSpec:
+				for index, right := range typed.Values {
+					if index < len(typed.Names) && expressionUsesVariables(guardPackage, right, variables) {
+						variable, variableOK := guardPackage.info.Defs[typed.Names[index]].(*types.Var)
+						if variableOK {
+							changed = addCallbackVariable(variable, variables) || changed
+						}
+					}
+				}
+			}
+
+			return true
+		})
+	}
+
+	return variables
+}
+
+// addCallbackVariable records one newly discovered function-typed callback alias.
+func addCallbackVariable(variable *types.Var, variables map[*types.Var]bool) bool {
+	if variable == nil || !guardVariableIsCallback(variable) || variables[variable] {
+		return false
+	}
+
+	variables[variable] = true
+
+	return true
+}
+
+// assignedGuardVariable resolves one declaration or assignment target.
+func assignedGuardVariable(guardPackage *sourceGuardPackage, expression ast.Expr) *types.Var {
+	identifier, ok := expression.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+
+	if variable, defined := guardPackage.info.Defs[identifier].(*types.Var); defined {
+		return variable
+	}
+
+	variable, ok := guardPackage.info.Uses[identifier].(*types.Var)
+	if !ok {
+		return nil
+	}
+
+	return variable
+}
+
+// guardVariableIsCallback reports whether a local can carry callback identity.
+func guardVariableIsCallback(variable *types.Var) bool {
+	_, callback := types.Unalias(variable.Type()).Underlying().(*types.Signature)
+
+	return callback
 }
 
 // functionTypedParameters returns Build's function-typed callback parameters.
@@ -851,15 +981,15 @@ func expressionUsesVariables(
 	return found
 }
 
-// reachableOwnerTypes follows state allocated by every callback-carrying streaming function.
+// reachableOwnerTypes follows state allocated by every Build runtime function.
 func reachableOwnerTypes(
 	guardPackage *sourceGuardPackage,
 	functions map[*types.Func]*ast.FuncDecl,
-	streaming map[*types.Func]bool,
+	runtimeFunctions map[*types.Func]bool,
 ) map[*types.TypeName]bool {
 	owned := make(map[*types.TypeName]bool)
 
-	for function := range streaming {
+	for function := range runtimeFunctions {
 		declaration := functions[function]
 		if declaration == nil {
 			continue
@@ -886,7 +1016,7 @@ func reachableOwnerTypes(
 // authorizedOwnerTypes identifies only parsed model, plan, current value, and bounded search state graphs.
 func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
 	authorized := make(map[*types.TypeName]bool)
-	for _, root := range []string{"schemaModel", "searchPlan", "jsonValue", "search"} {
+	for _, root := range []string{"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext"} {
 		collectNamedOwnerTypes(packageObjectType(guardPackage, root), authorized)
 	}
 
@@ -980,6 +1110,7 @@ func calledGuardFunctions(guardPackage *sourceGuardPackage, body *ast.BlockStmt)
 func reachableLocalOwnershipViolations(
 	guardPackage *sourceGuardPackage,
 	declaration *ast.FuncDecl,
+	runtimeFunction bool,
 	streaming bool,
 	authorized map[*types.TypeName]bool,
 	caseType,
@@ -998,8 +1129,12 @@ func reachableLocalOwnershipViolations(
 			return true
 		}
 
+		activeSearchLocal := !streaming && authorizedActiveLocalName(variable.Name())
+
+		checkGeneratedValues := streaming && !activeSearchLocal
 		if !guardTypeIsAuthorized(variable.Type(), authorized) && forbiddenOwnedCollection(
-			variable.Type(), variable.Name(), caseType, jsonValueType, streaming,
+			variable.Type(), variable.Name(), caseType, jsonValueType, authorized,
+			runtimeFunction && !activeSearchLocal, checkGeneratedValues,
 		) {
 			violations = append(violations, "reachable local corpus: "+variable.Name())
 		}
@@ -1008,6 +1143,14 @@ func reachableLocalOwnershipViolations(
 	})
 
 	return violations
+}
+
+// authorizedActiveLocalName identifies bounded scalar frontiers that are live only during active search.
+func authorizedActiveLocalName(name string) bool {
+	lower := strings.ToLower(name)
+
+	return strings.Contains(lower, "candidate") || strings.Contains(lower, "witness") ||
+		strings.Contains(lower, "parentpins") || strings.Contains(lower, "parenttokens")
 }
 
 // guardTypeIsAuthorized reports whether a local is one explicit model, plan, current-value, or search category.
@@ -1028,15 +1171,17 @@ func forbiddenOwnedCollection(
 	name string,
 	caseType,
 	jsonValueType types.Type,
+	authorized map[*types.TypeName]bool,
+	checkCorpusCategory bool,
 	checkGeneratedValues bool,
 ) bool {
 	if _, collection := collectionElementTypes(owned); collection &&
-		checkGeneratedValues && forbiddenCorpusCategoryName(name) {
+		checkCorpusCategory && forbiddenCorpusCategoryName(name) {
 		return true
 	}
 
 	return recursivelyOwnsForbidden(
-		owned, caseType, jsonValueType, checkGeneratedValues,
+		owned, caseType, jsonValueType, authorized, checkCorpusCategory, checkGeneratedValues,
 		0, false, make(map[types.Type]bool),
 	)
 }
@@ -1048,6 +1193,8 @@ func recursivelyOwnsForbidden(
 	owned,
 	caseType,
 	jsonValueType types.Type,
+	authorized map[*types.TypeName]bool,
+	checkCorpusCategory,
 	checkGeneratedValues bool,
 	collectionDepth int,
 	directCollectionElement bool,
@@ -1062,6 +1209,10 @@ func recursivelyOwnsForbidden(
 		return true
 	}
 
+	if named, ok := owned.(*types.Named); ok && authorized[named.Obj()] {
+		return false
+	}
+
 	if visiting[owned] {
 		return false
 	}
@@ -1074,43 +1225,43 @@ func recursivelyOwnsForbidden(
 		return collectionDepth > 1 && directCollectionElement && typed.Kind() == types.Byte
 	case *types.Pointer:
 		return recursivelyOwnsForbidden(
-			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			typed.Elem(), caseType, jsonValueType, authorized, checkCorpusCategory, checkGeneratedValues,
 			collectionDepth, directCollectionElement, visiting,
 		)
 	case *types.Slice:
 		return recursivelyOwnsForbidden(
-			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			typed.Elem(), caseType, jsonValueType, authorized, checkCorpusCategory, checkGeneratedValues,
 			collectionDepth+1, true, visiting,
 		)
 	case *types.Array:
 		return recursivelyOwnsForbidden(
-			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			typed.Elem(), caseType, jsonValueType, authorized, checkCorpusCategory, checkGeneratedValues,
 			collectionDepth+1, true, visiting,
 		)
 	case *types.Map:
 		return recursivelyOwnsForbidden(
-			typed.Key(), caseType, jsonValueType, checkGeneratedValues,
+			typed.Key(), caseType, jsonValueType, authorized, checkCorpusCategory, checkGeneratedValues,
 			collectionDepth+1, true, visiting,
 		) || recursivelyOwnsForbidden(
-			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			typed.Elem(), caseType, jsonValueType, authorized, checkCorpusCategory, checkGeneratedValues,
 			collectionDepth+1, true, visiting,
 		)
 	case *types.Chan:
 		return recursivelyOwnsForbidden(
-			typed.Elem(), caseType, jsonValueType, checkGeneratedValues,
+			typed.Elem(), caseType, jsonValueType, authorized, checkCorpusCategory, checkGeneratedValues,
 			collectionDepth+1, true, visiting,
 		)
 	case *types.Struct:
 		for index := range typed.NumFields() {
 			field := typed.Field(index)
 			if _, collection := collectionElementTypes(field.Type()); collection &&
-				checkGeneratedValues && forbiddenCorpusCategoryName(field.Name()) {
+				checkCorpusCategory && forbiddenCorpusCategoryName(field.Name()) {
 				return true
 			}
 
 			if recursivelyOwnsForbidden(
-				field.Type(), caseType, jsonValueType,
-				checkGeneratedValues, collectionDepth, false, visiting,
+				field.Type(), caseType, jsonValueType, authorized,
+				checkCorpusCategory, checkGeneratedValues, collectionDepth, false, visiting,
 			) {
 				return true
 			}
