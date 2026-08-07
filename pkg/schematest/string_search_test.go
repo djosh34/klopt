@@ -158,7 +158,7 @@ func TestBasicStringProductPreservesLiteralUTF16Units(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "😀x", witness)
-	require.Equal(t, uint64(10), searchState.steps)
+	require.Equal(t, uint64(11), searchState.steps)
 }
 
 func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) {
@@ -351,6 +351,137 @@ func TestBasicStringProductUsesExactES51WhitespaceSet(t *testing.T) {
 	}
 }
 
+func TestBasicStringLengthOrderPinsBoundariesThenFairLengths(t *testing.T) {
+	t.Parallel()
+
+	maximum := uint64(4)
+	lengths := basicStringLengths{
+		boundaries: []uint64{2, 4, 2},
+		maximum:    maximum,
+		hasMaximum: true,
+	}
+	product := &basicStringProduct{maxUnits: 3}
+	got := make([]uint64, 0)
+
+	lengths.each(product, basicStringLengthObjective{length: 3, pinned: true}, func(length uint64) bool {
+		got = append(got, length)
+
+		return false
+	})
+
+	require.Equal(t, []uint64{3, 2, 4, 0, 1}, got)
+}
+
+func TestBasicStringProductSearchesExactRuneLength(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 100}
+	witness, found, err := searchState.findBasicStringWitnessAtLength(
+		parseBasicSearchPatterns(t, `^😀$`),
+		1,
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "😀", witness)
+	require.Equal(t, uint64(4), searchState.steps)
+}
+
+func TestBasicStringProductRetriesChargeTheGlobalCounter(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 4}
+	witness, found, err := searchState.findBasicStringWitnessAtLength(
+		parseBasicSearchPatterns(t, `^[a-b]$`, `^b$`),
+		1,
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "b", witness)
+	require.Equal(t, uint64(3), searchState.steps)
+}
+
+func TestBuildSearchesPatternsAtActiveLengthBoundaries(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"minLength":3,
+		"maxLength":3,
+		"allOf":[
+			{"pattern":"^a..$"},
+			{"pattern":"^..z$"}
+		]
+	}`))
+	cases := make([]Case, 0)
+
+	report, err := Build(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
+		func(testCase Case) error {
+			cases = append(cases, testCase)
+
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Contains(t, cases, Case{JSON: []byte(`"a\u0000z"`), Valid: true})
+	require.Equal(t, MaxStepsReached, report.Stop)
+}
+
+func TestBasicStringProductDeduplicatesEqualCandidates(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 100}
+	witnessCount := 0
+	found, err := searchState.walkBasicStringWitnesses(
+		parseBasicSearchPatterns(t, `^(a|a)$`),
+		0,
+		func(value *jsonValue) (bool, error) {
+			require.Equal(t, "a", value.text)
+
+			witnessCount++
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, found)
+	require.Equal(t, 1, witnessCount)
+}
+
+func TestBasicStringProductExhaustsContradictoryFiniteLengths(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 100}
+	found, err := searchState.walkBasicStringWitnessesForLengths(
+		parseBasicSearchPatterns(t, `^a*$`),
+		basicStringLengths{
+			boundaries: []uint64{2, 1},
+			minimum:    2,
+			maximum:    1,
+			hasMaximum: true,
+		},
+		basicStringLengthObjective{},
+		0,
+		func(*jsonValue) (bool, error) { return false, nil },
+	)
+	require.NoError(t, err)
+	require.False(t, found)
+	require.Equal(t, uint64(3), searchState.steps)
+}
+
+func TestBasicStringProductLeavesUnboundedContradictionToGlobalBudget(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 20}
+	witness, found, err := searchState.findBasicStringWitness(
+		parseBasicSearchPatterns(t, `^a+$`, `^b+$`),
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, found)
+	require.Empty(t, witness)
+	require.Equal(t, uint64(20), searchState.steps)
+}
+
 func TestBasicStringProductChargesLengthAndCountedRepeatEdges(t *testing.T) {
 	t.Parallel()
 
@@ -396,7 +527,7 @@ func (product *basicStringProduct) transitions(
 ) []uint16 {
 	units := make([]uint16, 0)
 
-	product.eachTransition(state, 0, func(unit uint16) bool {
+	product.eachTransition(state, 0, false, func(unit uint16) bool {
 		units = append(units, unit)
 
 		return false
@@ -422,13 +553,35 @@ func (s *search) findBasicStringWitness(patterns []*patternAST) (string, bool, e
 }
 
 func (s *search) findBasicStringWitnessWithSeed(patterns []*patternAST, seed uint64) (string, bool, error) {
+	return s.findBasicStringWitnessForObjective(patterns, basicStringLengthObjective{}, seed)
+}
+
+func (s *search) findBasicStringWitnessAtLength(patterns []*patternAST, length uint64) (string, bool, error) {
+	return s.findBasicStringWitnessForObjective(
+		patterns,
+		basicStringLengthObjective{length: length, pinned: true},
+		0,
+	)
+}
+
+func (s *search) findBasicStringWitnessForObjective(
+	patterns []*patternAST,
+	objective basicStringLengthObjective,
+	seed uint64,
+) (string, bool, error) {
 	var witness string
 
-	found, err := s.walkBasicStringWitnesses(patterns, seed, func(value *jsonValue) (bool, error) {
-		witness = value.text
+	found, err := s.walkBasicStringWitnessesForLengths(
+		patterns,
+		basicStringLengths{},
+		objective,
+		seed,
+		func(value *jsonValue) (bool, error) {
+			witness = value.text
 
-		return true, nil
-	})
+			return true, nil
+		},
+	)
 
 	return witness, found, err
 }

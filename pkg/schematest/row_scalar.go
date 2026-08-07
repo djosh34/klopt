@@ -24,6 +24,11 @@ func (s *search) walkScalar(
 		}
 
 		if supported && len(patterns) > 0 {
+			lengths, lengthErr := activeBasicStringLengths(node, occurrence, pins)
+			if lengthErr != nil {
+				return false, lengthErr
+			}
+
 			canonicalSchemaJSON, marshalErr := marshalStrict(node.schemaJSON)
 			if marshalErr != nil {
 				return false, fmt.Errorf("schematest: canonicalize string search schema: %w", marshalErr)
@@ -36,7 +41,13 @@ func (s *search) walkScalar(
 				oracleStringValidLevel,
 			)
 
-			complete, walkErr := s.walkBasicStringWitnesses(patterns, seed, visit)
+			complete, walkErr := s.walkBasicStringWitnessesForLengths(
+				patterns,
+				lengths,
+				basicStringLengthObjective{},
+				seed,
+				visit,
+			)
 			if walkErr != nil || complete {
 				return complete, walkErr
 			}

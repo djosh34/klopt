@@ -21,7 +21,10 @@ const (
 	basicStringNotWordBoundary
 )
 
-const basicStringMaxUnit = uint16(0xffff)
+const (
+	basicStringMaxUnit      = uint16(0xffff)
+	basicStringUnitsPerRune = uint64(2)
+)
 
 type basicStringEdge struct {
 	kind   basicStringEdgeKind
@@ -36,14 +39,15 @@ type basicStringInterval struct {
 }
 
 type basicStringMachine struct {
-	states      [][]basicStringEdge
-	start       int
-	accept      int
-	maxUnits    uint64
-	unbounded   bool
-	hasBoundary bool
-	restart     bool
-	expected    bool
+	states       [][]basicStringEdge
+	start        int
+	accept       int
+	maxUnits     uint64
+	unbounded    bool
+	hasBoundary  bool
+	hasSurrogate bool
+	restart      bool
+	expected     bool
 }
 
 type basicStringPatternState struct {
@@ -59,9 +63,130 @@ type basicStringProductState struct {
 }
 
 type basicStringProduct struct {
-	machines  []basicStringMachine
-	maxUnits  uint64
-	unbounded bool
+	machines     []basicStringMachine
+	maxUnits     uint64
+	unbounded    bool
+	hasSurrogate bool
+}
+
+type basicStringLengthObjective struct {
+	length uint64
+	pinned bool
+}
+
+type basicStringLengths struct {
+	boundaries      []uint64
+	minimum         uint64
+	minimumTooLarge bool
+	maximum         uint64
+	hasMaximum      bool
+}
+
+func (lengths *basicStringLengths) addMinimum(count *exactCount) error {
+	length, fits, err := exactCountUint64(count)
+	if err != nil {
+		return err
+	}
+
+	if !fits {
+		lengths.minimumTooLarge = true
+
+		return nil
+	}
+
+	lengths.boundaries = append(lengths.boundaries, length)
+	lengths.minimum = max(lengths.minimum, length)
+
+	return nil
+}
+
+func (lengths *basicStringLengths) addMaximum(count *exactCount) error {
+	length, fits, err := exactCountUint64(count)
+	if err != nil {
+		return err
+	}
+
+	if !fits {
+		return nil
+	}
+
+	lengths.boundaries = append(lengths.boundaries, length)
+	if !lengths.hasMaximum || length < lengths.maximum {
+		lengths.maximum = length
+		lengths.hasMaximum = true
+	}
+
+	return nil
+}
+
+func (lengths basicStringLengths) allows(length uint64) bool {
+	return !lengths.minimumTooLarge && length >= lengths.minimum &&
+		(!lengths.hasMaximum || length <= lengths.maximum)
+}
+
+// each streams exact rune-length assignments without retaining the fair frontier.
+//
+//nolint:cyclop // Pinned, boundary, and fair phases share exact first-occurrence deduplication.
+func (lengths basicStringLengths) each(
+	product *basicStringProduct,
+	objective basicStringLengthObjective,
+	visit func(uint64) bool,
+) {
+	special := make([]uint64, 0, len(lengths.boundaries)+1)
+	if objective.pinned {
+		special = append(special, objective.length)
+	}
+
+	special = append(special, lengths.boundaries...)
+
+	for index, length := range special {
+		duplicate := false
+
+		for _, earlier := range special[:index] {
+			if earlier == length {
+				duplicate = true
+
+				break
+			}
+		}
+
+		if !duplicate && visit(length) {
+			return
+		}
+	}
+
+	maximum, bounded := uint64(0), false
+	if product != nil && !product.unbounded {
+		maximum, bounded = product.maxUnits, true
+	}
+
+	if lengths.hasMaximum && (!bounded || lengths.maximum < maximum) {
+		maximum, bounded = lengths.maximum, true
+	}
+
+	for length := uint64(0); ; length++ {
+		if bounded && length > maximum {
+			return
+		}
+
+		duplicate := false
+
+		for _, earlier := range special {
+			if earlier == length {
+				duplicate = true
+
+				break
+			}
+		}
+
+		if !duplicate && visit(length) {
+			return
+		}
+
+		if length == ^uint64(0) {
+			return
+		}
+	}
 }
 
 func activeBasicStringPatterns(
@@ -77,6 +202,76 @@ func activeBasicStringPatterns(
 	}
 
 	return patterns, supported, nil
+}
+
+func activeBasicStringLengths(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+) (basicStringLengths, error) {
+	var lengths basicStringLengths
+	if err := collectActiveBasicStringLengths(node, occurrence, pins, &lengths); err != nil {
+		return basicStringLengths{}, err
+	}
+
+	return lengths, nil
+}
+
+//nolint:cyclop // Direct, allOf, and pinned anyOf lengths form one active-schema traversal.
+func collectActiveBasicStringLengths(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	pins []applicabilityPin,
+	lengths *basicStringLengths,
+) error {
+	if node == nil || node.schemaShape == nil {
+		return errors.New("schematest: basic string length schema has no shape")
+	}
+
+	if node.minLength != nil {
+		if err := lengths.addMinimum(node.minLength); err != nil {
+			return fmt.Errorf("schematest: collect minLength at %s: %w", occurrence.usePointer, err)
+		}
+	}
+
+	if node.maxLength != nil {
+		if err := lengths.addMaximum(node.maxLength); err != nil {
+			return fmt.Errorf("schematest: collect maxLength at %s: %w", occurrence.usePointer, err)
+		}
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		if err := collectActiveBasicStringLengths(child, childOccurrence, pins, lengths); err != nil {
+			return err
+		}
+	}
+
+	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	if !pinned {
+		return nil
+	}
+
+	for index, child := range node.anyOf {
+		if !states[index] {
+			continue
+		}
+
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+		if err := collectActiveBasicStringLengths(child, childOccurrence, pins, lengths); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 //nolint:cyclop // Direct, allOf, and pinned anyOf patterns form one active-schema traversal.
@@ -155,6 +350,7 @@ func newBasicStringProduct(patterns []*patternAST) (*basicStringProduct, error) 
 		}
 
 		for _, machine := range machines {
+			product.hasSurrogate = product.hasSurrogate || machine.hasSurrogate
 			if machine.expected {
 				if machine.unbounded {
 					product.unbounded = true
@@ -407,6 +603,9 @@ func (machine *basicStringMachine) newState() int {
 
 func (machine *basicStringMachine) addEdge(state int, edge basicStringEdge) {
 	machine.states[state] = append(machine.states[state], edge)
+	if edge.kind == basicStringUnit && edge.low <= 0xdfff && edge.high >= 0xd800 {
+		machine.hasSurrogate = true
+	}
 }
 
 func basicStringExpressionLength(expression *patternExpression) (uint64, bool, bool) {
@@ -747,8 +946,25 @@ func eachBasicStringWordIntersection(edge basicStringEdge, word bool, visit func
 func (product *basicStringProduct) eachTransition(
 	state basicStringProductState,
 	seed uint64,
+	includePadding bool,
 	visit func(uint16) bool,
 ) {
+	if includePadding {
+		var low uint32
+		for low <= uint32(basicStringMaxUnit) {
+			high := product.intervalHigh(state, uint16(low))
+			if eachBasicStringIntervalCandidate(
+				basicStringInterval{low: uint16(low), high: high}, seed, visit,
+			) {
+				return
+			}
+
+			low = uint32(high) + 1
+		}
+
+		return
+	}
+
 	product.eachInterval(state, func(interval basicStringInterval) bool {
 		return eachBasicStringIntervalCandidate(interval, seed, visit)
 	})
@@ -819,26 +1035,87 @@ func (product *basicStringProduct) accepting(state basicStringProductState) bool
 }
 
 func (s *search) walkBasicStringWitnesses(patterns []*patternAST, seed uint64, visit rowVisit) (bool, error) {
+	return s.walkBasicStringWitnessesForLengths(
+		patterns,
+		basicStringLengths{},
+		basicStringLengthObjective{},
+		seed,
+		visit,
+	)
+}
+
+func (s *search) walkBasicStringWitnessesForLengths(
+	patterns []*patternAST,
+	lengths basicStringLengths,
+	objective basicStringLengthObjective,
+	seed uint64,
+	visit rowVisit,
+) (bool, error) {
 	product, err := newBasicStringProduct(patterns)
 	if err != nil {
 		return false, err
 	}
 
-	maxInt := uint64(^uint(0) >> 1)
-	if !product.unbounded && product.maxUnits > maxInt {
-		return false, errors.New("schematest: basic pattern witness length overflows int")
-	}
+	var (
+		complete bool
+		walkErr  error
+	)
 
-	for length := 0; product.unbounded || length <= int(product.maxUnits); length++ {
+	lengths.each(product, objective, func(runeLength uint64) bool {
 		if err := s.assign(); err != nil {
-			return false, err
+			walkErr = err
+
+			return true
 		}
 
-		units := make([]uint16, 0, length)
+		if !lengths.allows(runeLength) {
+			return false
+		}
 
-		complete, walkErr := s.walkBasicStringProduct(product, product.start(length), units, length, seed, visit)
-		if walkErr != nil || complete {
-			return complete, walkErr
+		complete, walkErr = s.walkBasicStringRuneLength(product, runeLength, seed, visit)
+
+		return walkErr != nil || complete
+	})
+
+	return complete, walkErr
+}
+
+func (s *search) walkBasicStringRuneLength(
+	product *basicStringProduct,
+	runeLength uint64,
+	seed uint64,
+	visit rowVisit,
+) (bool, error) {
+	maxInt := uint64(^uint(0) >> 1)
+	if runeLength > maxInt {
+		return false, nil
+	}
+
+	maximumUnits := runeLength
+	if product.hasSurrogate {
+		maximumUnits = runeLength * basicStringUnitsPerRune
+		if runeLength > maxInt/basicStringUnitsPerRune {
+			maximumUnits = maxInt
+		}
+	}
+
+	for unitLength := runeLength; unitLength <= maximumUnits; unitLength++ {
+		length := int(unitLength)
+		units := make([]uint16, 0, length)
+		includePadding := product.unbounded || unitLength > product.maxUnits
+
+		complete, err := s.walkBasicStringProduct(
+			product,
+			product.start(length),
+			units,
+			length,
+			int(runeLength),
+			seed,
+			includePadding,
+			visit,
+		)
+		if err != nil || complete {
+			return complete, err
 		}
 	}
 
@@ -850,11 +1127,14 @@ func (s *search) walkBasicStringProduct(
 	state basicStringProductState,
 	units []uint16,
 	length int,
+	runeLength int,
 	seed uint64,
+	includePadding bool,
 	visit rowVisit,
 ) (bool, error) {
 	if len(units) == length {
-		if !product.accepting(state) || !validBasicStringUnits(units) {
+		if !product.accepting(state) || !validBasicStringUnits(units) ||
+			len(utf16.Decode(units)) != runeLength {
 			return false, nil
 		}
 
@@ -866,7 +1146,7 @@ func (s *search) walkBasicStringProduct(
 		walkErr  error
 	)
 
-	product.eachTransition(state, seed, func(unit uint16) bool {
+	product.eachTransition(state, seed, includePadding, func(unit uint16) bool {
 		if err := s.assign(); err != nil {
 			walkErr = err
 
@@ -879,7 +1159,9 @@ func (s *search) walkBasicStringProduct(
 			product.advance(state, unit, len(units), length),
 			nextUnits,
 			length,
+			runeLength,
 			seed,
+			includePadding,
 			visit,
 		)
 
