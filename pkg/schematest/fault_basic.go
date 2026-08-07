@@ -14,7 +14,8 @@ func streamBasicFaults(
 	yield func(Case) error,
 ) (StopReason, error) {
 	for _, fault := range plan.faultTargets {
-		if !isBasicFaultTarget(plan, fault) {
+		if fault.obligation.rule == oracleRuleAllOf || fault.obligation.rule == oracleRuleAnyOf ||
+			faultHasCompositionPins(fault) {
 			continue
 		}
 
@@ -30,7 +31,20 @@ func streamBasicFaults(
 	return SpaceExhausted, nil
 }
 
+// faultHasCompositionPins reports whether a later composition task owns the fault.
+func faultHasCompositionPins(fault faultTarget) bool {
+	for _, pin := range fault.pins {
+		if pin.hasBranch {
+			return true
+		}
+	}
+
+	return false
+}
+
 // streamBasicFault replays, applies, verifies, and emits one fault derivative.
+//
+//nolint:cyclop // Replay, cutoff, exact verification, serialization, and streaming form one seam.
 func streamBasicFault(
 	plan *searchPlan,
 	fault faultTarget,
@@ -43,9 +57,17 @@ func streamBasicFault(
 		return err
 	}
 
-	derivative, err := applyFault(parent, fault, s)
+	derivative, found, err := findNonCompositionDerivative(parent, fault, s)
 	if err != nil {
 		return err
+	}
+
+	if !found {
+		return nil
+	}
+
+	if assignErr := s.assign(); assignErr != nil {
+		return assignErr
 	}
 
 	result := evaluate(s.model, derivative)
@@ -72,13 +94,6 @@ func streamBasicFault(
 	return yield(Case{JSON: encoded, Valid: false})
 }
 
-// isBasicFaultTarget bounds F1 streaming to one lone root type obligation.
-func isBasicFaultTarget(plan *searchPlan, fault faultTarget) bool {
-	return plan != nil && len(plan.validTargets) == 1 && len(plan.faultTargets) == 1 &&
-		fault.obligation.rule == oracleRuleType &&
-		fault.obligation.occurrence == plan.validTargets[0].obligation.occurrence
-}
-
 // regenerateParent replays row search for one fresh, complete oracle-valid parent.
 func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValue, bool, error) {
 	if plan == nil {
@@ -89,6 +104,8 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 		return nil, false, errors.New("schematest: parent replay has no model")
 	}
 
+	parentPins := parentReplayPins(fault)
+
 	var parent *jsonValue
 
 	visit := func(value *jsonValue) (bool, error) {
@@ -97,7 +114,7 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 			return false, fmt.Errorf("evaluate regenerated parent: %w", result.err)
 		}
 
-		if !result.valid || !faultPinsMatch(result, value, fault.pins) {
+		if !result.valid || !faultPinsMatch(result, value, parentPins) {
 			return false, nil
 		}
 
@@ -109,7 +126,7 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 	complete, err := s.walkNode(
 		s.model.root,
 		s.model.root.occurrence,
-		fault.pins,
+		parentPins,
 		rowSearchContext{},
 		visit,
 	)
@@ -118,6 +135,28 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 	}
 
 	return parent, complete, nil
+}
+
+// parentReplayPins turns mutation-result presence into valid-parent presence.
+func parentReplayPins(fault faultTarget) []applicabilityPin {
+	pins := copyPlanPins(fault.pins)
+	for index := range pins {
+		if !instanceTemplateMatches(
+			fault.obligation.occurrence.instanceTemplate,
+			pins[index].occurrence.instanceTemplate,
+		) {
+			continue
+		}
+
+		switch fault.obligation.rule {
+		case oracleRuleRequired:
+			pins[index].presence = planPinPresent
+		case oracleRuleAdditionalProperties:
+			pins[index].presence = planPinAbsent
+		}
+	}
+
+	return pins
 }
 
 // faultPinsMatch requires every fault-applicability precondition on a valid parent.
@@ -136,55 +175,9 @@ func faultPinsMatch(result evaluation, value *jsonValue, pins []applicabilityPin
 	return true
 }
 
-// applyFault copies the current parent, charges one fault choice, and applies one root type fault.
+// applyFault copies the current parent, charges one fault choice, and applies one fault.
 func applyFault(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, error) {
-	if parent == nil {
-		return nil, errors.New("schematest: nil fault parent")
-	}
-
-	if s == nil || s.model == nil || s.model.root == nil {
-		return nil, errors.New("schematest: fault application has no model")
-	}
-
-	if fault.obligation.rule != oracleRuleType ||
-		fault.obligation.occurrence != s.model.root.occurrence {
-		return nil, fmt.Errorf("schematest: unsupported basic fault %s", fault.obligation.String())
-	}
-
-	replacement, err := basicTypeFaultValue(s.model.root)
-	if err != nil {
-		return nil, err
-	}
-
-	derivative, err := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
-	if err != nil {
-		return nil, fmt.Errorf("copy fault parent: %w", err)
-	}
-
-	if err := s.assign(); err != nil {
-		return nil, err
-	}
-
-	*derivative = *replacement
-
-	return derivative, nil
-}
-
-// basicTypeFaultValue chooses one deterministic value rejected by the local type rule.
-func basicTypeFaultValue(node *schemaNode) (*jsonValue, error) {
-	if node == nil || node.schemaShape == nil || node.kind == schemaAny {
-		return nil, errors.New("schematest: type fault target has no explicit type")
-	}
-
-	if !node.nullable {
-		return &jsonValue{kind: jsonNull}, nil
-	}
-
-	if node.kind == schemaBoolean {
-		return &jsonValue{kind: jsonString}, nil
-	}
-
-	return &jsonValue{kind: jsonBoolean}, nil
+	return applyNonCompositionFault(parent, fault, s)
 }
 
 // copyJSONValue deep-copies one transient parent or fault witness.
