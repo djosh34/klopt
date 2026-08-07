@@ -275,7 +275,11 @@ func TestGenerateWritesCompiledValidation(t *testing.T) {
 
 	probe := []byte(`package generatefixture
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/djosh34/klopt/pkg/schematest"
+)
 
 func TestGeneratedValidation(t *testing.T) {
 	enumValues := []string{
@@ -311,9 +315,46 @@ func TestGeneratedValidation(t *testing.T) {
 	if errs := RequestValidations["zetaRequest"].Body.Validate([]byte("true")); len(errs) != 0 {
 		t.Fatalf("zeta body: %v", errs)
 	}
+
+	for _, operationID := range []string{"alphaRequest", "zetaRequest"} {
+		observed := [2]bool{}
+		report, err := schematest.Build(
+			schematest.Input{OpenAPI: openAPI, OperationID: operationID, MaxSteps: 10_000},
+			func(testCase schematest.Case) error {
+				valid := len(RequestValidations[operationID].Body.Validate(testCase.JSON)) == 0
+				if valid != testCase.Valid {
+					t.Fatalf("%s body %s validity = %t, want %t", operationID, testCase.JSON, valid, testCase.Valid)
+				}
+
+				body := string(testCase.JSON)
+				switch operationID {
+				case "alphaRequest":
+					observed[0] = observed[0] || testCase.Valid &&
+						body == "{\"array\":[1],\"closed\":{},\"enum\":false,"+
+							"\"number\":2,\"text\":\"a@b\"}"
+					observed[1] = observed[1] || testCase.Valid && body == "null"
+				case "zetaRequest":
+					observed[0] = observed[0] || testCase.Valid && body == "true"
+					observed[1] = observed[1] || testCase.Valid && body == "false"
+				}
+
+				return nil
+			},
+		)
+		if err != nil {
+			t.Fatalf("build %s: %v", operationID, err)
+		}
+		if report.Stop != schematest.SpaceExhausted && report.Stop != schematest.MaxStepsReached {
+			t.Fatalf("build %s stop = %q", operationID, report.Stop)
+		}
+		if !observed[0] || !observed[1] {
+			t.Fatalf("build %s observations = %v", operationID, observed)
+		}
+	}
 }
 `)
 	require.NoError(t, os.WriteFile(filepath.Join(output, "probe_test.go"), probe, 0o644))
+	writeRuntimeSpec(t, output, "generatefixture", spec)
 
 	command := exec.CommandContext(
 		t.Context(), "go", "test", "./pkg/"+filepath.Base(output), "-run", "TestGeneratedValidation",
