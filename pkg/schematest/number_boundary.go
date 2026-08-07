@@ -1,0 +1,160 @@
+package schematest
+
+import (
+	"errors"
+	"math/big"
+)
+
+// numberBoundaryCandidates returns minimum, nearby minimum, maximum, nearby maximum, and zero.
+func numberBoundaryCandidates(node *schemaNode) ([]*jsonValue, error) {
+	if node == nil || node.schemaShape == nil {
+		return nil, errors.New("schematest: number boundary schema has no shape")
+	}
+
+	quantum, err := numberBoundaryQuantum(node)
+	if err != nil {
+		return nil, err
+	}
+
+	var candidates []*jsonValue
+
+	err = appendNumberBoundaryTriplet(&candidates, node.minimum, quantum, true)
+	if err != nil {
+		return nil, err
+	}
+
+	err = appendNumberBoundaryTriplet(&candidates, node.maximum, quantum, false)
+	if err != nil {
+		return nil, err
+	}
+
+	zero, err := parseExactNumber("0")
+	if err != nil {
+		return nil, err
+	}
+
+	candidates, err = appendUniqueJSONWitness(
+		candidates,
+		&jsonValue{kind: jsonNumber, number: zero},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return candidates, nil
+}
+
+// numberBoundaryQuantum returns one for integer schemas and the finest authored numeric unit otherwise.
+func numberBoundaryQuantum(node *schemaNode) (*exactNumber, error) {
+	if node.kind == schemaInteger {
+		return parseExactNumber("1")
+	}
+
+	var numbers []*exactNumber
+	if node.minimum != nil {
+		numbers = append(numbers, node.minimum)
+	}
+
+	if node.maximum != nil {
+		numbers = append(numbers, node.maximum)
+	}
+
+	if node.multipleOf != nil {
+		numbers = append(numbers, node.multipleOf)
+	}
+
+	if len(numbers) == 0 {
+		return parseExactNumber("1")
+	}
+
+	return exactQuantum(numbers...)
+}
+
+// appendNumberBoundaryTriplet appends one bound and its two directed quantum neighbors.
+func appendNumberBoundaryTriplet(
+	candidates *[]*jsonValue,
+	bound, quantum *exactNumber,
+	minimum bool,
+) error {
+	if bound == nil {
+		return nil
+	}
+
+	positive, err := addExactNumbers(bound, quantum)
+	if err != nil {
+		return err
+	}
+
+	negativeQuantum, err := newExactNumber(
+		new(big.Int).Neg(quantum.numerator),
+		quantum.denominator,
+		quantum.exponent,
+		quantum.scale,
+	)
+	if err != nil {
+		return err
+	}
+
+	negative, err := addExactNumbers(bound, negativeQuantum)
+	if err != nil {
+		return err
+	}
+
+	ordered := []*exactNumber{bound, positive, negative}
+	if !minimum {
+		ordered = []*exactNumber{bound, negative, positive}
+	}
+
+	for _, number := range ordered {
+		var appendErr error
+
+		*candidates, appendErr = appendUniqueJSONWitness(
+			*candidates,
+			&jsonValue{kind: jsonNumber, number: number},
+		)
+		if appendErr != nil {
+			return appendErr
+		}
+	}
+
+	return nil
+}
+
+// addExactNumbers adds scaled rationals without binary floating point.
+func addExactNumbers(left, right *exactNumber) (*exactNumber, error) {
+	if err := left.validate(); err != nil {
+		return nil, err
+	}
+
+	if err := right.validate(); err != nil {
+		return nil, err
+	}
+
+	exponent := new(big.Int).Set(left.exponent)
+	if right.exponent.Cmp(exponent) < 0 {
+		exponent.Set(right.exponent)
+	}
+
+	leftShift := new(big.Int).Sub(left.exponent, exponent)
+
+	rightShift := new(big.Int).Sub(right.exponent, exponent)
+	if !leftShift.IsUint64() || !rightShift.IsUint64() {
+		return nil, errors.New("schematest: number boundary exponent difference does not fit uint64")
+	}
+
+	leftNumerator := new(big.Int).Mul(left.numerator, right.denominator)
+	leftNumerator.Mul(leftNumerator, decimalPower(leftShift.Uint64()))
+
+	rightNumerator := new(big.Int).Mul(right.numerator, left.denominator)
+	rightNumerator.Mul(rightNumerator, decimalPower(rightShift.Uint64()))
+
+	numerator := new(big.Int).Add(leftNumerator, rightNumerator)
+	denominator := new(big.Int).Mul(left.denominator, right.denominator)
+
+	scale := new(big.Int).Set(left.scale)
+	if right.scale.Cmp(scale) > 0 {
+		scale.Set(right.scale)
+	}
+
+	return newExactNumber(numerator, denominator, exponent, scale)
+}

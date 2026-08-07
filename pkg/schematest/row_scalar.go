@@ -157,9 +157,33 @@ func rowScalarValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 		return rowEnumValues(node.enum, kind)
 	}
 
-	candidates, err := canonicalKindWitnesses(kind)
+	var candidates []*jsonValue
+
+	var err error
+
+	hasNumberBoundary := kind == jsonNumber && (node.minimum != nil || node.maximum != nil)
+	if hasNumberBoundary {
+		candidates, err = numberBoundaryCandidates(node)
+	} else {
+		candidates, err = canonicalKindWitnesses(kind)
+	}
+
 	if err != nil {
 		return nil, err
+	}
+
+	if hasNumberBoundary {
+		canonical, canonicalErr := canonicalKindWitnesses(kind)
+		if canonicalErr != nil {
+			return nil, canonicalErr
+		}
+
+		for _, candidate := range canonical {
+			candidates, err = appendUniqueJSONWitness(candidates, candidate)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if node.defaultValue != nil && node.defaultValue.kind == kind {
@@ -248,8 +272,6 @@ func filterRowScalarValues(candidates []*jsonValue, node *schemaNode, kind jsonK
 }
 
 // appendRowNumberCandidates adds exact format edges and nearby multiples.
-//
-//nolint:cyclop // Exact format, bound, and divisibility witnesses stay in canonical order.
 func appendRowNumberCandidates(candidates []*jsonValue, node *schemaNode) ([]*jsonValue, error) {
 	for _, source := range rowNumericFormatSources(node.format) {
 		number, err := parseExactNumber(source)
@@ -260,24 +282,6 @@ func appendRowNumberCandidates(candidates []*jsonValue, node *schemaNode) ([]*js
 		candidates, err = appendUniqueJSONWitness(candidates, &jsonValue{kind: jsonNumber, number: number})
 		if err != nil {
 			return nil, err
-		}
-	}
-
-	for _, bound := range []*exactNumber{node.minimum, node.maximum} {
-		for delta := int64(-3); delta <= 3; delta++ {
-			candidate, exists, err := shiftedExactNumber(bound, delta)
-			if err != nil {
-				return nil, err
-			}
-
-			if !exists {
-				continue
-			}
-
-			candidates, err = appendUniqueJSONWitness(candidates, &jsonValue{kind: jsonNumber, number: candidate})
-			if err != nil {
-				return nil, err
-			}
 		}
 	}
 
