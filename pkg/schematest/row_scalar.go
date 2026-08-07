@@ -3,7 +3,6 @@ package schematest
 import (
 	"errors"
 	"fmt"
-	"math/big"
 	"strings"
 )
 
@@ -16,6 +15,19 @@ func (s *search) walkScalar(
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
+	if kind == jsonNumber {
+		return s.walkActiveScalarPinAlternatives(
+			node,
+			occurrence,
+			append([]applicabilityPin(nil), pins...),
+			func(activePins []applicabilityPin) (bool, error) {
+				return s.walkActiveNumberRules(
+					node, occurrence, activePins, context.validTarget, visit,
+				)
+			},
+		)
+	}
+
 	candidates, err := rowScalarValues(node, kind)
 	if err != nil {
 		return false, err
@@ -32,20 +44,25 @@ func (s *search) walkScalar(
 		}
 	}
 
-	if kind != jsonString || node.enum != nil {
+	if node.enum != nil {
 		return false, nil
 	}
 
-	return s.walkActiveStringPinAlternatives(
-		node,
-		occurrence,
-		append([]applicabilityPin(nil), pins...),
-		func(activePins []applicabilityPin) (bool, error) {
-			return s.walkActiveStringRules(
-				node, occurrence, activePins, context.validTarget, visit,
-			)
-		},
-	)
+	switch kind {
+	case jsonString:
+		return s.walkActiveScalarPinAlternatives(
+			node,
+			occurrence,
+			append([]applicabilityPin(nil), pins...),
+			func(activePins []applicabilityPin) (bool, error) {
+				return s.walkActiveStringRules(
+					node, occurrence, activePins, context.validTarget, visit,
+				)
+			},
+		)
+	default:
+		return false, nil
+	}
 }
 
 // walkActiveStringRules searches one canonical applicable rule view.
@@ -87,7 +104,7 @@ func (s *search) walkActiveStringRules(
 
 	seedPointer := occurrence.usePointer
 	if target != nil {
-		if targetNode, found := stringTargetNode(node, occurrence, target.expected.occurrence); found {
+		if targetNode, found := scalarTargetNode(node, occurrence, target.expected.occurrence); found {
 			seedNode = targetNode
 			rule = target.expected.rule
 			level = target.expected.level
@@ -113,13 +130,13 @@ func (s *search) walkActiveStringRules(
 		product,
 		lengths,
 		basicStringLengthObjective{},
-		basicStringSeed(seedPointer, canonicalSchemaJSON, rule, level),
+		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
 		visit,
 	)
 }
 
-// stringTargetNode resolves the valid target occurrence used to lock the string seed.
-func stringTargetNode(
+// scalarTargetNode resolves the valid target occurrence used to lock a scalar seed.
+func scalarTargetNode(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	target schemaOccurrence,
@@ -132,7 +149,7 @@ func stringTargetNode(
 		childOccurrence := rebasePlanOccurrence(
 			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if found, ok := stringTargetNode(child, childOccurrence, target); ok {
+		if found, ok := scalarTargetNode(child, childOccurrence, target); ok {
 			return found, true
 		}
 	}
@@ -141,7 +158,7 @@ func stringTargetNode(
 		childOccurrence := rebasePlanOccurrence(
 			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if found, ok := stringTargetNode(child, childOccurrence, target); ok {
+		if found, ok := scalarTargetNode(child, childOccurrence, target); ok {
 			return found, true
 		}
 	}
@@ -156,6 +173,8 @@ func rowScalarValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 	if node.enum != nil {
 		return rowEnumValues(node.enum, kind)
 	}
+
+	var candidates []*jsonValue
 
 	candidates, err := canonicalKindWitnesses(kind)
 	if err != nil {
@@ -181,15 +200,11 @@ func rowScalarValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 		}
 	}
 
-	switch kind {
-	case jsonNumber:
-		candidates, err = appendRowNumberCandidates(candidates, node)
-	case jsonString:
+	if kind == jsonString {
 		candidates, err = appendRowStringCandidates(candidates, node)
-	}
-
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return filterRowScalarValues(candidates, node, kind)
@@ -245,105 +260,6 @@ func filterRowScalarValues(candidates []*jsonValue, node *schemaNode, kind jsonK
 	}
 
 	return filtered, nil
-}
-
-// appendRowNumberCandidates adds exact format edges and nearby multiples.
-//
-//nolint:cyclop // Exact format, bound, and divisibility witnesses stay in canonical order.
-func appendRowNumberCandidates(candidates []*jsonValue, node *schemaNode) ([]*jsonValue, error) {
-	for _, source := range rowNumericFormatSources(node.format) {
-		number, err := parseExactNumber(source)
-		if err != nil {
-			return nil, err
-		}
-
-		candidates, err = appendUniqueJSONWitness(candidates, &jsonValue{kind: jsonNumber, number: number})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	for _, bound := range []*exactNumber{node.minimum, node.maximum} {
-		for delta := int64(-3); delta <= 3; delta++ {
-			candidate, exists, err := shiftedExactNumber(bound, delta)
-			if err != nil {
-				return nil, err
-			}
-
-			if !exists {
-				continue
-			}
-
-			candidates, err = appendUniqueJSONWitness(candidates, &jsonValue{kind: jsonNumber, number: candidate})
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if node.multipleOf != nil && rowNumberExponentFits(node.multipleOf) {
-		for multiplier := int64(-4); multiplier <= 8; multiplier++ {
-			candidate, err := multiplyRowNumbers(node.multipleOf, multiplier)
-			if err != nil {
-				return nil, err
-			}
-
-			candidates, err = appendUniqueJSONWitness(candidates, &jsonValue{kind: jsonNumber, number: candidate})
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	return candidates, nil
-}
-
-// rowNumericFormatSources provides exact finite representatives for numeric formats.
-func rowNumericFormatSources(format schemaFormat) []string {
-	switch format {
-	case schemaFormatInt32:
-		return []string{"-2147483648", "0", "2147483647"}
-	case schemaFormatInt64:
-		return []string{"-9223372036854775808", "0", "9223372036854775807"}
-	default:
-		return []string{"-1", "0", "1"}
-	}
-}
-
-// multiplyRowNumbers multiplies two exact rationals without binary floating point.
-func multiplyRowNumbers(left *exactNumber, multiplier int64) (*exactNumber, error) {
-	leftNumerator, leftDenominator := rowRationalParts(left)
-	numerator := new(big.Int).Mul(leftNumerator, big.NewInt(multiplier))
-
-	return newExactRational(numerator, leftDenominator)
-}
-
-// rowNumberExponentFits keeps transient exact multiplication within the search frontier.
-func rowNumberExponentFits(number *exactNumber) bool {
-	if number == nil || !number.exponent.IsInt64() {
-		return false
-	}
-
-	exponent := number.exponent.Int64()
-	if exponent < 0 {
-		exponent = -exponent
-	}
-
-	return uint64(exponent) <= maxPlanNumberExponent
-}
-
-// rowRationalParts converts one exact decimal to a rational pair.
-func rowRationalParts(number *exactNumber) (*big.Int, *big.Int) {
-	numerator := new(big.Int).Set(number.numerator)
-	denominator := new(big.Int).Set(number.denominator)
-
-	if number.exponent.Sign() >= 0 {
-		numerator.Mul(numerator, integerPower(decimalRadix, number.exponent.Uint64()))
-	} else {
-		denominator.Mul(denominator, integerPower(decimalRadix, new(big.Int).Neg(number.exponent).Uint64()))
-	}
-
-	return numerator, denominator
 }
 
 // appendRowStringCandidates adds valid format and length witnesses in stable order.

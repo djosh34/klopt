@@ -472,7 +472,7 @@ func TestBuildKeepsAnyOfSiblingPropertiesAsAlternatives(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Contains(t, cases, Case{JSON: []byte(`{"x":""}`), Valid: true})
-	require.Contains(t, cases, Case{JSON: []byte(`{"x":-1}`), Valid: true})
+	require.Contains(t, cases, Case{JSON: []byte(`{"x":0}`), Valid: true})
 
 	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
 	require.Contains(t, report.Covered, schemaPointer+"/anyOf/0/properties/x|#/x|type|level:string")
@@ -544,14 +544,14 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 		{JSON: []byte(`[null]`), Valid: true},
 		{JSON: []byte(`[null]`), Valid: true},
 		{JSON: []byte(`[false]`), Valid: true},
-		{JSON: []byte(`[-1]`), Valid: true},
+		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[""]`), Valid: true},
 		{JSON: []byte(`[[]]`), Valid: true},
 		{JSON: []byte(`[{}]`), Valid: true},
 	}, cases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 1186,
+		Steps: 1176,
 		Covered: []string{
 			schemaPointer + "|#|type|level:array",
 			schemaPointer + "|#|anyOf|level:mask:1",
@@ -667,5 +667,5 @@ func TestBuildKeepsAnyOfRequiredMembersInTheirBranch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, SpaceExhausted, report.Stop)
 	require.Contains(t, cases, Case{JSON: []byte(`{"a":""}`), Valid: true})
-	require.Contains(t, cases, Case{JSON: []byte(`{"b":-1}`), Valid: true})
+	require.Contains(t, cases, Case{JSON: []byte(`{"b":0}`), Valid: true})
 }

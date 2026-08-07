@@ -435,7 +435,7 @@ func (s *search) walkDirectedStringObjective(
 		return true, false, fmt.Errorf("schematest: canonicalize directed string schema: %w", err)
 	}
 
-	seed := basicStringSeed(
+	seed := searchSeed(
 		objective.occurrence.usePointer,
 		canonicalSchemaJSON,
 		objective.rule,

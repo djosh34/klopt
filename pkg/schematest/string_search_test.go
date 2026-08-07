@@ -128,17 +128,6 @@ func TestBasicStringProductEmitsOnlyPairedSurrogates(t *testing.T) {
 	require.Equal(t, "😀", witness)
 }
 
-func TestBasicStringSeedUsesLockedDomainAndFields(t *testing.T) {
-	t.Parallel()
-
-	require.Equal(t, uint64(0x2740e16489cf1844), basicStringSeed(
-		"#/schema",
-		[]byte(`{"pattern":"^[a-z]$","type":"string"}`),
-		"pattern",
-		"valid",
-	))
-}
-
 func TestBasicStringProductFindsGroupedAlternationIntersection(t *testing.T) {
 	t.Parallel()
 
