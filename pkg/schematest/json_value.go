@@ -3,6 +3,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"unicode/utf8"
 )
 
@@ -35,143 +36,250 @@ type jsonValue struct {
 }
 
 // jsonSemanticEqual compares two JSON values using JSON Schema semantics.
+//
+//nolint:cyclop,gocognit // The pair stack handles each of JSON's six semantic kinds directly.
 func jsonSemanticEqual(left, right *jsonValue) (bool, error) {
-	if err := validateJSONValue(left, make(map[*jsonValue]bool)); err != nil {
+	if err := validateJSONValue(left); err != nil {
 		return false, fmt.Errorf("left JSON value: %w", err)
 	}
 
-	if err := validateJSONValue(right, make(map[*jsonValue]bool)); err != nil {
+	if err := validateJSONValue(right); err != nil {
 		return false, fmt.Errorf("right JSON value: %w", err)
 	}
 
-	return equalJSONValue(left, right)
-}
+	work := []jsonValuePair{{left: left, right: right}}
+	for len(work) > 0 {
+		pair := work[len(work)-1]
+		work = work[:len(work)-1]
 
-// equalJSONValue compares already-validated JSON values.
-func equalJSONValue(left, right *jsonValue) (bool, error) {
-	if left.kind != right.kind {
-		return false, nil
-	}
-
-	switch left.kind {
-	case jsonNull:
-		return true, nil
-	case jsonBoolean:
-		return left.boolean == right.boolean, nil
-	case jsonNumber:
-		comparison, err := left.number.compare(right.number)
-		if err != nil {
-			return false, err
-		}
-
-		return comparison == 0, nil
-	case jsonString:
-		return left.text == right.text, nil
-	case jsonArray:
-		return equalJSONArray(left.array, right.array)
-	case jsonObject:
-		return equalJSONObject(left.object, right.object)
-	default:
-		return false, fmt.Errorf("unknown JSON kind %d", left.kind)
-	}
-}
-
-// equalJSONArray compares two ordered arrays.
-func equalJSONArray(left, right []*jsonValue) (bool, error) {
-	if len(left) != len(right) {
-		return false, nil
-	}
-
-	for index := range left {
-		equal, err := equalJSONValue(left[index], right[index])
-		if err != nil {
-			return false, err
-		}
-
-		if !equal {
+		if pair.left.kind != pair.right.kind {
 			return false, nil
+		}
+
+		switch pair.left.kind {
+		case jsonNull:
+		case jsonBoolean:
+			if pair.left.boolean != pair.right.boolean {
+				return false, nil
+			}
+		case jsonNumber:
+			comparison, err := pair.left.number.compare(pair.right.number)
+			if err != nil {
+				return false, err
+			}
+
+			if comparison != 0 {
+				return false, nil
+			}
+		case jsonString:
+			if pair.left.text != pair.right.text {
+				return false, nil
+			}
+		case jsonArray:
+			if len(pair.left.array) != len(pair.right.array) {
+				return false, nil
+			}
+
+			for index := len(pair.left.array) - 1; index >= 0; index-- {
+				work = append(work, jsonValuePair{left: pair.left.array[index], right: pair.right.array[index]})
+			}
+		case jsonObject:
+			if len(pair.left.object) != len(pair.right.object) {
+				return false, nil
+			}
+
+			for _, name := range sortedObjectNames(pair.left.object) {
+				rightMember, exists := pair.right.object[name]
+				if !exists {
+					return false, nil
+				}
+
+				work = append(work, jsonValuePair{left: pair.left.object[name], right: rightMember})
+			}
+		default:
+			return false, fmt.Errorf("unknown JSON kind %d", pair.left.kind)
 		}
 	}
 
 	return true, nil
 }
 
-// equalJSONObject compares two objects without observing member order.
-func equalJSONObject(left, right map[string]*jsonValue) (bool, error) {
-	if len(left) != len(right) {
-		return false, nil
-	}
-
-	for name, leftMember := range left {
-		rightMember, exists := right[name]
-		if !exists {
-			return false, nil
-		}
-
-		equal, err := equalJSONValue(leftMember, rightMember)
-		if err != nil {
-			return false, err
-		}
-
-		if !equal {
-			return false, nil
-		}
-	}
-
-	return true, nil
+// jsonValuePair is one pending semantic comparison.
+type jsonValuePair struct {
+	left  *jsonValue
+	right *jsonValue
 }
+
+// jsonActivePath tracks only ancestors of the current traversal occurrence.
+type jsonActivePath map[*jsonValue]bool
 
 // validateJSONValue rejects malformed private model state and cycles.
-func validateJSONValue(value *jsonValue, visiting map[*jsonValue]bool) error {
-	if value == nil {
-		return errors.New("JSON value is nil")
+//
+//nolint:cyclop // Validation keeps payload and container checks in one iterative traversal.
+func validateJSONValue(value *jsonValue) error {
+	active := make(jsonActivePath)
+	stack := []jsonValidationFrame{{value: value}}
+
+	for len(stack) > 0 {
+		frame := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if frame.exit {
+			delete(active, frame.value)
+
+			continue
+		}
+
+		if frame.value == nil {
+			return contextualJSONError(frame.context, errors.New("JSON value is nil"))
+		}
+
+		if active[frame.value] {
+			return contextualJSONError(frame.context, errors.New("JSON value contains a cycle"))
+		}
+
+		if err := validateJSONPayload(frame.value); err != nil {
+			return contextualJSONError(frame.context, err)
+		}
+
+		active[frame.value] = true
+		stack = append(stack, jsonValidationFrame{value: frame.value, exit: true})
+
+		switch frame.value.kind {
+		case jsonArray:
+			for index := len(frame.value.array) - 1; index >= 0; index-- {
+				stack = append(stack, jsonValidationFrame{
+					value:   frame.value.array[index],
+					context: fmt.Sprintf("array element %d", index),
+				})
+			}
+		case jsonObject:
+			names := sortedObjectNames(frame.value.object)
+			for index := len(names) - 1; index >= 0; index-- {
+				name := names[index]
+				if !utf8.ValidString(name) {
+					return errors.New("object member name is not valid UTF-8")
+				}
+
+				stack = append(stack, jsonValidationFrame{
+					value:   frame.value.object[name],
+					context: fmt.Sprintf("object member %q", name),
+				})
+			}
+		}
 	}
 
-	if visiting[value] {
-		return errors.New("JSON value contains a cycle")
-	}
+	return nil
+}
 
-	visiting[value] = true
-	defer delete(visiting, value)
+// jsonValidationFrame enters or exits one value occurrence.
+type jsonValidationFrame struct {
+	value   *jsonValue
+	context string
+	exit    bool
+}
 
-	if err := validateJSONPayload(value); err != nil {
+// contextualJSONError adds the immediate parent edge to an invariant error.
+func contextualJSONError(context string, err error) error {
+	if context == "" {
 		return err
 	}
 
-	switch value.kind {
-	case jsonArray:
-		return validateJSONArray(value.array, visiting)
-	case jsonObject:
-		return validateJSONObject(value.object, visiting)
-	default:
-		return nil
-	}
+	return fmt.Errorf("%s: %w", context, err)
 }
 
-// validateJSONArray validates every nested array element.
-func validateJSONArray(elements []*jsonValue, visiting map[*jsonValue]bool) error {
-	for index, element := range elements {
-		if err := validateJSONValue(element, visiting); err != nil {
-			return fmt.Errorf("array element %d: %w", index, err)
+// cloneJSONValue makes an independent tree copy and rejects malformed state and cycles.
+//
+//nolint:cyclop // Copy and cycle checks share one occurrence-oriented iterative traversal.
+func cloneJSONValue(value *jsonValue) (*jsonValue, error) {
+	if value == nil {
+		return nil, errors.New("JSON value is nil")
+	}
+
+	clone := &jsonValue{}
+	active := make(jsonActivePath)
+	stack := []jsonCloneFrame{{source: value, clone: clone}}
+
+	for len(stack) > 0 {
+		frame := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if frame.exit {
+			delete(active, frame.source)
+
+			continue
+		}
+
+		if frame.source == nil {
+			return nil, contextualJSONError(frame.context, errors.New("JSON value is nil"))
+		}
+
+		if active[frame.source] {
+			return nil, contextualJSONError(frame.context, errors.New("JSON value contains a cycle"))
+		}
+
+		if err := validateJSONPayload(frame.source); err != nil {
+			return nil, contextualJSONError(frame.context, err)
+		}
+
+		active[frame.source] = true
+		stack = append(stack, jsonCloneFrame{source: frame.source, exit: true})
+
+		frame.clone.kind = frame.source.kind
+		frame.clone.boolean = frame.source.boolean
+		frame.clone.text = frame.source.text
+
+		if frame.source.number != nil {
+			frame.clone.number = &exactNumber{
+				numerator:   new(big.Int).Set(frame.source.number.numerator),
+				denominator: new(big.Int).Set(frame.source.number.denominator),
+				exponent:    new(big.Int).Set(frame.source.number.exponent),
+				scale:       new(big.Int).Set(frame.source.number.scale),
+			}
+		}
+
+		switch frame.source.kind {
+		case jsonArray:
+			frame.clone.array = make([]*jsonValue, len(frame.source.array))
+			for index := len(frame.source.array) - 1; index >= 0; index-- {
+				child := &jsonValue{}
+				frame.clone.array[index] = child
+				stack = append(stack, jsonCloneFrame{
+					source:  frame.source.array[index],
+					clone:   child,
+					context: fmt.Sprintf("array element %d", index),
+				})
+			}
+		case jsonObject:
+			frame.clone.object = make(map[string]*jsonValue, len(frame.source.object))
+
+			names := sortedObjectNames(frame.source.object)
+			for index := len(names) - 1; index >= 0; index-- {
+				name := names[index]
+				if !utf8.ValidString(name) {
+					return nil, errors.New("object member name is not valid UTF-8")
+				}
+
+				child := &jsonValue{}
+				frame.clone.object[name] = child
+				stack = append(stack, jsonCloneFrame{
+					source:  frame.source.object[name],
+					clone:   child,
+					context: fmt.Sprintf("object member %q", name),
+				})
+			}
 		}
 	}
 
-	return nil
+	return clone, nil
 }
 
-// validateJSONObject validates member names and nested values.
-func validateJSONObject(members map[string]*jsonValue, visiting map[*jsonValue]bool) error {
-	for name, member := range members {
-		if !utf8.ValidString(name) {
-			return errors.New("object member name is not valid UTF-8")
-		}
-
-		if err := validateJSONValue(member, visiting); err != nil {
-			return fmt.Errorf("object member %q: %w", name, err)
-		}
-	}
-
-	return nil
+// jsonCloneFrame pairs one source occurrence with its fresh destination.
+type jsonCloneFrame struct {
+	source  *jsonValue
+	clone   *jsonValue
+	context string
+	exit    bool
 }
 
 // validateJSONPayload checks the discriminated-union invariant.

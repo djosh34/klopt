@@ -83,10 +83,12 @@ func TestEvaluateRepeatedReferencedCompositionBranchesKeepDistinctUseSiteIdentit
 	)
 }
 
-func TestEvaluateSharedYAMLCompositionDAGDeterministicallyWithoutTreeExpansion(t *testing.T) {
+func TestEvaluateExpandedYAMLCompositionDeterministically(t *testing.T) {
 	t.Parallel()
 
-	document := sharedYAMLCompositionDocument(24)
+	const depth = 8
+
+	document := sharedYAMLCompositionDocument(depth)
 	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
 	require.NoError(t, err)
 
@@ -100,14 +102,14 @@ func TestEvaluateSharedYAMLCompositionDAGDeterministicallyWithoutTreeExpansion(t
 	require.NoError(t, second.err)
 	require.True(t, first.valid)
 	require.Equal(t, first, second)
-	require.Len(t, first.applicable, 25)
-	require.Len(t, first.allOf, 24)
-	require.Equal(t, (1<<25)-1, first.records.applicable.count)
-	require.Equal(t, (1<<24)-1, first.records.allOf.count)
+	require.Len(t, first.applicable, (1<<(depth+1))-1)
+	require.Len(t, first.allOf, (1<<depth)-1)
+	require.Equal(t, len(first.applicable), first.records.applicable.count)
+	require.Equal(t, len(first.allOf), first.records.allOf.count)
 	require.Empty(t, first.anyOf)
 	require.Empty(t, first.failures)
 
-	expectedTruth := make([][]bool, 24)
+	expectedTruth := make([][]bool, (1<<depth)-1)
 	for index := range expectedTruth {
 		expectedTruth[index] = []bool{true, true}
 	}
@@ -125,7 +127,7 @@ func TestEvaluateSharedYAMLCompositionDAGDeterministicallyWithoutTreeExpansion(t
 	require.Equal(
 		t,
 		"#/paths/~1/post/requestBody/content/application~1json/schema"+
-			strings.Repeat("/allOf/1", 23)+"|#|allOf",
+			strings.Repeat("/allOf/1", depth-1)+"|#|allOf",
 		lastTruth.String(),
 	)
 	require.Equal(
@@ -144,7 +146,7 @@ func TestEvaluateSharedYAMLCompositionDAGDeterministicallyWithoutTreeExpansion(t
 	require.NoError(t, secondInvalid.err)
 	require.False(t, firstInvalid.valid)
 	require.Equal(t, firstInvalid, secondInvalid)
-	require.Equal(t, 1<<24, firstInvalid.records.failures.count)
+	require.Equal(t, 1<<depth, firstInvalid.records.failures.count)
 
 	firstFailure, ok := firstInvalid.records.failures.at(0)
 	require.True(t, ok)
@@ -153,22 +155,24 @@ func TestEvaluateSharedYAMLCompositionDAGDeterministicallyWithoutTreeExpansion(t
 	require.Equal(
 		t,
 		"#/paths/~1/post/requestBody/content/application~1json/schema"+
-			strings.Repeat("/allOf/0", 24)+"|#|type",
+			strings.Repeat("/allOf/0", depth)+"|#|type",
 		firstFailure.String(),
 	)
 	require.Equal(
 		t,
 		"#/paths/~1/post/requestBody/content/application~1json/schema"+
-			strings.Repeat("/allOf/1", 24)+"|#|type",
+			strings.Repeat("/allOf/1", depth)+"|#|type",
 		lastFailure.String(),
 	)
 }
 
-func TestEvaluateDepth64SharedYAMLCompositionRejectingLeafRemainsInvalid(t *testing.T) {
+func TestEvaluateExpandedYAMLCompositionRejectingLeafRemainsInvalid(t *testing.T) {
 	t.Parallel()
 
+	const depth = 10
+
 	model, err := parseInput(Input{
-		OpenAPI:     []byte(sharedYAMLCompositionDocument(64)),
+		OpenAPI:     []byte(sharedYAMLCompositionDocument(depth)),
 		OperationID: "selected",
 	})
 	require.NoError(t, err)
@@ -183,8 +187,8 @@ func TestEvaluateDepth64SharedYAMLCompositionRejectingLeafRemainsInvalid(t *test
 	require.NoError(t, second.err)
 	require.False(t, first.valid)
 	require.Equal(t, first, second)
-	require.Len(t, first.applicable, 65)
-	require.Len(t, first.allOf, 64)
+	require.Len(t, first.applicable, (1<<(depth+1))-1)
+	require.Len(t, first.allOf, (1<<depth)-1)
 	require.NotZero(t, first.records.failures.count)
 
 	failure, ok := first.records.failures.at(0)
@@ -192,7 +196,7 @@ func TestEvaluateDepth64SharedYAMLCompositionRejectingLeafRemainsInvalid(t *test
 	require.Equal(
 		t,
 		"#/paths/~1/post/requestBody/content/application~1json/schema"+
-			strings.Repeat("/allOf/0", 64)+"|#|type",
+			strings.Repeat("/allOf/0", depth)+"|#|type",
 		failure.String(),
 	)
 }

@@ -3,6 +3,7 @@ package schematest
 import (
 	"math/big"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -125,6 +126,48 @@ func TestExactQuantumUsesAuthoredScale(t *testing.T) {
 	lexeme, err := quantum.canonicalDecimal()
 	require.NoError(t, err)
 	require.Equal(t, "1e-4", lexeme)
+}
+
+// TestExactNumberLongAuthoredZeroSuffix preserves scale without arithmetic zero stripping.
+func TestExactNumberLongAuthoredZeroSuffix(t *testing.T) {
+	t.Parallel()
+
+	const zeroCount = 100_000
+
+	number := requireExactNumber(t, "1."+strings.Repeat("0", zeroCount))
+	require.Equal(t, "1", number.numerator.String())
+	require.Equal(t, "0", number.exponent.String())
+	require.Equal(t, strconv.Itoa(zeroCount), number.scale.String())
+
+	decimal, err := number.canonicalDecimal()
+	require.NoError(t, err)
+	require.Equal(t, "1", decimal)
+}
+
+// TestExactNumberBulkFactorRemoval preserves computed-rational normalization and serialization.
+func TestExactNumberBulkFactorRemoval(t *testing.T) {
+	t.Parallel()
+
+	const factorCount = 10_000
+
+	coefficient := new(big.Int).Exp(big.NewInt(decimalRadix), big.NewInt(factorCount), nil)
+	number, err := newExactNumber(coefficient, big.NewInt(1), big.NewInt(-factorCount), big.NewInt(0))
+	require.NoError(t, err)
+	require.Equal(t, "1", number.numerator.String())
+	require.Equal(t, "0", number.exponent.String())
+
+	decimal, err := number.canonicalDecimal()
+	require.NoError(t, err)
+	require.Equal(t, "1", decimal)
+
+	for _, factor := range []int64{binaryFactor, quinaryFactor} {
+		value := new(big.Int).Exp(big.NewInt(factor), big.NewInt(factorCount), nil)
+		value.Mul(value, big.NewInt(3))
+
+		count, remaining := removeFactor(value, factor)
+		require.Equal(t, uint64(factorCount), count)
+		require.Equal(t, "3", remaining.String())
+	}
 }
 
 // TestExactRationalSerialization verifies finite rationals become JSON decimals and others error.

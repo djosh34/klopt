@@ -515,11 +515,11 @@ func TestParseInputSharesRepeatedReferenceTargetStructure(t *testing.T) {
 	require.Same(t, model.root.allOf[0].allOf[0], model.root.allOf[1].allOf[0])
 }
 
-func TestParseInputSharesInlineYAMLAliasSchemaShapes(t *testing.T) {
+func TestParseInputExpandsInlineYAMLAliasSchemaOccurrences(t *testing.T) {
 	t.Parallel()
 
 	anchors := "x-schema-0: &s0 {type: string}\n"
-	for depth := 1; depth <= 24; depth++ {
+	for depth := 1; depth <= 4; depth++ {
 		anchors += fmt.Sprintf("x-schema-%d: &s%d {allOf: [*s%d, *s%d]}\n", depth, depth, depth-1, depth-1)
 	}
 
@@ -530,12 +530,12 @@ func TestParseInputSharesInlineYAMLAliasSchemaShapes(t *testing.T) {
       requestBody:
         content:
           application/json:
-            schema: *s24
+            schema: *s4
 `
 
 	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
 	require.NoError(t, err)
-	require.Same(t, model.root.allOf[0].schemaShape, model.root.allOf[1].schemaShape)
+	require.NotSame(t, model.root.allOf[0].schemaShape, model.root.allOf[1].schemaShape)
 }
 
 func TestParseInputKeepsAliasedSchemaDescendantTemplatesRelative(t *testing.T) {
@@ -564,7 +564,7 @@ paths:
 	require.NoError(t, err)
 	require.Equal(t, "#/a", model.root.properties["a"].occurrence.instanceTemplate)
 	require.Equal(t, "#/b", model.root.properties["b"].occurrence.instanceTemplate)
-	require.Same(t, model.root.properties["a"].schemaShape, model.root.properties["b"].schemaShape)
+	require.NotSame(t, model.root.properties["a"].schemaShape, model.root.properties["b"].schemaShape)
 	require.Equal(t, "#/child", model.root.properties["a"].properties["child"].occurrence.instanceTemplate)
 }
 
@@ -766,11 +766,11 @@ func TestParseInputDeduplicatesLargeEnumInLinearWork(t *testing.T) {
 	require.Len(t, model.root.enum, len(members))
 }
 
-func TestParseInputDeduplicatesEnumAliasDAGWithoutExpansion(t *testing.T) {
+func TestParseInputDeduplicatesExpandedEnumAliasesSemantically(t *testing.T) {
 	t.Parallel()
 
 	anchors := "x-anchor-0: &a0 [0]\n"
-	for depth := 1; depth <= 24; depth++ {
+	for depth := 1; depth <= 8; depth++ {
 		anchors += fmt.Sprintf("x-anchor-%d: &a%d [*a%d, *a%d]\n", depth, depth, depth-1, depth-1)
 	}
 
@@ -782,7 +782,7 @@ func TestParseInputDeduplicatesEnumAliasDAGWithoutExpansion(t *testing.T) {
         content:
           application/json:
             schema:
-              enum: [*a24, *a24]
+              enum: [*a8, *a8]
 `
 
 	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})

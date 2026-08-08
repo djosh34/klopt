@@ -1,6 +1,7 @@
 package schematest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -129,7 +130,71 @@ func TestMarshalStrictRejectsMalformedState(t *testing.T) {
 	}
 }
 
-// TestStrictJSONRoundTripProperty verifies repeated bytes and semantic round trips across representative values.
+// TestDeepJSONValueOperationsUseHeapBackedTraversal exercises every immutable value operation at depth.
+func TestDeepJSONValueOperationsUseHeapBackedTraversal(t *testing.T) {
+	t.Parallel()
+
+	const depth = 20_000
+
+	source := strings.Repeat("[", depth) + "1.0" + strings.Repeat("]", depth)
+	value, err := parseStrictJSON([]byte(source))
+	require.NoError(t, err)
+	require.NoError(t, validateJSONValue(value))
+
+	clone, err := cloneJSONValue(value)
+	require.NoError(t, err)
+	require.NotSame(t, value, clone)
+
+	equal, err := jsonSemanticEqual(value, clone)
+	require.NoError(t, err)
+	require.True(t, equal)
+
+	encoded, err := marshalStrict(clone)
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("[", depth)+"1"+strings.Repeat("]", depth), string(encoded))
+}
+
+// TestYAMLAliasesExpandIntoIndependentJSONOccurrences proves per-occurrence tree ownership.
+func TestYAMLAliasesExpandIntoIndependentJSONOccurrences(t *testing.T) {
+	t.Parallel()
+
+	value, err := decodeOpenAPIDocument([]byte("first: &value [{exact: 1.0}]\nsecond: *value\nthird: *value\n"))
+	require.NoError(t, err)
+
+	first := value.object["first"]
+	second := value.object["second"]
+	third := value.object["third"]
+
+	require.NotSame(t, first, second)
+	require.NotSame(t, second, third)
+	require.NotSame(t, first.array[0], second.array[0])
+	require.NotSame(t, second.array[0].object["exact"].number, third.array[0].object["exact"].number)
+
+	encoded, err := marshalStrict(value)
+	require.NoError(t, err)
+	require.Equal(t, `{"first":[{"exact":1}],"second":[{"exact":1}],"third":[{"exact":1}]}`, string(encoded))
+}
+
+// TestCloneJSONValueRejectsCyclesAndExpandsSharedOccurrences locks clone safety and ownership.
+func TestCloneJSONValueRejectsCyclesAndExpandsSharedOccurrences(t *testing.T) {
+	t.Parallel()
+
+	shared := &jsonValue{kind: jsonArray, array: []*jsonValue{{kind: jsonString, text: "value"}}}
+	root := &jsonValue{kind: jsonArray, array: []*jsonValue{shared, shared}}
+
+	clone, err := cloneJSONValue(root)
+	require.NoError(t, err)
+	require.NotSame(t, clone.array[0], clone.array[1])
+	require.NotSame(t, clone.array[0].array[0], clone.array[1].array[0])
+
+	cycle := &jsonValue{kind: jsonArray, array: make([]*jsonValue, 1)}
+	cycle.array[0] = cycle
+	clone, err = cloneJSONValue(cycle)
+	require.ErrorContains(t, err, "cycle")
+	require.Nil(t, clone)
+}
+
+// TestStrictJSONRoundTripProperty verifies stable bytes and semantic round trips.
 func TestStrictJSONRoundTripProperty(t *testing.T) {
 	t.Parallel()
 

@@ -17,7 +17,33 @@ type strictJSONParser struct {
 	position int
 }
 
+// strictJSONContainerState identifies the next token expected by an open container.
+type strictJSONContainerState uint8
+
+const (
+	// jsonArrayStart permits an element or the closing bracket.
+	jsonArrayStart strictJSONContainerState = iota
+	// jsonArrayValue requires an element after a comma.
+	jsonArrayValue
+	// jsonArrayEnd requires a comma or the closing bracket.
+	jsonArrayEnd
+	// jsonObjectStart permits a member name or the closing brace.
+	jsonObjectStart
+	// jsonObjectName requires a member name after a comma.
+	jsonObjectName
+	// jsonObjectEnd requires a comma or the closing brace.
+	jsonObjectEnd
+)
+
+// strictJSONContainerFrame holds one open container's parsing state.
+type strictJSONContainerFrame struct {
+	value *jsonValue
+	state strictJSONContainerState
+}
+
 // parseStrictJSON parses exactly one complete interoperable JSON value.
+//
+//nolint:cyclop,gocognit // The explicit container state machine replaces recursive descent.
 func parseStrictJSON(source []byte) (*jsonValue, error) {
 	if !utf8.Valid(source) {
 		return nil, errors.New("JSON input is not valid UTF-8")
@@ -30,9 +56,115 @@ func parseStrictJSON(source []byte) (*jsonValue, error) {
 		return nil, errors.New("expected JSON value")
 	}
 
-	value, err := parser.parseValue()
+	value, state, container, err := parser.parseValueToken()
 	if err != nil {
 		return nil, err
+	}
+
+	stack := make([]strictJSONContainerFrame, 0)
+	if container {
+		stack = append(stack, strictJSONContainerFrame{value: value, state: state})
+	}
+
+	for len(stack) > 0 {
+		frame := &stack[len(stack)-1]
+
+		parser.skipWhitespace()
+
+		switch frame.state {
+		case jsonArrayStart:
+			if parser.consume(']') {
+				stack = stack[:len(stack)-1]
+
+				continue
+			}
+
+			frame.state = jsonArrayValue
+		case jsonArrayEnd:
+			if parser.consume(']') {
+				stack = stack[:len(stack)-1]
+
+				continue
+			}
+
+			if !parser.consume(',') {
+				return nil, fmt.Errorf("expected ',' or ']' at byte %d", parser.position)
+			}
+
+			parser.skipWhitespace()
+
+			frame.state = jsonArrayValue
+		case jsonObjectStart:
+			if parser.consume('}') {
+				stack = stack[:len(stack)-1]
+
+				continue
+			}
+
+			frame.state = jsonObjectName
+		case jsonObjectEnd:
+			if parser.consume('}') {
+				stack = stack[:len(stack)-1]
+
+				continue
+			}
+
+			if !parser.consume(',') {
+				return nil, fmt.Errorf("expected ',' or '}' at byte %d", parser.position)
+			}
+
+			parser.skipWhitespace()
+
+			frame.state = jsonObjectName
+		}
+
+		switch frame.state {
+		case jsonArrayValue:
+			child, childState, childContainer, parseErr := parser.parseValueToken()
+			if parseErr != nil {
+				return nil, parseErr
+			}
+
+			frame.value.array = append(frame.value.array, child)
+
+			frame.state = jsonArrayEnd
+			if childContainer {
+				stack = append(stack, strictJSONContainerFrame{value: child, state: childState})
+			}
+		case jsonObjectName:
+			if parser.position == len(parser.source) || parser.source[parser.position] != '"' {
+				return nil, fmt.Errorf("expected object member name at byte %d", parser.position)
+			}
+
+			name, nameErr := parser.parseString()
+			if nameErr != nil {
+				return nil, nameErr
+			}
+
+			parser.skipWhitespace()
+
+			if !parser.consume(':') {
+				return nil, fmt.Errorf("expected ':' at byte %d", parser.position)
+			}
+
+			parser.skipWhitespace()
+
+			child, childState, childContainer, parseErr := parser.parseValueToken()
+			if parseErr != nil {
+				return nil, parseErr
+			}
+
+			if _, duplicate := frame.value.object[name]; duplicate {
+				return nil, fmt.Errorf("duplicate object member %q at byte %d", name, parser.position)
+			}
+
+			frame.value.object[name] = child
+
+			frame.state = jsonObjectEnd
+			if childContainer {
+				stack = append(stack, strictJSONContainerFrame{value: child, state: childState})
+			}
+		}
 	}
 
 	parser.skipWhitespace()
@@ -44,42 +176,48 @@ func parseStrictJSON(source []byte) (*jsonValue, error) {
 	return value, nil
 }
 
-// parseValue parses a value at the current position.
-func (parser *strictJSONParser) parseValue() (*jsonValue, error) {
+// parseValueToken parses one scalar or opens one container.
+//
+//nolint:cyclop // JSON's fixed token alternatives are intentionally explicit.
+func (parser *strictJSONParser) parseValueToken() (*jsonValue, strictJSONContainerState, bool, error) {
 	if parser.position == len(parser.source) {
-		return nil, fmt.Errorf("expected JSON value at byte %d", parser.position)
+		return nil, 0, false, fmt.Errorf("expected JSON value at byte %d", parser.position)
 	}
 
 	switch parser.source[parser.position] {
 	case 'n':
-		return parser.parseLiteral("null", &jsonValue{kind: jsonNull})
+		value, err := parser.parseLiteral("null", &jsonValue{kind: jsonNull})
+
+		return value, 0, false, err
 	case 'f':
-		return parser.parseLiteral("false", &jsonValue{kind: jsonBoolean})
+		value, err := parser.parseLiteral("false", &jsonValue{kind: jsonBoolean})
+
+		return value, 0, false, err
 	case 't':
-		return parser.parseLiteral("true", &jsonValue{kind: jsonBoolean, boolean: true})
+		value, err := parser.parseLiteral("true", &jsonValue{kind: jsonBoolean, boolean: true})
+
+		return value, 0, false, err
 	case '"':
 		text, err := parser.parseString()
-		if err != nil {
-			return nil, err
+
+		return &jsonValue{kind: jsonString, text: text}, 0, false, err
+	case '[':
+		parser.position++
+
+		return &jsonValue{kind: jsonArray, array: make([]*jsonValue, 0)}, jsonArrayStart, true, nil
+	case '{':
+		parser.position++
+
+		return &jsonValue{kind: jsonObject, object: make(map[string]*jsonValue)}, jsonObjectStart, true, nil
+	default:
+		if parser.source[parser.position] != '-' && !isDecimalDigit(parser.source[parser.position]) {
+			return nil, 0, false, fmt.Errorf("expected JSON value at byte %d", parser.position)
 		}
 
-		return &jsonValue{kind: jsonString, text: text}, nil
-	case '[':
-		return parser.parseArray()
-	case '{':
-		return parser.parseObject()
-	default:
-		return parser.parseNumberOrError()
-	}
-}
+		value, err := parser.parseNumber()
 
-// parseNumberOrError parses a number or reports an unexpected value token.
-func (parser *strictJSONParser) parseNumberOrError() (*jsonValue, error) {
-	if parser.source[parser.position] == '-' || isDecimalDigit(parser.source[parser.position]) {
-		return parser.parseNumber()
+		return value, 0, false, err
 	}
-
-	return nil, fmt.Errorf("expected JSON value at byte %d", parser.position)
 }
 
 // parseLiteral parses one fixed JSON literal.
@@ -110,101 +248,6 @@ func (parser *strictJSONParser) parseNumber() (*jsonValue, error) {
 	}
 
 	return &jsonValue{kind: jsonNumber, number: number}, nil
-}
-
-// parseArray parses an ordered JSON array.
-func (parser *strictJSONParser) parseArray() (*jsonValue, error) {
-	parser.position++
-	parser.skipWhitespace()
-
-	elements := make([]*jsonValue, 0)
-	if parser.consume(']') {
-		return &jsonValue{kind: jsonArray, array: elements}, nil
-	}
-
-	for {
-		element, err := parser.parseValue()
-		if err != nil {
-			return nil, err
-		}
-
-		elements = append(elements, element)
-
-		parser.skipWhitespace()
-
-		if parser.consume(']') {
-			return &jsonValue{kind: jsonArray, array: elements}, nil
-		}
-
-		if !parser.consume(',') {
-			return nil, fmt.Errorf("expected ',' or ']' at byte %d", parser.position)
-		}
-
-		parser.skipWhitespace()
-	}
-}
-
-// parseObject parses a JSON object and rejects duplicate decoded names.
-func (parser *strictJSONParser) parseObject() (*jsonValue, error) {
-	parser.position++
-	parser.skipWhitespace()
-
-	members := make(map[string]*jsonValue)
-	if parser.consume('}') {
-		return &jsonValue{kind: jsonObject, object: members}, nil
-	}
-
-	for {
-		name, member, err := parser.parseObjectMember()
-		if err != nil {
-			return nil, err
-		}
-
-		if _, duplicate := members[name]; duplicate {
-			return nil, fmt.Errorf("duplicate object member %q at byte %d", name, parser.position)
-		}
-
-		members[name] = member
-
-		parser.skipWhitespace()
-
-		if parser.consume('}') {
-			return &jsonValue{kind: jsonObject, object: members}, nil
-		}
-
-		if !parser.consume(',') {
-			return nil, fmt.Errorf("expected ',' or '}' at byte %d", parser.position)
-		}
-
-		parser.skipWhitespace()
-	}
-}
-
-// parseObjectMember parses one decoded name and value.
-func (parser *strictJSONParser) parseObjectMember() (string, *jsonValue, error) {
-	if parser.position == len(parser.source) || parser.source[parser.position] != '"' {
-		return "", nil, fmt.Errorf("expected object member name at byte %d", parser.position)
-	}
-
-	name, err := parser.parseString()
-	if err != nil {
-		return "", nil, err
-	}
-
-	parser.skipWhitespace()
-
-	if !parser.consume(':') {
-		return "", nil, fmt.Errorf("expected ':' at byte %d", parser.position)
-	}
-
-	parser.skipWhitespace()
-
-	member, err := parser.parseValue()
-	if err != nil {
-		return "", nil, err
-	}
-
-	return name, member, nil
 }
 
 // parseString parses and decodes one JSON string.

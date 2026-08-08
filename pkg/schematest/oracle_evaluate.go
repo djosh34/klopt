@@ -121,7 +121,7 @@ func evaluate(model *schemaModel, value *jsonValue) evaluation {
 		return result
 	}
 
-	if err := validateJSONValue(value, make(map[*jsonValue]bool)); err != nil {
+	if err := validateJSONValue(value); err != nil {
 		result.err = fmt.Errorf("evaluate JSON value: %w", err)
 
 		return result
