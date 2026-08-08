@@ -16,7 +16,7 @@ func streamBasicFaults(
 	covered map[string]bool,
 	yield func(Case) error,
 ) (StopReason, error) {
-	for _, fault := range plan.faultTargets {
+	for _, fault := range plan.faultSchedule {
 		if err := streamBasicFault(plan, fault, s, covered, yield); err != nil {
 			if errors.Is(err, errMaxSteps) {
 				return MaxStepsReached, nil
@@ -32,7 +32,7 @@ func streamBasicFaults(
 // streamBasicFault replays, applies, verifies, and emits one fault derivative.
 func streamBasicFault(
 	plan *searchPlan,
-	fault faultTarget,
+	fault faultProgram,
 	s *search,
 	covered map[string]bool,
 	yield func(Case) error,
@@ -56,9 +56,9 @@ func streamBasicFault(
 		return fmt.Errorf("evaluate fault derivative: %w", result.err)
 	}
 
-	matches, err := exactFailureClosure(result.failureRecords(), fault.closure)
+	matches, err := exactFailureClosure(result.failureRecords(), fault.expected)
 	if err != nil {
-		return fmt.Errorf("compare fault closure: %w", err)
+		return fmt.Errorf("compare fault expected: %w", err)
 	}
 
 	if result.valid || !matches {
@@ -76,7 +76,7 @@ func streamBasicFault(
 }
 
 // regenerateParent replays row search for one fresh, complete oracle-valid parent.
-func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValue, bool, error) {
+func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonValue, bool, error) {
 	if plan == nil {
 		return nil, false, errors.New("schematest: nil search plan")
 	}
@@ -121,8 +121,8 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 // parentReplayPins turns mutation-result presence into valid-parent presence.
 //
 //nolint:cyclop // Presence, type, and enum faults translate distinct pin dimensions.
-func parentReplayPins(fault faultTarget) []applicabilityPin {
-	pins := copyPlanPins(fault.pins)
+func parentReplayPins(fault faultProgram) []requirement {
+	pins := copyPlanPins(fault.requirements)
 	for index := range pins {
 		if pins[index].hasBranch {
 			if pins[index].composition == "anyOf" {
@@ -132,7 +132,7 @@ func parentReplayPins(fault faultTarget) []applicabilityPin {
 			}
 		}
 
-		for _, failure := range fault.closure {
+		for _, failure := range fault.expected {
 			if !instanceTemplateMatches(
 				failure.occurrence.instanceTemplate,
 				pins[index].occurrence.instanceTemplate,
@@ -142,9 +142,9 @@ func parentReplayPins(fault faultTarget) []applicabilityPin {
 
 			switch failure.rule {
 			case oracleRuleRequired:
-				pins[index].presence = planPinPresent
+				pins[index].presence = requirementPresent
 			case oracleRuleAdditionalProperties:
-				pins[index].presence = planPinAbsent
+				pins[index].presence = requirementAbsent
 			case oracleRuleType:
 				pins[index].hasKind = false
 			case oracleRuleEnum:
@@ -159,10 +159,10 @@ func parentReplayPins(fault faultTarget) []applicabilityPin {
 }
 
 // faultPinsMatch requires every fault-applicability precondition on a valid parent.
-func faultPinsMatch(result evaluation, value *jsonValue, pins []applicabilityPin) bool {
+func faultPinsMatch(result evaluation, value *jsonValue, pins []requirement) bool {
 	for _, pin := range pins {
 		switch {
-		case pin.presence != planPinNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
+		case pin.presence != requirementNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
 			return false
 		case pin.hasKind && !kindWasObserved(result.observedRecords(), pin.occurrence, pin.kind):
 			return false
@@ -175,7 +175,7 @@ func faultPinsMatch(result evaluation, value *jsonValue, pins []applicabilityPin
 }
 
 // applyFault copies the current parent, charges one fault choice, and applies one fault.
-func applyFault(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, error) {
+func applyFault(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, error) {
 	if faultNeedsCompositionSearch(fault) {
 		return applyCompositionFault(parent, fault, s)
 	}

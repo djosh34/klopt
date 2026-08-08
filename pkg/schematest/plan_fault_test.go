@@ -60,7 +60,7 @@ func TestMakePlanOmitsAnyOfFaultsIncompatibleWithParentType(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	for _, target := range plan.faultTargets {
+	for _, target := range plan.faultSchedule {
 		require.NotEqual(t, oracleRuleAnyOf, target.obligation.rule)
 		require.NotContains(t, target.obligation.occurrence.usePointer, "/anyOf/")
 	}
@@ -93,8 +93,8 @@ func TestMakePlanDirectedFaultsUseTheirOwnAnyOfApplicability(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|pattern|fault:pattern")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+	requireCompositionPin(t, fault.requirements, "anyOf", 0, false)
+	requireCompositionPin(t, fault.requirements, "anyOf", 1, true)
 }
 
 func TestMakePlanMaxLengthFaultUsesExactAnyOfApplicability(t *testing.T) {
@@ -114,8 +114,8 @@ func TestMakePlanMaxLengthFaultUsesExactAnyOfApplicability(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|maxLength|fault:maxLength")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+	requireCompositionPin(t, fault.requirements, "anyOf", 0, false)
+	requireCompositionPin(t, fault.requirements, "anyOf", 1, true)
 }
 
 func TestMakePlanTypeFaultUsesWrongKindAnyOfApplicability(t *testing.T) {
@@ -131,15 +131,15 @@ func TestMakePlanTypeFaultUsesWrongKindAnyOfApplicability(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|type|fault:type")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, true)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, false)
+	requireCompositionPin(t, fault.requirements, "anyOf", 0, true)
+	requireCompositionPin(t, fault.requirements, "anyOf", 1, false)
 }
 
 func TestFaultCandidateSupportsKindRejectsConflictingSameInstancePins(t *testing.T) {
 	t.Parallel()
 
 	occurrence := schemaOccurrence{usePointer: "#/branch", instanceTemplate: "#"}
-	candidate := faultTarget{pins: []applicabilityPin{
+	candidate := faultProgram{requirements: []requirement{
 		kindPin(occurrence, jsonString),
 		kindPin(occurrence, jsonNumber),
 	}}
@@ -165,8 +165,8 @@ func TestMakePlanPreservesNestedAllOfFaultsInAnyOfAggregate(t *testing.T) {
 		aggregate.obligation.ruleIdentity.String(),
 		aggregate.obligation.occurrence.usePointer + "/anyOf/0/allOf/0|#|type",
 		aggregate.obligation.occurrence.usePointer + "/anyOf/1|#|type",
-	}, identityStrings(aggregate.closure))
-	requireKindPin(t, aggregate.pins, aggregate.obligation.occurrence, jsonString)
+	}, identityStrings(aggregate.expected))
+	requireKindPin(t, aggregate.requirements, aggregate.obligation.occurrence, jsonString)
 }
 
 func TestMakePlanAnyOfAggregateUsesInheritedKindPins(t *testing.T) {
@@ -182,14 +182,14 @@ func TestMakePlanAnyOfAggregateUsesInheritedKindPins(t *testing.T) {
 	require.NoError(t, err)
 
 	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
-	requireKindPin(t, aggregate.pins, aggregate.obligation.occurrence, jsonString)
-	requireCompositionPin(t, aggregate.pins, "anyOf", 0, false)
-	requireCompositionPin(t, aggregate.pins, "anyOf", 1, false)
+	requireKindPin(t, aggregate.requirements, aggregate.obligation.occurrence, jsonString)
+	requireCompositionPin(t, aggregate.requirements, "anyOf", 0, false)
+	requireCompositionPin(t, aggregate.requirements, "anyOf", 1, false)
 	require.Equal(t, []string{
 		aggregate.obligation.ruleIdentity.String(),
 		aggregate.obligation.occurrence.usePointer + "/anyOf/0|#|type",
 		aggregate.obligation.occurrence.usePointer + "/anyOf/1|#|type",
-	}, identityStrings(aggregate.closure))
+	}, identityStrings(aggregate.expected))
 }
 
 func TestMakePlanMaximumFaultUsesDirectedBoundWitness(t *testing.T) {
@@ -206,8 +206,8 @@ func TestMakePlanMaximumFaultUsesDirectedBoundWitness(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|maximum|fault:maximum")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, true)
-	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
+	requireCompositionPin(t, fault.requirements, "anyOf", 0, true)
+	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.expected))
 }
 
 func TestMakePlanRequiredFaultsPopulateUnaffectedSiblings(t *testing.T) {
@@ -224,14 +224,14 @@ func TestMakePlanRequiredFaultsPopulateUnaffectedSiblings(t *testing.T) {
 	require.NoError(t, err)
 
 	idFault := findFaultTarget(t, plan, "|#/id|required|fault:required")
-	requirePin(t, idFault.pins, "#/id", planPinAbsent)
-	requirePin(t, idFault.pins, "#/name", planPinPresent)
-	requireCompositionPin(t, idFault.pins, "anyOf", 0, true)
+	requirePin(t, idFault.requirements, "#/id", requirementAbsent)
+	requirePin(t, idFault.requirements, "#/name", requirementPresent)
+	requireCompositionPin(t, idFault.requirements, "anyOf", 0, true)
 
 	nameFault := findFaultTarget(t, plan, "|#/name|required|fault:required")
-	requirePin(t, nameFault.pins, "#/name", planPinAbsent)
-	requirePin(t, nameFault.pins, "#/id", planPinPresent)
-	requireCompositionPin(t, nameFault.pins, "anyOf", 0, true)
+	requirePin(t, nameFault.requirements, "#/name", requirementAbsent)
+	requirePin(t, nameFault.requirements, "#/id", requirementPresent)
+	requireCompositionPin(t, nameFault.requirements, "anyOf", 0, true)
 }
 
 func TestMakePlanEnumFaultUsesStringOutsideCannedEnum(t *testing.T) {
@@ -247,8 +247,8 @@ func TestMakePlanEnumFaultUsesStringOutsideCannedEnum(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|enum|fault:enum")
-	requireKindPin(t, fault.pins, fault.obligation.occurrence, jsonString)
-	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
+	requireKindPin(t, fault.requirements, fault.obligation.occurrence, jsonString)
+	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.expected))
 }
 
 func TestMakePlanOmitsContradictoryAnyOfScalarLevel(t *testing.T) {
@@ -263,7 +263,7 @@ func TestMakePlanOmitsContradictoryAnyOfScalarLevel(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	for _, target := range plan.validTargets {
+	for _, target := range plan.validSchedule {
 		require.NotEqual(t, "|anyOf|level:mask:1", target.obligation.String())
 	}
 }
@@ -282,8 +282,8 @@ func TestMakePlanAdditionalPropertyFaultUsesAnAddedMemberAnyOfMask(t *testing.T)
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|#/*|additionalProperties|fault:additionalProperties")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+	requireCompositionPin(t, fault.requirements, "anyOf", 0, false)
+	requireCompositionPin(t, fault.requirements, "anyOf", 1, true)
 }
 
 func TestMakePlanAdditionalPropertyWitnessAvoidsAuthoredName(t *testing.T) {
@@ -301,8 +301,8 @@ func TestMakePlanAdditionalPropertyWitnessAvoidsAuthoredName(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|#/*|additionalProperties|fault:additionalProperties")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+	requireCompositionPin(t, fault.requirements, "anyOf", 0, false)
+	requireCompositionPin(t, fault.requirements, "anyOf", 1, true)
 }
 
 func TestMakePlanRequiredFaultUsesAnOmittedMemberAnyOfMask(t *testing.T) {
@@ -319,8 +319,8 @@ func TestMakePlanRequiredFaultUsesAnOmittedMemberAnyOfMask(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|#/id|required|fault:required")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+	requireCompositionPin(t, fault.requirements, "anyOf", 0, false)
+	requireCompositionPin(t, fault.requirements, "anyOf", 1, true)
 }
 
 func TestMakePlanEnumFaultUsesNullableKindWhenSiblingRulesExhaustStrings(t *testing.T) {
@@ -338,8 +338,8 @@ func TestMakePlanEnumFaultUsesNullableKindWhenSiblingRulesExhaustStrings(t *test
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|enum|fault:enum")
-	requireKindPin(t, fault.pins, fault.obligation.occurrence, jsonNull)
-	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
+	requireKindPin(t, fault.requirements, fault.obligation.occurrence, jsonNull)
+	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.expected))
 }
 
 func TestMakePlanOmitsExhaustiveNullableBooleanEnumFault(t *testing.T) {
@@ -355,7 +355,7 @@ func TestMakePlanOmitsExhaustiveNullableBooleanEnumFault(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	for _, target := range plan.faultTargets {
+	for _, target := range plan.faultSchedule {
 		require.NotEqual(t, oracleRuleEnum, target.obligation.rule)
 	}
 }
@@ -373,7 +373,7 @@ func TestMakePlanEnumFaultPinsTheDeclaredKind(t *testing.T) {
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|enum|fault:enum")
-	requireKindPin(t, fault.pins, fault.obligation.occurrence, jsonString)
+	requireKindPin(t, fault.requirements, fault.obligation.occurrence, jsonString)
 }
 
 func TestMakePlanIntegerTypeFaultUsesFractionalAnyOfApplicability(t *testing.T) {
@@ -389,8 +389,8 @@ func TestMakePlanIntegerTypeFaultUsesFractionalAnyOfApplicability(t *testing.T) 
 	require.NoError(t, err)
 
 	fault := findFaultTarget(t, plan, "|type|fault:type")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
+	requireCompositionPin(t, fault.requirements, "anyOf", 0, false)
+	requireCompositionPin(t, fault.requirements, "anyOf", 1, true)
 }
 
 func TestMakePlanFaultClosureDoesNotIncludeInapplicableLocalRules(t *testing.T) {
@@ -407,5 +407,5 @@ func TestMakePlanFaultClosureDoesNotIncludeInapplicableLocalRules(t *testing.T) 
 	require.NoError(t, err)
 
 	typeFault := findFaultTarget(t, plan, "|type|fault:type")
-	require.Equal(t, []string{typeFault.obligation.ruleIdentity.String()}, identityStrings(typeFault.closure))
+	require.Equal(t, []string{typeFault.obligation.ruleIdentity.String()}, identityStrings(typeFault.expected))
 }

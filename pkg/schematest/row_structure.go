@@ -32,7 +32,7 @@ const (
 func (s *search) walkArray(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
@@ -82,7 +82,7 @@ func (s *search) walkArray(
 func (s *search) walkArrayElements(
 	item *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	context rowSearchContext,
 	elements []*jsonValue,
 	index int,
@@ -119,7 +119,7 @@ func (s *search) walkArrayElements(
 // rowArrayLengths returns canonical and repair lengths for one array occurrence.
 //
 //nolint:cyclop,gocognit,gocyclo // Bound extraction and deterministic repair choices are one structural phase.
-func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []applicabilityPin) ([]int, error) {
+func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []requirement) ([]int, error) {
 	minimum := 0
 	maximum := int(^uint(0) >> 1)
 
@@ -226,7 +226,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 		}
 	}
 
-	if itemPinned && !itemPin.canonical && itemPin.presence == planPinPresent && minimum < 1 {
+	if itemPinned && !itemPin.canonical && itemPin.presence == requirementPresent && minimum < 1 {
 		minimum = 1
 	}
 
@@ -283,7 +283,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 func rowComposedArrayDefaultLengths(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 ) ([]int, error) {
 	return rowComposedArrayDefaultLengthsAt(node, occurrence, pins, make(map[*schemaNode]bool))
 }
@@ -294,7 +294,7 @@ func rowComposedArrayDefaultLengths(
 func rowComposedArrayDefaultLengthsAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	visiting map[*schemaNode]bool,
 ) ([]int, error) {
 	if node == nil || node.schemaShape == nil {
@@ -357,7 +357,7 @@ func rowComposedArrayDefaultLengthsAt(
 func rowNestedArrayBounds(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 ) ([][2]int, error) {
 	return rowNestedArrayBoundsAt(node, occurrence, pins, make(map[*schemaNode]bool))
 }
@@ -368,7 +368,7 @@ func rowNestedArrayBounds(
 func rowNestedArrayBoundsAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	visiting map[*schemaNode]bool,
 ) ([][2]int, error) {
 	maximum := int(^uint(0) >> 1)
@@ -494,7 +494,7 @@ func combineRowArrayBounds(left, right [][2]int) [][2]int {
 func (s *search) walkObject(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
@@ -512,7 +512,7 @@ func (s *search) walkObject(
 func (s *search) walkObjectMembers(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	context rowSearchContext,
 	members []rowMember,
 	values map[string]*jsonValue,
@@ -571,7 +571,7 @@ func (s *search) walkObjectMembers(
 //nolint:cyclop // Schema alternatives and child recursion are one DFS phase.
 func (s *search) walkRowMemberValues(
 	member rowMember,
-	pins []applicabilityPin,
+	pins []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
@@ -622,15 +622,15 @@ func (s *search) walkRowMemberValues(
 func rowMemberPresenceChoices(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	members []rowMember,
 	index int,
 	member rowMember,
-	pinned applicabilityPin,
+	pinned requirement,
 	presencePinned bool,
 ) ([]bool, error) {
 	if presencePinned && !pinned.canonical {
-		if pinned.presence == planPinPresent {
+		if pinned.presence == requirementPresent {
 			return []bool{true}, nil
 		}
 
@@ -642,7 +642,7 @@ func rowMemberPresenceChoices(
 	}
 
 	if presencePinned {
-		if pinned.presence == planPinPresent {
+		if pinned.presence == requirementPresent {
 			return []bool{true, false}, nil
 		}
 
@@ -665,7 +665,7 @@ func rowMemberPresenceChoices(
 func rowObjectMinimumProperties(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 ) (uint64, bool, error) {
 	return rowNestedObjectMinimumProperties(node, occurrence, pins, make(map[*schemaNode]bool))
 }
@@ -676,7 +676,7 @@ func rowObjectMinimumProperties(
 func rowNestedObjectMinimumProperties(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	visiting map[*schemaNode]bool,
 ) (uint64, bool, error) {
 	if node == nil || node.schemaShape == nil || !nodeCanHaveKind(node, jsonObject) {
@@ -766,7 +766,7 @@ func rowNestedObjectMinimumProperties(
 func rowCanonicalMemberPresence(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	members []rowMember,
 	index int,
 ) (bool, error) {
@@ -803,7 +803,7 @@ func rowCanonicalMemberPresence(
 // rowObjectMembers collects direct, composed, required, and pinned member names.
 //
 //nolint:cyclop,gocognit // Direct, composed, additional, and pin selection share one canonical pass.
-func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []applicabilityPin) ([]rowMember, error) {
+func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []requirement) ([]rowMember, error) {
 	specs := make(map[string][]rowMember)
 
 	required := make(map[string]bool)
@@ -819,7 +819,7 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 				continue
 			}
 
-			if pin.presence != planPinNoPresence || pin.hasKind {
+			if pin.presence != requirementNoPresence || pin.hasKind {
 				if _, exists := specs[name]; !exists {
 					specs[name] = nil
 				}
@@ -911,7 +911,7 @@ func composeRowMemberAlternatives(
 	base []rowMember,
 	sourceSets [][]rowMember,
 	required bool,
-	pins []applicabilityPin,
+	pins []requirement,
 ) (rowMember, error) {
 	if len(sourceSets) == 0 {
 		sourceSets = [][]rowMember{{}}
@@ -961,7 +961,7 @@ func composeRowMemberAlternatives(
 func rowAdditionalPropertySources(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 ) ([][]rowAdditionalPropertySource, error) {
 	visiting := make(map[*schemaNode]bool)
 
@@ -1093,7 +1093,7 @@ func combineRowAdditionalPropertySourceSets(
 func rowAdditionalMemberNames(
 	node *schemaNode,
 	specified map[string][]rowMember,
-	pins []applicabilityPin,
+	pins []requirement,
 	occurrence schemaOccurrence,
 ) ([]string, error) {
 	if !node.allowAdditionalProperties {
@@ -1163,7 +1163,7 @@ func collectRowObjectMembers(
 	occurrence schemaOccurrence,
 	specs map[string][]rowMember,
 	required map[string]bool,
-	pins []applicabilityPin,
+	pins []requirement,
 	requiredAllowed bool,
 	visiting map[*schemaNode]bool,
 ) error {
@@ -1232,7 +1232,7 @@ func collectRowObjectMembers(
 
 // rowCompositionPinTruth returns one pinned branch truth, defaulting to false.
 func rowCompositionPinTruth(
-	pins []applicabilityPin,
+	pins []requirement,
 	occurrence schemaOccurrence,
 	composition string,
 	branch int,
@@ -1266,13 +1266,13 @@ func rowChildName(parent, child string) (string, bool) {
 }
 
 // rowPresencePinDetails prefers a hard target pin over a canonical starting assignment.
-func rowPresencePinDetails(pins []applicabilityPin, occurrence schemaOccurrence) (applicabilityPin, bool) {
-	var canonical applicabilityPin
+func rowPresencePinDetails(pins []requirement, occurrence schemaOccurrence) (requirement, bool) {
+	var canonical requirement
 
 	canonicalFound := false
 
 	for _, pin := range pins {
-		if pin.presence == planPinNoPresence || !rowOccurrenceMatches(pin.occurrence, occurrence) {
+		if pin.presence == requirementNoPresence || !rowOccurrenceMatches(pin.occurrence, occurrence) {
 			continue
 		}
 
@@ -1290,11 +1290,11 @@ func rowPresencePinDetails(pins []applicabilityPin, occurrence schemaOccurrence)
 }
 
 // rowAdditionalPresencePinned reports whether the target explicitly asks for an extra member.
-func rowAdditionalPresencePinned(occurrence schemaOccurrence, pins []applicabilityPin) bool {
+func rowAdditionalPresencePinned(occurrence schemaOccurrence, pins []requirement) bool {
 	wantedTemplate := appendInstanceToken(occurrence.instanceTemplate, "*")
 
 	for _, pin := range pins {
-		if pin.canonical || pin.presence != planPinPresent ||
+		if pin.canonical || pin.presence != requirementPresent ||
 			!strings.HasSuffix(pin.occurrence.usePointer, "/additionalProperties") {
 			continue
 		}
@@ -1308,7 +1308,7 @@ func rowAdditionalPresencePinned(occurrence schemaOccurrence, pins []applicabili
 }
 
 // walkGenericValue assigns a small complete value where no child schema is available.
-func (s *search) walkGenericValue(_ []applicabilityPin, visit rowVisit) (bool, error) {
+func (s *search) walkGenericValue(_ []requirement, visit rowVisit) (bool, error) {
 	for _, kind := range canonicalJSONKinds() {
 		if err := s.assign(); err != nil {
 			return false, err

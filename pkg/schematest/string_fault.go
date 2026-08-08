@@ -49,7 +49,7 @@ type activeStringRules struct {
 func activeStringRulesFor(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	objective *stringSearchObjective,
 ) (activeStringRules, error) {
 	rules := activeStringRules{supported: true}
@@ -64,7 +64,7 @@ func activeStringRulesFor(
 func collectActiveStringRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	objective *stringSearchObjective,
 	rules *activeStringRules,
 ) error {
@@ -143,7 +143,7 @@ func collectActiveStringRules(
 }
 
 //nolint:cyclop // Objective admission, scalar traversal, and exact closure verification form one seam.
-func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bool, error) {
+func findStringFaultRow(target faultProgram, searchState *search) (*jsonValue, bool, error) {
 	if searchState == nil || searchState.model == nil || searchState.model.root == nil {
 		return nil, false, errors.New("schematest: string fault search has no model")
 	}
@@ -156,7 +156,7 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 	objective := &stringSearchObjective{
 		kind:       kind,
 		occurrence: target.obligation.occurrence,
-		closure:    append([]failureIdentity(nil), target.closure...),
+		closure:    append([]failureIdentity(nil), target.expected...),
 		rule:       target.obligation.rule,
 		level:      target.obligation.component,
 	}
@@ -181,7 +181,7 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 	handled, complete, err := searchState.walkDirectedStringObjective(
 		node,
 		occurrence,
-		target.pins,
+		target.requirements,
 		objective,
 		func(value *jsonValue) (bool, error) {
 			result := evaluateNode(node, value, occurrence)
@@ -189,7 +189,7 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 				return false, fmt.Errorf("evaluate directed string fault: %w", result.err)
 			}
 
-			matches, matchErr := exactFailureClosure(result.failureRecords(), target.closure)
+			matches, matchErr := exactFailureClosure(result.failureRecords(), target.expected)
 			if matchErr != nil || !matches {
 				return false, matchErr
 			}
@@ -366,7 +366,7 @@ func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIde
 func (s *search) walkDirectedStringObjective(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	objective *stringSearchObjective,
 	visit rowVisit,
 ) (bool, bool, error) {

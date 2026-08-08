@@ -21,7 +21,7 @@ type search struct {
 
 // rowSearchContext explicitly carries private directed and valid-target search inputs.
 type rowSearchContext struct {
-	validTarget *validTarget
+	validIntent *validIntent
 }
 
 // assign charges one structural, kind, composition, enum, or scalar choice.
@@ -42,7 +42,7 @@ func (s *search) assign() error {
 // findTargetRow searches one target without retaining generated rows.
 //
 //nolint:cyclop // Structural impossibility and row search share one target boundary.
-func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue, bool, error) {
+func findTargetRow(plan *searchPlan, target validIntent, s *search) (*jsonValue, bool, error) {
 	if plan == nil {
 		return nil, false, errors.New("schematest: nil search plan")
 	}
@@ -76,8 +76,8 @@ func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue,
 	complete, err := s.walkNode(
 		s.model.root,
 		s.model.root.occurrence,
-		target.pins,
-		rowSearchContext{validTarget: &target},
+		target.requirements,
+		rowSearchContext{validIntent: &target},
 		visit,
 	)
 	if err != nil {
@@ -90,7 +90,7 @@ func findTargetRow(plan *searchPlan, target validTarget, s *search) (*jsonValue,
 // targetPresenceForbiddenByActiveSchema rejects impossible active member targets.
 //
 //nolint:cyclop // Root-kind and concrete-member contradictions share one preflight.
-func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validTarget) (bool, error) {
+func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validIntent) (bool, error) {
 	tokens, ok := rowPointerTokens(target.expected.occurrence.instanceTemplate)
 	if !ok {
 		return false, nil
@@ -98,13 +98,13 @@ func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validTarget)
 
 	if len(tokens) == 0 {
 		collision, err := activeSchemaHasForbiddenDeclaration(
-			root, root.occurrence, target.pins, make(map[*schemaNode]bool),
+			root, root.occurrence, target.requirements, make(map[*schemaNode]bool),
 		)
 		if err != nil || !collision {
 			return false, err
 		}
 
-		for _, pin := range target.pins {
+		for _, pin := range target.requirements {
 			if pin.hasKind && rowOccurrenceMatches(pin.occurrence, target.expected.occurrence) &&
 				root.kind != schemaAny && !nodeAcceptsKindForTarget(root, pin.kind) {
 				return true, nil
@@ -116,8 +116,8 @@ func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validTarget)
 
 	present := false
 
-	for _, pin := range target.pins {
-		if pin.presence == planPinPresent &&
+	for _, pin := range target.requirements {
+		if pin.presence == requirementPresent &&
 			instanceTemplateMatches(pin.occurrence.instanceTemplate, target.expected.occurrence.instanceTemplate) {
 			present = true
 
@@ -139,7 +139,7 @@ func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validTarget)
 	}
 
 	return activeSchemaForbidsMember(
-		container, occurrence, target.pins, tokens[len(tokens)-1], make(map[*schemaNode]bool),
+		container, occurrence, target.requirements, tokens[len(tokens)-1], make(map[*schemaNode]bool),
 	)
 }
 
@@ -147,7 +147,7 @@ func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validTarget)
 func activeSchemaHasForbiddenDeclaration(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	visiting map[*schemaNode]bool,
 ) (bool, error) {
 	names := make(map[string]bool)
@@ -210,7 +210,7 @@ func collectActiveSameInstancePropertyNames(
 func activeSchemaForbidsMember(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	name string,
 	visiting map[*schemaNode]bool,
 ) (bool, error) {
@@ -273,15 +273,15 @@ func activeSchemaForbidsMember(
 // targetRowMatches requires a complete valid value and the target's exact pins.
 //
 //nolint:cyclop // Validity, levels, and the three pin dimensions are one acceptance pass.
-func targetRowMatches(result evaluation, target validTarget, value *jsonValue) bool {
+func targetRowMatches(result evaluation, target validIntent, value *jsonValue) bool {
 	if !result.valid || (!levelWasObserved(result.observedRecords(), target.expected) &&
 		!compositionLevelWasObserved(result, target.expected)) {
 		return false
 	}
 
-	for _, pin := range target.pins {
+	for _, pin := range target.requirements {
 		switch {
-		case pin.presence != planPinNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
+		case pin.presence != requirementNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
 			return false
 		case pin.hasKind && !kindWasObserved(result.observedRecords(), pin.occurrence, pin.kind):
 			return false
@@ -369,7 +369,7 @@ func compositionLevelWasObserved(result evaluation, expected levelIdentity) bool
 }
 
 // presencePinWasSatisfied checks one required or optional data path.
-func presencePinWasSatisfied(value *jsonValue, pin applicabilityPin) bool {
+func presencePinWasSatisfied(value *jsonValue, pin requirement) bool {
 	if strings.HasSuffix(pin.occurrence.usePointer, "/additionalProperties") {
 		return true
 	}
@@ -379,7 +379,7 @@ func presencePinWasSatisfied(value *jsonValue, pin applicabilityPin) bool {
 		return true
 	}
 
-	return present == (pin.presence == planPinPresent)
+	return present == (pin.presence == requirementPresent)
 }
 
 // rowValuePathPresent checks one exact instance-template path.
@@ -450,7 +450,7 @@ func kindWasObserved(observed iter.Seq[levelIdentity], occurrence schemaOccurren
 }
 
 // branchTruthWasObserved checks one exact allOf or anyOf truth bit.
-func branchTruthWasObserved(result evaluation, pin applicabilityPin) bool {
+func branchTruthWasObserved(result evaluation, pin requirement) bool {
 	truths := result.compositionRecords(pin.composition)
 
 	parentUsePointer := strings.TrimSuffix(

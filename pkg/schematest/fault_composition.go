@@ -9,7 +9,7 @@ import (
 
 // applyCompositionFault searches for the smallest exact aggregate edit relative
 // to the regenerated parent. Rejected candidates are transient.
-func applyCompositionFault(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, error) {
+func applyCompositionFault(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, error) {
 	if parent == nil {
 		return nil, errors.New("schematest: nil composition fault parent")
 	}
@@ -43,7 +43,7 @@ type compositionEdit struct {
 // current parent, so unrelated parent paths are retained.
 func findCompositionFaultDerivative(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
 	derivative, found, err := applyCompositionPinEdits(parent, fault, s)
@@ -79,7 +79,7 @@ func findCompositionFaultDerivative(
 	found, err = s.walkNode(
 		s.model.root,
 		s.model.root.occurrence,
-		fault.pins,
+		fault.requirements,
 		rowSearchContext{},
 		visit,
 	)
@@ -92,13 +92,13 @@ func findCompositionFaultDerivative(
 //nolint:cyclop // Pin collection and deterministic subset search are one operation.
 func applyCompositionPinEdits(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
 	var edits []compositionEdit
 
-	for _, pin := range fault.pins {
-		if pin.canonical || pin.presence != planPinAbsent {
+	for _, pin := range fault.requirements {
+		if pin.canonical || pin.presence != requirementAbsent {
 			continue
 		}
 
@@ -138,7 +138,7 @@ func applyCompositionPinEdits(
 // tryCompositionEdits charges and verifies one transient edit set.
 func tryCompositionEdits(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	edits []compositionEdit,
 	s *search,
 ) (*jsonValue, bool, error) {
@@ -166,9 +166,9 @@ func tryCompositionEdits(
 		return nil, false, fmt.Errorf("evaluate composition fault derivative: %w", result.err)
 	}
 
-	matches, matchErr := exactFailureClosure(result.failureRecords(), fault.closure)
+	matches, matchErr := exactFailureClosure(result.failureRecords(), fault.expected)
 	if matchErr != nil {
-		return nil, false, fmt.Errorf("compare composition fault closure: %w", matchErr)
+		return nil, false, fmt.Errorf("compare composition fault expected: %w", matchErr)
 	}
 
 	if result.valid || !matches {
@@ -379,12 +379,12 @@ func jsonValuesEqual(left, right *jsonValue) bool {
 // faultNeedsCompositionSearch reports whether one fault must make an anyOf
 // closure false atomically. Pure allOf branch faults use the ordinary isolated
 // mutation path so unaffected branches remain untouched.
-func faultNeedsCompositionSearch(fault faultTarget) bool {
+func faultNeedsCompositionSearch(fault faultProgram) bool {
 	if fault.obligation.rule == oracleRuleAllOf || fault.obligation.rule == oracleRuleAnyOf {
 		return true
 	}
 
-	for _, failure := range fault.closure {
+	for _, failure := range fault.expected {
 		if failure.rule == oracleRuleAnyOf {
 			return true
 		}

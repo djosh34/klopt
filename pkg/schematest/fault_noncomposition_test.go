@@ -38,7 +38,7 @@ func TestNonCompositionFaultFamiliesHaveExactClosures(t *testing.T) {
 
 			searchState := &search{model: model, maxSteps: 1_000_000}
 
-			for _, fault := range plan.faultTargets {
+			for _, fault := range plan.faultSchedule {
 				if fault.obligation.rule == oracleRuleAllOf || fault.obligation.rule == oracleRuleAnyOf {
 					continue
 				}
@@ -55,13 +55,13 @@ func TestNonCompositionFaultFamiliesHaveExactClosures(t *testing.T) {
 				result := evaluate(model, derivative)
 				require.NoError(t, result.err, fault.obligation.String())
 				require.False(t, result.valid, fault.obligation.String())
-				matches, matchErr := exactFailureClosure(result.failureRecords(), fault.closure)
+				matches, matchErr := exactFailureClosure(result.failureRecords(), fault.expected)
 				require.NoError(t, matchErr)
 				require.True(
 					t, matches, "%s: actual=%v expected=%v",
 					fault.obligation.String(),
 					identityStrings(result.failureRecords()),
-					identityStrings(fault.closure),
+					identityStrings(fault.expected),
 				)
 			}
 		})
@@ -240,7 +240,7 @@ func TestAdditionalPropertyFaultUsesActiveDeclaredPropertySchema(t *testing.T) {
 			derivative, err := applyFault(parent, fault, searchState)
 			require.NoError(t, err)
 			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
-			matches, err := derivativeHasClosure(model, derivative, fault.closure)
+			matches, err := derivativeHasClosure(model, derivative, fault.expected)
 			require.NoError(t, err)
 			require.True(t, matches)
 

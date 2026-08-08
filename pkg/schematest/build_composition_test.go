@@ -52,7 +52,7 @@ paths:
 
 	var targets []string
 
-	for _, fault := range plan.faultTargets {
+	for _, fault := range plan.faultSchedule {
 		if fault.obligation.rule == oracleRuleMinLength {
 			targets = append(targets, fault.obligation.occurrence.targetPointer)
 		}
@@ -298,11 +298,11 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	var target validTarget
+	var target validIntent
 
 	foundTarget := false
 
-	for _, candidate := range plan.validTargets {
+	for _, candidate := range plan.validSchedule {
 		if strings.Contains(candidate.obligation.String(), "/allOf/0/anyOf/0|#|minItems|level:valid") {
 			target = candidate
 			foundTarget = true
@@ -655,7 +655,7 @@ func TestCompositionPinsMatchConcreteArrayInstances(t *testing.T) {
 	pin := anyOfValidPins(parent, 0)[0]
 	concrete := schemaOccurrence{usePointer: "#/items", instanceTemplate: "#/0"}
 
-	require.True(t, rowHasCompositionPins([]applicabilityPin{pin}, concrete, "anyOf"))
+	require.True(t, rowHasCompositionPins([]requirement{pin}, concrete, "anyOf"))
 }
 
 // TestCompositionCoverageScansAllWildcardTruthVectors verifies wildcard coverage.

@@ -8,8 +8,7 @@ import (
 
 // activeNumberRule is one numeric schema in the selected composition view.
 type activeNumberRule struct {
-	node       *schemaNode
-	occurrence schemaOccurrence
+	node *schemaNode
 }
 
 // walkActiveNumberRules tries all exact authored edges, then the fair decimal frontier.
@@ -18,8 +17,8 @@ type activeNumberRule struct {
 func (s *search) walkActiveNumberRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	target *validTarget,
+	pins []requirement,
+	target *validIntent,
 	visit rowVisit,
 ) (bool, error) {
 	rules := make([]activeNumberRule, 0)
@@ -120,7 +119,7 @@ func nodeHasNumberObjective(node *schemaNode) bool {
 func collectActiveNumberRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	rules *[]activeNumberRule,
 	falseBranchObjective *bool,
 ) error {
@@ -128,7 +127,7 @@ func collectActiveNumberRules(
 		return errors.New("schematest: active number schema has no shape")
 	}
 
-	*rules = append(*rules, activeNumberRule{node: node, occurrence: occurrence})
+	*rules = append(*rules, activeNumberRule{node: node})
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(

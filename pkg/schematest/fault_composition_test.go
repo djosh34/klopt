@@ -31,7 +31,7 @@ func TestAllOfFaultKeepsSiblingBranchesTrue(t *testing.T) {
 	require.Equal(t, `{"a":"","b":""}`, string(marshalFaultTestValue(t, parent)))
 
 	result := evaluate(model, derivative)
-	require.Equal(t, identityStrings(fault.closure), identityStrings(result.failureRecords()))
+	require.Equal(t, identityStrings(fault.expected), identityStrings(result.failureRecords()))
 	require.Equal(t, [][]bool{{false, true}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf)))
 }
 
@@ -59,7 +59,7 @@ func TestAnyOfAggregateFaultAtomicallyMakesEveryBranchFalse(t *testing.T) {
 	require.Equal(t, `{"a":"","b":""}`, string(marshalFaultTestValue(t, parent)))
 
 	result := evaluate(model, derivative)
-	matches, err := exactFailureClosure(result.failureRecords(), fault.closure)
+	matches, err := exactFailureClosure(result.failureRecords(), fault.expected)
 	require.NoError(t, err)
 	require.True(t, matches)
 	require.Equal(t, [][]bool{{false, false}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAnyOf)))
@@ -131,7 +131,7 @@ func TestItemAnyOfAggregateFaultPreservesUnrelatedArrayElements(t *testing.T) {
 	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 
 	result := evaluate(model, derivative)
-	matches, err := exactFailureClosure(result.failureRecords(), fault.closure)
+	matches, err := exactFailureClosure(result.failureRecords(), fault.expected)
 	require.NoError(t, err)
 	require.True(t, matches)
 
@@ -162,7 +162,7 @@ func TestAnyOfAggregateFaultPreservesArrayPrefixWhenAssignmentLengthDiffers(t *t
 	require.Equal(t, `["keep"]`, string(marshalFaultTestValue(t, derivative)))
 	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 
-	matches, err := derivativeHasClosure(model, derivative, fault.closure)
+	matches, err := derivativeHasClosure(model, derivative, fault.expected)
 	require.NoError(t, err)
 	require.True(t, matches)
 

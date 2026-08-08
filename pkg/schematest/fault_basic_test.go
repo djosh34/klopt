@@ -42,7 +42,7 @@ func TestRegenerateParentAndApplyBasicTypeFault(t *testing.T) {
 
 	result := evaluate(model, derivative)
 	require.False(t, result.valid)
-	require.Equal(t, identityStrings(fault.closure), identityStrings(result.failureRecords()))
+	require.Equal(t, identityStrings(fault.expected), identityStrings(result.failureRecords()))
 }
 
 func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {

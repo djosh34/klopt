@@ -11,7 +11,7 @@ import (
 )
 
 // applyNonCompositionFault builds one isolated non-composition derivative.
-func applyNonCompositionFault(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, error) {
+func applyNonCompositionFault(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, error) {
 	if parent == nil {
 		return nil, errors.New("schematest: nil fault parent")
 	}
@@ -39,7 +39,7 @@ func applyNonCompositionFault(parent *jsonValue, fault faultTarget, s *search) (
 // findNonCompositionDerivative selects a deterministic witness without retaining candidates.
 //
 //nolint:cyclop // Closed fault-family dispatch is intentionally explicit.
-func findNonCompositionDerivative(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, bool, error) {
+func findNonCompositionDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
 	if fault.obligation.rule == oracleRuleRequired {
 		return findRequiredDerivative(parent, fault, s)
 	}
@@ -92,7 +92,7 @@ func formatHasNumericSemantics(format schemaFormat) bool {
 //nolint:cyclop // Seeded witnesses and active-conjunction fallback share one search.
 func findTypeDerivative(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	node *schemaNode,
 	model *schemaModel,
 	s *search,
@@ -121,14 +121,14 @@ func findTypeDerivative(
 		}
 
 		withoutType := cloneWithoutFaultRule(container, occurrence, fault.obligation.occurrence, oracleRuleType)
-		if !activeSchemaAllowsKind(withoutType, occurrence, fault.pins, kind, make(map[*schemaNode]bool)) {
+		if !activeSchemaAllowsKind(withoutType, occurrence, fault.requirements, kind, make(map[*schemaNode]bool)) {
 			continue
 		}
 
 		derivative = nil
 
 		complete, err := s.walkNode(
-			withoutType, occurrence, fault.pins, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
+			withoutType, occurrence, fault.requirements, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
 				selected, matched, selectErr := firstReplacementDerivative(
 					parent, fault, slices.Values([]*jsonValue{candidate}), model, s,
 				)
@@ -151,7 +151,7 @@ func findTypeDerivative(
 
 func findEnumDerivative(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	node *schemaNode,
 	model *schemaModel,
 	s *search,
@@ -180,7 +180,7 @@ func findEnumDerivative(
 		derivative = nil
 
 		complete, err := s.walkNode(
-			withoutEnum, occurrence, fault.pins, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
+			withoutEnum, occurrence, fault.requirements, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
 				selected, matched, selectErr := firstReplacementDerivative(
 					parent, fault, slices.Values([]*jsonValue{candidate}), model, s,
 				)
@@ -205,7 +205,7 @@ func findEnumDerivative(
 func activeSchemaAllowsKind(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	kind jsonKind,
 	visiting map[*schemaNode]bool,
 ) bool {
@@ -299,7 +299,7 @@ func cloneWithoutFaultRule(
 	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}
 }
 
-func findNumberDerivative(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, bool, error) {
+func findNumberDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
 	container, occurrence, found := resolveFaultContainer(
 		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, jsonNumber,
 	)
@@ -310,7 +310,7 @@ func findNumberDerivative(parent *jsonValue, fault faultTarget, s *search) (*jso
 	var derivative *jsonValue
 
 	complete, err := s.walkActiveNumberRules(
-		container, occurrence, fault.pins, nil, func(candidate *jsonValue) (bool, error) {
+		container, occurrence, fault.requirements, nil, func(candidate *jsonValue) (bool, error) {
 			selected, matched, selectErr := firstReplacementDerivative(
 				parent, fault, slices.Values([]*jsonValue{candidate}), s.model, s,
 			)
@@ -330,7 +330,7 @@ func findNumberDerivative(parent *jsonValue, fault faultTarget, s *search) (*jso
 	return derivative, complete, nil
 }
 
-func findStringDerivative(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, bool, error) {
+func findStringDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
 	candidate, found, err := findStringFaultRow(fault, s)
 	if err != nil || !found {
 		return nil, false, err
@@ -341,7 +341,7 @@ func findStringDerivative(parent *jsonValue, fault faultTarget, s *search) (*jso
 
 func firstReplacementDerivative(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	candidates iter.Seq[*jsonValue],
 	model *schemaModel,
 	s *search,
@@ -367,7 +367,7 @@ func firstReplacementDerivative(
 				continue
 			}
 
-			matched, err := derivativeHasClosure(model, derivative, fault.closure)
+			matched, err := derivativeHasClosure(model, derivative, fault.expected)
 			if err != nil {
 				return nil, false, err
 			}
@@ -384,7 +384,7 @@ func firstReplacementDerivative(
 //nolint:cyclop // Exact count conversion, resize, and item repair are one mutation.
 func findArrayCountDerivative(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	node *schemaNode,
 	s *search,
 ) (*jsonValue, bool, error) {
@@ -438,7 +438,7 @@ func findArrayCountDerivative(
 		var derivative *jsonValue
 
 		complete, walkErr := walkActiveFaultChildValues(
-			container, containerOccurrence, fault.pins, rowChildItems, "", s,
+			container, containerOccurrence, fault.requirements, rowChildItems, "", s,
 			func(witness *jsonValue) (bool, error) {
 				candidate, matched, candidateErr := buildArrayCountDerivative(
 					parent, path, desired, witness, fault, s,
@@ -465,7 +465,7 @@ func buildArrayCountDerivative(
 	path []string,
 	desired int,
 	witness *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
 	if assignErr := s.assign(); assignErr != nil {
@@ -499,7 +499,7 @@ func buildArrayCountDerivative(
 		array.array = append(array.array, item)
 	}
 
-	matched, matchErr := derivativeHasClosure(s.model, candidate, fault.closure)
+	matched, matchErr := derivativeHasClosure(s.model, candidate, fault.expected)
 
 	return candidate, matched, matchErr
 }
@@ -508,7 +508,7 @@ func buildArrayCountDerivative(
 func walkActiveFaultChildValues(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	kind rowChildKind,
 	name string,
 	s *search,
@@ -565,7 +565,7 @@ func walkActiveFaultChildValues(
 //nolint:cyclop,gocognit // Exact count conversion and active member search are one mutation.
 func findObjectCountDerivative(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	node *schemaNode,
 	s *search,
 ) (*jsonValue, bool, error) {
@@ -607,7 +607,7 @@ func findObjectCountDerivative(
 			return nil, false, exhaustFaultStructuralBudget(s)
 		}
 
-		growthPins := append([]applicabilityPin(nil), fault.pins...)
+		growthPins := append([]requirement(nil), fault.requirements...)
 
 		members, memberErr := rowObjectMembers(container, containerOccurrence, growthPins)
 		if memberErr != nil {
@@ -637,7 +637,7 @@ func findObjectCountDerivative(
 			available++
 		}
 
-		if len(growthPins) != len(fault.pins) {
+		if len(growthPins) != len(fault.requirements) {
 			members, memberErr = rowObjectMembers(container, containerOccurrence, growthPins)
 			if memberErr != nil {
 				return nil, false, memberErr
@@ -658,7 +658,7 @@ func findObjectCountDerivative(
 //nolint:cyclop // Subset search, charging, and closure checking form one bounded repair.
 func findObjectShrinkDerivative(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	node *schemaNode,
 	paths [][]string,
 	s *search,
@@ -707,7 +707,7 @@ func findObjectShrinkDerivative(
 				delete(candidateObject.object, name)
 			}
 
-			matched, matchErr := derivativeHasClosure(s.model, candidate, fault.closure)
+			matched, matchErr := derivativeHasClosure(s.model, candidate, fault.expected)
 			if matchErr != nil || !matched {
 				return false, matchErr
 			}
@@ -754,14 +754,15 @@ func visitNameSubsets(names []string, size int, visit func([]string) (bool, erro
 	return walk(0)
 }
 
-func faultMemberPresencePin(occurrence schemaOccurrence, name string) applicabilityPin {
-	return applicabilityPin{
+func faultMemberPresencePin(occurrence schemaOccurrence, name string) requirement {
+	return requirement{
+		tag: requirementPresenceState,
 		occurrence: schemaOccurrence{
 			usePointer:       occurrence.usePointer + "/additionalProperties",
 			targetPointer:    occurrence.targetPointer,
 			instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, name),
 		},
-		presence: planPinPresent,
+		presence: requirementPresent,
 	}
 }
 
@@ -771,8 +772,8 @@ func findObjectGrowthDerivative(
 	path []string,
 	desired int,
 	members []rowMember,
-	fault faultTarget,
-	pins []applicabilityPin,
+	fault faultProgram,
+	pins []requirement,
 	s *search,
 ) (*jsonValue, bool, error) {
 	var derivative *jsonValue
@@ -786,7 +787,7 @@ func findObjectGrowthDerivative(
 		}
 
 		if len(object.object) == desired {
-			matched, err := derivativeHasClosure(s.model, candidate, fault.closure)
+			matched, err := derivativeHasClosure(s.model, candidate, fault.expected)
 			if err != nil || !matched {
 				return false, err
 			}
@@ -836,7 +837,7 @@ func findObjectGrowthDerivative(
 	return derivative, found, err
 }
 
-func findRequiredDerivative(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, bool, error) {
+func findRequiredDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
 	tokens, ok := rowPointerTokens(fault.obligation.occurrence.instanceTemplate)
 	if !ok || len(tokens) == 0 {
 		return nil, false, errors.New("schematest: required fault has no member path")
@@ -862,7 +863,7 @@ func findRequiredDerivative(parent *jsonValue, fault faultTarget, s *search) (*j
 
 		delete(object.object, name)
 
-		matched, err := derivativeHasClosure(s.model, candidate, fault.closure)
+		matched, err := derivativeHasClosure(s.model, candidate, fault.expected)
 		if err != nil || matched {
 			return candidate, matched, err
 		}
@@ -874,7 +875,7 @@ func findRequiredDerivative(parent *jsonValue, fault faultTarget, s *search) (*j
 //nolint:cyclop // Path and active-witness retries form one mutation search.
 func findAdditionalPropertyDerivative(
 	parent *jsonValue,
-	fault faultTarget,
+	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
 	tokens, ok := rowPointerTokens(fault.obligation.occurrence.instanceTemplate)
@@ -896,7 +897,7 @@ func findAdditionalPropertyDerivative(
 
 	name := additionalPropertyWitnessName(container)
 
-	pins := append([]applicabilityPin(nil), fault.pins...)
+	pins := append([]requirement(nil), fault.requirements...)
 	pins = append(pins, faultMemberPresencePin(containerOccurrence, name))
 
 	for _, path := range matchingValuePaths(parent, parentPointer) {
@@ -926,7 +927,7 @@ func findAdditionalPropertyDerivative(
 
 				object.object[name] = value
 
-				matched, matchErr := derivativeHasClosure(s.model, candidate, fault.closure)
+				matched, matchErr := derivativeHasClosure(s.model, candidate, fault.expected)
 				if matchErr != nil || !matched {
 					return false, matchErr
 				}

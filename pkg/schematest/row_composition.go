@@ -32,7 +32,7 @@ const (
 func rowChildSchemaChoices(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	kind rowChildKind,
 	name string,
 ) ([]rowSchemaChoice, error) {
@@ -70,7 +70,7 @@ func rowChildSchemaChoices(
 func rowChildSchemaSourceSets(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	kind rowChildKind,
 	name string,
 ) ([][]rowSchemaSource, error) {
@@ -85,7 +85,7 @@ func rowChildSchemaSourceSets(
 func rowChildSchemaSourceSetsAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	kind rowChildKind,
 	name string,
 	visiting map[*schemaNode]bool,
@@ -304,14 +304,14 @@ func rowChildOccurrence(
 }
 
 // rowPreferredSchemaSources puts a target-pinned source first before composition merging.
-func rowPreferredSchemaSources(sources []rowSchemaSource, pins []applicabilityPin) []rowSchemaSource {
+func rowPreferredSchemaSources(sources []rowSchemaSource, pins []requirement) []rowSchemaSource {
 	ordered := append([]rowSchemaSource(nil), sources...)
 
 	for index, source := range ordered {
 		preferred := false
 
 		for _, pin := range pins {
-			if (pin.hasKind || pin.presence != planPinNoPresence) &&
+			if (pin.hasKind || pin.presence != requirementNoPresence) &&
 				rowOccurrenceMatches(pin.occurrence, source.occurrence) {
 				preferred = true
 
@@ -370,7 +370,7 @@ func mergeRowSchemaSources(sources []rowSchemaSource) (rowSchemaChoice, bool, er
 // composeRowMember merges all direct and active composed schemas for one object name.
 //
 //nolint:cyclop // Common-schema selection and inactive-branch alternatives are one phase.
-func composeRowMember(name string, candidates []rowMember, required bool, pins []applicabilityPin) (rowMember, error) {
+func composeRowMember(name string, candidates []rowMember, required bool, pins []requirement) (rowMember, error) {
 	common := make([]rowSchemaSource, 0, len(candidates))
 	fallback := make([]rowMember, 0, len(candidates))
 
@@ -441,7 +441,7 @@ func composeRowMember(name string, candidates []rowMember, required bool, pins [
 // rowMemberCompositionState identifies anyOf branch context for one property schema.
 //
 //nolint:cyclop // Candidate branch and sibling-parent checks are one applicability decision.
-func rowMemberCompositionState(candidate rowMember, pins []applicabilityPin) (bool, bool) {
+func rowMemberCompositionState(candidate rowMember, pins []requirement) (bool, bool) {
 	active := false
 	constrained := false
 
@@ -506,7 +506,7 @@ func rowAnyOfParentUsePointer(usePointer string) (string, bool) {
 
 // rowCompositionTruthStates reads branch pins using the pin template as wildcard pattern.
 func rowCompositionTruthStates(
-	pins []applicabilityPin,
+	pins []requirement,
 	occurrence schemaOccurrence,
 	composition string,
 	count int,

@@ -11,9 +11,9 @@ const (
 )
 
 const (
-	planPinNoPresence pinPresence = iota
-	planPinPresent
-	planPinAbsent
+	requirementNoPresence requirementPresence = iota
+	requirementPresent
+	requirementAbsent
 )
 
 // obligation is one private report identity. Its string form is the only
@@ -31,12 +31,35 @@ func (identity obligation) String() string {
 	return identity.ruleIdentity.String() + "|" + identity.component
 }
 
-// applicabilityPin is a structural precondition for one planned target.
-type applicabilityPin struct {
-	occurrence  schemaOccurrence
+// requirementKind tags each concrete declarative constraint.
+type requirementKind uint8
+
+const (
+	requirementNone requirementKind = iota
+	requirementActiveRules
+	requirementTargetLevel
+	requirementExactEnumMember
+	requirementJSONKind
+	requirementPresenceState
+	requirementExactCount
+	requirementBranchTruth
+)
+
+// requirement is one declarative search constraint. A schema reference points
+// only to immutable admitted model input; enum values are authored input, never
+// generated candidates.
+type requirement struct {
+	tag requirementKind
+
+	occurrence schemaOccurrence
+	active     *schemaNode
+	target     levelIdentity
+	enumMember *enumMember
+	count      *exactCount
+
 	kind        jsonKind
 	hasKind     bool
-	presence    pinPresence
+	presence    requirementPresence
 	canonical   bool // Canonical structural assignments remain repairable during search.
 	composition string
 	branch      int
@@ -44,29 +67,40 @@ type applicabilityPin struct {
 	hasBranch   bool
 }
 
-// pinPresence identifies whether a structural child must be supplied.
-type pinPresence uint8
+// requirementPresence identifies whether a structural child must be supplied.
+type requirementPresence uint8
 
-// validTarget is one focused valid obligation and its clean-oracle pins.
-type validTarget struct {
-	obligation obligation
-	expected   levelIdentity
-	pins       []applicabilityPin
+// validIntent is one focused valid obligation and its complete requirements.
+type validIntent struct {
+	obligation   obligation
+	expected     levelIdentity
+	requirements []requirement
 }
 
-// faultTarget is one isolated invalid obligation and its exact failure closure.
-type faultTarget struct {
-	obligation obligation
-	pins       []applicabilityPin
-	closure    []failureIdentity
+// failureSet is one immutable expected failure identity set.
+type failureSet = []failureIdentity
+
+// faultClosureProgram links closure alternatives without materializing a
+// Cartesian product.
+type faultClosureProgram struct {
+	expected failureSet
+	next     *faultClosureProgram
 }
 
-// searchPlan contains canonical valid and fault schedules. It retains no rows
-// or scalar witnesses.
+// faultProgram is one isolated invalid obligation and its requirements.
+type faultProgram struct {
+	obligation   obligation
+	requirements []requirement
+	expected     failureSet
+	alternatives *faultClosureProgram
+}
+
+// searchPlan keeps report, valid execution, and fault execution order separate.
+// It retains no rows or scalar candidates.
 type searchPlan struct {
-	validTargets []validTarget
-	faultTargets []faultTarget
-	obligations  []obligation
+	validSchedule []validIntent
+	faultSchedule []faultProgram
+	obligations   []obligation
 }
 
 // obligationIDs returns report order without exposing planner types publicly.
@@ -85,12 +119,12 @@ func (plan *searchPlan) obligationIDs() []string {
 
 // validObligationIDs returns the focused-valid portion of report order.
 func (plan *searchPlan) validObligationIDs() []string {
-	if plan == nil || len(plan.validTargets) == 0 {
+	if plan == nil || len(plan.validSchedule) == 0 {
 		return nil
 	}
 
-	result := make([]string, 0, len(plan.validTargets))
-	for _, target := range plan.validTargets {
+	result := make([]string, 0, len(plan.validSchedule))
+	for _, target := range plan.validSchedule {
 		result = append(result, target.obligation.String())
 	}
 
@@ -99,12 +133,12 @@ func (plan *searchPlan) validObligationIDs() []string {
 
 // faultObligationIDs returns the isolated-fault portion of report order.
 func (plan *searchPlan) faultObligationIDs() []string {
-	if plan == nil || len(plan.faultTargets) == 0 {
+	if plan == nil || len(plan.faultSchedule) == 0 {
 		return nil
 	}
 
-	result := make([]string, 0, len(plan.faultTargets))
-	for _, target := range plan.faultTargets {
+	result := make([]string, 0, len(plan.faultSchedule))
+	for _, target := range plan.faultSchedule {
 		result = append(result, target.obligation.String())
 	}
 

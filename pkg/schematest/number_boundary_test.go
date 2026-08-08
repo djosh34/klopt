@@ -6,6 +6,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// collectNumberScheduleForTest collects the finite exact-number schedule for assertions.
+func collectNumberScheduleForTest(node *schemaNode) ([]*jsonValue, error) {
+	schedule, err := newNumberSchedule([]activeNumberRule{{node: node}})
+	if err != nil {
+		return nil, err
+	}
+
+	state := &search{maxSteps: ^uint64(0)}
+
+	var values []*jsonValue
+
+	_, err = state.walkNumberDeterministic(schedule, func(value *jsonValue) (bool, error) {
+		values = append(values, value)
+
+		return false, nil
+	})
+
+	return values, err
+}
+
 // TestNumberBoundaryCandidates pins exact boundary order, quantum, dedupe, and wire bytes.
 func TestNumberBoundaryCandidates(t *testing.T) {
 	t.Parallel()
@@ -85,7 +105,7 @@ func TestNumberBoundaryCandidates(t *testing.T) {
 				node.multipleOf = requireExactNumber(t, test.multiple)
 			}
 
-			candidates, err := numberDeterministicCandidates(node)
+			candidates, err := collectNumberScheduleForTest(node)
 			require.NoError(t, err)
 			require.Equal(t, test.want, marshalNumberCandidates(t, candidates))
 		})
@@ -123,7 +143,7 @@ func TestNumberIntegerFormatCandidates(t *testing.T) {
 			t.Parallel()
 
 			node := &schemaNode{schemaShape: &schemaShape{kind: schemaNumber, format: test.format}}
-			candidates, err := numberDeterministicCandidates(node)
+			candidates, err := collectNumberScheduleForTest(node)
 			require.NoError(t, err)
 			require.Equal(t, test.want, marshalNumberCandidates(t, candidates))
 		})
@@ -139,7 +159,7 @@ func TestNumberFloatFormatCandidates(t *testing.T) {
 			t.Parallel()
 
 			node := &schemaNode{schemaShape: &schemaShape{kind: schemaNumber, format: format}}
-			candidates, err := numberDeterministicCandidates(node)
+			candidates, err := collectNumberScheduleForTest(node)
 			require.NoError(t, err)
 			require.Len(t, candidates, 5)
 			require.Equal(t, "0", marshalNumberCandidates(t, candidates[:1])[0])
@@ -379,7 +399,7 @@ func TestWalkScalarCompilesOneActiveNumericSchedule(t *testing.T) {
 		schemaJSON: requireStrictJSONValue(t, `{"type":"number"}`),
 	}}
 	occurrence := schemaOccurrence{usePointer: "#/schema", instanceTemplate: "#"}
-	pins := []applicabilityPin{
+	pins := []requirement{
 		{
 			occurrence: schemaOccurrence{
 				usePointer: "#/schema/anyOf/0", instanceTemplate: "#",

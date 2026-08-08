@@ -15,7 +15,7 @@ type rowVisit func(*jsonValue) (bool, error)
 func (s *search) walkNode(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
@@ -72,7 +72,7 @@ func (s *search) walkNode(
 func (s *search) chargeNodeCompositions(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 ) error {
 	return s.chargeNestedCompositions(node, occurrence, pins, make(map[*schemaNode]bool))
 }
@@ -83,7 +83,7 @@ func (s *search) chargeNodeCompositions(
 func (s *search) chargeNestedCompositions(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	visiting map[*schemaNode]bool,
 ) error {
 	if node == nil || node.schemaShape == nil {
@@ -137,7 +137,7 @@ func (s *search) chargeNestedCompositions(
 }
 
 // rowKindChoices returns one pinned kind or the planner's canonical kind order.
-func rowKindChoices(node *schemaNode, occurrence schemaOccurrence, pins []applicabilityPin) ([]jsonKind, error) {
+func rowKindChoices(node *schemaNode, occurrence schemaOccurrence, pins []requirement) ([]jsonKind, error) {
 	var pinned *jsonKind
 
 	for _, pin := range pins {
@@ -231,7 +231,7 @@ func rowDirectValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 func (s *search) rowChildValueUsable(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	value *jsonValue,
 ) (bool, error) {
 	result := evaluateNode(node, value, occurrence)
@@ -256,7 +256,7 @@ func (s *search) rowChildValueUsable(
 }
 
 // rowBranchContainsOccurrence reports whether a pinned composition branch contains one child.
-func rowBranchContainsOccurrence(pin applicabilityPin, occurrence schemaOccurrence) bool {
+func rowBranchContainsOccurrence(pin requirement, occurrence schemaOccurrence) bool {
 	prefix := pin.occurrence.usePointer
 	if occurrence.usePointer != prefix && !strings.HasPrefix(occurrence.usePointer, prefix+"/") {
 		return false
@@ -284,7 +284,7 @@ func rowInstancePrefixMatches(prefix, value string) bool {
 }
 
 // rowHasCompositionPins reports whether one local composition has an explicit target state.
-func rowHasCompositionPins(pins []applicabilityPin, occurrence schemaOccurrence, composition string) bool {
+func rowHasCompositionPins(pins []requirement, occurrence schemaOccurrence, composition string) bool {
 	prefix := occurrence.usePointer + "/" + composition + "/"
 	for _, pin := range pins {
 		if pin.hasBranch && pin.composition == composition &&

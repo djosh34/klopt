@@ -10,7 +10,7 @@ import (
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 	context rowSearchContext,
 	kind jsonKind,
 	visit rowVisit,
@@ -19,10 +19,10 @@ func (s *search) walkScalar(
 		return s.walkActiveScalarPinAlternatives(
 			node,
 			occurrence,
-			append([]applicabilityPin(nil), pins...),
-			func(activePins []applicabilityPin) (bool, error) {
+			append([]requirement(nil), pins...),
+			func(activePins []requirement) (bool, error) {
 				return s.walkActiveNumberRules(
-					node, occurrence, activePins, context.validTarget, visit,
+					node, occurrence, activePins, context.validIntent, visit,
 				)
 			},
 		)
@@ -53,10 +53,10 @@ func (s *search) walkScalar(
 		return s.walkActiveScalarPinAlternatives(
 			node,
 			occurrence,
-			append([]applicabilityPin(nil), pins...),
-			func(activePins []applicabilityPin) (bool, error) {
+			append([]requirement(nil), pins...),
+			func(activePins []requirement) (bool, error) {
 				return s.walkActiveStringRules(
-					node, occurrence, activePins, context.validTarget, visit,
+					node, occurrence, activePins, context.validIntent, visit,
 				)
 			},
 		)
@@ -71,8 +71,8 @@ func (s *search) walkScalar(
 func (s *search) walkActiveStringRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	target *validTarget,
+	pins []requirement,
+	target *validIntent,
 	visit rowVisit,
 ) (bool, error) {
 	rules, err := activeStringRulesFor(node, occurrence, pins, nil)

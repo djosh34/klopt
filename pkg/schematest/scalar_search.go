@@ -9,8 +9,8 @@ import (
 func (s *search) walkActiveScalarPinAlternatives(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	visit func([]applicabilityPin) (bool, error),
+	pins []requirement,
+	visit func([]requirement) (bool, error),
 ) (bool, error) {
 	anyOfNode, anyOfOccurrence, found := firstUnpinnedScalarAnyOf(node, occurrence, pins)
 	if !found {
@@ -31,7 +31,8 @@ func (s *search) walkActiveScalarPinAlternatives(
 				anyOfOccurrence.usePointer+"/anyOf/"+itoa(branch),
 				anyOfOccurrence.instanceTemplate,
 			)
-			pins = append(pins, applicabilityPin{
+			pins = append(pins, requirement{
+				tag:         requirementBranchTruth,
 				occurrence:  branchOccurrence,
 				composition: "anyOf",
 				branch:      branch,
@@ -55,7 +56,7 @@ func (s *search) walkActiveScalarPinAlternatives(
 func firstUnpinnedScalarAnyOf(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	pins []requirement,
 ) (*schemaNode, schemaOccurrence, bool) {
 	if len(node.anyOf) > 0 {
 		states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))

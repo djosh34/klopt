@@ -36,13 +36,13 @@ func makePlan(model *schemaModel) (*searchPlan, error) {
 		return nil, err
 	}
 
-	if err := stablePlanSort(compiled.valid, func(left, right validTarget) (int, error) {
+	if err := stablePlanSort(compiled.valid, func(left, right validIntent) (int, error) {
 		return comparePlanObligations(left.obligation, right.obligation)
 	}); err != nil {
 		return nil, fmt.Errorf("sort valid obligations: %w", err)
 	}
 
-	if err := stablePlanSort(compiled.faults, func(left, right faultTarget) (int, error) {
+	if err := stablePlanSort(compiled.faults, func(left, right faultProgram) (int, error) {
 		return comparePlanObligations(left.obligation, right.obligation)
 	}); err != nil {
 		return nil, fmt.Errorf("sort fault obligations: %w", err)
@@ -66,9 +66,9 @@ func makePlan(model *schemaModel) (*searchPlan, error) {
 	}
 
 	return &searchPlan{
-		validTargets: compiled.valid,
-		faultTargets: compiled.faults,
-		obligations:  obligations,
+		validSchedule: compiled.valid,
+		faultSchedule: compiled.faults,
+		obligations:   obligations,
 	}, nil
 }
 
@@ -79,15 +79,15 @@ type planBuilder struct {
 
 // compiledNodePlan contains targets collected below one schema occurrence.
 type compiledNodePlan struct {
-	valid  []validTarget
-	faults []faultTarget
+	valid  []validIntent
+	faults []faultProgram
 }
 
 // anyOfBranchPlan contains branch faults that can represent an exact closure.
 type anyOfBranchPlan struct {
 	node            *schemaNode
 	occurrence      schemaOccurrence
-	representatives []faultTarget
+	representatives []faultProgram
 }
 
 // compileNode compiles one occurrence with separate valid and fault context.
@@ -96,8 +96,8 @@ type anyOfBranchPlan struct {
 func (builder *planBuilder) compileNode(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 	visiting map[*schemaNode]bool,
 ) (compiledNodePlan, error) {
 	if node == nil || node.schemaShape == nil {
@@ -111,8 +111,13 @@ func (builder *planBuilder) compileNode(
 	visiting[node] = true
 	defer delete(visiting, node)
 
-	validPins := defaultPlanPins(validInherited, node, occurrence)
-	faultPins := defaultPlanPins(faultInherited, node, occurrence)
+	activeRules := requirement{
+		tag:        requirementActiveRules,
+		occurrence: occurrence,
+		active:     node,
+	}
+	validPins := appendPlanPins(defaultPlanPins(validInherited, node, occurrence), activeRules)
+	faultPins := appendPlanPins(defaultPlanPins(faultInherited, node, occurrence), activeRules)
 	result := compiledNodePlan{}
 
 	if err := builder.compileTypeRules(&result, node, occurrence, validPins, faultPins); err != nil {
@@ -209,8 +214,8 @@ func (builder *planBuilder) compileAnyOfChildren(
 	result *compiledNodePlan,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 	visiting map[*schemaNode]bool,
 	anyOfIdentity ruleIdentity,
 ) error {
@@ -267,7 +272,7 @@ func (builder *planBuilder) compileAnyOfChildren(
 			compatible := true
 
 			for siblingIndex, representative := range representatives {
-				if siblingIndex != index && !planPinsCompatible(candidate.pins, representative.pins) {
+				if siblingIndex != index && !planPinsCompatible(candidate.requirements, representative.requirements) {
 					compatible = false
 
 					break
@@ -278,16 +283,16 @@ func (builder *planBuilder) compileAnyOfChildren(
 				continue
 			}
 
-			pins := appendPlanPins(candidate.pins, parentFaultPins...)
-			closure := append([]failureIdentity(nil), candidate.closure...)
+			pins := appendPlanPins(candidate.requirements, parentFaultPins...)
+			closure := append([]failureIdentity(nil), candidate.expected...)
 
 			for siblingIndex, representative := range representatives {
 				if siblingIndex == index {
 					continue
 				}
 
-				pins = appendPlanPins(pins, representative.pins...)
-				closure = append(closure, representative.closure...)
+				pins = appendPlanPins(pins, representative.requirements...)
+				closure = append(closure, representative.expected...)
 			}
 
 			closure = append(closure, failureIdentity(anyOfIdentity))
@@ -309,8 +314,8 @@ func (builder *planBuilder) compileAnyOfChildren(
 	closure := make([]failureIdentity, 0)
 
 	for _, representative := range representatives {
-		aggregatePins = appendPlanPins(aggregatePins, representative.pins...)
-		closure = append(closure, representative.closure...)
+		aggregatePins = appendPlanPins(aggregatePins, representative.requirements...)
+		closure = append(closure, representative.expected...)
 	}
 
 	closure = append(closure, failureIdentity(anyOfIdentity))
@@ -323,8 +328,8 @@ func (builder *planBuilder) compileChildren(
 	result *compiledNodePlan,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 	visiting map[*schemaNode]bool,
 ) error {
 	shape := node.schemaShape
@@ -401,7 +406,7 @@ func (builder *planBuilder) compileDirectChild(
 	child *schemaNode,
 	childOccurrence schemaOccurrence,
 	kind jsonKind,
-	validInherited, faultInherited []applicabilityPin,
+	validInherited, faultInherited []requirement,
 	visiting map[*schemaNode]bool,
 ) error {
 	validParent, validRealizable, err := builder.validPinsForKind(validInherited, parent, parentOccurrence, kind)
@@ -423,7 +428,7 @@ func (builder *planBuilder) compileDirectChild(
 		return err
 	}
 
-	presence := presencePin(childOccurrence, planPinPresent)
+	presence := presencePin(childOccurrence, requirementPresent)
 
 	childPlan, err := builder.compileNode(
 		child,
@@ -450,7 +455,7 @@ func (builder *planBuilder) compileAllOfChild(
 	child *schemaNode,
 	childOccurrence schemaOccurrence,
 	index int,
-	validInherited, faultInherited []applicabilityPin,
+	validInherited, faultInherited []requirement,
 	visiting map[*schemaNode]bool,
 ) error {
 	validParent, validRealizable, err := builder.validAnyOfPins(parent, parentOccurrence, validInherited)
@@ -491,8 +496,8 @@ func (builder *planBuilder) compileTypeRules(
 	result *compiledNodePlan,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 ) error {
 	identity := makeRuleIdentity(occurrence, oracleRuleType)
 	for _, kind := range orderedTypeKinds(node) {
@@ -558,8 +563,8 @@ func (builder *planBuilder) compileEnumRules(
 	result *compiledNodePlan,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 ) error {
 	if node.enum == nil {
 		return nil
@@ -567,7 +572,9 @@ func (builder *planBuilder) compileEnumRules(
 
 	identity := makeRuleIdentity(occurrence, oracleRuleEnum)
 
-	for _, member := range node.enum {
+	for index := range node.enum {
+		member := node.enum[index]
+
 		matches, matchErr := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 		if matchErr != nil {
 			return matchErr
@@ -586,7 +593,17 @@ func (builder *planBuilder) compileEnumRules(
 			continue
 		}
 
-		builder.addValid(result, identity, "member:"+itoa(member.authoredIndex), pins)
+		memberRequirement := requirement{
+			tag:        requirementExactEnumMember,
+			occurrence: occurrence,
+			enumMember: &node.enum[index],
+		}
+		builder.addValid(
+			result,
+			identity,
+			"member:"+itoa(member.authoredIndex),
+			appendPlanPins(pins, memberRequirement),
+		)
 	}
 
 	pins, realizable, pinErr := builder.faultPinsForEnum(faultInherited, node, occurrence)
@@ -610,8 +627,8 @@ func (builder *planBuilder) compileNumberRules(
 	result *compiledNodePlan,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 ) error {
 	if !nodeCanHaveKind(node, jsonNumber) {
 		return nil
@@ -669,8 +686,8 @@ func (builder *planBuilder) compileStringRules(
 	result *compiledNodePlan,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 ) error {
 	if !nodeCanHaveKind(node, jsonString) {
 		return nil
@@ -721,8 +738,8 @@ func (builder *planBuilder) compileArrayRules(
 	result *compiledNodePlan,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 ) error {
 	if !nodeCanHaveKind(node, jsonArray) {
 		return nil
@@ -759,8 +776,8 @@ func (builder *planBuilder) compileObjectRules(
 	result *compiledNodePlan,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 ) error {
 	if !nodeCanHaveKind(node, jsonObject) {
 		return nil
@@ -804,7 +821,7 @@ func (builder *planBuilder) compileObjectRules(
 				result,
 				identity,
 				oracleRequiredPresentLevel,
-				appendPlanPins(validPins, presencePin(presenceOccurrence, planPinPresent)),
+				appendPlanPins(validPins, presencePin(presenceOccurrence, requirementPresent)),
 			)
 		}
 
@@ -819,7 +836,7 @@ func (builder *planBuilder) compileObjectRules(
 			if err := builder.addFault(
 				result,
 				identity,
-				appendPlanPins(faultPins, presencePin(presenceOccurrence, planPinAbsent)),
+				appendPlanPins(faultPins, presencePin(presenceOccurrence, requirementAbsent)),
 				[]failureIdentity{identity},
 			); err != nil {
 				return err
@@ -844,7 +861,7 @@ func (builder *planBuilder) compileObjectRules(
 			if err := builder.addFault(
 				result,
 				identity,
-				appendPlanPins(pins, presencePin(identity.occurrence, planPinPresent)),
+				appendPlanPins(pins, presencePin(identity.occurrence, requirementPresent)),
 				[]failureIdentity{identity},
 			); err != nil {
 				return err
@@ -861,8 +878,8 @@ func (builder *planBuilder) addScalarRule(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	rule string,
-	validInherited []applicabilityPin,
-	faultInherited []applicabilityPin,
+	validInherited []requirement,
+	faultInherited []requirement,
 	kind jsonKind,
 	faultAllowed bool,
 ) error {
@@ -876,6 +893,10 @@ func (builder *planBuilder) addScalarRule(
 
 	if !realizable {
 		return nil
+	}
+
+	if count := countRequirementForRule(node, occurrence, rule); count != nil {
+		validPins = appendPlanPins(validPins, *count)
 	}
 
 	builder.addValidAtRank(result, identity, oracleScalarValidLevel, validPins, ruleRank)
@@ -895,7 +916,45 @@ func (builder *planBuilder) addScalarRule(
 		return nil
 	}
 
+	if count := countRequirementForRule(node, occurrence, rule); count != nil {
+		faultPins = appendPlanPins(faultPins, *count)
+	}
+
 	return builder.addFaultAtRank(result, identity, faultPins, []failureIdentity{identity}, ruleRank)
+}
+
+// countRequirementForRule returns one authored count constraint when applicable.
+func countRequirementForRule(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	rule string,
+) *requirement {
+	var count *exactCount
+
+	switch rule {
+	case oracleRuleMinLength:
+		count = node.minLength
+	case oracleRuleMaxLength:
+		count = node.maxLength
+	case oracleRuleMinItems:
+		count = node.minItems
+	case oracleRuleMaxItems:
+		count = node.maxItems
+	case oracleRuleMinProperties:
+		count = node.minProperties
+	case oracleRuleMaxProperties:
+		count = node.maxProperties
+	}
+
+	if count == nil {
+		return nil
+	}
+
+	return &requirement{
+		tag:        requirementExactCount,
+		occurrence: occurrence,
+		count:      count,
+	}
 }
 
 // addValid appends one valid target with a deterministic insertion number.
@@ -903,7 +962,7 @@ func (builder *planBuilder) addValid(
 	result *compiledNodePlan,
 	identity ruleIdentity,
 	level string,
-	pins []applicabilityPin,
+	pins []requirement,
 ) {
 	builder.addValidAtRank(result, identity, level, pins, planRuleRank(identity.rule))
 }
@@ -913,7 +972,7 @@ func (builder *planBuilder) addValidAtRank(
 	result *compiledNodePlan,
 	identity ruleIdentity,
 	level string,
-	pins []applicabilityPin,
+	pins []requirement,
 	ruleRank int,
 ) {
 	validObligation := makeLevelObligation(identity, level)
@@ -921,10 +980,15 @@ func (builder *planBuilder) addValidAtRank(
 	validObligation.order = builder.nextOrder
 	builder.nextOrder++
 
-	result.valid = append(result.valid, validTarget{
+	expected := makeLevelIdentity(identity, level)
+	result.valid = append(result.valid, validIntent{
 		obligation: validObligation,
-		expected:   makeLevelIdentity(identity, level),
-		pins:       copyPlanPins(pins),
+		expected:   expected,
+		requirements: appendPlanPins(pins, requirement{
+			tag:        requirementTargetLevel,
+			occurrence: identity.occurrence,
+			target:     expected,
+		}),
 	})
 }
 
@@ -932,7 +996,7 @@ func (builder *planBuilder) addValidAtRank(
 func (builder *planBuilder) addFault(
 	result *compiledNodePlan,
 	identity ruleIdentity,
-	pins []applicabilityPin,
+	pins []requirement,
 	closure []failureIdentity,
 ) error {
 	return builder.addFaultAtRank(result, identity, pins, closure, planRuleRank(identity.rule))
@@ -942,7 +1006,7 @@ func (builder *planBuilder) addFault(
 func (builder *planBuilder) addFaultAtRank(
 	result *compiledNodePlan,
 	identity ruleIdentity,
-	pins []applicabilityPin,
+	pins []requirement,
 	closure []failureIdentity,
 	ruleRank int,
 ) error {
@@ -956,10 +1020,12 @@ func (builder *planBuilder) addFaultAtRank(
 	faultObligation.order = builder.nextOrder
 	builder.nextOrder++
 
-	result.faults = append(result.faults, faultTarget{
-		obligation: faultObligation,
-		pins:       copyPlanPins(pins),
-		closure:    canonical,
+	expected := failureSet(canonical)
+	result.faults = append(result.faults, faultProgram{
+		obligation:   faultObligation,
+		requirements: copyPlanPins(pins),
+		expected:     expected,
+		alternatives: &faultClosureProgram{expected: expected},
 	})
 
 	return nil
@@ -984,7 +1050,7 @@ func requiredPresenceOccurrence(node *schemaNode, occurrence schemaOccurrence, n
 }
 
 // defaultPlanPins adds composition defaults for one local schema occurrence.
-func defaultPlanPins(inherited []applicabilityPin, node *schemaNode, occurrence schemaOccurrence) []applicabilityPin {
+func defaultPlanPins(inherited []requirement, node *schemaNode, occurrence schemaOccurrence) []requirement {
 	pins := appendPlanPins(inherited)
 	if len(node.allOf) > 0 {
 		pins = appendPlanPins(pins, allOfValidPins(occurrence, len(node.allOf))...)
@@ -1017,7 +1083,7 @@ func defaultPresencePinsForKind(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	kind jsonKind,
-) ([]applicabilityPin, error) {
+) ([]requirement, error) {
 	if node == nil || node.schemaShape == nil {
 		return nil, errors.New("schema occurrence has no shape")
 	}
@@ -1033,12 +1099,12 @@ func defaultPresencePinsForKind(
 }
 
 // defaultArrayPresencePins chooses the smallest item presence satisfying minItems.
-func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]applicabilityPin, error) {
+func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]requirement, error) {
 	if node.items == nil {
 		return nil, nil
 	}
 
-	presence := planPinAbsent
+	presence := requirementAbsent
 
 	positive, err := exactCountIsPositive(node.minItems)
 	if err != nil {
@@ -1046,7 +1112,7 @@ func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]
 	}
 
 	if positive {
-		presence = planPinPresent
+		presence = requirementPresent
 	}
 
 	itemOccurrence := rebasePlanOccurrence(
@@ -1056,13 +1122,13 @@ func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]
 		appendInstanceToken(occurrence.instanceTemplate, "*"),
 	)
 
-	return []applicabilityPin{canonicalPresencePin(itemOccurrence, presence)}, nil
+	return []requirement{canonicalPresencePin(itemOccurrence, presence)}, nil
 }
 
 // defaultObjectPresencePins chooses required members, enough lower-bound members, and no extras.
 //
 //nolint:cyclop // Required and lower-bound presence decisions share one canonical pass.
-func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]applicabilityPin, error) {
+func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]requirement, error) {
 	shape := node.schemaShape
 
 	names := make(map[string]bool, len(shape.properties)+len(shape.required))
@@ -1082,13 +1148,13 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 
 	sort.Strings(sortedNames)
 
-	pins := make([]applicabilityPin, 0, len(sortedNames)+1)
+	pins := make([]requirement, 0, len(sortedNames)+1)
 	presentCount := 0
 
 	for _, name := range sortedNames {
-		presence := planPinAbsent
+		presence := requirementAbsent
 		if containsString(shape.required, name) {
-			presence = planPinPresent
+			presence = requirementPresent
 		} else {
 			needsMember, err := objectMinimumNeedsMember(shape.minProperties, presentCount)
 			if err != nil {
@@ -1096,11 +1162,11 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 			}
 
 			if needsMember {
-				presence = planPinPresent
+				presence = requirementPresent
 			}
 		}
 
-		if presence == planPinPresent {
+		if presence == requirementPresent {
 			presentCount++
 		}
 
@@ -1108,7 +1174,7 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 	}
 
 	if shape.additionalProperties != nil {
-		presence := planPinAbsent
+		presence := requirementAbsent
 
 		needsMember, err := objectMinimumNeedsMember(shape.minProperties, presentCount)
 		if err != nil {
@@ -1116,7 +1182,7 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 		}
 
 		if needsMember {
-			presence = planPinPresent
+			presence = requirementPresent
 		}
 
 		additionalOccurrence := rebasePlanOccurrence(
@@ -1152,11 +1218,11 @@ func objectMinimumNeedsMember(minimum *exactCount, presentCount int) (bool, erro
 
 // validPinsForKind adds local defaults and the exact parent anyOf state.
 func (builder *planBuilder) validPinsForKind(
-	inherited []applicabilityPin,
+	inherited []requirement,
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	kind jsonKind,
-) ([]applicabilityPin, bool, error) {
+) ([]requirement, bool, error) {
 	pins := appendPlanPins(inherited)
 
 	if node != nil && !nodeAcceptsKindForTarget(node, kind) {
@@ -1191,11 +1257,11 @@ func (builder *planBuilder) validPinsForKind(
 
 // faultPinsForKind adds the local kind and the exact parent anyOf state.
 func (builder *planBuilder) faultPinsForKind(
-	inherited []applicabilityPin,
+	inherited []requirement,
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	kind jsonKind,
-) ([]applicabilityPin, bool, error) {
+) ([]requirement, bool, error) {
 	pins := appendPlanPins(inherited, kindPin(occurrence, kind))
 	if node == nil || len(node.anyOf) == 0 {
 		return pins, true, nil
@@ -1217,8 +1283,8 @@ func (builder *planBuilder) faultPinsForKind(
 func (builder *planBuilder) validAnyOfPins(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	inherited []applicabilityPin,
-) ([]applicabilityPin, bool, error) {
+	inherited []requirement,
+) ([]requirement, bool, error) {
 	if len(node.anyOf) == 0 {
 		return appendPlanPins(inherited), true, nil
 	}
@@ -1237,19 +1303,19 @@ func (builder *planBuilder) validAnyOfPins(
 
 // faultPinsForAny chooses one nonempty parent state for a fault outside this node.
 func (builder *planBuilder) faultPinsForAny(
-	inherited []applicabilityPin,
+	inherited []requirement,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-) ([]applicabilityPin, bool, error) {
+) ([]requirement, bool, error) {
 	return builder.validAnyOfPins(node, occurrence, inherited)
 }
 
 // faultPinsForType chooses an anyOf state for a wrong-kind type fault.
 func (builder *planBuilder) faultPinsForType(
-	inherited []applicabilityPin,
+	inherited []requirement,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-) ([]applicabilityPin, bool, error) {
+) ([]requirement, bool, error) {
 	pins := appendPlanPins(inherited)
 	if node == nil || len(node.anyOf) == 0 {
 		return pins, true, nil
@@ -1269,12 +1335,12 @@ func (builder *planBuilder) faultPinsForType(
 
 // faultPinsForRule chooses an anyOf state for one local scalar fault.
 func (builder *planBuilder) faultPinsForRule(
-	inherited []applicabilityPin,
+	inherited []requirement,
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	kind jsonKind,
 	rule string,
-) ([]applicabilityPin, bool, error) {
+) ([]requirement, bool, error) {
 	pins := appendPlanPins(inherited, kindPin(occurrence, kind))
 	if node == nil || len(node.anyOf) == 0 {
 		return pins, true, nil
@@ -1294,11 +1360,11 @@ func (builder *planBuilder) faultPinsForRule(
 
 // faultPinsForRequired chooses an anyOf state while omitting one required member.
 func (builder *planBuilder) faultPinsForRequired(
-	inherited []applicabilityPin,
+	inherited []requirement,
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	name string,
-) ([]applicabilityPin, bool, error) {
+) ([]requirement, bool, error) {
 	pins := appendPlanPins(inherited, kindPin(occurrence, jsonObject))
 
 	if node == nil {
@@ -1325,10 +1391,10 @@ func (builder *planBuilder) faultPinsForRequired(
 
 // faultPinsForAdditional chooses an anyOf state for one undeclared member.
 func (builder *planBuilder) faultPinsForAdditional(
-	inherited []applicabilityPin,
+	inherited []requirement,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-) ([]applicabilityPin, bool, error) {
+) ([]requirement, bool, error) {
 	pins := appendPlanPins(inherited, kindPin(occurrence, jsonObject))
 
 	if node == nil {
@@ -1353,10 +1419,10 @@ func (builder *planBuilder) faultPinsForAdditional(
 
 // faultPinsForEnum chooses an anyOf state while allowing this node's enum to fail.
 func (builder *planBuilder) faultPinsForEnum(
-	inherited []applicabilityPin,
+	inherited []requirement,
 	node *schemaNode,
 	occurrence schemaOccurrence,
-) ([]applicabilityPin, bool, error) {
+) ([]requirement, bool, error) {
 	pins := appendPlanPins(inherited)
 
 	if node == nil {
@@ -1657,15 +1723,15 @@ func populateRequiredFaultWitness(witness *jsonValue, node *schemaNode, omitted 
 }
 
 // requiredFaultSiblingPins pins unaffected required members present.
-func requiredFaultSiblingPins(node *schemaNode, occurrence schemaOccurrence, omitted string) []applicabilityPin {
-	pins := make([]applicabilityPin, 0, len(node.required))
+func requiredFaultSiblingPins(node *schemaNode, occurrence schemaOccurrence, omitted string) []requirement {
+	pins := make([]requirement, 0, len(node.required))
 
 	for _, name := range node.required {
 		if name == omitted {
 			continue
 		}
 
-		pins = append(pins, presencePin(requiredPresenceOccurrence(node, occurrence, name), planPinPresent))
+		pins = append(pins, presencePin(requiredPresenceOccurrence(node, occurrence, name), requirementPresent))
 	}
 
 	return pins
@@ -2980,44 +3046,59 @@ func canonicalJSONKinds() []jsonKind {
 }
 
 // memberKindPin pins an enum target to its member's JSON kind.
-func memberKindPin(occurrence schemaOccurrence, value *jsonValue) applicabilityPin {
+func memberKindPin(occurrence schemaOccurrence, value *jsonValue) requirement {
 	return kindPin(occurrence, value.kind)
 }
 
 // kindPin pins one schema occurrence to a JSON kind.
-func kindPin(occurrence schemaOccurrence, kind jsonKind) applicabilityPin {
-	return applicabilityPin{occurrence: occurrence, kind: kind, hasKind: true}
+func kindPin(occurrence schemaOccurrence, kind jsonKind) requirement {
+	return requirement{
+		tag:        requirementJSONKind,
+		occurrence: occurrence,
+		kind:       kind,
+		hasKind:    true,
+	}
 }
 
 // presencePin pins one child occurrence to present or absent.
-func presencePin(occurrence schemaOccurrence, presence pinPresence) applicabilityPin {
-	return applicabilityPin{occurrence: occurrence, presence: presence}
+func presencePin(occurrence schemaOccurrence, presence requirementPresence) requirement {
+	return requirement{
+		tag:        requirementPresenceState,
+		occurrence: occurrence,
+		presence:   presence,
+	}
 }
 
 // canonicalPresencePin records the first structural assignment without making it a hard target precondition.
-func canonicalPresencePin(occurrence schemaOccurrence, presence pinPresence) applicabilityPin {
-	return applicabilityPin{occurrence: occurrence, presence: presence, canonical: true}
+func canonicalPresencePin(occurrence schemaOccurrence, presence requirementPresence) requirement {
+	return requirement{
+		tag:        requirementPresenceState,
+		occurrence: occurrence,
+		presence:   presence,
+		canonical:  true,
+	}
 }
 
 // allOfValidPins pins every allOf branch true.
-func allOfValidPins(occurrence schemaOccurrence, count int) []applicabilityPin {
+func allOfValidPins(occurrence schemaOccurrence, count int) []requirement {
 	return compositionPins(occurrence, "allOf", count, -1, true)
 }
 
 // allOfFaultPins pins one allOf branch false and all sibling branches true.
-func allOfFaultPins(occurrence schemaOccurrence, count, selected int) []applicabilityPin {
+func allOfFaultPins(occurrence schemaOccurrence, count, selected int) []requirement {
 	return compositionFaultPins(occurrence, "allOf", count, selected)
 }
 
 // anyOfValidPins pins the selected anyOf branch true without constraining siblings.
-func anyOfValidPins(occurrence schemaOccurrence, selected int) []applicabilityPin {
+func anyOfValidPins(occurrence schemaOccurrence, selected int) []requirement {
 	branchOccurrence := schemaOccurrence{
 		usePointer:       occurrence.usePointer + "/anyOf/" + itoa(selected),
 		targetPointer:    occurrence.targetPointer,
 		instanceTemplate: occurrence.instanceTemplate,
 	}
 
-	return []applicabilityPin{{
+	return []requirement{{
+		tag:         requirementBranchTruth,
 		occurrence:  branchOccurrence,
 		composition: "anyOf",
 		branch:      selected,
@@ -3027,7 +3108,7 @@ func anyOfValidPins(occurrence schemaOccurrence, selected int) []applicabilityPi
 }
 
 // anyOfFaultPins pins every authored anyOf branch false.
-func anyOfFaultPins(occurrence schemaOccurrence, count int) []applicabilityPin {
+func anyOfFaultPins(occurrence schemaOccurrence, count int) []requirement {
 	return compositionPins(occurrence, "anyOf", count, -1, false)
 }
 
@@ -3037,8 +3118,8 @@ func compositionPins(
 	composition string,
 	count, selected int,
 	truth bool,
-) []applicabilityPin {
-	pins := make([]applicabilityPin, 0, count)
+) []requirement {
+	pins := make([]requirement, 0, count)
 	for index := 0; index < count; index++ {
 		branchOccurrence := schemaOccurrence{
 			usePointer:       occurrence.usePointer + "/" + composition + "/" + itoa(index),
@@ -3051,7 +3132,8 @@ func compositionPins(
 			branchTruth = index == selected
 		}
 
-		pins = append(pins, applicabilityPin{
+		pins = append(pins, requirement{
+			tag:         requirementBranchTruth,
 			occurrence:  branchOccurrence,
 			composition: composition,
 			branch:      index,
@@ -3064,15 +3146,16 @@ func compositionPins(
 }
 
 // compositionFaultPins creates a branch-failure context for one composition child.
-func compositionFaultPins(occurrence schemaOccurrence, composition string, count, selected int) []applicabilityPin {
-	pins := make([]applicabilityPin, 0, count)
+func compositionFaultPins(occurrence schemaOccurrence, composition string, count, selected int) []requirement {
+	pins := make([]requirement, 0, count)
 	for index := 0; index < count; index++ {
 		branchOccurrence := schemaOccurrence{
 			usePointer:       occurrence.usePointer + "/" + composition + "/" + itoa(index),
 			targetPointer:    occurrence.targetPointer,
 			instanceTemplate: occurrence.instanceTemplate,
 		}
-		pins = append(pins, applicabilityPin{
+		pins = append(pins, requirement{
+			tag:         requirementBranchTruth,
 			occurrence:  branchOccurrence,
 			composition: composition,
 			branch:      index,
@@ -3085,10 +3168,11 @@ func compositionFaultPins(occurrence schemaOccurrence, composition string, count
 }
 
 // anyOfMaskPins pins the complete authored anyOf truth mask.
-func anyOfMaskPins(occurrence schemaOccurrence, count int, mask *big.Int) []applicabilityPin {
-	pins := make([]applicabilityPin, 0, count)
+func anyOfMaskPins(occurrence schemaOccurrence, count int, mask *big.Int) []requirement {
+	pins := make([]requirement, 0, count)
 	for index := 0; index < count; index++ {
-		pins = append(pins, applicabilityPin{
+		pins = append(pins, requirement{
+			tag: requirementBranchTruth,
 			occurrence: schemaOccurrence{
 				usePointer:       occurrence.usePointer + "/anyOf/" + itoa(index),
 				targetPointer:    occurrence.targetPointer,
@@ -3117,7 +3201,7 @@ func rebasePlanOccurrence(
 }
 
 // appendPlanPins merges later pins over earlier pins for the same dimension.
-func appendPlanPins(base []applicabilityPin, pins ...applicabilityPin) []applicabilityPin {
+func appendPlanPins(base []requirement, pins ...requirement) []requirement {
 	result := copyPlanPins(base)
 
 	for _, pin := range pins {
@@ -3143,8 +3227,9 @@ func appendPlanPins(base []applicabilityPin, pins ...applicabilityPin) []applica
 }
 
 // samePlanPinOccurrence identifies pins that describe one occurrence and composition branch.
-func samePlanPinOccurrence(left, right applicabilityPin) bool {
-	return left.occurrence.usePointer == right.occurrence.usePointer &&
+func samePlanPinOccurrence(left, right requirement) bool {
+	return left.tag == right.tag &&
+		left.occurrence.usePointer == right.occurrence.usePointer &&
 		left.occurrence.instanceTemplate == right.occurrence.instanceTemplate &&
 		left.composition == right.composition &&
 		left.hasBranch == right.hasBranch &&
@@ -3152,15 +3237,31 @@ func samePlanPinOccurrence(left, right applicabilityPin) bool {
 }
 
 // mergePlanPins lets an explicit later pin override one earlier dimension.
-func mergePlanPins(left, right applicabilityPin) applicabilityPin {
+func mergePlanPins(left, right requirement) requirement {
 	merged := left
+	if right.active != nil {
+		merged.active = right.active
+	}
+
+	if right.target.rule != "" {
+		merged.target = right.target
+	}
+
+	if right.enumMember != nil {
+		merged.enumMember = right.enumMember
+	}
+
+	if right.count != nil {
+		merged.count = right.count
+	}
+
 	if right.hasKind {
 		merged.occurrence = right.occurrence
 		merged.kind = right.kind
 		merged.hasKind = true
 	}
 
-	if right.presence != planPinNoPresence {
+	if right.presence != requirementNoPresence {
 		merged.occurrence = right.occurrence
 		merged.presence = right.presence
 		merged.canonical = right.canonical
@@ -3178,12 +3279,12 @@ func mergePlanPins(left, right applicabilityPin) applicabilityPin {
 }
 
 // copyPlanPins copies pins without retaining a caller-owned backing array.
-func copyPlanPins(pins []applicabilityPin) []applicabilityPin {
+func copyPlanPins(pins []requirement) []requirement {
 	if len(pins) == 0 {
 		return nil
 	}
 
-	return append([]applicabilityPin(nil), pins...)
+	return append([]requirement(nil), pins...)
 }
 
 // sortedSchemaPropertyNames returns property names in UTF-8 byte order.
@@ -3210,16 +3311,16 @@ func containsString(values []string, wanted string) bool {
 }
 
 // firstCanonicalFault selects the first fault in canonical obligation order.
-func firstCanonicalFault(faults []faultTarget) (faultTarget, bool, error) {
+func firstCanonicalFault(faults []faultProgram) (faultProgram, bool, error) {
 	if len(faults) == 0 {
-		return faultTarget{}, false, nil
+		return faultProgram{}, false, nil
 	}
 
 	best := faults[0]
 	for _, candidate := range faults[1:] {
 		comparison, err := comparePlanObligations(candidate.obligation, best.obligation)
 		if err != nil {
-			return faultTarget{}, false, err
+			return faultProgram{}, false, err
 		}
 
 		if comparison < 0 {
@@ -3234,11 +3335,11 @@ func firstCanonicalFault(faults []faultTarget) (faultTarget, bool, error) {
 func realizableFaultCandidates(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	faults []faultTarget,
-) ([]faultTarget, error) {
-	remaining := append([]faultTarget(nil), faults...)
+	faults []faultProgram,
+) ([]faultProgram, error) {
+	remaining := append([]faultProgram(nil), faults...)
 
-	candidates := make([]faultTarget, 0, len(faults))
+	candidates := make([]faultProgram, 0, len(faults))
 	for len(remaining) > 0 {
 		candidate, exists, err := firstCanonicalFault(remaining)
 		if err != nil {
@@ -3249,7 +3350,7 @@ func realizableFaultCandidates(
 			break
 		}
 
-		if faultTargetIsRealizable(node, occurrence, candidate) {
+		if faultProgramIsRealizable(node, occurrence, candidate) {
 			candidates = append(candidates, candidate)
 		}
 
@@ -3276,22 +3377,22 @@ func realizableFaultCandidates(
 func firstRealizableFault(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	faults []faultTarget,
-) (faultTarget, bool, error) {
+	faults []faultProgram,
+) (faultProgram, bool, error) {
 	candidates, err := realizableFaultCandidates(node, occurrence, faults)
 	if err != nil {
-		return faultTarget{}, false, err
+		return faultProgram{}, false, err
 	}
 
 	if len(candidates) == 0 {
-		return faultTarget{}, false, nil
+		return faultProgram{}, false, nil
 	}
 
 	return candidates[0], true, nil
 }
 
 // selectAnyOfRepresentatives chooses compatible representatives for every branch.
-func selectAnyOfRepresentatives(branches []anyOfBranchPlan) ([]faultTarget, bool) {
+func selectAnyOfRepresentatives(branches []anyOfBranchPlan) ([]faultProgram, bool) {
 	return selectAnyOfRepresentativesAt(branches, 0, nil, nil)
 }
 
@@ -3300,8 +3401,8 @@ func selectAnyOfRepresentativesForParent(
 	branches []anyOfBranchPlan,
 	parent *schemaNode,
 	occurrence schemaOccurrence,
-	inherited []applicabilityPin,
-) ([]faultTarget, jsonKind, bool, error) {
+	inherited []requirement,
+) ([]faultProgram, jsonKind, bool, error) {
 	kinds, err := anyOfParentKinds(parent, occurrence, inherited)
 	if err != nil {
 		return nil, jsonNull, false, err
@@ -3321,7 +3422,7 @@ func selectAnyOfRepresentativesForParent(
 func anyOfParentKinds(
 	parent *schemaNode,
 	occurrence schemaOccurrence,
-	inherited []applicabilityPin,
+	inherited []requirement,
 ) ([]jsonKind, error) {
 	localKinds := make([]jsonKind, 0, len(canonicalJSONKinds()))
 	allOfKinds := make([]jsonKind, 0, len(canonicalJSONKinds()))
@@ -3368,7 +3469,7 @@ func allOfAcceptsKind(node *schemaNode, kind jsonKind) (bool, error) {
 }
 
 // inheritedPinsAllowKind reports whether same-instance kind pins permit one kind.
-func inheritedPinsAllowKind(inherited []applicabilityPin, instanceTemplate string, kind jsonKind) bool {
+func inheritedPinsAllowKind(inherited []requirement, instanceTemplate string, kind jsonKind) bool {
 	for _, pin := range inherited {
 		if !pin.hasKind || pin.occurrence.instanceTemplate != instanceTemplate {
 			continue
@@ -3387,22 +3488,22 @@ func selectAnyOfRepresentativesAtKind(
 	branches []anyOfBranchPlan,
 	kind jsonKind,
 	index int,
-	selected []faultTarget,
-	pins []applicabilityPin,
-) ([]faultTarget, bool) {
+	selected []faultProgram,
+	pins []requirement,
+) ([]faultProgram, bool) {
 	if index == len(branches) {
-		return append([]faultTarget(nil), selected...), true
+		return append([]faultProgram(nil), selected...), true
 	}
 
 	branch := branches[index]
 	for _, candidate := range branch.representatives {
 		if !faultCandidateSupportsKind(candidate, branch.node, branch.occurrence, kind) ||
-			!planPinsCompatible(pins, candidate.pins) {
+			!planPinsCompatible(pins, candidate.requirements) {
 			continue
 		}
 
-		nextSelected := append(append([]faultTarget(nil), selected...), candidate)
-		nextPins := appendPlanPins(pins, candidate.pins...)
+		nextSelected := append(append([]faultProgram(nil), selected...), candidate)
+		nextPins := appendPlanPins(pins, candidate.requirements...)
 
 		result, exists := selectAnyOfRepresentativesAtKind(
 			branches, kind, index+1, nextSelected, nextPins,
@@ -3417,14 +3518,14 @@ func selectAnyOfRepresentativesAtKind(
 
 // faultCandidateSupportsKind reports whether a branch fault can use one parent kind.
 func faultCandidateSupportsKind(
-	candidate faultTarget,
+	candidate faultProgram,
 	branch *schemaNode,
 	branchOccurrence schemaOccurrence,
 	kind jsonKind,
 ) bool {
 	foundKindPin := false
 
-	for _, pin := range candidate.pins {
+	for _, pin := range candidate.requirements {
 		if !pin.hasKind || pin.occurrence.instanceTemplate != branchOccurrence.instanceTemplate {
 			continue
 		}
@@ -3441,7 +3542,7 @@ func faultCandidateSupportsKind(
 	}
 
 	if candidate.obligation.rule == oracleRuleType {
-		faultNode := faultTargetSchemaNode(branch, branchOccurrence, candidate)
+		faultNode := faultProgramSchemaNode(branch, branchOccurrence, candidate)
 		if faultNode == nil {
 			return false
 		}
@@ -3452,13 +3553,13 @@ func faultCandidateSupportsKind(
 	return true
 }
 
-// faultTargetSchemaNode resolves a branch fault's schema shape from its use site.
+// faultProgramSchemaNode resolves a branch fault's schema shape from its use site.
 //
 //nolint:cyclop,gocognit // The schema occurrence path has one explicit case per supported child shape.
-func faultTargetSchemaNode(
+func faultProgramSchemaNode(
 	branch *schemaNode,
 	branchOccurrence schemaOccurrence,
-	candidate faultTarget,
+	candidate faultProgram,
 ) *schemaNode {
 	if branch == nil || branch.schemaShape == nil {
 		return nil
@@ -3548,20 +3649,20 @@ func faultTargetSchemaNode(
 func selectAnyOfRepresentativesAt(
 	branches []anyOfBranchPlan,
 	index int,
-	selected []faultTarget,
-	pins []applicabilityPin,
-) ([]faultTarget, bool) {
+	selected []faultProgram,
+	pins []requirement,
+) ([]faultProgram, bool) {
 	if index == len(branches) {
-		return append([]faultTarget(nil), selected...), true
+		return append([]faultProgram(nil), selected...), true
 	}
 
 	for _, candidate := range branches[index].representatives {
-		if !planPinsCompatible(pins, candidate.pins) {
+		if !planPinsCompatible(pins, candidate.requirements) {
 			continue
 		}
 
-		nextSelected := append(append([]faultTarget(nil), selected...), candidate)
-		nextPins := appendPlanPins(pins, candidate.pins...)
+		nextSelected := append(append([]faultProgram(nil), selected...), candidate)
+		nextPins := appendPlanPins(pins, candidate.requirements...)
 		result, exists := selectAnyOfRepresentativesAt(branches, index+1, nextSelected, nextPins)
 
 		if exists {
@@ -3575,7 +3676,7 @@ func selectAnyOfRepresentativesAt(
 // planPinsCompatible reports whether two pin sets can describe one instance value.
 //
 //nolint:cyclop // The three independent pin dimensions must be checked pairwise.
-func planPinsCompatible(left, right []applicabilityPin) bool {
+func planPinsCompatible(left, right []requirement) bool {
 	for _, leftPin := range left {
 		for _, rightPin := range right {
 			if leftPin.occurrence.instanceTemplate != rightPin.occurrence.instanceTemplate {
@@ -3586,7 +3687,7 @@ func planPinsCompatible(left, right []applicabilityPin) bool {
 				return false
 			}
 
-			if leftPin.presence != planPinNoPresence && rightPin.presence != planPinNoPresence &&
+			if leftPin.presence != requirementNoPresence && rightPin.presence != requirementNoPresence &&
 				leftPin.presence != rightPin.presence {
 				return false
 			}
@@ -3603,8 +3704,8 @@ func planPinsCompatible(left, right []applicabilityPin) bool {
 	return true
 }
 
-// faultTargetIsRealizable reports whether a branch fault can keep its other local rules clean.
-func faultTargetIsRealizable(node *schemaNode, occurrence schemaOccurrence, target faultTarget) bool {
+// faultProgramIsRealizable reports whether a branch fault can keep its other local rules clean.
+func faultProgramIsRealizable(node *schemaNode, occurrence schemaOccurrence, target faultProgram) bool {
 	if node == nil || node.schemaShape == nil {
 		return false
 	}
@@ -3684,7 +3785,7 @@ func validatePlanOccurrences(plan compiledNodePlan) error {
 			return err
 		}
 
-		for _, pin := range target.pins {
+		for _, pin := range target.requirements {
 			if err := validate(pin.occurrence); err != nil {
 				return err
 			}
@@ -3696,13 +3797,13 @@ func validatePlanOccurrences(plan compiledNodePlan) error {
 			return err
 		}
 
-		for _, pin := range target.pins {
+		for _, pin := range target.requirements {
 			if err := validate(pin.occurrence); err != nil {
 				return err
 			}
 		}
 
-		for _, failure := range target.closure {
+		for _, failure := range target.expected {
 			if err := validate(failure.occurrence); err != nil {
 				return err
 			}
