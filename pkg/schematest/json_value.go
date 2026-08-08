@@ -36,8 +36,6 @@ type jsonValue struct {
 }
 
 // jsonSemanticEqual compares two JSON values using JSON Schema semantics.
-//
-//nolint:cyclop,gocognit // The pair stack handles each of JSON's six semantic kinds directly.
 func jsonSemanticEqual(left, right *jsonValue) (bool, error) {
 	if err := validateJSONValue(left); err != nil {
 		return false, fmt.Errorf("left JSON value: %w", err)
@@ -47,6 +45,13 @@ func jsonSemanticEqual(left, right *jsonValue) (bool, error) {
 		return false, fmt.Errorf("right JSON value: %w", err)
 	}
 
+	return jsonValidatedSemanticEqual(left, right)
+}
+
+// jsonValidatedSemanticEqual compares values already validated at their ownership boundary.
+//
+//nolint:cyclop,gocognit // The pair stack handles each of JSON's six semantic kinds directly.
+func jsonValidatedSemanticEqual(left, right *jsonValue) (bool, error) {
 	work := []jsonValuePair{{left: left, right: right}}
 	for len(work) > 0 {
 		pair := work[len(work)-1]

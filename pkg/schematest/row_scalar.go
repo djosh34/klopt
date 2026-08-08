@@ -211,23 +211,18 @@ func rowScalarValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 }
 
 // rowEnumValues preserves authored enum order and uses already canonical members.
-func rowEnumValues(enum []*jsonValue, kind jsonKind) ([]*jsonValue, error) {
+func rowEnumValues(enum []enumMember, kind jsonKind) ([]*jsonValue, error) {
 	candidates := make([]*jsonValue, 0, len(enum))
-	for _, candidate := range enum {
-		if candidate == nil {
+	for _, member := range enum {
+		if member.value == nil {
 			return nil, errors.New("schematest: nil enum row value")
 		}
 
-		if candidate.kind != kind {
+		if member.value.kind != kind {
 			continue
 		}
 
-		var err error
-
-		candidates, err = appendUniqueJSONWitness(candidates, candidate)
-		if err != nil {
-			return nil, err
-		}
+		candidates = append(candidates, member.value)
 	}
 
 	return candidates, nil

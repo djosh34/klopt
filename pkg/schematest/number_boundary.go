@@ -195,15 +195,15 @@ func (schedule numberSchedule) eachEdge(visit func(numberEdge) (bool, error)) er
 	if schedule.hasEnum {
 		for _, rule := range schedule.rules {
 			for _, member := range rule.node.enum {
-				if member == nil {
+				if member.value == nil {
 					return errors.New("schematest: nil numeric enum member")
 				}
 
-				if member.kind != jsonNumber {
+				if member.value.kind != jsonNumber {
 					continue
 				}
 
-				stop, err := visit(numberEdge{base: member.number})
+				stop, err := visit(numberEdge{base: member.value.number})
 				if err != nil || stop {
 					return err
 				}

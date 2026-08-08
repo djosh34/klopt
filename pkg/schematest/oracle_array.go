@@ -79,19 +79,9 @@ func evaluateArrayCountRule(
 	identity := makeRuleIdentity(occurrence, rule)
 	appendApplicable(result, identity)
 
-	actual, err := parseExactNumber(strconv.Itoa(count))
-	if err != nil {
-		return fmt.Errorf("%s: parse array length: %w", identity, err)
-	}
-
-	comparison, err := actual.compare(bound.number)
+	violated, err := countBoundViolated(count, bound, minimum)
 	if err != nil {
 		return fmt.Errorf("%s: compare array length: %w", identity, err)
-	}
-
-	violated := comparison < 0
-	if !minimum {
-		violated = comparison > 0
 	}
 
 	if violated {

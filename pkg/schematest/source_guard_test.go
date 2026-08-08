@@ -215,6 +215,81 @@ func parallelOracleStoreViolations(guardPackage *sourceGuardPackage) []string {
 	return violations
 }
 
+// TestCanonicalMetadataHasNoParallelOrHotPathRepresentations locks admission-owned metadata.
+func TestCanonicalMetadataHasNoParallelOrHotPathRepresentations(t *testing.T) {
+	t.Parallel()
+
+	require.Empty(t, canonicalMetadataViolations(productionGuardPackage(t)))
+
+	legacy := parseGuardPackage(t, map[string]string{
+		"model.go": `package schematest
+			type jsonValue struct{}
+			type schemaShape struct { enum []*jsonValue; enumIndices []int; required []string }
+			func canonicalPlanEnum([]*jsonValue) {}`,
+	})
+	require.NotEmpty(t, canonicalMetadataViolations(legacy))
+}
+
+// canonicalMetadataViolations rejects split enum identity and planner recanonicalization.
+//
+//nolint:cyclop // Exact type-shape failures are independently reported.
+func canonicalMetadataViolations(guardPackage *sourceGuardPackage) []string {
+	var violations []string
+
+	shapeObject := guardPackage.pkg.Scope().Lookup("schemaShape")
+
+	memberObject := guardPackage.pkg.Scope().Lookup("enumMember")
+	if shapeObject == nil || memberObject == nil {
+		return []string{"missing canonical metadata types"}
+	}
+
+	shape, ok := shapeObject.Type().Underlying().(*types.Struct)
+	if !ok {
+		return []string{"schemaShape is not a struct"}
+	}
+
+	enumFound := false
+
+	for index := range shape.NumFields() {
+		field := shape.Field(index)
+		if field.Name() == "enumIndices" {
+			violations = append(violations, "schemaShape.enumIndices")
+		}
+
+		if field.Name() == "enum" {
+			enumFound = true
+
+			slice, sliceOK := field.Type().(*types.Slice)
+			if !sliceOK {
+				violations = append(violations, "schemaShape.enum")
+
+				continue
+			}
+
+			named, namedOK := slice.Elem().(*types.Named)
+			if !namedOK || named.Obj().Name() != "enumMember" {
+				violations = append(violations, "schemaShape.enum")
+			}
+		}
+	}
+
+	if !enumFound {
+		violations = append(violations, "missing schemaShape.enum")
+	}
+
+	member, ok := memberObject.Type().Underlying().(*types.Struct)
+	if !ok || member.NumFields() != 2 || member.Field(0).Name() != "value" ||
+		member.Field(1).Name() != "authoredIndex" {
+		violations = append(violations, "enumMember")
+	}
+
+	if guardPackage.pkg.Scope().Lookup("canonicalPlanEnum") != nil {
+		violations = append(violations, "canonicalPlanEnum")
+	}
+
+	return violations
+}
+
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
 func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	t.Parallel()

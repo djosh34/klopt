@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -144,7 +145,7 @@ func parseScalarSchemaFields(node *schemaNode, object map[string]*jsonValue, poi
 
 	node.nullable = node.kind != schemaAny && nullable
 
-	if node.enum, node.enumIndices, err = parseSchemaEnum(object, pointer); err != nil {
+	if node.enum, err = parseSchemaEnum(object, pointer); err != nil {
 		return err
 	}
 
@@ -215,22 +216,21 @@ func parseSchemaType(node *schemaNode, object map[string]*jsonValue, pointer str
 	return nil
 }
 
-func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue, []int, error) {
+func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]enumMember, error) {
 	value, exists := object["enum"]
 	if !exists {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	if value.kind != jsonArray {
-		return nil, nil, fmt.Errorf("%s/enum: must be an array", pointer)
+		return nil, fmt.Errorf("%s/enum: must be an array", pointer)
 	}
 
 	if len(value.array) == 0 {
-		return nil, nil, fmt.Errorf("%s/enum: empty enum is outside the Klopt profile", pointer)
+		return nil, fmt.Errorf("%s/enum: empty enum is outside the Klopt profile", pointer)
 	}
 
-	members := make([]*jsonValue, 0, len(value.array))
-	indices := make([]int, 0, len(value.array))
+	members := make([]enumMember, 0, len(value.array))
 	seen := make(map[int]bool, len(value.array))
 	interner := jsonValueInterner{
 		valueIDs: make(map[*jsonValue]int),
@@ -241,7 +241,7 @@ func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue
 	for index, candidate := range value.array {
 		identifier, err := interner.intern(candidate)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s/enum/%d: canonicalize enum member: %w", pointer, index, err)
+			return nil, fmt.Errorf("%s/enum/%d: canonicalize enum member: %w", pointer, index, err)
 		}
 
 		if seen[identifier] {
@@ -250,11 +250,10 @@ func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue
 
 		seen[identifier] = true
 
-		members = append(members, candidate)
-		indices = append(indices, index)
+		members = append(members, enumMember{value: candidate, authoredIndex: index})
 	}
 
-	return members, indices, nil
+	return members, nil
 }
 
 type jsonValueInterner struct {
@@ -610,6 +609,8 @@ func (parser *oasParser) parseObjectFields(
 
 		node.required = append(node.required, name)
 	}
+
+	sort.Strings(node.required)
 
 	return parser.parseAdditionalProperties(node, object, pointer)
 }

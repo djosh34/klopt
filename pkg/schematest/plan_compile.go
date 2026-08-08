@@ -535,7 +535,7 @@ func typeFaultHasWitness(node *schemaNode) (bool, error) {
 	}
 
 	for _, member := range node.enum {
-		matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+		matches, err := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 		if err != nil {
 			return false, err
 		}
@@ -549,8 +549,6 @@ func typeFaultHasWitness(node *schemaNode) (bool, error) {
 }
 
 // compileEnumRules compiles semantic enum members and the enum fault.
-//
-//nolint:cyclop // Enum validity and faultability are separate canonical decisions.
 func (builder *planBuilder) compileEnumRules(
 	result *compiledNodePlan,
 	node *schemaNode,
@@ -562,15 +560,10 @@ func (builder *planBuilder) compileEnumRules(
 		return nil
 	}
 
-	members, err := canonicalPlanEnum(node.enum)
-	if err != nil {
-		return fmt.Errorf("%s/enum: %w", occurrence.targetPointer, err)
-	}
-
 	identity := makeRuleIdentity(occurrence, oracleRuleEnum)
 
-	for index, member := range members {
-		matches, matchErr := valueMatchesNodeKind(member, node.kind, node.nullable)
+	for _, member := range node.enum {
+		matches, matchErr := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 		if matchErr != nil {
 			return matchErr
 		}
@@ -579,7 +572,7 @@ func (builder *planBuilder) compileEnumRules(
 			continue
 		}
 
-		pins, realizable, pinErr := builder.validPinsForKind(validInherited, node, occurrence, member.kind)
+		pins, realizable, pinErr := builder.validPinsForKind(validInherited, node, occurrence, member.value.kind)
 		if pinErr != nil {
 			return pinErr
 		}
@@ -588,12 +581,7 @@ func (builder *planBuilder) compileEnumRules(
 			continue
 		}
 
-		authoredIndex := index
-		if index < len(node.enumIndices) {
-			authoredIndex = node.enumIndices[index]
-		}
-
-		builder.addValid(result, identity, "member:"+itoa(authoredIndex), pins)
+		builder.addValid(result, identity, "member:"+itoa(member.authoredIndex), pins)
 	}
 
 	pins, realizable, pinErr := builder.faultPinsForEnum(faultInherited, node, occurrence)
@@ -794,7 +782,7 @@ func (builder *planBuilder) compileObjectRules(
 		}
 	}
 
-	for _, name := range sortedStrings(node.required) {
+	for _, name := range node.required {
 		identity := makeRuleIdentity(
 			appendObjectMemberOccurrence(occurrence, name),
 			oracleRuleRequired,
@@ -1664,7 +1652,7 @@ func populateRequiredFaultWitness(witness *jsonValue, node *schemaNode, omitted 
 func requiredFaultSiblingPins(node *schemaNode, occurrence schemaOccurrence, omitted string) []applicabilityPin {
 	pins := make([]applicabilityPin, 0, len(node.required))
 
-	for _, name := range sortedStrings(node.required) {
+	for _, name := range node.required {
 		if name == omitted {
 			continue
 		}
@@ -1701,7 +1689,6 @@ func schemaNodeWithoutLocalRule(node *schemaNode, rule string) *schemaNode {
 		shape.nullable = false
 	case oracleRuleEnum:
 		shape.enum = nil
-		shape.enumIndices = nil
 	case oracleRuleMinimum, oracleRuleExclusiveMinimum:
 		shape.minimum = nil
 		shape.exclusiveMinimum = false
@@ -1821,8 +1808,8 @@ func orderedTypeKinds(node *schemaNode) []jsonKind {
 func firstSiblingCompatibleKind(node *schemaNode, allowed map[jsonKind]bool) (jsonKind, bool) {
 	if node.enum != nil {
 		for _, member := range node.enum {
-			if member != nil && member.kind != jsonNull && allowed[member.kind] {
-				return member.kind, true
+			if member.value != nil && member.value.kind != jsonNull && allowed[member.value.kind] {
+				return member.value.kind, true
 			}
 		}
 	}
@@ -1881,16 +1868,16 @@ func branchEnumAcceptsKind(node *schemaNode, kind jsonKind) (bool, error) {
 	}
 
 	for _, member := range node.enum {
-		if member == nil {
+		if member.value == nil {
 			return false, errors.New("JSON enum member is nil")
 		}
 
-		matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+		matches, err := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 		if err != nil {
 			return false, err
 		}
 
-		if matches && member.kind == kind {
+		if matches && member.value.kind == kind {
 			return true, nil
 		}
 	}
@@ -2107,20 +2094,20 @@ func branchCanAcceptInteger(node *schemaNode, visiting map[*schemaNode]bool) (bo
 		matched := false
 
 		for _, member := range node.enum {
-			if member == nil {
+			if member.value == nil {
 				return false, errors.New("JSON enum member is nil")
 			}
 
-			if member.kind != jsonNumber {
+			if member.value.kind != jsonNumber {
 				continue
 			}
 
-			integer, err := member.number.isInteger()
+			integer, err := member.value.number.isInteger()
 			if err != nil {
 				return false, err
 			}
 
-			matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+			matches, err := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 			if err != nil {
 				return false, err
 			}
@@ -2403,7 +2390,6 @@ func enumFaultKinds(node *schemaNode) []jsonKind {
 func schemaNodeWithoutEnum(node *schemaNode) *schemaNode {
 	shape := *node.schemaShape
 	shape.enum = nil
-	shape.enumIndices = nil
 
 	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}
 }
@@ -2411,7 +2397,7 @@ func schemaNodeWithoutEnum(node *schemaNode) *schemaNode {
 // enumContainsValue reports whether one value is semantically listed by an enum.
 func enumContainsValue(node *schemaNode, value *jsonValue) (bool, error) {
 	for _, member := range node.enum {
-		equal, err := jsonSemanticEqual(member, value)
+		equal, err := jsonValidatedSemanticEqual(member.value, value)
 		if err != nil {
 			return false, err
 		}
@@ -2583,14 +2569,14 @@ func collectAnyOfWitnesses(
 	defer delete(visiting, node)
 
 	for _, member := range node.enum {
-		if member == nil {
+		if member.value == nil {
 			return errors.New("JSON enum member is nil")
 		}
 
-		if member.kind == kind {
+		if member.value.kind == kind {
 			var err error
 
-			*witnesses, err = appendUniqueJSONWitness(*witnesses, member)
+			*witnesses, err = appendUniqueJSONWitness(*witnesses, member.value)
 			if err != nil {
 				return err
 			}
@@ -3170,14 +3156,6 @@ func sortedSchemaPropertyNames(properties map[string]*schemaNode) []string {
 	return names
 }
 
-// sortedStrings returns a copied UTF-8 byte-ordered string list.
-func sortedStrings(values []string) []string {
-	result := append([]string(nil), values...)
-	sort.Strings(result)
-
-	return result
-}
-
 // containsString reports whether a required name is present.
 func containsString(values []string, wanted string) bool {
 	for _, value := range values {
@@ -3187,37 +3165,6 @@ func containsString(values []string, wanted string) bool {
 	}
 
 	return false
-}
-
-// canonicalPlanEnum deduplicates semantic enum values while keeping first-authored order.
-func canonicalPlanEnum(values []*jsonValue) ([]*jsonValue, error) {
-	members := make([]*jsonValue, 0, len(values))
-	for _, candidate := range values {
-		if candidate == nil {
-			return nil, errors.New("JSON enum member is nil")
-		}
-
-		duplicate := false
-
-		for _, existing := range members {
-			equal, err := jsonSemanticEqual(candidate, existing)
-			if err != nil {
-				return nil, err
-			}
-
-			if equal {
-				duplicate = true
-
-				break
-			}
-		}
-
-		if !duplicate {
-			members = append(members, candidate)
-		}
-	}
-
-	return members, nil
 }
 
 // firstCanonicalFault selects the first fault in canonical obligation order.
@@ -3627,7 +3574,7 @@ func faultTargetIsRealizable(node *schemaNode, occurrence schemaOccurrence, targ
 	if target.obligation.rule == oracleRuleType && node.enum != nil && node.kind != schemaAny {
 		expected := schemaNodeJSONKind(node.kind)
 		for _, member := range node.enum {
-			if member != nil && member.kind != expected {
+			if member.value != nil && member.value.kind != expected {
 				return true
 			}
 		}

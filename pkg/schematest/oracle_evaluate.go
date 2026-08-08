@@ -296,15 +296,10 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 	identity := makeRuleIdentity(occurrence, oracleRuleEnum)
 	appendApplicable(result, identity)
 
-	for index, member := range node.enum {
-		authoredIndex := index
-		if index < len(node.enumIndices) {
-			authoredIndex = node.enumIndices[index]
-		}
-
-		equal, err := jsonSemanticEqual(value, member)
+	for _, member := range node.enum {
+		equal, err := jsonValidatedSemanticEqual(value, member.value)
 		if err != nil {
-			result.err = fmt.Errorf("%s member %d: %w", identity, authoredIndex, err)
+			result.err = fmt.Errorf("%s member %d: %w", identity, member.authoredIndex, err)
 
 			return
 		}
@@ -312,7 +307,7 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 		if equal {
 			appendObserved(result, levelIdentity{
 				ruleIdentity: identity,
-				level:        fmt.Sprintf("%s%d", oracleEnumLevelPrefix, authoredIndex),
+				level:        fmt.Sprintf("%s%d", oracleEnumLevelPrefix, member.authoredIndex),
 			})
 
 			return

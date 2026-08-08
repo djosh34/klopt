@@ -1,10 +1,6 @@
 package schematest
 
-import (
-	"fmt"
-	"sort"
-	"strconv"
-)
+import "fmt"
 
 const (
 	// oracleRuleMinProperties identifies an inclusive lower bound on object members.
@@ -82,17 +78,14 @@ func evaluateObjectCounts(
 	return nil
 }
 
-// evaluateRequiredMembers evaluates required members in UTF-8 member order.
+// evaluateRequiredMembers evaluates the admission-canonical required members.
 func evaluateRequiredMembers(
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	members map[string]*jsonValue,
 ) {
-	required := append([]string(nil), node.required...)
-	sort.Strings(required)
-
-	for _, name := range required {
+	for _, name := range node.required {
 		identity := makeRuleIdentity(
 			appendObjectMemberOccurrence(occurrence, name),
 			oracleRuleRequired,
@@ -200,19 +193,9 @@ func evaluateObjectCountRule(
 	identity := makeRuleIdentity(occurrence, rule)
 	appendApplicable(result, identity)
 
-	actual, err := parseExactNumber(strconv.Itoa(count))
-	if err != nil {
-		return fmt.Errorf("%s: parse object member count: %w", identity, err)
-	}
-
-	comparison, err := actual.compare(bound.number)
+	violated, err := countBoundViolated(count, bound, minimum)
 	if err != nil {
 		return fmt.Errorf("%s: compare object member count: %w", identity, err)
-	}
-
-	violated := comparison < 0
-	if !minimum {
-		violated = comparison > 0
 	}
 
 	if violated {

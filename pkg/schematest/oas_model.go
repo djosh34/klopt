@@ -70,14 +70,19 @@ type schemaNode struct {
 	occurrence schemaOccurrence
 }
 
+// enumMember keeps one semantically unique admitted value with its first authored identity.
+type enumMember struct {
+	value         *jsonValue
+	authoredIndex int
+}
+
 // schemaShape contains the semantics shared by references to one target.
 type schemaShape struct {
 	schemaJSON *jsonValue
 
 	kind         schemaKind
 	nullable     bool
-	enum         []*jsonValue
-	enumIndices  []int
+	enum         []enumMember
 	defaultValue *jsonValue
 
 	minimum          *exactNumber
