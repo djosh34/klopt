@@ -91,7 +91,7 @@ func validateURIAuthority(authority string) error {
 			return fmt.Errorf("invalid IP literal: %w", err)
 		}
 
-		return validateURIPortSuffix(hostAndPort[closingBracket+1:])
+		return validateURIPortSuffix(hostAndPort[closingBracket+1:], true)
 	}
 
 	if strings.ContainsAny(hostAndPort, "[]") {
@@ -101,7 +101,7 @@ func validateURIAuthority(authority string) error {
 	host := hostAndPort
 	if separator := strings.LastIndexByte(hostAndPort, ':'); separator >= 0 {
 		host = hostAndPort[:separator]
-		if err := validateURIPortSuffix(hostAndPort[separator:]); err != nil {
+		if err := validateURIPortSuffix(hostAndPort[separator:], false); err != nil {
 			return err
 		}
 	}
@@ -150,13 +150,17 @@ func validateIPvFuture(literal string) error {
 	return nil
 }
 
-func validateURIPortSuffix(suffix string) error {
+func validateURIPortSuffix(suffix string, requireDigits bool) error {
 	if suffix == "" {
 		return nil
 	}
 
 	if suffix[0] != ':' {
 		return errors.New("unexpected characters after host")
+	}
+
+	if requireDigits && len(suffix) == 1 {
+		return errors.New("port must contain decimal digits")
 	}
 
 	for index := 1; index < len(suffix); index++ {

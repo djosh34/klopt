@@ -23,9 +23,7 @@ func TestValidateURIReferenceAcceptsRFC3986IPLiteralForms(t *testing.T) {
 		"https://[1::8]/",
 		"https://[::ffff:192.0.2.128]/",
 		"https://[1:2:3:4:5:6:192.0.2.1]:443/path?query#fragment",
-		"https://[::1]:/docs",
 		"https://[v1.a]/",
-		"https://[v1.docs]:/docs",
 		"https://[VAF.a:b!$&'()*+,;=-._~]:443/",
 	} {
 		_, err := validateURIReference(value)
@@ -49,6 +47,8 @@ func TestValidateURIReferenceRejectsMalformedIPLiteralForms(t *testing.T) {
 		"https://[v1.a%20b]/",
 		"https://[v1.a/b]/",
 		"https://[::1]extra/",
+		"https://[::1]:/docs",
+		"https://[v1.docs]:/docs",
 		"https://[::1]:port/",
 	} {
 		_, err := validateURIReference(value)
@@ -104,14 +104,16 @@ func TestParseInputAnnotationIPLiteralParity(t *testing.T) {
 			yamlSchema: `xml: {namespace: "urn://[2001:db8::1]/name"}`,
 		},
 		{
-			name:       "external documentation IPv6 empty port",
-			jsonSchema: `{"externalDocs":{"url":"https://[::1]:/docs"}}`,
-			yamlSchema: `externalDocs: {url: "https://[::1]:/docs"}`,
+			name:        "external documentation IPv6 empty port",
+			jsonSchema:  `{"externalDocs":{"url":"https://[::1]:/docs"}}`,
+			yamlSchema:  `externalDocs: {url: "https://[::1]:/docs"}`,
+			wantPointer: "/externalDocs/url",
 		},
 		{
-			name:       "external documentation IPvFuture empty port",
-			jsonSchema: `{"externalDocs":{"url":"https://[v1.docs]:/docs"}}`,
-			yamlSchema: `externalDocs: {url: "https://[v1.docs]:/docs"}`,
+			name:        "external documentation IPvFuture empty port",
+			jsonSchema:  `{"externalDocs":{"url":"https://[v1.docs]:/docs"}}`,
+			yamlSchema:  `externalDocs: {url: "https://[v1.docs]:/docs"}`,
+			wantPointer: "/externalDocs/url",
 		},
 		{
 			name:        "external documentation malformed bracket host",
