@@ -1,4 +1,4 @@
-//nolint:godoclint // Canonical planner tables pin private identity vocabulary at its seam.
+//nolint:godoclint // Canonical planner tables requirement private identity vocabulary at its seam.
 package schematest
 
 import (
@@ -104,7 +104,7 @@ func TestMakePlanCanonicalizesPropertyAndEnumObligations(t *testing.T) {
 	}, plan.obligationIDs())
 }
 
-func TestMakePlanPinsCanonicalKindsAndObjectPresence(t *testing.T) {
+func TestMakePlanRequirementsCanonicalKindsAndObjectPresence(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -121,15 +121,15 @@ func TestMakePlanPinsCanonicalKindsAndObjectPresence(t *testing.T) {
 	require.NoError(t, err)
 
 	rootType := findValidTarget(t, plan, "|type|level:object")
-	requirePin(t, rootType.requirements, "#/required", requirementPresent)
-	requirePin(t, rootType.requirements, "#/optional", requirementAbsent)
+	requireRequirement(t, rootType.requirements, "#/required", requirementPresent)
+	requireRequirement(t, rootType.requirements, "#/optional", requirementAbsent)
 
 	optionalType := findValidTarget(t, plan, "/properties/optional|#/optional|type|level:number")
-	requirePin(t, optionalType.requirements, "#/optional", requirementPresent)
-	requireKindPin(t, optionalType.requirements, optionalType.obligation.occurrence, jsonNumber)
+	requireRequirement(t, optionalType.requirements, "#/optional", requirementPresent)
+	requireKindRequirement(t, optionalType.requirements, optionalType.obligation.occurrence, jsonNumber)
 
 	requiredFault := findFaultTarget(t, plan, "|#/required|required|fault:required")
-	requireOnlyPresencePin(t, requiredFault.requirements, "#/required", requirementAbsent)
+	requireOnlyPresenceRequirement(t, requiredFault.requirements, "#/required", requirementAbsent)
 }
 
 func TestMakePlanFaultsInvertCompositionBranchTruth(t *testing.T) {
@@ -151,12 +151,12 @@ func TestMakePlanFaultsInvertCompositionBranchTruth(t *testing.T) {
 	require.NoError(t, err)
 
 	allOfFault := findFaultTarget(t, plan, "/allOf/0|#|pattern|fault:pattern")
-	requireCompositionPin(t, allOfFault.requirements, "allOf", 0, false)
-	requireCompositionPin(t, allOfFault.requirements, "allOf", 1, true)
+	requireCompositionRequirement(t, allOfFault.requirements, "allOf", 0, false)
+	requireCompositionRequirement(t, allOfFault.requirements, "allOf", 1, true)
 
 	anyOfFault := findFaultTarget(t, plan, "/anyOf/0|#|pattern|fault:pattern")
-	requireCompositionPin(t, anyOfFault.requirements, "anyOf", 0, false)
-	requireCompositionPin(t, anyOfFault.requirements, "anyOf", 1, false)
+	requireCompositionRequirement(t, anyOfFault.requirements, "anyOf", 0, false)
+	requireCompositionRequirement(t, anyOfFault.requirements, "anyOf", 1, false)
 }
 
 func TestMakePlanKeepsTypelessSiblingCompatibleKindFirst(t *testing.T) {
@@ -372,7 +372,7 @@ func TestMakePlanAcceptsSchemaNamesThatMatchCompositionKeywords(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestMakePlanScalarFaultsPinTheirLocalKinds(t *testing.T) {
+func TestMakePlanScalarFaultsConstrainTheirLocalKinds(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -397,12 +397,12 @@ func TestMakePlanScalarFaultsPinTheirLocalKinds(t *testing.T) {
 			require.NoError(t, err)
 
 			fault := findFaultTarget(t, plan, "|"+test.rule+"|fault:"+test.rule)
-			requireKindPin(t, fault.requirements, fault.obligation.occurrence, test.kind)
+			requireKindRequirement(t, fault.requirements, fault.obligation.occurrence, test.kind)
 		})
 	}
 }
 
-func TestMakePlanRequiredPresencePinsContainmentAndUndeclaredNames(t *testing.T) {
+func TestMakePlanRequiredPresenceRequirementsContainmentAndUndeclaredNames(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -415,8 +415,8 @@ func TestMakePlanRequiredPresencePinsContainmentAndUndeclaredNames(t *testing.T)
 	require.NoError(t, err)
 
 	required := findValidTarget(t, plan, "|#/missing|required|level:present")
-	requireKindPin(t, required.requirements, model.root.occurrence, jsonObject)
-	requirePin(t, required.requirements, "#/missing", requirementPresent)
+	requireKindRequirement(t, required.requirements, model.root.occurrence, jsonObject)
+	requireRequirement(t, required.requirements, "#/missing", requirementPresent)
 }
 
 func TestMakePlanTypelessRequiredPresenceOnlyAppliesToObjects(t *testing.T) {
@@ -436,12 +436,12 @@ func TestMakePlanTypelessRequiredPresenceOnlyAppliesToObjects(t *testing.T) {
 		}
 
 		if target.obligation.component == oracleLevelPrefix+jsonKindName(jsonObject) {
-			requirePin(t, target.requirements, "#/name", requirementPresent)
+			requireRequirement(t, target.requirements, "#/name", requirementPresent)
 
 			continue
 		}
 
-		requireNoPresencePin(t, target.requirements, "#/name")
+		requireNoPresenceRequirement(t, target.requirements, "#/name")
 	}
 }
 
@@ -457,9 +457,9 @@ func TestMakePlanAnyOfLocalMinimumLeavesSiblingTruthToSearch(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	pins := findValidTarget(t, plan, "|minimum|level:valid").requirements
-	requireNoCompositionPin(t, pins, "anyOf", 0)
-	requireNoCompositionPin(t, pins, "anyOf", 1)
+	requirements := findValidTarget(t, plan, "|minimum|level:valid").requirements
+	requireNoCompositionRequirement(t, requirements, "anyOf", 0)
+	requireNoCompositionRequirement(t, requirements, "anyOf", 1)
 }
 
 func TestMakePlanAnyOfOverlappingChildValidTargetsKeepSiblingsUnconstrained(t *testing.T) {
@@ -475,14 +475,14 @@ func TestMakePlanAnyOfOverlappingChildValidTargetsKeepSiblingsUnconstrained(t *t
 
 	for index := 0; index < 2; index++ {
 		target := findValidTarget(t, plan, "/anyOf/"+itoa(index)+"|#|type|level:string")
-		requireCompositionPin(t, target.requirements, "anyOf", index, true)
+		requireCompositionRequirement(t, target.requirements, "anyOf", index, true)
 
 		for sibling := 0; sibling < 2; sibling++ {
 			if sibling == index {
 				continue
 			}
 
-			requireNoCompositionPin(t, target.requirements, "anyOf", sibling)
+			requireNoCompositionRequirement(t, target.requirements, "anyOf", sibling)
 		}
 	}
 }
@@ -504,8 +504,8 @@ func TestMakePlanPositiveMinItemsSuppliesItsItem(t *testing.T) {
 		findValidTarget(t, plan, "|type|level:array"),
 		findValidTarget(t, plan, "|minItems|level:valid"),
 	} {
-		requirePin(t, target.requirements, "#/*", requirementPresent)
-		requireNoPresencePin(t, target.requirements, "#/*", requirementAbsent)
+		requireRequirement(t, target.requirements, "#/*", requirementPresent)
+		requireNoPresenceRequirement(t, target.requirements, "#/*", requirementAbsent)
 	}
 }
 
@@ -553,7 +553,7 @@ func TestMakePlanEnumeratesEveryIntegerNumberAnyOfMask(t *testing.T) {
 	require.Equal(t, []string{"level:mask:1", "level:mask:2", "level:mask:3"}, anyOfLevelComponents(plan))
 }
 
-func TestMakePlanPositiveMinPropertiesPinsDeclaredMemberPresent(t *testing.T) {
+func TestMakePlanPositiveMinPropertiesRequirementsDeclaredMemberPresent(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -571,8 +571,8 @@ func TestMakePlanPositiveMinPropertiesPinsDeclaredMemberPresent(t *testing.T) {
 		findValidTarget(t, plan, "|type|level:object"),
 		findValidTarget(t, plan, "|minProperties|level:valid"),
 	} {
-		requirePin(t, target.requirements, "#/x", requirementPresent)
-		requireNoPresencePin(t, target.requirements, "#/x", requirementAbsent)
+		requireRequirement(t, target.requirements, "#/x", requirementPresent)
+		requireNoPresenceRequirement(t, target.requirements, "#/x", requirementAbsent)
 	}
 }
 
@@ -604,80 +604,120 @@ func findFaultTarget(t *testing.T, plan *searchPlan, suffix string) faultProgram
 	return faultProgram{}
 }
 
-func requirePin(t *testing.T, pins []requirement, instanceTemplate string, presence requirementPresence) {
+func requireRequirement(
+	t *testing.T,
+	requirements []requirement,
+	instanceTemplate string,
+	presence requirementPresence,
+) {
 	t.Helper()
 
-	for _, pin := range pins {
-		if pin.occurrence.instanceTemplate == instanceTemplate && pin.presence == presence {
+	for _, requirement := range requirements {
+		if requirement.occurrence.instanceTemplate == instanceTemplate && requirement.presence == presence {
 			return
 		}
 	}
 
-	t.Fatalf("pin for instance template %q with presence %d not found: %#v", instanceTemplate, presence, pins)
+	t.Fatalf(
+		"requirement for instance template %q with presence %d not found: %#v",
+		instanceTemplate, presence, requirements,
+	)
 }
 
-func requireOnlyPresencePin(t *testing.T, pins []requirement, instanceTemplate string, presence requirementPresence) {
+func requireOnlyPresenceRequirement(
+	t *testing.T,
+	requirements []requirement,
+	instanceTemplate string,
+	presence requirementPresence,
+) {
 	t.Helper()
 
 	count := 0
 
-	for _, pin := range pins {
-		if pin.occurrence.instanceTemplate == instanceTemplate && pin.presence != requirementNoPresence {
+	for _, requirement := range requirements {
+		if requirement.occurrence.instanceTemplate == instanceTemplate &&
+			requirement.presence != requirementNoPresence {
 			count++
 
-			require.Equal(t, presence, pin.presence)
+			require.Equal(t, presence, requirement.presence)
 		}
 	}
 
-	require.Equal(t, 1, count, "presence pin for %s", instanceTemplate)
+	require.Equal(t, 1, count, "presence requirement for %s", instanceTemplate)
 }
 
-func requireNoPresencePin(t *testing.T, pins []requirement, instanceTemplate string, forbidden ...requirementPresence) {
+func requireNoPresenceRequirement(
+	t *testing.T,
+	requirements []requirement,
+	instanceTemplate string,
+	forbidden ...requirementPresence,
+) {
 	t.Helper()
 
-	for _, pin := range pins {
-		if pin.occurrence.instanceTemplate != instanceTemplate || pin.presence == requirementNoPresence {
+	for _, requirement := range requirements {
+		if requirement.occurrence.instanceTemplate != instanceTemplate ||
+			requirement.presence == requirementNoPresence {
 			continue
 		}
 
-		if len(forbidden) == 0 || pin.presence == forbidden[0] {
-			t.Fatalf("unexpected presence pin for instance template %q: %#v", instanceTemplate, pins)
+		if len(forbidden) == 0 || requirement.presence == forbidden[0] {
+			t.Fatalf("unexpected presence requirement for %q: %#v", instanceTemplate, requirements)
 		}
 	}
 }
 
-func requireKindPin(t *testing.T, pins []requirement, occurrence schemaOccurrence, kind jsonKind) {
+func requireKindRequirement(
+	t *testing.T,
+	requirements []requirement,
+	occurrence schemaOccurrence,
+	kind jsonKind,
+) {
 	t.Helper()
 
-	for _, pin := range pins {
-		if pin.hasKind && pin.occurrence == occurrence && pin.kind == kind {
+	for _, requirement := range requirements {
+		if requirement.hasKind && requirement.occurrence == occurrence && requirement.kind == kind {
 			return
 		}
 	}
 
-	t.Fatalf("kind pin for %s with kind %s not found: %#v", occurrence.usePointer, jsonKindName(kind), pins)
+	t.Fatalf(
+		"kind requirement for %s with kind %s not found: %#v",
+		occurrence.usePointer, jsonKindName(kind), requirements,
+	)
 }
 
-func requireNoCompositionPin(t *testing.T, pins []requirement, composition string, branch int) {
+func requireNoCompositionRequirement(
+	t *testing.T,
+	requirements []requirement,
+	composition string,
+	branch int,
+) {
 	t.Helper()
 
-	for _, pin := range pins {
-		if pin.hasBranch && pin.composition == composition && pin.branch == branch {
-			t.Fatalf("unexpected composition pin %s[%d]: %#v", composition, branch, pins)
+	for _, requirement := range requirements {
+		if requirement.hasBranch && requirement.composition == composition && requirement.branch == branch {
+			t.Fatalf("unexpected composition requirement %s[%d]: %#v", composition, branch, requirements)
 		}
 	}
 }
 
-func requireCompositionPin(t *testing.T, pins []requirement, composition string, branch int, truth bool) {
+func requireCompositionRequirement(
+	t *testing.T,
+	requirements []requirement,
+	composition string,
+	branch int,
+	truth bool,
+) {
 	t.Helper()
 
-	for _, pin := range pins {
-		if pin.composition == composition && pin.branch == branch && pin.hasBranch && pin.truth == truth {
+	for _, requirement := range requirements {
+		if requirement.composition == composition && requirement.branch == branch &&
+			requirement.hasBranch && requirement.truth == truth {
 			return
 		}
 	}
 
-	t.Fatalf("composition pin %s[%d]=%t not found: %#v", composition, branch, truth, pins)
+	t.Fatalf("composition requirement %s[%d]=%t not found: %#v", composition, branch, truth, requirements)
 }
 
 func occurrenceUsePointers(occurrences []schemaOccurrence) []string {

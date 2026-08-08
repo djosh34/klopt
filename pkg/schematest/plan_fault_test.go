@@ -1,4 +1,4 @@
-//nolint:godoclint // Fault-planning tests pin the private declarative seam.
+//nolint:godoclint // Fault-planning tests requirement the private declarative seam.
 package schematest
 
 import (
@@ -22,20 +22,20 @@ func TestMakePlanCompilesTypedObjectFaultRolesWithoutWitnesses(t *testing.T) {
 	require.NoError(t, err)
 
 	required := findFaultTarget(t, plan, "|#/id|required|fault:required")
-	requirePin(t, required.requirements, "#/id", requirementAbsent)
-	requirePin(t, required.requirements, "#/name", requirementPresent)
-	requireKindPin(t, required.requirements, model.root.occurrence, jsonObject)
+	requireRequirement(t, required.requirements, "#/id", requirementAbsent)
+	requireRequirement(t, required.requirements, "#/name", requirementPresent)
+	requireKindRequirement(t, required.requirements, model.root.occurrence, jsonObject)
 	require.Equal(t, failureSet{failureIdentity(required.obligation.ruleIdentity)}, required.expected)
 	require.Nil(t, required.alternatives)
 
 	additional := findFaultTarget(t, plan, "|#/*|additionalProperties|fault:additionalProperties")
-	requirePin(t, additional.requirements, "#/*", requirementPresent)
-	requireKindPin(t, additional.requirements, model.root.occurrence, jsonObject)
+	requireRequirement(t, additional.requirements, "#/*", requirementPresent)
+	requireKindRequirement(t, additional.requirements, model.root.occurrence, jsonObject)
 	require.Equal(t, failureSet{failureIdentity(additional.obligation.ruleIdentity)}, additional.expected)
 	require.Nil(t, additional.alternatives)
 }
 
-func TestMakePlanCompilesNestedAnyOfClosureDomainsWithoutInheritedKindPins(t *testing.T) {
+func TestMakePlanCompilesNestedAnyOfClosureDomainsWithoutInheritedKindRequirements(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -52,9 +52,9 @@ func TestMakePlanCompilesNestedAnyOfClosureDomainsWithoutInheritedKindPins(t *te
 
 	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
 	require.Equal(t, failureSet{failureIdentity(aggregate.obligation.ruleIdentity)}, aggregate.expected)
-	requireNoKindPin(t, aggregate.requirements, aggregate.obligation.occurrence)
-	requireCompositionPin(t, aggregate.requirements, "anyOf", 0, false)
-	requireCompositionPin(t, aggregate.requirements, "anyOf", 1, false)
+	requireNoKindRequirement(t, aggregate.requirements, aggregate.obligation.occurrence)
+	requireCompositionRequirement(t, aggregate.requirements, "anyOf", 0, false)
+	requireCompositionRequirement(t, aggregate.requirements, "anyOf", 1, false)
 
 	first := aggregate.alternatives
 	require.NotNil(t, first)
@@ -109,10 +109,10 @@ func TestMakePlanRetainsFaultsWithoutFiniteRealizabilityProof(t *testing.T) {
 	findValidTarget(t, plan, "|anyOf|level:mask:1")
 }
 
-func requireNoKindPin(t *testing.T, pins []requirement, occurrence schemaOccurrence) {
+func requireNoKindRequirement(t *testing.T, requirements []requirement, occurrence schemaOccurrence) {
 	t.Helper()
 
-	for _, pin := range pins {
-		require.False(t, pin.hasKind && rowOccurrenceMatches(pin.occurrence, occurrence), pins)
+	for _, requirement := range requirements {
+		require.False(t, requirement.hasKind && rowOccurrenceMatches(requirement.occurrence, occurrence), requirements)
 	}
 }

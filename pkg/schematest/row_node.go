@@ -15,7 +15,7 @@ type rowVisit func(*jsonValue) (bool, error)
 func (s *search) walkNode(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
@@ -23,11 +23,11 @@ func (s *search) walkNode(
 		return false, errors.New("schematest: row schema occurrence has no shape")
 	}
 
-	if err := s.chargeNodeCompositions(node, occurrence, pins); err != nil {
+	if err := s.chargeNodeCompositions(node, occurrence, requirements); err != nil {
 		return false, err
 	}
 
-	kinds, err := rowKindChoices(node, occurrence, pins)
+	kinds, err := rowKindChoices(node, occurrence, requirements)
 	if err != nil {
 		return false, err
 	}
@@ -38,7 +38,7 @@ func (s *search) walkNode(
 		}
 
 		if kindIsScalar(kind) {
-			complete, scalarErr := s.walkScalar(node, occurrence, pins, context, kind, visit)
+			complete, scalarErr := s.walkScalar(node, occurrence, requirements, context, kind, visit)
 			if scalarErr != nil || complete {
 				return complete, scalarErr
 			}
@@ -53,9 +53,9 @@ func (s *search) walkNode(
 
 		switch kind {
 		case jsonArray:
-			complete, err = s.walkArray(node, occurrence, pins, context, visit)
+			complete, err = s.walkArray(node, occurrence, requirements, context, visit)
 		case jsonObject:
-			complete, err = s.walkObject(node, occurrence, pins, context, visit)
+			complete, err = s.walkObject(node, occurrence, requirements, context, visit)
 		default:
 			return false, fmt.Errorf("schematest: unsupported row kind %d", kind)
 		}
@@ -68,13 +68,13 @@ func (s *search) walkNode(
 	return false, nil
 }
 
-// chargeNodeCompositions charges each pinned local composition choice once per occurrence.
+// chargeNodeCompositions charges each constrained local composition choice once per occurrence.
 func (s *search) chargeNodeCompositions(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 ) error {
-	return s.chargeNestedCompositions(node, occurrence, pins, make(map[*schemaNode]bool))
+	return s.chargeNestedCompositions(node, occurrence, requirements, make(map[*schemaNode]bool))
 }
 
 // chargeNestedCompositions charges same-instance compositions before structural assignment.
@@ -83,7 +83,7 @@ func (s *search) chargeNodeCompositions(
 func (s *search) chargeNestedCompositions(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	visiting map[*schemaNode]bool,
 ) error {
 	if node == nil || node.schemaShape == nil {
@@ -97,13 +97,13 @@ func (s *search) chargeNestedCompositions(
 	visiting[node] = true
 	defer delete(visiting, node)
 
-	if len(node.allOf) > 0 && rowHasCompositionPins(pins, occurrence, "allOf") {
+	if len(node.allOf) > 0 && rowHasCompositionRequirements(requirements, occurrence, "allOf") {
 		if err := s.assign(); err != nil {
 			return err
 		}
 	}
 
-	if len(node.anyOf) > 0 && rowHasCompositionPins(pins, occurrence, "anyOf") {
+	if len(node.anyOf) > 0 && rowHasCompositionRequirements(requirements, occurrence, "anyOf") {
 		if err := s.assign(); err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func (s *search) chargeNestedCompositions(
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if err := s.chargeNestedCompositions(child, childOccurrence, pins, visiting); err != nil {
+		if err := s.chargeNestedCompositions(child, childOccurrence, requirements, visiting); err != nil {
 			return err
 		}
 	}
@@ -128,7 +128,7 @@ func (s *search) chargeNestedCompositions(
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if err := s.chargeNestedCompositions(child, childOccurrence, pins, visiting); err != nil {
+		if err := s.chargeNestedCompositions(child, childOccurrence, requirements, visiting); err != nil {
 			return err
 		}
 	}
@@ -136,29 +136,29 @@ func (s *search) chargeNestedCompositions(
 	return nil
 }
 
-// rowKindChoices returns one pinned kind or the planner's canonical kind order.
-func rowKindChoices(node *schemaNode, occurrence schemaOccurrence, pins []requirement) ([]jsonKind, error) {
-	var pinned *jsonKind
+// rowKindChoices returns one constrained kind or the planner's canonical kind order.
+func rowKindChoices(node *schemaNode, occurrence schemaOccurrence, requirements []requirement) ([]jsonKind, error) {
+	var constrained *jsonKind
 
-	for _, pin := range pins {
-		if !pin.hasKind || !rowOccurrenceMatches(pin.occurrence, occurrence) {
+	for _, requirement := range requirements {
+		if !requirement.hasKind || !rowOccurrenceMatches(requirement.occurrence, occurrence) {
 			continue
 		}
 
-		if pinned != nil && *pinned != pin.kind {
-			return nil, fmt.Errorf("schematest: conflicting kind pins at %s", occurrence.usePointer)
+		if constrained != nil && *constrained != requirement.kind {
+			return nil, fmt.Errorf("schematest: conflicting kind requirements at %s", occurrence.usePointer)
 		}
 
-		kind := pin.kind
-		pinned = &kind
+		kind := requirement.kind
+		constrained = &kind
 	}
 
-	if pinned != nil {
-		if !nodeAcceptsKindForTarget(node, *pinned) {
+	if constrained != nil {
+		if !nodeAcceptsKindForTarget(node, *constrained) {
 			return nil, nil
 		}
 
-		return []jsonKind{*pinned}, nil
+		return []jsonKind{*constrained}, nil
 	}
 
 	return orderedTypeKinds(node), nil
@@ -227,11 +227,11 @@ func rowDirectValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 	return candidates, nil
 }
 
-// rowChildValueUsable prunes locally invalid children unless a pinned anyOf branch must be false.
+// rowChildValueUsable prunes locally invalid children unless a constrained anyOf branch must be false.
 func (s *search) rowChildValueUsable(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	value *jsonValue,
 ) (bool, error) {
 	result := evaluateNode(node, value, occurrence)
@@ -243,9 +243,9 @@ func (s *search) rowChildValueUsable(
 		return true, nil
 	}
 
-	for _, pin := range pins {
-		if !pin.hasBranch || pin.composition != "anyOf" || pin.truth ||
-			!rowBranchContainsOccurrence(pin, occurrence) {
+	for _, requirement := range requirements {
+		if !requirement.hasBranch || requirement.composition != "anyOf" || requirement.truth ||
+			!rowBranchContainsOccurrence(requirement, occurrence) {
 			continue
 		}
 
@@ -255,14 +255,14 @@ func (s *search) rowChildValueUsable(
 	return false, nil
 }
 
-// rowBranchContainsOccurrence reports whether a pinned composition branch contains one child.
-func rowBranchContainsOccurrence(pin requirement, occurrence schemaOccurrence) bool {
-	prefix := pin.occurrence.usePointer
+// rowBranchContainsOccurrence reports whether a constrained composition branch contains one child.
+func rowBranchContainsOccurrence(requirement requirement, occurrence schemaOccurrence) bool {
+	prefix := requirement.occurrence.usePointer
 	if occurrence.usePointer != prefix && !strings.HasPrefix(occurrence.usePointer, prefix+"/") {
 		return false
 	}
 
-	return rowInstancePrefixMatches(pin.occurrence.instanceTemplate, occurrence.instanceTemplate)
+	return rowInstancePrefixMatches(requirement.occurrence.instanceTemplate, occurrence.instanceTemplate)
 }
 
 // rowInstancePrefixMatches matches a planner instance prefix to one concrete child path.
@@ -283,14 +283,14 @@ func rowInstancePrefixMatches(prefix, value string) bool {
 	return true
 }
 
-// rowHasCompositionPins reports whether one local composition has an explicit target state.
-func rowHasCompositionPins(pins []requirement, occurrence schemaOccurrence, composition string) bool {
+// rowHasCompositionRequirements reports whether one local composition has an explicit target state.
+func rowHasCompositionRequirements(requirements []requirement, occurrence schemaOccurrence, composition string) bool {
 	prefix := occurrence.usePointer + "/" + composition + "/"
-	for _, pin := range pins {
-		if pin.hasBranch && pin.composition == composition &&
-			len(pin.occurrence.usePointer) > len(prefix) &&
-			pin.occurrence.usePointer[:len(prefix)] == prefix &&
-			instanceTemplateMatches(pin.occurrence.instanceTemplate, occurrence.instanceTemplate) {
+	for _, requirement := range requirements {
+		if requirement.hasBranch && requirement.composition == composition &&
+			len(requirement.occurrence.usePointer) > len(prefix) &&
+			requirement.occurrence.usePointer[:len(prefix)] == prefix &&
+			instanceTemplateMatches(requirement.occurrence.instanceTemplate, occurrence.instanceTemplate) {
 			return true
 		}
 	}

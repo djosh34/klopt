@@ -81,7 +81,7 @@ func isGeneratedImport(path string) bool {
 	return false
 }
 
-// TestGeneratedImportGuardRejectsCheckedInConsumer pins the actual generated semantic package root.
+// TestGeneratedImportGuardRejectsCheckedInConsumer requirements the actual generated semantic package root.
 func TestGeneratedImportGuardRejectsCheckedInConsumer(t *testing.T) {
 	t.Parallel()
 
@@ -697,6 +697,41 @@ func TestPlannerCallGraphIsDeclarative(t *testing.T) {
 	}
 }
 
+// TestRowAndFaultCandidateSourcesRetainNoCandidateCollections locks the lazy source call graph.
+func TestRowAndFaultCandidateSourcesRetainNoCandidateCollections(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+
+	functions := guardFunctions(guardPackage)
+	for _, name := range []string{"rowScalarValueSource", "canonicalAnyOfWitnesses", "canonicalEnumFaultWitnesses"} {
+		function, ok := guardPackage.pkg.Scope().Lookup(name).(*types.Func)
+		require.True(t, ok, name)
+
+		for reachable := range reachableGuardFunctions(guardPackage, functions, function) {
+			require.NotContains(t, []string{
+				"canonicalKindWitnesses", "appendUniqueJSONWitness", "rowScalarValues", "collectAnyOfWitnesses",
+			}, reachable.Name(), name)
+		}
+	}
+}
+
+// TestR4FaultRuntimeDoesNotConsumeClosurePrograms locks compile-only closure ownership.
+func TestR4FaultRuntimeDoesNotConsumeClosurePrograms(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	functions := guardFunctions(guardPackage)
+	stream, ok := guardPackage.pkg.Scope().Lookup("streamBasicFault").(*types.Func)
+	require.True(t, ok)
+
+	for function := range reachableGuardFunctions(guardPackage, functions, stream) {
+		name := strings.ToLower(function.Name())
+		require.NotContains(t, name, "closureprogram")
+		require.NotContains(t, name, "syntacticallyunreachable")
+	}
+}
+
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
 func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	t.Parallel()
@@ -706,7 +741,7 @@ func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	require.Emptyf(t, violations, "production contains copied or fixture-derived semantics: %v", violations)
 }
 
-// TestCopiedAnswerGuardRejectsConcreteBypasses pins semantic selectors and renamed generated structures.
+// TestCopiedAnswerGuardRejectsConcreteBypasses requirements semantic selectors and renamed generated structures.
 func TestCopiedAnswerGuardRejectsConcreteBypasses(t *testing.T) {
 	t.Parallel()
 
@@ -772,7 +807,7 @@ func TestBuildReachableStateOwnsNoCaseCorpus(t *testing.T) {
 	require.Emptyf(t, violations, "production contains corpus-bearing execution state: %v", violations)
 }
 
-// TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes pins representative retention bypasses.
+// TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes requirements representative retention bypasses.
 func TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes(t *testing.T) {
 	t.Parallel()
 
@@ -1554,7 +1589,7 @@ func reachableOwnerTypes(
 func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
 	authorized := make(map[*types.TypeName]bool)
 	for _, root := range []string{
-		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext", "canonicalWitnesses",
+		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext",
 		"jsonActivePath", "jsonValuePair", "jsonValidationFrame", "jsonCloneFrame", "jsonMarshalFrame",
 		"strictJSONContainerFrame",
 	} {
@@ -1691,7 +1726,7 @@ func authorizedActiveLocalName(name string) bool {
 	lower := strings.ToLower(name)
 
 	for _, category := range []string{
-		"admitted", "candidate", "generated", "witness", "parentpins", "parenttokens", "canonical",
+		"admitted", "candidate", "generated", "witness", "parentrequirements", "parenttokens", "canonical",
 		"derived", "edits", "elements", "filtered", "seeded", "selected", "values",
 	} {
 		if strings.Contains(lower, category) {

@@ -37,6 +37,7 @@ func TestBuildStreamsArrayCountAndExistingIndexTargets(t *testing.T) {
 		Covered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:array",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maxItems|level:valid",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/items|#/*|type|level:string",
 		},
 		Uncovered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|fault:type",
@@ -44,7 +45,7 @@ func TestBuildStreamsArrayCountAndExistingIndexTargets(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema/items|#/*|type|fault:type",
 		},
 	}
-	expectedCases := []Case{{JSON: []byte(`[]`), Valid: true}}
+	expectedCases := []Case{{JSON: []byte(`[""]`), Valid: true}}
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)

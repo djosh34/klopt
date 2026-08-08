@@ -32,11 +32,11 @@ const (
 func (s *search) walkArray(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	lengths, err := rowArrayLengths(node, occurrence, pins)
+	lengths, err := rowArrayLengths(node, occurrence, requirements)
 	if err != nil {
 		return false, err
 	}
@@ -48,7 +48,7 @@ func (s *search) walkArray(
 
 		elements := make([]*jsonValue, length)
 
-		itemChoices, err := rowChildSchemaChoices(node, occurrence, pins, rowChildItems, "")
+		itemChoices, err := rowChildSchemaChoices(node, occurrence, requirements, rowChildItems, "")
 		if err != nil {
 			return false, err
 		}
@@ -63,7 +63,7 @@ func (s *search) walkArray(
 			complete, err := s.walkArrayElements(
 				itemChoice.node,
 				itemChoice.occurrence,
-				pins,
+				requirements,
 				context,
 				elements,
 				0,
@@ -82,7 +82,7 @@ func (s *search) walkArray(
 func (s *search) walkArrayElements(
 	item *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	context rowSearchContext,
 	elements []*jsonValue,
 	index int,
@@ -93,15 +93,15 @@ func (s *search) walkArrayElements(
 	}
 
 	if item == nil {
-		return s.walkGenericValue(pins, func(value *jsonValue) (bool, error) {
+		return s.walkGenericValue(requirements, func(value *jsonValue) (bool, error) {
 			elements[index] = value
 
-			return s.walkArrayElements(item, occurrence, pins, context, elements, index+1, visit)
+			return s.walkArrayElements(item, occurrence, requirements, context, elements, index+1, visit)
 		})
 	}
 
-	return s.walkNode(item, occurrence, pins, context, func(value *jsonValue) (bool, error) {
-		usable, err := s.rowChildValueUsable(item, occurrence, pins, value)
+	return s.walkNode(item, occurrence, requirements, context, func(value *jsonValue) (bool, error) {
+		usable, err := s.rowChildValueUsable(item, occurrence, requirements, value)
 		if err != nil {
 			return false, err
 		}
@@ -112,14 +112,14 @@ func (s *search) walkArrayElements(
 
 		elements[index] = value
 
-		return s.walkArrayElements(item, occurrence, pins, context, elements, index+1, visit)
+		return s.walkArrayElements(item, occurrence, requirements, context, elements, index+1, visit)
 	})
 }
 
 // rowArrayLengths returns canonical and repair lengths for one array occurrence.
 //
 //nolint:cyclop,gocognit,gocyclo // Bound extraction and deterministic repair choices are one structural phase.
-func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []requirement) ([]int, error) {
+func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, requirements []requirement) ([]int, error) {
 	minimum := 0
 	maximum := int(^uint(0) >> 1)
 
@@ -149,7 +149,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []requi
 			occurrence.instanceTemplate,
 		)
 
-		childBounds, err := rowNestedArrayBounds(child, childOccurrence, pins)
+		childBounds, err := rowNestedArrayBounds(child, childOccurrence, requirements)
 		if err != nil {
 			return nil, err
 		}
@@ -157,8 +157,8 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []requi
 		composedBounds = combineRowArrayBounds(composedBounds, childBounds)
 	}
 
-	anyOfStates, anyOfPinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	if anyOfPinned {
+	anyOfStates, anyOfConstrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
+	if anyOfConstrained {
 		for index, child := range node.anyOf {
 			if !anyOfStates[index] {
 				continue
@@ -171,7 +171,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []requi
 				occurrence.instanceTemplate,
 			)
 
-			childBounds, err := rowNestedArrayBounds(child, childOccurrence, pins)
+			childBounds, err := rowNestedArrayBounds(child, childOccurrence, requirements)
 			if err != nil {
 				return nil, err
 			}
@@ -188,7 +188,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []requi
 				occurrence.instanceTemplate,
 			)
 
-			childBounds, err := rowNestedArrayBounds(child, childOccurrence, pins)
+			childBounds, err := rowNestedArrayBounds(child, childOccurrence, requirements)
 			if err != nil {
 				return nil, err
 			}
@@ -207,30 +207,30 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []requi
 		maximum = composedBounds[0][1]
 	}
 
-	itemPin, itemPinned := rowPresencePinDetails(pins, schemaOccurrence{
+	itemRequirement, itemConstrained := rowPresenceRequirementDetails(requirements, schemaOccurrence{
 		usePointer:       occurrence.usePointer + "/items",
 		targetPointer:    occurrence.targetPointer,
 		instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
 	})
-	if !itemPinned {
-		itemChoices, err := rowChildSchemaChoices(node, occurrence, pins, rowChildItems, "")
+	if !itemConstrained {
+		itemChoices, err := rowChildSchemaChoices(node, occurrence, requirements, rowChildItems, "")
 		if err != nil {
 			return nil, err
 		}
 
 		for _, itemChoice := range itemChoices {
-			candidatePin, exists := rowPresencePinDetails(pins, itemChoice.occurrence)
-			if exists && (!itemPinned || !candidatePin.canonical) {
-				itemPin, itemPinned = candidatePin, true
+			candidateRequirement, exists := rowPresenceRequirementDetails(requirements, itemChoice.occurrence)
+			if exists && (!itemConstrained || !candidateRequirement.canonical) {
+				itemRequirement, itemConstrained = candidateRequirement, true
 			}
 		}
 	}
 
-	if itemPinned && !itemPin.canonical && itemPin.presence == requirementPresent && minimum < 1 {
+	if itemConstrained && !itemRequirement.canonical && itemRequirement.presence == requirementPresent && minimum < 1 {
 		minimum = 1
 	}
 
-	defaultLengths, err := rowComposedArrayDefaultLengths(node, occurrence, pins)
+	defaultLengths, err := rowComposedArrayDefaultLengths(node, occurrence, requirements)
 	if err != nil {
 		return nil, err
 	}
@@ -283,18 +283,18 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []requi
 func rowComposedArrayDefaultLengths(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 ) ([]int, error) {
-	return rowComposedArrayDefaultLengthsAt(node, occurrence, pins, make(map[*schemaNode]bool))
+	return rowComposedArrayDefaultLengthsAt(node, occurrence, requirements, make(map[*schemaNode]bool))
 }
 
 // rowComposedArrayDefaultLengthsAt recursively collects nested authored defaults.
 //
-//nolint:cyclop // Direct, allOf, and pinned anyOf defaults share one recursive pass.
+//nolint:cyclop // Direct, allOf, and constrained anyOf defaults share one recursive pass.
 func rowComposedArrayDefaultLengthsAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	visiting map[*schemaNode]bool,
 ) ([]int, error) {
 	if node == nil || node.schemaShape == nil {
@@ -321,7 +321,7 @@ func rowComposedArrayDefaultLengthsAt(
 			occurrence.instanceTemplate,
 		)
 
-		childLengths, err := rowComposedArrayDefaultLengthsAt(child, childOccurrence, pins, visiting)
+		childLengths, err := rowComposedArrayDefaultLengthsAt(child, childOccurrence, requirements, visiting)
 		if err != nil {
 			return nil, err
 		}
@@ -329,9 +329,9 @@ func rowComposedArrayDefaultLengthsAt(
 		lengths = append(lengths, childLengths...)
 	}
 
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
-		if pinned && !states[index] {
+		if constrained && !states[index] {
 			continue
 		}
 
@@ -342,7 +342,7 @@ func rowComposedArrayDefaultLengthsAt(
 			occurrence.instanceTemplate,
 		)
 
-		childLengths, err := rowComposedArrayDefaultLengthsAt(child, childOccurrence, pins, visiting)
+		childLengths, err := rowComposedArrayDefaultLengthsAt(child, childOccurrence, requirements, visiting)
 		if err != nil {
 			return nil, err
 		}
@@ -357,9 +357,9 @@ func rowComposedArrayDefaultLengthsAt(
 func rowNestedArrayBounds(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 ) ([][2]int, error) {
-	return rowNestedArrayBoundsAt(node, occurrence, pins, make(map[*schemaNode]bool))
+	return rowNestedArrayBoundsAt(node, occurrence, requirements, make(map[*schemaNode]bool))
 }
 
 // rowNestedArrayBoundsAt carries nested composition alternatives through bounds.
@@ -368,7 +368,7 @@ func rowNestedArrayBounds(
 func rowNestedArrayBoundsAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	visiting map[*schemaNode]bool,
 ) ([][2]int, error) {
 	maximum := int(^uint(0) >> 1)
@@ -411,7 +411,7 @@ func rowNestedArrayBoundsAt(
 			occurrence.instanceTemplate,
 		)
 
-		childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, pins, visiting)
+		childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, requirements, visiting)
 		if err != nil {
 			return nil, err
 		}
@@ -423,8 +423,8 @@ func rowNestedArrayBoundsAt(
 		return bounds, nil
 	}
 
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	if pinned {
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
+	if constrained {
 		for index, child := range node.anyOf {
 			if !states[index] {
 				continue
@@ -437,7 +437,7 @@ func rowNestedArrayBoundsAt(
 				occurrence.instanceTemplate,
 			)
 
-			childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, pins, visiting)
+			childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, requirements, visiting)
 			if err != nil {
 				return nil, err
 			}
@@ -457,7 +457,7 @@ func rowNestedArrayBoundsAt(
 			occurrence.instanceTemplate,
 		)
 
-		childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, pins, visiting)
+		childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, requirements, visiting)
 		if err != nil {
 			return nil, err
 		}
@@ -494,25 +494,25 @@ func combineRowArrayBounds(left, right [][2]int) [][2]int {
 func (s *search) walkObject(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	members, err := rowObjectMembers(node, occurrence, pins)
+	members, err := rowObjectMembers(node, occurrence, requirements)
 	if err != nil {
 		return false, err
 	}
 
 	values := make(map[string]*jsonValue, len(members))
 
-	return s.walkObjectMembers(node, occurrence, pins, context, members, values, 0, visit)
+	return s.walkObjectMembers(node, occurrence, requirements, context, members, values, 0, visit)
 }
 
 // walkObjectMembers performs deterministic presence and value backtracking.
 func (s *search) walkObjectMembers(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	context rowSearchContext,
 	members []rowMember,
 	values map[string]*jsonValue,
@@ -524,10 +524,10 @@ func (s *search) walkObjectMembers(
 	}
 
 	member := members[index]
-	presence, presencePinned := rowPresencePinDetails(pins, member.occurrence)
+	presence, presenceConstrained := rowPresenceRequirementDetails(requirements, member.occurrence)
 
 	choices, err := rowMemberPresenceChoices(
-		node, occurrence, pins, members, index, member, presence, presencePinned,
+		node, occurrence, requirements, members, index, member, presence, presenceConstrained,
 	)
 	if err != nil {
 		return false, err
@@ -542,7 +542,7 @@ func (s *search) walkObjectMembers(
 			delete(values, member.name)
 
 			complete, err := s.walkObjectMembers(
-				node, occurrence, pins, context, members, values, index+1, visit,
+				node, occurrence, requirements, context, members, values, index+1, visit,
 			)
 			if err != nil || complete {
 				return complete, err
@@ -554,10 +554,10 @@ func (s *search) walkObjectMembers(
 		walkValue := func(value *jsonValue) (bool, error) {
 			values[member.name] = value
 
-			return s.walkObjectMembers(node, occurrence, pins, context, members, values, index+1, visit)
+			return s.walkObjectMembers(node, occurrence, requirements, context, members, values, index+1, visit)
 		}
 
-		complete, err := s.walkRowMemberValues(member, pins, context, walkValue)
+		complete, err := s.walkRowMemberValues(member, requirements, context, walkValue)
 		if err != nil || complete {
 			return complete, err
 		}
@@ -571,7 +571,7 @@ func (s *search) walkObjectMembers(
 //nolint:cyclop // Schema alternatives and child recursion are one DFS phase.
 func (s *search) walkRowMemberValues(
 	member rowMember,
-	pins []requirement,
+	requirements []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
@@ -587,7 +587,7 @@ func (s *search) walkRowMemberValues(
 		}
 
 		if candidate.node == nil {
-			complete, err := s.walkGenericValue(pins, visit)
+			complete, err := s.walkGenericValue(requirements, visit)
 			if err != nil || complete {
 				return complete, err
 			}
@@ -596,9 +596,9 @@ func (s *search) walkRowMemberValues(
 		}
 
 		complete, err := s.walkNode(
-			candidate.node, candidate.occurrence, pins, context,
+			candidate.node, candidate.occurrence, requirements, context,
 			func(value *jsonValue) (bool, error) {
-				usable, err := s.rowChildValueUsable(candidate.node, candidate.occurrence, pins, value)
+				usable, err := s.rowChildValueUsable(candidate.node, candidate.occurrence, requirements, value)
 				if err != nil {
 					return false, err
 				}
@@ -622,15 +622,15 @@ func (s *search) walkRowMemberValues(
 func rowMemberPresenceChoices(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	members []rowMember,
 	index int,
 	member rowMember,
-	pinned requirement,
-	presencePinned bool,
+	constrained requirement,
+	presenceConstrained bool,
 ) ([]bool, error) {
-	if presencePinned && !pinned.canonical {
-		if pinned.presence == requirementPresent {
+	if presenceConstrained && !constrained.canonical {
+		if constrained.presence == requirementPresent {
 			return []bool{true}, nil
 		}
 
@@ -641,15 +641,15 @@ func rowMemberPresenceChoices(
 		return []bool{true}, nil
 	}
 
-	if presencePinned {
-		if pinned.presence == requirementPresent {
+	if presenceConstrained {
+		if constrained.presence == requirementPresent {
 			return []bool{true, false}, nil
 		}
 
 		return []bool{false, true}, nil
 	}
 
-	present, err := rowCanonicalMemberPresence(node, occurrence, pins, members, index)
+	present, err := rowCanonicalMemberPresence(node, occurrence, requirements, members, index)
 	if err != nil {
 		return nil, err
 	}
@@ -665,18 +665,18 @@ func rowMemberPresenceChoices(
 func rowObjectMinimumProperties(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 ) (uint64, bool, error) {
-	return rowNestedObjectMinimumProperties(node, occurrence, pins, make(map[*schemaNode]bool))
+	return rowNestedObjectMinimumProperties(node, occurrence, requirements, make(map[*schemaNode]bool))
 }
 
 // rowNestedObjectMinimumProperties carries object lower bounds through active composition.
 //
-//nolint:cyclop,gocognit // Local, allOf, and pinned anyOf bounds are one recursive calculation.
+//nolint:cyclop,gocognit // Local, allOf, and constrained anyOf bounds are one recursive calculation.
 func rowNestedObjectMinimumProperties(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	visiting map[*schemaNode]bool,
 ) (uint64, bool, error) {
 	if node == nil || node.schemaShape == nil || !nodeCanHaveKind(node, jsonObject) {
@@ -719,7 +719,7 @@ func rowNestedObjectMinimumProperties(
 		)
 
 		childMinimum, childFits, err := rowNestedObjectMinimumProperties(
-			child, childOccurrence, pins, visiting,
+			child, childOccurrence, requirements, visiting,
 		)
 		if err != nil {
 			return 0, false, err
@@ -731,8 +731,8 @@ func rowNestedObjectMinimumProperties(
 		}
 	}
 
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	if pinned {
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
+	if constrained {
 		for index, child := range node.anyOf {
 			if !states[index] {
 				continue
@@ -746,7 +746,7 @@ func rowNestedObjectMinimumProperties(
 			)
 
 			childMinimum, childFits, err := rowNestedObjectMinimumProperties(
-				child, childOccurrence, pins, visiting,
+				child, childOccurrence, requirements, visiting,
 			)
 			if err != nil {
 				return 0, false, err
@@ -766,7 +766,7 @@ func rowNestedObjectMinimumProperties(
 func rowCanonicalMemberPresence(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	members []rowMember,
 	index int,
 ) (bool, error) {
@@ -775,7 +775,7 @@ func rowCanonicalMemberPresence(
 		return true, nil
 	}
 
-	minimum, fits, err := rowObjectMinimumProperties(node, occurrence, pins)
+	minimum, fits, err := rowObjectMinimumProperties(node, occurrence, requirements)
 	if err != nil {
 		return false, err
 	}
@@ -787,7 +787,7 @@ func rowCanonicalMemberPresence(
 	present := 0
 
 	for prior := 0; prior < index; prior++ {
-		priorPresent, err := rowCanonicalMemberPresence(node, occurrence, pins, members, prior)
+		priorPresent, err := rowCanonicalMemberPresence(node, occurrence, requirements, members, prior)
 		if err != nil {
 			return false, err
 		}
@@ -800,26 +800,26 @@ func rowCanonicalMemberPresence(
 	return uint64(present) < minimum, nil
 }
 
-// rowObjectMembers collects direct, composed, required, and pinned member names.
+// rowObjectMembers collects direct, composed, required, and constrained member names.
 //
-//nolint:cyclop,gocognit // Direct, composed, additional, and pin selection share one canonical pass.
-func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []requirement) ([]rowMember, error) {
+//nolint:cyclop,gocognit // Direct, composed, additional, and requirement selection share one canonical pass.
+func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, requirements []requirement) ([]rowMember, error) {
 	specs := make(map[string][]rowMember)
 
 	required := make(map[string]bool)
 	if err := collectRowObjectMembers(
-		node, occurrence, specs, required, pins, true, make(map[*schemaNode]bool),
+		node, occurrence, specs, required, requirements, true, make(map[*schemaNode]bool),
 	); err != nil {
 		return nil, err
 	}
 
-	for _, pin := range pins {
-		if name, ok := rowChildName(occurrence.instanceTemplate, pin.occurrence.instanceTemplate); ok {
-			if name == "*" && strings.HasSuffix(pin.occurrence.usePointer, "/additionalProperties") {
+	for _, requirement := range requirements {
+		if name, ok := rowChildName(occurrence.instanceTemplate, requirement.occurrence.instanceTemplate); ok {
+			if name == "*" && strings.HasSuffix(requirement.occurrence.usePointer, "/additionalProperties") {
 				continue
 			}
 
-			if pin.presence != requirementNoPresence || pin.hasKind {
+			if requirement.presence != requirementNoPresence || requirement.hasKind {
 				if _, exists := specs[name]; !exists {
 					specs[name] = nil
 				}
@@ -827,7 +827,7 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []requ
 		}
 	}
 
-	additionalSourceSets, err := rowAdditionalPropertySources(node, occurrence, pins)
+	additionalSourceSets, err := rowAdditionalPropertySources(node, occurrence, requirements)
 	if err != nil {
 		return nil, err
 	}
@@ -863,7 +863,7 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []requ
 		return result
 	}
 
-	extraNames, err := rowAdditionalMemberNames(node, specs, pins, occurrence)
+	extraNames, err := rowAdditionalMemberNames(node, specs, requirements, occurrence)
 	if err != nil {
 		return nil, err
 	}
@@ -893,7 +893,7 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []requ
 			specs[name],
 			additionalMembersForName(name),
 			required[name],
-			pins,
+			requirements,
 		)
 		if err != nil {
 			return nil, err
@@ -911,7 +911,7 @@ func composeRowMemberAlternatives(
 	base []rowMember,
 	sourceSets [][]rowMember,
 	required bool,
-	pins []requirement,
+	requirements []requirement,
 ) (rowMember, error) {
 	if len(sourceSets) == 0 {
 		sourceSets = [][]rowMember{{}}
@@ -941,7 +941,7 @@ func composeRowMemberAlternatives(
 			candidates = append(candidates, rowMember{name: name, required: required})
 		}
 
-		member, err := composeRowMember(name, candidates, required, pins)
+		member, err := composeRowMember(name, candidates, required, requirements)
 		if err != nil {
 			return rowMember{}, err
 		}
@@ -961,7 +961,7 @@ func composeRowMemberAlternatives(
 func rowAdditionalPropertySources(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 ) ([][]rowAdditionalPropertySource, error) {
 	visiting := make(map[*schemaNode]bool)
 
@@ -1017,8 +1017,8 @@ func rowAdditionalPropertySources(
 			return common, nil
 		}
 
-		states, pinned := rowCompositionTruthStates(pins, currentOccurrence, "anyOf", len(current.anyOf))
-		if pinned {
+		states, constrained := rowCompositionTruthStates(requirements, currentOccurrence, "anyOf", len(current.anyOf))
+		if constrained {
 			selected := common
 
 			for index, child := range current.anyOf {
@@ -1089,18 +1089,18 @@ func combineRowAdditionalPropertySourceSets(
 	return result
 }
 
-// rowAdditionalMemberNames adds wildcard members needed by lower bounds or target pins.
+// rowAdditionalMemberNames adds wildcard members needed by lower bounds or target requirements.
 func rowAdditionalMemberNames(
 	node *schemaNode,
 	specified map[string][]rowMember,
-	pins []requirement,
+	requirements []requirement,
 	occurrence schemaOccurrence,
 ) ([]string, error) {
 	if !node.allowAdditionalProperties {
 		return nil, nil
 	}
 
-	minimum, fits, err := rowObjectMinimumProperties(node, occurrence, pins)
+	minimum, fits, err := rowObjectMinimumProperties(node, occurrence, requirements)
 	if err != nil {
 		return nil, err
 	}
@@ -1115,7 +1115,7 @@ func rowAdditionalMemberNames(
 		needed = int(minimum) - len(specified)
 	}
 
-	if rowAdditionalPresencePinned(occurrence, pins) && needed == 0 {
+	if rowAdditionalPresenceConstrained(occurrence, requirements) && needed == 0 {
 		needed = 1
 	}
 
@@ -1163,7 +1163,7 @@ func collectRowObjectMembers(
 	occurrence schemaOccurrence,
 	specs map[string][]rowMember,
 	required map[string]bool,
-	pins []requirement,
+	requirements []requirement,
 	requiredAllowed bool,
 	visiting map[*schemaNode]bool,
 ) error {
@@ -1205,7 +1205,7 @@ func collectRowObjectMembers(
 			occurrence.instanceTemplate,
 		)
 		if err := collectRowObjectMembers(
-			child, childOccurrence, specs, required, pins, requiredAllowed, visiting,
+			child, childOccurrence, specs, required, requirements, requiredAllowed, visiting,
 		); err != nil {
 			return err
 		}
@@ -1219,9 +1219,9 @@ func collectRowObjectMembers(
 			occurrence.instanceTemplate,
 		)
 
-		branchRequired := requiredAllowed && rowCompositionPinTruth(pins, childOccurrence, "anyOf", index)
+		branchRequired := requiredAllowed && rowCompositionRequirementTruth(requirements, childOccurrence, "anyOf", index)
 		if err := collectRowObjectMembers(
-			child, childOccurrence, specs, required, pins, branchRequired, visiting,
+			child, childOccurrence, specs, required, requirements, branchRequired, visiting,
 		); err != nil {
 			return err
 		}
@@ -1230,17 +1230,17 @@ func collectRowObjectMembers(
 	return nil
 }
 
-// rowCompositionPinTruth returns one pinned branch truth, defaulting to false.
-func rowCompositionPinTruth(
-	pins []requirement,
+// rowCompositionRequirementTruth returns one constrained branch truth, defaulting to false.
+func rowCompositionRequirementTruth(
+	requirements []requirement,
 	occurrence schemaOccurrence,
 	composition string,
 	branch int,
 ) bool {
-	for _, pin := range pins {
-		if pin.hasBranch && pin.composition == composition && pin.branch == branch &&
-			rowOccurrenceMatches(pin.occurrence, occurrence) {
-			return pin.truth
+	for _, requirement := range requirements {
+		if requirement.hasBranch && requirement.composition == composition && requirement.branch == branch &&
+			rowOccurrenceMatches(requirement.occurrence, occurrence) {
+			return requirement.truth
 		}
 	}
 
@@ -1265,23 +1265,23 @@ func rowChildName(parent, child string) (string, bool) {
 	return childTokens[len(parentTokens)], true
 }
 
-// rowPresencePinDetails prefers a hard target pin over a canonical starting assignment.
-func rowPresencePinDetails(pins []requirement, occurrence schemaOccurrence) (requirement, bool) {
+// rowPresenceRequirementDetails prefers a hard target requirement over a canonical starting assignment.
+func rowPresenceRequirementDetails(requirements []requirement, occurrence schemaOccurrence) (requirement, bool) {
 	var canonical requirement
 
 	canonicalFound := false
 
-	for _, pin := range pins {
-		if pin.presence == requirementNoPresence || !rowOccurrenceMatches(pin.occurrence, occurrence) {
+	for _, requirement := range requirements {
+		if requirement.presence == requirementNoPresence || !rowOccurrenceMatches(requirement.occurrence, occurrence) {
 			continue
 		}
 
-		if !pin.canonical {
-			return pin, true
+		if !requirement.canonical {
+			return requirement, true
 		}
 
 		if !canonicalFound {
-			canonical = pin
+			canonical = requirement
 			canonicalFound = true
 		}
 	}
@@ -1289,17 +1289,17 @@ func rowPresencePinDetails(pins []requirement, occurrence schemaOccurrence) (req
 	return canonical, canonicalFound
 }
 
-// rowAdditionalPresencePinned reports whether the target explicitly asks for an extra member.
-func rowAdditionalPresencePinned(occurrence schemaOccurrence, pins []requirement) bool {
+// rowAdditionalPresenceConstrained reports whether the target explicitly asks for an extra member.
+func rowAdditionalPresenceConstrained(occurrence schemaOccurrence, requirements []requirement) bool {
 	wantedTemplate := appendInstanceToken(occurrence.instanceTemplate, "*")
 
-	for _, pin := range pins {
-		if pin.canonical || pin.presence != requirementPresent ||
-			!strings.HasSuffix(pin.occurrence.usePointer, "/additionalProperties") {
+	for _, requirement := range requirements {
+		if requirement.canonical || requirement.presence != requirementPresent ||
+			!strings.HasSuffix(requirement.occurrence.usePointer, "/additionalProperties") {
 			continue
 		}
 
-		if pin.occurrence.instanceTemplate == wantedTemplate {
+		if requirement.occurrence.instanceTemplate == wantedTemplate {
 			return true
 		}
 	}

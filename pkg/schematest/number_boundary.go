@@ -16,7 +16,7 @@ const (
 // errNumberEdgeStop ends metadata replay without exposing a search error.
 var errNumberEdgeStop = errors.New("schematest: stop numeric edge metadata")
 
-// numberSchedule is the exact numeric conjunction for one pinned composition view.
+// numberSchedule is the exact numeric conjunction for one constrained composition view.
 type numberSchedule struct {
 	rules   []activeNumberRule
 	quantum *exactNumber

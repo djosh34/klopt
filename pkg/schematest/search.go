@@ -51,6 +51,10 @@ func findTargetRow(plan *searchPlan, request validRequest, s *search) (*jsonValu
 		return nil, false, errors.New("schematest: search has no model")
 	}
 
+	if requestHasSyntacticKindConflict(request) {
+		return nil, false, nil
+	}
+
 	forbidden, err := requestPresenceForbiddenByActiveSchema(s.model.root, request)
 	if err != nil || forbidden {
 		return nil, false, err
@@ -87,6 +91,24 @@ func findTargetRow(plan *searchPlan, request validRequest, s *search) (*jsonValu
 	return found, complete, nil
 }
 
+// requestHasSyntacticKindConflict detects incompatible same-instance kind requirements.
+func requestHasSyntacticKindConflict(request validRequest) bool {
+	for _, left := range request.requirements {
+		if !left.hasKind {
+			continue
+		}
+
+		for _, right := range request.requirements {
+			if right.hasKind && left.occurrence.instanceTemplate == right.occurrence.instanceTemplate &&
+				left.kind != right.kind {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // requestPresenceForbiddenByActiveSchema rejects impossible active member targets.
 func requestPresenceForbiddenByActiveSchema(root *schemaNode, request validRequest) (bool, error) {
 	objective := 0
@@ -121,9 +143,9 @@ func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validIntent)
 			return false, err
 		}
 
-		for _, pin := range target.requirements {
-			if pin.hasKind && rowOccurrenceMatches(pin.occurrence, target.expected.occurrence) &&
-				root.kind != schemaAny && !nodeAcceptsKindForTarget(root, pin.kind) {
+		for _, requirement := range target.requirements {
+			if requirement.hasKind && rowOccurrenceMatches(requirement.occurrence, target.expected.occurrence) &&
+				root.kind != schemaAny && !nodeAcceptsKindForTarget(root, requirement.kind) {
 				return true, nil
 			}
 		}
@@ -133,9 +155,9 @@ func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validIntent)
 
 	present := false
 
-	for _, pin := range target.requirements {
-		if pin.presence == requirementPresent &&
-			instanceTemplateMatches(pin.occurrence.instanceTemplate, target.expected.occurrence.instanceTemplate) {
+	for _, requirement := range target.requirements {
+		if requirement.presence == requirementPresent &&
+			instanceTemplateMatches(requirement.occurrence.instanceTemplate, target.expected.occurrence.instanceTemplate) {
 			present = true
 
 			break
@@ -164,7 +186,7 @@ func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validIntent)
 func activeSchemaHasForbiddenDeclaration(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	visiting map[*schemaNode]bool,
 ) (bool, error) {
 	names := make(map[string]bool)
@@ -174,7 +196,7 @@ func activeSchemaHasForbiddenDeclaration(
 
 	for name := range names {
 		forbidden, err := activeSchemaForbidsMember(
-			node, occurrence, pins, name, make(map[*schemaNode]bool),
+			node, occurrence, requirements, name, make(map[*schemaNode]bool),
 		)
 		if err != nil || forbidden {
 			return forbidden, err
@@ -223,11 +245,11 @@ func collectActiveSameInstancePropertyNames(
 
 // activeSchemaForbidsMember checks one name against the active conjunction.
 //
-//nolint:cyclop // Local, allOf, and pinned anyOf member rules form one conjunction.
+//nolint:cyclop // Local, allOf, and constrained anyOf member rules form one conjunction.
 func activeSchemaForbidsMember(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	name string,
 	visiting map[*schemaNode]bool,
 ) (bool, error) {
@@ -255,14 +277,14 @@ func activeSchemaForbidsMember(
 			occurrence.instanceTemplate,
 		)
 
-		forbidden, err := activeSchemaForbidsMember(child, childOccurrence, pins, name, visiting)
+		forbidden, err := activeSchemaForbidsMember(child, childOccurrence, requirements, name, visiting)
 		if err != nil || forbidden {
 			return forbidden, err
 		}
 	}
 
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	if !pinned {
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
+	if !constrained {
 		return false, nil
 	}
 
@@ -278,7 +300,7 @@ func activeSchemaForbidsMember(
 			occurrence.instanceTemplate,
 		)
 
-		forbidden, err := activeSchemaForbidsMember(child, childOccurrence, pins, name, visiting)
+		forbidden, err := activeSchemaForbidsMember(child, childOccurrence, requirements, name, visiting)
 		if err != nil || forbidden {
 			return forbidden, err
 		}
@@ -287,9 +309,9 @@ func activeSchemaForbidsMember(
 	return false, nil
 }
 
-// targetRowMatches requires a complete valid value and the target's exact pins.
+// targetRowMatches requires a complete valid value and the target's exact requirements.
 //
-//nolint:cyclop // Validity, levels, and the three pin dimensions are one acceptance pass.
+//nolint:cyclop // Validity, levels, and the three requirement dimensions are one acceptance pass.
 func targetRowMatches(result evaluation, request validRequest, value *jsonValue) bool {
 	if !result.valid {
 		return false
@@ -307,13 +329,14 @@ func targetRowMatches(result evaluation, request validRequest, value *jsonValue)
 		}
 	}
 
-	for _, pin := range request.requirements {
+	for _, requirement := range request.requirements {
 		switch {
-		case pin.presence != requirementNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
+		case requirement.presence != requirementNoPresence && !requirement.canonical &&
+			!presenceRequirementWasSatisfied(value, requirement):
 			return false
-		case pin.hasKind && !kindWasObserved(result.observedRecords(), pin.occurrence, pin.kind):
+		case requirement.hasKind && !kindWasObserved(result.observedRecords(), requirement.occurrence, requirement.kind):
 			return false
-		case pin.hasBranch && !branchTruthWasObserved(result, pin):
+		case requirement.hasBranch && !branchTruthWasObserved(result, requirement):
 			return false
 		}
 	}
@@ -396,18 +419,18 @@ func compositionLevelWasObserved(result evaluation, expected levelIdentity) bool
 	return false
 }
 
-// presencePinWasSatisfied checks one required or optional data path.
-func presencePinWasSatisfied(value *jsonValue, pin requirement) bool {
-	if strings.HasSuffix(pin.occurrence.usePointer, "/additionalProperties") {
+// presenceRequirementWasSatisfied checks one required or optional data path.
+func presenceRequirementWasSatisfied(value *jsonValue, requirement requirement) bool {
+	if strings.HasSuffix(requirement.occurrence.usePointer, "/additionalProperties") {
 		return true
 	}
 
-	present, known := rowValuePathPresent(value, pin.occurrence.instanceTemplate)
+	present, known := rowValuePathPresent(value, requirement.occurrence.instanceTemplate)
 	if !known {
 		return true
 	}
 
-	return present == (pin.presence == requirementPresent)
+	return present == (requirement.presence == requirementPresent)
 }
 
 // rowValuePathPresent checks one exact instance-template path.
@@ -469,7 +492,7 @@ func rowValuePathPresentTokens(value *jsonValue, tokens []string) bool {
 	}
 }
 
-// kindWasObserved checks the clean type observation for one pinned occurrence.
+// kindWasObserved checks the clean type observation for one constrained occurrence.
 func kindWasObserved(observed iter.Seq[levelIdentity], occurrence schemaOccurrence, kind jsonKind) bool {
 	return levelWasObserved(observed, levelIdentity{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleType),
@@ -478,25 +501,25 @@ func kindWasObserved(observed iter.Seq[levelIdentity], occurrence schemaOccurren
 }
 
 // branchTruthWasObserved checks one exact allOf or anyOf truth bit.
-func branchTruthWasObserved(result evaluation, pin requirement) bool {
-	truths := result.compositionRecords(pin.composition)
+func branchTruthWasObserved(result evaluation, requirement requirement) bool {
+	truths := result.compositionRecords(requirement.composition)
 
 	parentUsePointer := strings.TrimSuffix(
-		strings.TrimSuffix(pin.occurrence.usePointer, "/"+itoa(pin.branch)),
-		"/"+pin.composition,
+		strings.TrimSuffix(requirement.occurrence.usePointer, "/"+itoa(requirement.branch)),
+		"/"+requirement.composition,
 	)
 
 	for truth := range truths {
-		if truth.rule != pin.composition || truth.occurrence.usePointer != parentUsePointer ||
-			!instanceTemplateMatches(pin.occurrence.instanceTemplate, truth.occurrence.instanceTemplate) {
+		if truth.rule != requirement.composition || truth.occurrence.usePointer != parentUsePointer ||
+			!instanceTemplateMatches(requirement.occurrence.instanceTemplate, truth.occurrence.instanceTemplate) {
 			continue
 		}
 
-		if pin.branch < 0 || pin.branch >= len(truth.branches) {
+		if requirement.branch < 0 || requirement.branch >= len(truth.branches) {
 			return false
 		}
 
-		return truth.branches[pin.branch] == pin.truth
+		return truth.branches[requirement.branch] == requirement.truth
 	}
 
 	return false
@@ -510,7 +533,7 @@ func ruleOccurrenceMatches(actual, expected schemaOccurrence) bool {
 		instanceTemplateMatches(expected.instanceTemplate, actual.instanceTemplate)
 }
 
-// rowOccurrenceMatches compares planner pins, which intentionally omit target identity.
+// rowOccurrenceMatches compares planner requirements, which intentionally omit target identity.
 func rowOccurrenceMatches(left, right schemaOccurrence) bool {
 	return left.usePointer == right.usePointer &&
 		instanceTemplateMatches(left.instanceTemplate, right.instanceTemplate)

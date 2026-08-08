@@ -486,7 +486,7 @@ func TestBasicStringProductUsesExactES51WhitespaceSet(t *testing.T) {
 	}
 }
 
-func TestBasicStringLengthOrderPinsBoundariesThenFairLengths(t *testing.T) {
+func TestBasicStringLengthOrderRequirementsBoundariesThenFairLengths(t *testing.T) {
 	t.Parallel()
 
 	maximum := uint64(4)
@@ -498,7 +498,7 @@ func TestBasicStringLengthOrderPinsBoundariesThenFairLengths(t *testing.T) {
 	product := &basicStringProduct{maxUnits: 3}
 	got := make([]uint64, 0)
 
-	lengths.each(product, basicStringLengthObjective{length: 3, pinned: true}, func(length uint64) bool {
+	lengths.each(product, basicStringLengthObjective{length: 3, constrained: true}, func(length uint64) bool {
 		got = append(got, length)
 
 		return false
@@ -694,7 +694,7 @@ func (s *search) findBasicStringWitnessWithSeed(patterns []*patternAST, seed uin
 func (s *search) findBasicStringWitnessAtLength(patterns []*patternAST, length uint64) (string, bool, error) {
 	return s.findBasicStringWitnessForObjective(
 		patterns,
-		basicStringLengthObjective{length: length, pinned: true},
+		basicStringLengthObjective{length: length, constrained: true},
 		0,
 	)
 }

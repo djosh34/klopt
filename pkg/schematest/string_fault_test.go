@@ -1,4 +1,4 @@
-//nolint:godoclint // Tests pin private directed string-search behavior.
+//nolint:godoclint // Tests requirement private directed string-search behavior.
 package schematest
 
 import (
@@ -120,7 +120,7 @@ func TestFindStringFaultRowDirectsLengthBoundsAndPreservesPatterns(t *testing.T)
 	}
 }
 
-func TestFindStringFaultRowPinsMaxLengthFailureAtSiblingMinimum(t *testing.T) {
+func TestFindStringFaultRowRequirementsMaxLengthFailureAtSiblingMinimum(t *testing.T) {
 	t.Parallel()
 
 	model, plan := parseStringFaultPlan(t, `{

@@ -1,4 +1,4 @@
-//nolint:godoclint // Tests pin the private clean format-search seam.
+//nolint:godoclint // Tests requirement the private clean format-search seam.
 package schematest
 
 import (

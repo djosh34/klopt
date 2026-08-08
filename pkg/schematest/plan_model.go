@@ -81,9 +81,10 @@ type validIntent struct {
 // validRequest is one additive row request. The baseline has no focus; every
 // later request replaces exactly targets[focus] in that baseline vector.
 type validRequest struct {
-	targets      []validIntent
-	requirements []requirement
-	focus        int
+	targets          []validIntent
+	requirements     []requirement
+	stringObjectives []levelIdentity
+	focus            int
 }
 
 // failureSet is one immutable expected failure identity set.

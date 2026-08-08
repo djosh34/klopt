@@ -1,4 +1,4 @@
-//nolint:godoclint // Composition failure identity is pinned at the private oracle seam.
+//nolint:godoclint // Composition failure identity is constrained at the private oracle seam.
 package schematest
 
 import (

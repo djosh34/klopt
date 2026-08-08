@@ -1,4 +1,4 @@
-//nolint:godoclint // Tests pin the public string-search schedule.
+//nolint:godoclint // Tests requirement the public string-search schedule.
 package schematest
 
 import (
@@ -27,6 +27,7 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 
 	require.Equal(t, []Case{
 		{JSON: []byte(`"b"`), Valid: true},
+		{JSON: []byte(`"b"`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`"bb"`), Valid: false},
 		{JSON: []byte(`"c"`), Valid: false},
@@ -34,7 +35,7 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 	}, firstCases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 113,
+		Steps: 106,
 		Covered: []string{
 			schemaPointer + "|#|type|level:string",
 			schemaPointer + "|#|type|fault:type",
@@ -50,8 +51,8 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 		},
 		Uncovered: []string{
 			schemaPointer + "|#|minLength|fault:minLength",
-			schemaPointer + "/allOf/0|#|type|level:null",
 			schemaPointer + "/allOf/0|#|type|level:boolean",
+			schemaPointer + "/allOf/0|#|type|level:null",
 			schemaPointer + "/allOf/0|#|type|level:number",
 			schemaPointer + "/allOf/0|#|type|level:array",
 			schemaPointer + "/allOf/0|#|type|level:object",
@@ -127,7 +128,7 @@ func TestBuildSearchesFormatsAtActiveLengths(t *testing.T) {
 	}
 }
 
-func TestBuildEnumeratesUnpinnedAnyOfStringRules(t *testing.T) {
+func TestBuildEnumeratesUnconstrainedAnyOfStringRules(t *testing.T) {
 	t.Parallel()
 
 	cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(`{
@@ -270,7 +271,7 @@ func TestBuildFormatProductCoversLockedLanguage(t *testing.T) {
 	}
 }
 
-func TestBuildChargesUnpinnedAnyOfDFSBeforeRetainingSiblingPaths(t *testing.T) {
+func TestBuildChargesUnconstrainedAnyOfDFSBeforeRetainingSiblingPaths(t *testing.T) {
 	t.Parallel()
 
 	const count = 25

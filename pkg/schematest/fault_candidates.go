@@ -3,7 +3,6 @@ package schematest
 import (
 	"errors"
 	"fmt"
-	"iter"
 	"math/big"
 	"unicode/utf16"
 )
@@ -74,37 +73,55 @@ func schemaNodeWithoutLocalRule(node *schemaNode, rule string) *schemaNode {
 	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}
 }
 
-// canonicalEnumFaultWitnesses adds one deterministic string outside the authored enum.
-func canonicalEnumFaultWitnesses(node *schemaNode, kind jsonKind) (canonicalWitnesses, error) {
-	witnesses, err := canonicalAnyOfWitnesses(node, kind)
-	if err != nil {
-		return canonicalWitnesses{}, err
-	}
+// canonicalEnumFaultWitnesses lazily yields generated values outside the authored enum.
+func canonicalEnumFaultWitnesses(node *schemaNode, kind jsonKind) jsonValueSource {
+	return uniqueJSONValueSource(func(yield func(*jsonValue) bool) error {
+		stopped := false
+		emit := func(value *jsonValue) bool {
+			if !yield(value) {
+				stopped = true
+			}
 
-	if kind != jsonString {
-		return witnesses, nil
-	}
-
-	const base = "__schematest_enum_fault__"
-	for index := 0; ; index++ {
-		candidateText := base
-		if index > 0 {
-			candidateText = fmt.Sprintf("%s_%d", base, index)
+			return !stopped
 		}
 
-		candidate := &jsonValue{kind: jsonString, text: candidateText}
-
-		contains, err := enumContainsValue(node, candidate)
-		if err != nil {
-			return canonicalWitnesses{}, err
+		if err := walkGeneratedCompositionWitnesses(node, kind, make(map[*schemaNode]bool), emit); err != nil {
+			return err
 		}
 
-		if !contains {
-			err = witnesses.appendGenerated(candidate)
-
-			return witnesses, err
+		if stopped {
+			return nil
 		}
-	}
+
+		if err := walkCanonicalKindWitnesses(kind, emit); err != nil {
+			return err
+		}
+
+		if kind != jsonString {
+			return nil
+		}
+
+		const base = "__schematest_enum_fault__"
+		for index := 0; ; index++ {
+			candidateText := base
+			if index > 0 {
+				candidateText = fmt.Sprintf("%s_%d", base, index)
+			}
+
+			candidate := &jsonValue{kind: jsonString, text: candidateText}
+
+			contains, err := enumContainsValue(node, candidate)
+			if err != nil {
+				return err
+			}
+
+			if !contains {
+				emit(candidate)
+
+				return nil
+			}
+		}
+	})
 }
 
 // enumFaultKinds returns kinds that can fail enum without also failing type.
@@ -147,139 +164,221 @@ func enumContainsValue(node *schemaNode, value *jsonValue) (bool, error) {
 	return false, nil
 }
 
-// canonicalWitnesses keeps admitted values separate from deduplicated generated candidates.
-type canonicalWitnesses struct {
-	admitted  []*jsonValue
-	generated []*jsonValue
+// jsonValueSource advances one candidate only when its consumer requests it.
+type jsonValueSource func(yield func(*jsonValue) bool) error
+
+// canonicalAnyOfWitnesses lazily yields authored values, derived values, then fixed canonical values.
+func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) jsonValueSource {
+	return uniqueJSONValueSource(func(yield func(*jsonValue) bool) error {
+		stopped := false
+		emit := func(value *jsonValue) bool {
+			if !yield(value) {
+				stopped = true
+			}
+
+			return !stopped
+		}
+
+		if err := walkAuthoredEnumWitnesses(node, kind, make(map[*schemaNode]bool), emit); err != nil {
+			return err
+		}
+
+		if stopped {
+			return nil
+		}
+
+		if err := walkGeneratedCompositionWitnesses(node, kind, make(map[*schemaNode]bool), emit); err != nil {
+			return err
+		}
+
+		if stopped {
+			return nil
+		}
+
+		return walkCanonicalKindWitnesses(kind, emit)
+	})
 }
 
-// values iterates admitted members followed by generated candidates.
-func (witnesses canonicalWitnesses) values() iter.Seq[*jsonValue] {
-	return func(yield func(*jsonValue) bool) {
-		for _, witness := range witnesses.admitted {
-			if !yield(witness) {
-				return
+// walkAuthoredEnumWitnesses traverses authored enum members lazily.
+func walkAuthoredEnumWitnesses(
+	node *schemaNode,
+	kind jsonKind,
+	visiting map[*schemaNode]bool,
+	yield func(*jsonValue) bool,
+) error {
+	_, err := walkCompositionWitnessNodes(node, visiting, func(current *schemaNode) bool {
+		for _, member := range current.enum {
+			if member.value.kind == kind && !yield(member.value) {
+				return false
 			}
 		}
 
-		for _, witness := range witnesses.generated {
-			if !yield(witness) {
-				return
-			}
-		}
-	}
-}
-
-// appendGenerated deduplicates only within generated candidates.
-func (witnesses *canonicalWitnesses) appendGenerated(candidate *jsonValue) error {
-	var err error
-
-	witnesses.generated, err = appendUniqueJSONWitness(witnesses.generated, candidate)
+		return true
+	})
 
 	return err
 }
 
-// canonicalAnyOfWitnesses returns authored and simple canonical values for one kind.
-func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) (canonicalWitnesses, error) {
-	admitted := make([]*jsonValue, 0)
-
-	generated := make([]*jsonValue, 0)
-	if err := collectAnyOfWitnesses(
-		node, kind, make(map[*schemaNode]bool), &admitted, &generated,
-	); err != nil {
-		return canonicalWitnesses{}, err
-	}
-
-	canonical, err := canonicalKindWitnesses(kind)
-	if err != nil {
-		return canonicalWitnesses{}, err
-	}
-
-	for _, witness := range canonical {
-		var appendErr error
-
-		generated, appendErr = appendUniqueJSONWitness(generated, witness)
-		if appendErr != nil {
-			return canonicalWitnesses{}, appendErr
-		}
-	}
-
-	return canonicalWitnesses{admitted: admitted, generated: generated}, nil
-}
-
-// collectAnyOfWitnesses collects values authored by the parent or its compositions.
+// walkGeneratedCompositionWitnesses traverses authored derived-value sources lazily.
 //
-//nolint:cyclop,gocognit // One recursive pass collects all complete-parent witness sources.
-func collectAnyOfWitnesses(
+//nolint:cyclop // Each authored scalar source is yielded in its locked local order.
+func walkGeneratedCompositionWitnesses(
 	node *schemaNode,
 	kind jsonKind,
 	visiting map[*schemaNode]bool,
-	admitted, generated *[]*jsonValue,
+	yield func(*jsonValue) bool,
 ) error {
+	_, err := walkCompositionWitnessNodes(node, visiting, func(current *schemaNode) bool {
+		if current.defaultValue != nil && current.defaultValue.kind == kind && !yield(current.defaultValue) {
+			return false
+		}
+
+		if kind == jsonString {
+			if witness, exists := canonicalStringPatternWitness(current.pattern); exists && !yield(witness) {
+				return false
+			}
+		}
+
+		if kind == jsonNumber {
+			for _, bound := range []*exactNumber{current.minimum, current.maximum, current.multipleOf} {
+				if bound != nil && !yield(&jsonValue{kind: jsonNumber, number: bound}) {
+					return false
+				}
+			}
+		}
+
+		return true
+	})
+
+	return err
+}
+
+// walkCompositionWitnessNodes traverses composition nodes until the consumer stops.
+//
+//nolint:cyclop // Node validation, stopping, and both composition families form one DFS seam.
+func walkCompositionWitnessNodes(
+	node *schemaNode,
+	visiting map[*schemaNode]bool,
+	visit func(*schemaNode) bool,
+) (bool, error) {
 	if node == nil || node.schemaShape == nil {
-		return errors.New("anyOf branch has no shape")
+		return false, errors.New("composition witness source has no shape")
 	}
 
 	if visiting[node] {
-		return fmt.Errorf("recursive anyOf witness schema at %s", node.occurrence.usePointer)
+		return false, fmt.Errorf("recursive composition witness schema at %s", node.occurrence.usePointer)
 	}
 
 	visiting[node] = true
 	defer delete(visiting, node)
 
-	for _, member := range node.enum {
-		if member.value.kind == kind {
-			*admitted = append(*admitted, member.value)
-		}
-	}
-
-	if node.defaultValue != nil && node.defaultValue.kind == kind {
-		var err error
-
-		*generated, err = appendUniqueJSONWitness(*generated, node.defaultValue)
-		if err != nil {
-			return err
-		}
-	}
-
-	if kind == jsonString {
-		if witness, exists := canonicalStringPatternWitness(node.pattern); exists {
-			var err error
-
-			*generated, err = appendUniqueJSONWitness(*generated, witness)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	if kind == jsonNumber {
-		for _, bound := range []*exactNumber{node.minimum, node.maximum, node.multipleOf} {
-			if bound == nil {
-				continue
-			}
-
-			value := &jsonValue{kind: jsonNumber, number: bound}
-
-			var appendErr error
-
-			*generated, appendErr = appendUniqueJSONWitness(*generated, value)
-			if appendErr != nil {
-				return appendErr
-			}
-		}
+	if !visit(node) {
+		return false, nil
 	}
 
 	for _, child := range node.allOf {
-		if err := collectAnyOfWitnesses(child, kind, visiting, admitted, generated); err != nil {
-			return err
+		complete, err := walkCompositionWitnessNodes(child, visiting, visit)
+		if err != nil || !complete {
+			return complete, err
 		}
 	}
 
 	for _, child := range node.anyOf {
-		if err := collectAnyOfWitnesses(child, kind, visiting, admitted, generated); err != nil {
+		complete, err := walkCompositionWitnessNodes(child, visiting, visit)
+		if err != nil || !complete {
+			return complete, err
+		}
+	}
+
+	return true, nil
+}
+
+// uniqueJSONValueSource deduplicates the traversed prefix without retaining candidate values.
+func uniqueJSONValueSource(source jsonValueSource) jsonValueSource {
+	return func(yield func(*jsonValue) bool) error {
+		seen := make(map[string]bool)
+
+		var sourceErr error
+
+		err := source(func(candidate *jsonValue) bool {
+			encoded, marshalErr := marshalStrict(candidate)
+			if marshalErr != nil {
+				sourceErr = marshalErr
+
+				return false
+			}
+
+			key := string(encoded)
+			if seen[key] {
+				return true
+			}
+
+			seen[key] = true
+
+			return yield(candidate)
+		})
+		if err != nil {
 			return err
 		}
+
+		return sourceErr
+	}
+}
+
+// walkCanonicalKindWitnesses emits the locked kind alternatives directly.
+//
+//nolint:cyclop // Locked small alternatives are emitted directly, never retained as a candidate slice.
+func walkCanonicalKindWitnesses(kind jsonKind, yield func(*jsonValue) bool) error {
+	emitNumber := func(source string) (bool, error) {
+		number, err := parseExactNumber(source)
+		if err != nil {
+			return false, err
+		}
+
+		return yield(&jsonValue{kind: jsonNumber, number: number}), nil
+	}
+
+	switch kind {
+	case jsonNull:
+		yield(&jsonValue{kind: jsonNull})
+	case jsonBoolean:
+		if yield(&jsonValue{kind: jsonBoolean}) {
+			yield(&jsonValue{kind: jsonBoolean, boolean: true})
+		}
+	case jsonNumber:
+		for _, source := range [...]string{"-1", "0", "0.5", "1", "2", "3"} {
+			complete, err := emitNumber(source)
+			if err != nil || !complete {
+				return err
+			}
+		}
+	case jsonString:
+		for _, text := range [...]string{"", "a", "b", "text"} {
+			if !yield(&jsonValue{kind: jsonString, text: text}) {
+				return nil
+			}
+		}
+	case jsonArray:
+		number, err := parseExactNumber("0")
+		if err != nil {
+			return err
+		}
+
+		if !yield(&jsonValue{kind: jsonArray, array: []*jsonValue{}}) ||
+			!yield(&jsonValue{kind: jsonArray, array: []*jsonValue{{kind: jsonBoolean}}}) ||
+			!yield(&jsonValue{kind: jsonArray, array: []*jsonValue{{kind: jsonString, text: "a"}}}) {
+			return nil
+		}
+
+		yield(&jsonValue{kind: jsonArray, array: []*jsonValue{{kind: jsonNumber, number: number}}})
+	case jsonObject:
+		if yield(&jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}) {
+			yield(&jsonValue{kind: jsonObject, object: map[string]*jsonValue{
+				"a": {kind: jsonString, text: "a"},
+			}})
+		}
+	default:
+		return fmt.Errorf("unknown JSON kind %d", kind)
 	}
 
 	return nil

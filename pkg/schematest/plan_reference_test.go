@@ -1,4 +1,4 @@
-//nolint:godoclint,lll // Reference tables pin occurrence identity without exposing planner types.
+//nolint:godoclint,lll // Reference tables requirement occurrence identity without exposing planner types.
 package schematest
 
 import (

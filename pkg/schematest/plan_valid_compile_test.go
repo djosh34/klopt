@@ -1,6 +1,7 @@
 package schematest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,6 +53,119 @@ func TestMakePlanDeclaresEveryAnyOfMaskWithoutWitnessProbing(t *testing.T) {
 }
 
 // TestMakePlanExactTargetsDoNotInheritKindSelectedAnyOfMask verifies target-specific requirements.
+func TestBuildReportsReachedAndUncoveredAnyOfMasks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		schema    string
+		covered   []string
+		uncovered []string
+	}{
+		{
+			name: "crossed bounds",
+			schema: `{"type":"number","enum":[21,0,10],"anyOf":[
+				{"minimum":10},{"maximum":20}
+			]}`,
+			covered: []string{"mask:1", "mask:2", "mask:3"},
+		},
+		{
+			name: "identical branches",
+			schema: `{"type":"string","anyOf":[
+				{"pattern":"^z+$"},{"pattern":"^z+$"}
+			]}`,
+			covered:   []string{"mask:3"},
+			uncovered: []string{"mask:1", "mask:2"},
+		},
+		{
+			name: "contradictory branch",
+			schema: `{"type":"number","anyOf":[
+				{"minimum":10,"maximum":0},{"minimum":1}
+			]}`,
+			covered:   []string{"mask:2"},
+			uncovered: []string{"mask:1", "mask:3"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			report, err := Build(Input{
+				OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected", MaxSteps: 10_000,
+			}, func(Case) error { return nil })
+			require.NoError(t, err)
+			require.Equal(t, test.covered, anyOfReportMasks(report.Covered))
+			require.Equal(t, test.uncovered, anyOfReportMasks(report.Uncovered))
+		})
+	}
+}
+
+// anyOfReportMasks extracts root anyOf coverage levels.
+func anyOfReportMasks(identities []string) []string {
+	var masks []string
+
+	for _, identity := range identities {
+		marker := "|anyOf|level:"
+
+		index := strings.Index(identity, marker)
+		if index >= 0 {
+			masks = append(masks, identity[index+len(marker):])
+		}
+	}
+
+	return masks
+}
+
+// TestBaselineReachesSingletonNestedCanonicalTargets proves complete-vector baseline propagation.
+func TestBaselineReachesSingletonNestedCanonicalTargets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+		levels []string
+	}{
+		{
+			name:   "optional exact enum property",
+			schema: `{"type":"object","properties":{"value":{"type":"string","enum":["a"]}}}`,
+			levels: []string{"#/value|type|level:string", "#/value|enum|level:member:0"},
+		},
+		{
+			name:   "singleton array item",
+			schema: `{"type":"array","items":{"type":"boolean"}}`,
+			levels: []string{"#/*|type|level:boolean"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			report, err := Build(Input{
+				OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected", MaxSteps: 10_000,
+			}, func(Case) error { return nil })
+			require.NoError(t, err)
+
+			for _, suffix := range test.levels {
+				require.Truef(t, reportIdentityHasSuffix(report.Covered, suffix), "%s: %#v", suffix, report)
+			}
+		})
+	}
+}
+
+// reportIdentityHasSuffix reports whether coverage contains one focused identity fragment.
+func reportIdentityHasSuffix(identities []string, suffix string) bool {
+	for _, identity := range identities {
+		if strings.Contains(identity, suffix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestMakePlanExactTargetsDoNotInheritKindSelectedAnyOfMask locks target-specific requirements.
 func TestMakePlanExactTargetsDoNotInheritKindSelectedAnyOfMask(t *testing.T) {
 	t.Parallel()
 
@@ -76,7 +190,7 @@ func TestMakePlanExactTargetsDoNotInheritKindSelectedAnyOfMask(t *testing.T) {
 	child := model.root.properties["value"]
 	childEnum := findValidIntent(t, plan, child.occurrence, oracleRuleEnum, "member:0")
 	requireExactEnumRequirement(t, childEnum.requirements, &child.enum[0])
-	requirePin(t, childEnum.requirements, "#/value", requirementPresent)
+	requireRequirement(t, childEnum.requirements, "#/value", requirementPresent)
 	requireNoCompositionRequirements(t, childEnum.requirements, model.root.occurrence, "anyOf")
 }
 

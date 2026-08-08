@@ -9,38 +9,45 @@ import (
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	context rowSearchContext,
 	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
 	if kind == jsonNumber {
-		return s.walkActiveScalarPinAlternatives(
+		return s.walkActiveScalarRequirementAlternatives(
 			node,
 			occurrence,
-			append([]requirement(nil), pins...),
-			func(activePins []requirement) (bool, error) {
+			append([]requirement(nil), requirements...),
+			func(activeRequirements []requirement) (bool, error) {
 				return s.walkActiveNumberRules(
-					node, occurrence, activePins, context.validRequest, visit,
+					node, occurrence, activeRequirements, context.validRequest, visit,
 				)
 			},
 		)
 	}
 
-	candidates, err := rowScalarValues(node, kind)
+	complete := false
+
+	var visitErr error
+
+	err := rowScalarValueSource(node, kind)(func(candidate *jsonValue) bool {
+		if assignErr := s.assign(); assignErr != nil {
+			visitErr = assignErr
+
+			return false
+		}
+
+		complete, visitErr = visit(candidate)
+
+		return visitErr == nil && !complete
+	})
 	if err != nil {
 		return false, err
 	}
 
-	for _, candidate := range candidates {
-		if err := s.assign(); err != nil {
-			return false, err
-		}
-
-		complete, visitErr := visit(candidate)
-		if visitErr != nil || complete {
-			return complete, visitErr
-		}
+	if visitErr != nil || complete {
+		return complete, visitErr
 	}
 
 	if node.enum != nil {
@@ -49,13 +56,13 @@ func (s *search) walkScalar(
 
 	switch kind {
 	case jsonString:
-		return s.walkActiveScalarPinAlternatives(
+		return s.walkActiveScalarRequirementAlternatives(
 			node,
 			occurrence,
-			append([]requirement(nil), pins...),
-			func(activePins []requirement) (bool, error) {
+			append([]requirement(nil), requirements...),
+			func(activeRequirements []requirement) (bool, error) {
 				return s.walkActiveStringRules(
-					node, occurrence, activePins, context.validRequest, visit,
+					node, occurrence, activeRequirements, context.validRequest, visit,
 				)
 			},
 		)
@@ -70,11 +77,11 @@ func (s *search) walkScalar(
 func (s *search) walkActiveStringRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	request *validRequest,
 	visit rowVisit,
 ) (bool, error) {
-	rules, err := activeStringRulesFor(node, occurrence, pins, nil)
+	rules, err := activeStringRulesFor(node, occurrence, requirements, nil)
 	if err != nil {
 		return false, err
 	}
@@ -102,14 +109,11 @@ func (s *search) walkActiveStringRules(
 	level := oracleStringValidLevel
 
 	seedPointer := occurrence.usePointer
-	if target := validScalarObjective(request, node, occurrence); target != nil {
-		targetNode, found := scalarTargetNode(node, occurrence, target.expected.occurrence)
-		if found {
-			seedNode = targetNode
-			rule = target.expected.rule
-			level = target.expected.level
-			seedPointer = target.expected.occurrence.usePointer
-		}
+	if objective := validStringObjective(request, node, occurrence); objective != nil {
+		seedNode = objective.node
+		rule = objective.identity.rule
+		level = objective.identity.level
+		seedPointer = objective.identity.occurrence.usePointer
 	}
 
 	canonicalSchemaJSON, err := marshalStrict(seedNode.schemaJSON)
@@ -135,23 +139,26 @@ func (s *search) walkActiveStringRules(
 	)
 }
 
-// validScalarObjective selects the focused target, then canonical objective order.
-func validScalarObjective(request *validRequest, node *schemaNode, occurrence schemaOccurrence) *validIntent {
+// resolvedScalarObjective reuses one scalar occurrence traversal result.
+type resolvedScalarObjective struct {
+	identity levelIdentity
+	node     *schemaNode
+}
+
+// validStringObjective consumes the request's explicit string execution sequence.
+func validStringObjective(
+	request *validRequest,
+	node *schemaNode,
+	occurrence schemaOccurrence,
+) *resolvedScalarObjective {
 	if request == nil {
 		return nil
 	}
 
-	if request.focus >= 0 && request.focus < len(request.targets) {
-		target := &request.targets[request.focus]
-		if _, found := scalarTargetNode(node, occurrence, target.expected.occurrence); found {
-			return target
-		}
-	}
-
-	for index := range request.targets {
-		target := &request.targets[index]
-		if _, found := scalarTargetNode(node, occurrence, target.expected.occurrence); found {
-			return target
+	for _, objective := range request.stringObjectives {
+		resolved, found := scalarTargetNode(node, occurrence, objective.occurrence)
+		if found {
+			return &resolvedScalarObjective{identity: objective, node: resolved}
 		}
 	}
 
@@ -195,158 +202,129 @@ func scalarTargetNode(
 	return nil, false
 }
 
-// rowScalarValues builds a finite deterministic frontier for one primitive kind.
+// rowScalarValueSource advances exactly one primitive alternative at a time.
 //
-//nolint:cyclop // Canonical, derived, numeric, and string witness phases are explicit.
-func rowScalarValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
-	if node.enum != nil {
-		return rowEnumValues(node.enum, kind)
-	}
+//nolint:cyclop,gocognit // Error, filtering, stopping, and phased lazy sources share one closure boundary.
+func rowScalarValueSource(node *schemaNode, kind jsonKind) jsonValueSource {
+	return uniqueJSONValueSource(func(yield func(*jsonValue) bool) error {
+		stopped := false
 
-	derived, err := canonicalAnyOfWitnesses(node, kind)
-	if err != nil {
-		return nil, err
-	}
+		var sourceErr error
 
-	generated, err := canonicalKindWitnesses(kind)
-	if err != nil {
-		return nil, err
-	}
-
-	if node.defaultValue != nil && node.defaultValue.kind == kind {
-		generated, err = appendUniqueJSONWitness(generated, node.defaultValue)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	prefixCount := len(generated)
-	for _, candidate := range derived.generated {
-		generated, err = appendUniqueJSONWitness(generated, candidate)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if kind == jsonString {
-		generated, err = appendRowStringCandidates(generated, node)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	candidates := make([]*jsonValue, 0, len(derived.admitted)+len(generated))
-	candidates = append(candidates, generated[:prefixCount]...)
-	candidates = append(candidates, derived.admitted...)
-	candidates = append(candidates, generated[prefixCount:]...)
-
-	return filterRowScalarValues(candidates, node, kind)
-}
-
-// rowEnumValues preserves authored enum order and uses already canonical members.
-func rowEnumValues(enum []enumMember, kind jsonKind) ([]*jsonValue, error) {
-	candidates := make([]*jsonValue, 0, len(enum))
-	for _, member := range enum {
-		if member.value == nil {
-			return nil, errors.New("schematest: nil enum row value")
-		}
-
-		if member.value.kind != kind {
-			continue
-		}
-
-		candidates = append(candidates, member.value)
-	}
-
-	return candidates, nil
-}
-
-// filterRowScalarValues keeps only values that can satisfy the node's explicit kind.
-func filterRowScalarValues(candidates []*jsonValue, node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
-	filtered := make([]*jsonValue, 0, len(candidates))
-	for _, candidate := range candidates {
-		if candidate == nil {
-			return nil, errors.New("schematest: nil scalar row value")
-		}
-
-		if candidate.kind != kind {
-			continue
-		}
-
-		if node.kind == schemaInteger && kind == jsonNumber {
-			integer, err := candidate.number.isInteger()
+		emit := func(candidate *jsonValue) bool {
+			usable, err := rowScalarValueUsable(candidate, node, kind)
 			if err != nil {
-				return nil, err
+				sourceErr = err
+				stopped = true
+
+				return false
 			}
 
-			if !integer {
-				continue
+			if !usable {
+				return true
+			}
+
+			if !yield(candidate) {
+				stopped = true
+			}
+
+			return !stopped
+		}
+
+		if node.enum != nil {
+			for _, member := range node.enum {
+				if member.value == nil {
+					return errors.New("schematest: nil enum row value")
+				}
+
+				if member.value.kind == kind && !emit(member.value) {
+					return nil
+				}
+			}
+
+			return nil
+		}
+
+		if err := walkCanonicalKindWitnesses(kind, emit); err != nil {
+			return err
+		}
+
+		if stopped {
+			return sourceErr
+		}
+
+		if err := canonicalAnyOfWitnesses(node, kind)(emit); err != nil {
+			return err
+		}
+
+		if stopped {
+			return sourceErr
+		}
+
+		if kind == jsonString {
+			if err := walkRowStringCandidates(node, emit); err != nil {
+				return err
 			}
 		}
 
-		filtered = append(filtered, candidate)
-	}
-
-	return filtered, nil
+		return sourceErr
+	})
 }
 
-// appendRowStringCandidates adds valid format and length witnesses in stable order.
-//
-
-// appendRowStringCandidates adds only fixed small string seeds; directed lengths remain lazy.
-func appendRowStringCandidates(candidates []*jsonValue, node *schemaNode) ([]*jsonValue, error) {
-	for _, sample := range rowStringFormatSamples(node.format) {
-		var err error
-
-		candidates, err = appendUniqueJSONWitness(candidates, &jsonValue{kind: jsonString, text: sample})
-		if err != nil {
-			return nil, err
-		}
+// rowScalarValueUsable applies kind and integer filtering to one yielded value.
+func rowScalarValueUsable(candidate *jsonValue, node *schemaNode, kind jsonKind) (bool, error) {
+	if candidate == nil {
+		return false, errors.New("schematest: nil scalar row value")
 	}
 
-	if witness, exists := canonicalStringPatternWitness(node.pattern); exists {
-		var err error
+	if candidate.kind != kind {
+		return false, nil
+	}
 
-		candidates, err = appendUniqueJSONWitness(candidates, witness)
-		if err != nil {
-			return nil, err
-		}
+	if node.kind != schemaInteger || kind != jsonNumber {
+		return true, nil
+	}
+
+	return candidate.number.isInteger()
+}
+
+// walkRowStringCandidates adds only fixed small seeds; directed lengths remain lazy.
+func walkRowStringCandidates(node *schemaNode, yield func(*jsonValue) bool) error {
+	if !walkRowStringFormatSamples(node.format, func(sample string) bool {
+		return yield(&jsonValue{kind: jsonString, text: sample})
+	}) {
+		return nil
+	}
+
+	if witness, exists := canonicalStringPatternWitness(node.pattern); exists && !yield(witness) {
+		return nil
 	}
 
 	if node.pattern != nil {
-		var err error
-
-		candidates, err = appendUniqueJSONWitness(
-			candidates, &jsonValue{kind: jsonString, text: "a@b"},
-		)
-		if err != nil {
-			return nil, err
-		}
+		yield(&jsonValue{kind: jsonString, text: "a@b"})
 	}
 
-	return candidates, nil
+	return nil
 }
 
-// rowStringFormatSamples provides one small witness for every active string format.
-func rowStringFormatSamples(format schemaFormat) []string {
+// walkRowStringFormatSamples emits fixed format seeds without retaining a slice.
+func walkRowStringFormatSamples(format schemaFormat, yield func(string) bool) bool {
 	switch format {
 	case schemaFormatByte:
-		return []string{"YQ=="}
+		return yield("YQ==")
 	case schemaFormatDate:
-		return []string{"1970-01-01"}
+		return yield("1970-01-01")
 	case schemaFormatDateTime:
-		return []string{"1970-01-01T00:00:00Z"}
+		return yield("1970-01-01T00:00:00Z")
 	case schemaFormatEmail:
-		return []string{"a@b", "a@example.com"}
+		return yield("a@b") && yield("a@example.com")
 	case schemaFormatIPv4:
-		return []string{"0.0.0.0"}
-	case schemaFormatUUID:
-		return []string{"00000000-0000-4000-8000-000000000000"}
-	case schemaFormatUUIDv4, schemaFormatUUIDDashV4:
-		return []string{"00000000-0000-4000-8000-000000000000"}
+		return yield("0.0.0.0")
+	case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
+		return yield("00000000-0000-4000-8000-000000000000")
 	case schemaFormatCIDR, schemaFormatIPv4CIDR:
-		return []string{"0.0.0.0/0"}
+		return yield("0.0.0.0/0")
 	default:
-		return nil
+		return true
 	}
 }

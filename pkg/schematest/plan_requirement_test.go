@@ -30,7 +30,7 @@ func TestPlanRequirementsDescribeAuthoredEnumTargetWithoutCandidate(t *testing.T
 	require.Contains(t, intent.requirements, requirement{
 		tag: requirementExactEnumMember, occurrence: model.root.occurrence, enumMember: &model.root.enum[1],
 	})
-	require.Contains(t, intent.requirements, kindPin(model.root.occurrence, jsonString))
+	require.Contains(t, intent.requirements, kindRequirement(model.root.occurrence, jsonString))
 }
 
 // TestPlanRequirementsCarryExactCountAndFaultProgram verifies count and closure constraints.

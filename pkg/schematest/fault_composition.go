@@ -46,7 +46,7 @@ func findCompositionFaultDerivative(
 	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
-	derivative, found, err := applyCompositionPinEdits(parent, fault, s)
+	derivative, found, err := applyCompositionRequirementEdits(parent, fault, s)
 	if err != nil || found {
 		return derivative, found, err
 	}
@@ -87,22 +87,22 @@ func findCompositionFaultDerivative(
 	return derivative, found, err
 }
 
-// applyCompositionPinEdits applies directly represented absent-presence pins.
+// applyCompositionRequirementEdits applies directly represented absent-presence requirements.
 //
-//nolint:cyclop // Pin collection and deterministic subset search are one operation.
-func applyCompositionPinEdits(
+//nolint:cyclop // Requirement collection and deterministic subset search are one operation.
+func applyCompositionRequirementEdits(
 	parent *jsonValue,
 	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
 	var edits []compositionEdit
 
-	for _, pin := range fault.requirements {
-		if pin.canonical || pin.presence != requirementAbsent {
+	for _, requirement := range fault.requirements {
+		if requirement.canonical || requirement.presence != requirementAbsent {
 			continue
 		}
 
-		for _, path := range matchingValuePaths(parent, pin.occurrence.instanceTemplate) {
+		for _, path := range matchingValuePaths(parent, requirement.occurrence.instanceTemplate) {
 			if len(path) == 0 || valueAtPath(parent, path) == nil {
 				continue
 			}

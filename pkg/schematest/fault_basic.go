@@ -6,7 +6,7 @@ import (
 	"math/big"
 )
 
-// errFaultNotFound leaves an unrealizable planned fault uncovered.
+// errFaultNotFound leaves a planned fault without an isolated derivative uncovered.
 var errFaultNotFound = errors.New("schematest: planned fault has no isolated derivative")
 
 // streamBasicFaults visits supported faults in planner order.
@@ -43,12 +43,8 @@ func streamBasicFault(
 	covered map[string]bool,
 	yield func(Case) error,
 ) error {
-	unreachable, err := faultIsSyntacticallyUnreachable(fault, s.model)
-	if err != nil {
-		return err
-	}
-
-	if !closureProgramCanComplete(fault.alternatives) || unreachable {
+	// R4 only compiles aggregate closure domains. R7 owns their charged runtime cursor.
+	if fault.alternatives != nil {
 		return nil
 	}
 
@@ -90,177 +86,6 @@ func streamBasicFault(
 	return yield(Case{JSON: encoded, Valid: false})
 }
 
-// closureProgramCanComplete reports whether every linked branch has at least
-// one recursively complete symbolic alternative.
-func closureProgramCanComplete(program *faultClosureProgram) bool {
-	if program == nil {
-		return true
-	}
-
-	for alternative := program.alternatives; alternative != nil; alternative = alternative.next {
-		if closureProgramCanComplete(alternative.closure) && closureProgramCanComplete(program.next) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// faultIsSyntacticallyUnreachable recognizes finite exhaustive enum domains
-// without deleting their declarative obligations from the plan.
-//
-//nolint:cyclop // Closed fault families have distinct exact syntactic checks.
-func faultIsSyntacticallyUnreachable(fault faultProgram, model *schemaModel) (bool, error) {
-	if model == nil || model.root == nil {
-		return false, nil
-	}
-
-	node, _, found := resolveExactFaultTarget(
-		model.root,
-		model.root.occurrence,
-		fault.obligation.occurrence,
-	)
-	if !found {
-		return false, nil
-	}
-
-	if !faultClosureCanRespectAnyOfParentType(fault, model) {
-		return true, nil
-	}
-
-	switch fault.obligation.rule {
-	case oracleRuleType:
-		if node.enum == nil {
-			return false, nil
-		}
-
-		for _, member := range node.enum {
-			matches, err := valueMatchesNodeKind(member.value, node.kind, node.nullable)
-			if err != nil {
-				return false, err
-			}
-
-			if !matches {
-				return false, nil
-			}
-		}
-
-		return true, nil
-	case oracleRuleEnum:
-		return booleanEnumIsExhaustive(node), nil
-	default:
-		return false, nil
-	}
-}
-
-// faultClosureCanRespectAnyOfParentType checks branch faults against one explicit parent type.
-func faultClosureCanRespectAnyOfParentType(fault faultProgram, model *schemaModel) bool {
-	for _, failure := range fault.expected {
-		if failure.rule != oracleRuleAnyOf {
-			continue
-		}
-
-		parent, _, found := resolveExactFaultTarget(model.root, model.root.occurrence, failure.occurrence)
-		if !found || parent.kind == schemaAny || parent.nullable {
-			return true
-		}
-
-		kind := schemaNodeJSONKind(parent.kind)
-
-		return failureSetCanUseParentKind(
-			fault.expected, fault.obligation.ruleIdentity, failure.occurrence, kind, model,
-		) && closureProgramCanUseParentKind(
-			fault.alternatives, fault.obligation.ruleIdentity, failure.occurrence, kind, model,
-		)
-	}
-
-	return true
-}
-
-// closureProgramCanUseParentKind finds one symbolic closure path compatible with the parent kind.
-func closureProgramCanUseParentKind(
-	program *faultClosureProgram,
-	directed ruleIdentity,
-	parent schemaOccurrence,
-	kind jsonKind,
-	model *schemaModel,
-) bool {
-	if program == nil {
-		return true
-	}
-
-	for alternative := program.alternatives; alternative != nil; alternative = alternative.next {
-		if failureSetCanUseParentKind(alternative.expected, directed, parent, kind, model) &&
-			closureProgramCanUseParentKind(alternative.closure, directed, parent, kind, model) &&
-			closureProgramCanUseParentKind(program.next, directed, parent, kind, model) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// failureSetCanUseParentKind rejects type failures that would also break the parent type.
-func failureSetCanUseParentKind(
-	failures failureSet,
-	directed ruleIdentity,
-	parent schemaOccurrence,
-	kind jsonKind,
-	model *schemaModel,
-) bool {
-	for _, failure := range failures {
-		directedAtParent := failure == directed &&
-			rowOccurrenceMatches(failure.occurrence, parent)
-		if failure.rule != oracleRuleType || directedAtParent ||
-			failure.occurrence.instanceTemplate != parent.instanceTemplate {
-			continue
-		}
-
-		node, _, found := resolveExactFaultTarget(model.root, model.root.occurrence, failure.occurrence)
-		if !found {
-			continue
-		}
-
-		if node.kind == schemaInteger && kind == jsonNumber {
-			continue
-		}
-
-		if nodeAcceptsKindForTarget(node, kind) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// booleanEnumIsExhaustive recognizes the finite valid domain of a boolean schema.
-//
-//nolint:cyclop // Boolean and nullable coverage are clearer as explicit cases.
-func booleanEnumIsExhaustive(node *schemaNode) bool {
-	if node == nil || node.kind != schemaBoolean || node.enum == nil {
-		return false
-	}
-
-	seenFalse := false
-	seenTrue := false
-	seenNull := false
-
-	for _, member := range node.enum {
-		switch member.value.kind {
-		case jsonBoolean:
-			if member.value.boolean {
-				seenTrue = true
-			} else {
-				seenFalse = true
-			}
-		case jsonNull:
-			seenNull = true
-		}
-	}
-
-	return seenFalse && seenTrue && (!node.nullable || seenNull)
-}
-
 // regenerateParent replays row search for one fresh, complete oracle-valid parent.
 func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonValue, bool, error) {
 	if plan == nil {
@@ -271,7 +96,7 @@ func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonVal
 		return nil, false, errors.New("schematest: parent replay has no model")
 	}
 
-	parentPins := parentReplayPins(fault)
+	parentRequirements := parentReplayRequirements(fault)
 
 	var parent *jsonValue
 
@@ -281,7 +106,7 @@ func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonVal
 			return false, fmt.Errorf("evaluate regenerated parent: %w", result.err)
 		}
 
-		if !result.valid || !faultPinsMatch(result, value, parentPins) {
+		if !result.valid || !faultRequirementsMatch(result, value, parentRequirements) {
 			return false, nil
 		}
 
@@ -293,7 +118,7 @@ func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonVal
 	complete, err := s.walkNode(
 		s.model.root,
 		s.model.root.occurrence,
-		parentPins,
+		parentRequirements,
 		rowSearchContext{},
 		visit,
 	)
@@ -304,55 +129,56 @@ func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonVal
 	return parent, complete, nil
 }
 
-// parentReplayPins turns mutation-result presence into valid-parent presence.
+// parentReplayRequirements turns mutation-result presence into valid-parent presence.
 //
-//nolint:cyclop // Presence, type, and enum faults translate distinct pin dimensions.
-func parentReplayPins(fault faultProgram) []requirement {
-	pins := copyPlanPins(fault.requirements)
-	for index := range pins {
-		if pins[index].hasBranch {
-			if pins[index].composition == "anyOf" {
-				pins[index].hasBranch = false
+//nolint:cyclop // Presence, type, and enum faults translate distinct requirement dimensions.
+func parentReplayRequirements(fault faultProgram) []requirement {
+	requirements := copyPlanRequirements(fault.requirements)
+	for index := range requirements {
+		if requirements[index].hasBranch {
+			if requirements[index].composition == "anyOf" {
+				requirements[index].hasBranch = false
 			} else {
-				pins[index].truth = true
+				requirements[index].truth = true
 			}
 		}
 
 		for _, failure := range fault.expected {
 			if !instanceTemplateMatches(
 				failure.occurrence.instanceTemplate,
-				pins[index].occurrence.instanceTemplate,
+				requirements[index].occurrence.instanceTemplate,
 			) {
 				continue
 			}
 
 			switch failure.rule {
 			case oracleRuleRequired:
-				pins[index].presence = requirementPresent
+				requirements[index].presence = requirementPresent
 			case oracleRuleAdditionalProperties:
-				pins[index].presence = requirementAbsent
+				requirements[index].presence = requirementAbsent
 			case oracleRuleType:
-				pins[index].hasKind = false
+				requirements[index].hasKind = false
 			case oracleRuleEnum:
-				if rowOccurrenceMatches(pins[index].occurrence, failure.occurrence) {
-					pins[index].hasKind = false
+				if rowOccurrenceMatches(requirements[index].occurrence, failure.occurrence) {
+					requirements[index].hasKind = false
 				}
 			}
 		}
 	}
 
-	return pins
+	return requirements
 }
 
-// faultPinsMatch requires every fault-applicability precondition on a valid parent.
-func faultPinsMatch(result evaluation, value *jsonValue, pins []requirement) bool {
-	for _, pin := range pins {
+// faultRequirementsMatch requires every fault-applicability precondition on a valid parent.
+func faultRequirementsMatch(result evaluation, value *jsonValue, requirements []requirement) bool {
+	for _, requirement := range requirements {
 		switch {
-		case pin.presence != requirementNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
+		case requirement.presence != requirementNoPresence && !requirement.canonical &&
+			!presenceRequirementWasSatisfied(value, requirement):
 			return false
-		case pin.hasKind && !kindWasObserved(result.observedRecords(), pin.occurrence, pin.kind):
+		case requirement.hasKind && !kindWasObserved(result.observedRecords(), requirement.occurrence, requirement.kind):
 			return false
-		case pin.hasBranch && !branchTruthWasObserved(result, pin):
+		case requirement.hasBranch && !branchTruthWasObserved(result, requirement):
 			return false
 		}
 	}

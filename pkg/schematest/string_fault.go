@@ -49,11 +49,11 @@ type activeStringRules struct {
 func activeStringRulesFor(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	objective *stringSearchObjective,
 ) (activeStringRules, error) {
 	rules := activeStringRules{supported: true}
-	if err := collectActiveStringRules(node, occurrence, pins, objective, &rules); err != nil {
+	if err := collectActiveStringRules(node, occurrence, requirements, objective, &rules); err != nil {
 		return activeStringRules{}, err
 	}
 
@@ -64,7 +64,7 @@ func activeStringRulesFor(
 func collectActiveStringRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	objective *stringSearchObjective,
 	rules *activeStringRules,
 ) error {
@@ -117,12 +117,12 @@ func collectActiveStringRules(
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if err := collectActiveStringRules(child, childOccurrence, pins, objective, rules); err != nil {
+		if err := collectActiveStringRules(child, childOccurrence, requirements, objective, rules); err != nil {
 			return err
 		}
 	}
 
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
@@ -130,11 +130,11 @@ func collectActiveStringRules(
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if !pinned || !states[index] && !stringObjectiveWithin(objective, childOccurrence) {
+		if !constrained || !states[index] && !stringObjectiveWithin(objective, childOccurrence) {
 			continue
 		}
 
-		if err := collectActiveStringRules(child, childOccurrence, pins, objective, rules); err != nil {
+		if err := collectActiveStringRules(child, childOccurrence, requirements, objective, rules); err != nil {
 			return err
 		}
 	}
@@ -364,54 +364,21 @@ func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIde
 	return true, nil
 }
 
-// faultFailureClosureMatches verifies one actual closure against the symbolic
-// branch-local domains without materializing their Cartesian product.
+// faultFailureClosureMatches verifies direct faults only. Aggregate closure programs
+// remain compile-only until the later fault-search delivery owns their charged cursor.
 func faultFailureClosureMatches(actual iter.Seq[failureIdentity], fault faultProgram) (bool, error) {
-	failures := make([]failureIdentity, 0)
-	for failure := range actual {
-		failures = append(failures, failure)
+	if fault.alternatives != nil {
+		return false, errors.New("schematest: aggregate fault closure execution is unavailable")
 	}
 
-	return closureProgramMatches(failures, fault.expected, fault.alternatives)
-}
-
-func closureProgramMatches(
-	actual []failureIdentity,
-	expected failureSet,
-	program *faultClosureProgram,
-) (bool, error) {
-	if program == nil {
-		return exactFailureClosure(failureSequence(actual), expected)
-	}
-
-	for alternative := program.alternatives; alternative != nil; alternative = alternative.next {
-		combined := append(append(failureSet(nil), expected...), alternative.expected...)
-		remaining := appendClosurePrograms(alternative.closure, program.next)
-
-		matches, err := closureProgramMatches(actual, combined, remaining)
-		if err != nil || matches {
-			return matches, err
-		}
-	}
-
-	return false, nil
-}
-
-func failureSequence(failures []failureIdentity) iter.Seq[failureIdentity] {
-	return func(yield func(failureIdentity) bool) {
-		for _, failure := range failures {
-			if !yield(failure) {
-				return
-			}
-		}
-	}
+	return exactFailureClosure(actual, fault.expected)
 }
 
 //nolint:cyclop // Pattern, length, seed, and failure-alternative phases share one objective seam.
 func (s *search) walkDirectedStringObjective(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []requirement,
+	requirements []requirement,
 	objective *stringSearchObjective,
 	visit rowVisit,
 ) (bool, bool, error) {
@@ -419,7 +386,7 @@ func (s *search) walkDirectedStringObjective(
 		return false, false, nil
 	}
 
-	rules, rulesErr := activeStringRulesFor(node, occurrence, pins, objective)
+	rules, rulesErr := activeStringRulesFor(node, occurrence, requirements, objective)
 	if rulesErr != nil {
 		return true, false, rulesErr
 	}
@@ -608,7 +575,7 @@ func directedBasicStringLengths(
 		return basicStringLengths{}, basicStringLengthObjective{}, false, err
 	}
 
-	lengthObjective := basicStringLengthObjective{pinned: true}
+	lengthObjective := basicStringLengthObjective{constrained: true}
 
 	switch objective.kind {
 	case stringSearchMinLengthFalse:

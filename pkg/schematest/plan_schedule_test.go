@@ -51,7 +51,7 @@ func TestMakePlanEmitsAdditiveValidSchedule(t *testing.T) {
 	require.Equal(t, []string{
 		"type|string",
 		"enum|member:0",
-		"anyOf|mask:1",
+		"anyOf|mask:3",
 		"type|string",
 		"type|string",
 	}, validRequestLevels(baseline))
@@ -62,12 +62,39 @@ func TestMakePlanEmitsAdditiveValidSchedule(t *testing.T) {
 
 	require.Equal(t, []string{
 		"enum|member:1",
+		"anyOf|mask:1",
 		"anyOf|mask:2",
-		"anyOf|mask:3",
 	}, validAlternativeLevels(plan.validSchedule[1:]))
 }
 
 // TestMakePlanTypelessBaselineStartsBoolean locks the non-null canonical kind.
+func TestMakePlanTypelessOrderIgnoresEnumSiblingCompatibility(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{"enum":[1]}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"type|boolean", "type|null", "type|number", "type|string", "type|array", "type|object",
+	}, validTypeLevels(plan.validCatalog, model.root.occurrence))
+}
+
+// validTypeLevels renders root type levels in catalog order.
+func validTypeLevels(catalog []validIntent, occurrence schemaOccurrence) []string {
+	var levels []string
+
+	for _, target := range catalog {
+		if target.expected.rule == oracleRuleType && target.expected.occurrence == occurrence {
+			levels = append(levels, target.expected.rule+"|"+target.expected.level)
+		}
+	}
+
+	return levels
+}
+
+// TestMakePlanTypelessBaselineStartsBoolean locks the first additive type assignment.
 func TestMakePlanTypelessBaselineStartsBoolean(t *testing.T) {
 	t.Parallel()
 
@@ -81,6 +108,45 @@ func TestMakePlanTypelessBaselineStartsBoolean(t *testing.T) {
 	require.Equal(t, []string{
 		"type|null", "type|number", "type|string", "type|array", "type|object",
 	}, validAlternativeLevels(plan.validSchedule[1:]))
+}
+
+// TestValidStringObjectiveConsumesExplicitExecutionOrder proves production consumes compiled order.
+func TestValidStringObjectiveConsumesExplicitExecutionOrder(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string","minLength":1,"maxLength":3,"pattern":"^a+$","format":"email"
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	baseline := plan.validSchedule[0]
+	objective := validStringObjective(&baseline, model.root, model.root.occurrence)
+	require.NotNil(t, objective)
+	require.Equal(t, oracleRuleMinLength, objective.identity.rule)
+	require.Same(t, model.root, objective.node)
+
+	focus := -1
+
+	for index, target := range baseline.targets {
+		if target.expected.rule == oracleRulePattern {
+			focus = index
+
+			break
+		}
+	}
+
+	require.NotEqual(t, -1, focus)
+
+	focused, err := makeValidRequest(baseline.targets, focus, plan.stringObjectives)
+	require.NoError(t, err)
+
+	objective = validStringObjective(&focused, model.root, model.root.occurrence)
+	require.NotNil(t, objective)
+	require.Equal(t, oracleRulePattern, objective.identity.rule)
+	require.Equal(t, oracleRulePattern, focused.stringObjectives[0].rule)
 }
 
 // TestMakePlanCachesCanonicalObligationOrderKeys proves one-time order parsing.

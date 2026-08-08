@@ -73,26 +73,7 @@ func comparePlanPointers(left, right string, schemaPointer bool) (int, error) {
 		return 0, err
 	}
 
-	limit := len(leftTokens)
-	if len(rightTokens) < limit {
-		limit = len(rightTokens)
-	}
-
-	for index := 0; index < limit; index++ {
-		comparison := comparePlanPointerTokens(leftTokens[index], rightTokens[index])
-		if comparison != 0 {
-			return comparison, nil
-		}
-	}
-
-	switch {
-	case len(leftTokens) < len(rightTokens):
-		return -1, nil
-	case len(leftTokens) > len(rightTokens):
-		return 1, nil
-	default:
-		return 0, nil
-	}
+	return comparePlanPointerTokenSlices(leftTokens, rightTokens), nil
 }
 
 // comparePlanPointerTokens compares array indices numerically and object tokens by UTF-8 bytes.
