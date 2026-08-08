@@ -153,7 +153,7 @@ func TestBuildTypeFaultUsesActiveSiblingEnumWitness(t *testing.T) {
 			name:       "large integer enum witness",
 			schema:     `{"allOf":[{"type":"boolean"},{"enum":[true,123456789]}]}`,
 			derivative: `123456789`,
-			steps:      3863,
+			steps:      3871,
 		},
 	}
 

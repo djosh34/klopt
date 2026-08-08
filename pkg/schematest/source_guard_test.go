@@ -370,6 +370,15 @@ func TestCanonicalMetadataHasNoParallelOrHotPathRepresentations(t *testing.T) {
 		`package schematest
 			type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }
 			type schemaShape struct { enum []enumMember; required []string }
+			func appendUniqueJSONWitness(values []*jsonValue, candidate *jsonValue) ([]*jsonValue, error) {
+				return values, nil
+			}
+			func rowScalarValues(admitted []*jsonValue, candidate *jsonValue) {
+				_, _ = appendUniqueJSONWitness(admitted, candidate)
+			}`,
+		`package schematest
+			type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }
+			type schemaShape struct { enum []enumMember; required []string }
 			func appendUniqueJSONWitness([]*jsonValue, *jsonValue) ([]*jsonValue, error) { return nil, nil }
 			func collectAnyOfWitnesses(node *schemaShape) {
 				for _, member := range node.enum { _, _ = appendUniqueJSONWitness(nil, member.value) }
@@ -463,9 +472,9 @@ func canonicalMetadataViolations(guardPackage *sourceGuardPackage) []string {
 					functionCallUsesWrongFirstArgument(function, "appendUniqueJSONWitness", "generated") {
 					violations = append(violations, "planner re-deduplicates admitted enum")
 				}
-			case "canonicalAnyOfWitnesses":
+			case "canonicalAnyOfWitnesses", "rowScalarValues":
 				if functionCallUsesWrongFirstArgument(function, "appendUniqueJSONWitness", "generated") {
-					violations = append(violations, "canonical witnesses compare against admitted enum")
+					violations = append(violations, "generated witnesses compare against admitted enum")
 				}
 			case "evaluateEnumRule":
 				if countFunctionCalls(function, "jsonValidatedSemanticEqual") != 1 ||
@@ -1520,7 +1529,7 @@ func reachableOwnerTypes(
 func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
 	authorized := make(map[*types.TypeName]bool)
 	for _, root := range []string{
-		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext",
+		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext", "canonicalWitnesses",
 		"jsonActivePath", "jsonValuePair", "jsonValidationFrame", "jsonCloneFrame", "jsonMarshalFrame",
 		"strictJSONContainerFrame",
 	} {

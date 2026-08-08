@@ -310,7 +310,7 @@ x-shared: &outer
       properties:
         leaf: {type: string}
     child:
-      $ref: '#/x-shared/properties/definition'
+      $ref: '#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0/properties/definition'
     local: {type: string}
 paths:
   /:
@@ -353,8 +353,8 @@ paths:
 	secondUse := rootUse + "/allOf/1"
 	identities := evaluationRecordValues(cachedSecond.applicableRecords())
 	require.Equal(t, secondUse, identities[0].occurrence.targetPointer)
-	require.Equal(t, "#/x-shared/properties/definition", identities[1].occurrence.targetPointer)
-	require.Equal(t, "#/x-shared/properties/definition/properties/leaf", identities[2].occurrence.targetPointer)
+	require.Equal(t, rootUse+"/allOf/0/properties/definition", identities[1].occurrence.targetPointer)
+	require.Equal(t, rootUse+"/allOf/0/properties/definition/properties/leaf", identities[2].occurrence.targetPointer)
 	require.Equal(t, secondUse+"/properties/local", identities[3].occurrence.targetPointer)
 }
 

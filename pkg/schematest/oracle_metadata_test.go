@@ -46,14 +46,15 @@ func TestCanonicalWitnessesDoNotDeduplicateAgainstAdmittedEnum(t *testing.T) {
 
 	witnesses, err := canonicalAnyOfWitnesses(model.root, jsonObject)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(witnesses), 4)
-	require.Same(t, model.root.enum[0].value, witnesses[0])
-	require.Same(t, model.root.defaultValue, witnesses[1])
-	equal, err := jsonValidatedSemanticEqual(witnesses[0], witnesses[1])
+	require.Len(t, witnesses.admitted, 1)
+	require.GreaterOrEqual(t, len(witnesses.generated), 3)
+	require.Same(t, model.root.enum[0].value, witnesses.admitted[0])
+	require.Same(t, model.root.defaultValue, witnesses.generated[0])
+	equal, err := jsonValidatedSemanticEqual(witnesses.admitted[0], witnesses.generated[0])
 	require.NoError(t, err)
 	require.True(t, equal)
-	require.Equal(t, jsonObject, witnesses[2].kind)
-	require.Empty(t, witnesses[2].object)
+	require.Equal(t, jsonObject, witnesses.generated[1].kind)
+	require.Empty(t, witnesses.generated[1].object)
 }
 
 func TestValidatedEnumObjectEqualityIgnoresOrderAndRejectsMiss(t *testing.T) {

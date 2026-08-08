@@ -1405,7 +1405,7 @@ func anyOfMaskForTypeFault(node *schemaNode, occurrence schemaOccurrence) (*big.
 			return nil, false, err
 		}
 
-		for _, witness := range witnesses {
+		for witness := range witnesses.values() {
 			base := evaluateNode(withoutType, witness, occurrence)
 			if base.err != nil {
 				return nil, false, fmt.Errorf("evaluate type-fault witness: %w", base.err)
@@ -1463,7 +1463,7 @@ func anyOfMaskForFaultRule(
 	}
 
 	identity := makeRuleIdentity(occurrence, rule)
-	for _, witness := range witnesses {
+	for witness := range witnesses.values() {
 		base := evaluateNode(withoutRule, witness, occurrence)
 		if base.err != nil {
 			return nil, false, fmt.Errorf("evaluate %s-fault witness: %w", rule, base.err)
@@ -1503,7 +1503,7 @@ func anyOfMaskForAdditionalFault(node *schemaNode, occurrence schemaOccurrence) 
 	extra := additionalPropertyWitnessName(node)
 	identity := makeRuleIdentity(appendObjectMemberOccurrence(occurrence, extra), oracleRuleAdditionalProperties)
 
-	for _, witness := range witnesses {
+	for witness := range witnesses.values() {
 		if witness == nil || witness.kind != jsonObject {
 			continue
 		}
@@ -1596,7 +1596,7 @@ func anyOfMaskForRequiredFault(node *schemaNode, occurrence schemaOccurrence, na
 
 	identity := makeRuleIdentity(appendObjectMemberOccurrence(occurrence, name), oracleRuleRequired)
 
-	for _, witness := range witnesses {
+	for witness := range witnesses.values() {
 		candidate := populateRequiredFaultWitness(witness, node, name)
 		if candidate == nil {
 			continue
@@ -2274,7 +2274,7 @@ func anyOfMaskForEnumFaultWithKind(node *schemaNode) (*big.Int, jsonKind, bool, 
 			return nil, jsonNull, false, err
 		}
 
-		for _, witness := range witnesses {
+		for _, witness := range witnesses.generated {
 			matches, err := enumContainsValue(node, witness)
 			if err != nil {
 				return nil, jsonNull, false, err
@@ -2314,7 +2314,7 @@ func enumFaultKind(node *schemaNode) (jsonKind, bool, error) {
 			return jsonNull, false, err
 		}
 
-		for _, witness := range witnesses {
+		for _, witness := range witnesses.generated {
 			matches, err := enumContainsValue(node, witness)
 			if err != nil {
 				return jsonNull, false, err
@@ -2348,10 +2348,10 @@ func enumFaultKind(node *schemaNode) (jsonKind, bool, error) {
 }
 
 // canonicalEnumFaultWitnesses adds one deterministic string outside the authored enum.
-func canonicalEnumFaultWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
+func canonicalEnumFaultWitnesses(node *schemaNode, kind jsonKind) (canonicalWitnesses, error) {
 	witnesses, err := canonicalAnyOfWitnesses(node, kind)
 	if err != nil {
-		return nil, err
+		return canonicalWitnesses{}, err
 	}
 
 	if kind != jsonString {
@@ -2369,11 +2369,13 @@ func canonicalEnumFaultWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue,
 
 		contains, err := enumContainsValue(node, candidate)
 		if err != nil {
-			return nil, err
+			return canonicalWitnesses{}, err
 		}
 
 		if !contains {
-			return appendUniqueJSONWitness(witnesses, candidate)
+			err = witnesses.appendGenerated(candidate)
+
+			return witnesses, err
 		}
 	}
 }
@@ -2463,7 +2465,7 @@ func realizableAnyOfMasksForKind(node *schemaNode, kind jsonKind) ([]*big.Int, e
 
 	masks := make([]*big.Int, 0)
 
-	for _, witness := range witnesses {
+	for witness := range witnesses.values() {
 		result := evaluateNode(node, witness, node.occurrence)
 		if result.err != nil {
 			return nil, fmt.Errorf("evaluate anyOf %s witness: %w", jsonKindName(kind), result.err)
@@ -2532,20 +2534,52 @@ func appendUniqueAnyOfMask(masks []*big.Int, candidate *big.Int) []*big.Int {
 	return append(masks, candidate)
 }
 
+// canonicalWitnesses keeps admitted values separate from deduplicated generated candidates.
+type canonicalWitnesses struct {
+	admitted  []*jsonValue
+	generated []*jsonValue
+}
+
+// values iterates admitted members followed by generated candidates.
+func (witnesses canonicalWitnesses) values() iter.Seq[*jsonValue] {
+	return func(yield func(*jsonValue) bool) {
+		for _, witness := range witnesses.admitted {
+			if !yield(witness) {
+				return
+			}
+		}
+
+		for _, witness := range witnesses.generated {
+			if !yield(witness) {
+				return
+			}
+		}
+	}
+}
+
+// appendGenerated deduplicates only within generated candidates.
+func (witnesses *canonicalWitnesses) appendGenerated(candidate *jsonValue) error {
+	var err error
+
+	witnesses.generated, err = appendUniqueJSONWitness(witnesses.generated, candidate)
+
+	return err
+}
+
 // canonicalAnyOfWitnesses returns authored and simple canonical values for one kind.
-func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
+func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) (canonicalWitnesses, error) {
 	admitted := make([]*jsonValue, 0)
 
 	generated := make([]*jsonValue, 0)
 	if err := collectAnyOfWitnesses(
 		node, kind, make(map[*schemaNode]bool), &admitted, &generated,
 	); err != nil {
-		return nil, err
+		return canonicalWitnesses{}, err
 	}
 
 	canonical, err := canonicalKindWitnesses(kind)
 	if err != nil {
-		return nil, err
+		return canonicalWitnesses{}, err
 	}
 
 	for _, witness := range canonical {
@@ -2553,11 +2587,11 @@ func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue, err
 
 		generated, appendErr = appendUniqueJSONWitness(generated, witness)
 		if appendErr != nil {
-			return nil, appendErr
+			return canonicalWitnesses{}, appendErr
 		}
 	}
 
-	return append(admitted, generated...), nil
+	return canonicalWitnesses{admitted: admitted, generated: generated}, nil
 }
 
 // collectAnyOfWitnesses collects values authored by the parent or its compositions.
@@ -2684,11 +2718,11 @@ const (
 
 // appendDirectedBoundWitness adds one exact scalar beyond a numeric bound.
 func appendDirectedBoundWitness(
-	witnesses []*jsonValue,
+	witnesses canonicalWitnesses,
 	node *schemaNode,
 	kind jsonKind,
 	rule string,
-) ([]*jsonValue, error) {
+) (canonicalWitnesses, error) {
 	if node == nil || kind != jsonNumber {
 		return witnesses, nil
 	}
@@ -2715,14 +2749,16 @@ func appendDirectedBoundWitness(
 
 	candidate, exists, err := shiftedExactNumber(bound, delta)
 	if err != nil {
-		return nil, err
+		return canonicalWitnesses{}, err
 	}
 
 	if !exists {
 		return witnesses, nil
 	}
 
-	return appendUniqueJSONWitness(witnesses, &jsonValue{kind: jsonNumber, number: candidate})
+	err = witnesses.appendGenerated(&jsonValue{kind: jsonNumber, number: candidate})
+
+	return witnesses, err
 }
 
 // shiftedExactNumber returns one exact decimal value at an integer offset.

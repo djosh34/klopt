@@ -4,6 +4,8 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"iter"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -106,7 +108,7 @@ func findTypeDerivative(
 			return nil, false, seedErr
 		}
 
-		derivative, found, seedErr := firstReplacementDerivative(parent, fault, seeded, model, s)
+		derivative, found, seedErr := firstReplacementDerivative(parent, fault, seeded.values(), model, s)
 		if seedErr != nil || found {
 			return derivative, found, seedErr
 		}
@@ -128,7 +130,7 @@ func findTypeDerivative(
 		complete, err := s.walkNode(
 			withoutType, occurrence, fault.pins, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
 				selected, matched, selectErr := firstReplacementDerivative(
-					parent, fault, []*jsonValue{candidate}, model, s,
+					parent, fault, slices.Values([]*jsonValue{candidate}), model, s,
 				)
 				if selectErr != nil || !matched {
 					return false, selectErr
@@ -160,7 +162,9 @@ func findEnumDerivative(
 			return nil, false, seedErr
 		}
 
-		derivative, found, seedErr := firstReplacementDerivative(parent, fault, seeded, model, s)
+		derivative, found, seedErr := firstReplacementDerivative(
+			parent, fault, slices.Values(seeded.generated), model, s,
+		)
 		if seedErr != nil || found {
 			return derivative, found, seedErr
 		}
@@ -178,7 +182,7 @@ func findEnumDerivative(
 		complete, err := s.walkNode(
 			withoutEnum, occurrence, fault.pins, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
 				selected, matched, selectErr := firstReplacementDerivative(
-					parent, fault, []*jsonValue{candidate}, model, s,
+					parent, fault, slices.Values([]*jsonValue{candidate}), model, s,
 				)
 				if selectErr != nil || !matched {
 					return false, selectErr
@@ -308,7 +312,7 @@ func findNumberDerivative(parent *jsonValue, fault faultTarget, s *search) (*jso
 	complete, err := s.walkActiveNumberRules(
 		container, occurrence, fault.pins, nil, func(candidate *jsonValue) (bool, error) {
 			selected, matched, selectErr := firstReplacementDerivative(
-				parent, fault, []*jsonValue{candidate}, s.model, s,
+				parent, fault, slices.Values([]*jsonValue{candidate}), s.model, s,
 			)
 			if selectErr != nil || !matched {
 				return false, selectErr
@@ -332,19 +336,19 @@ func findStringDerivative(parent *jsonValue, fault faultTarget, s *search) (*jso
 		return nil, false, err
 	}
 
-	return firstReplacementDerivative(parent, fault, []*jsonValue{candidate}, s.model, s)
+	return firstReplacementDerivative(parent, fault, slices.Values([]*jsonValue{candidate}), s.model, s)
 }
 
 func firstReplacementDerivative(
 	parent *jsonValue,
 	fault faultTarget,
-	candidates []*jsonValue,
+	candidates iter.Seq[*jsonValue],
 	model *schemaModel,
 	s *search,
 ) (*jsonValue, bool, error) {
 	paths := matchingValuePaths(parent, fault.obligation.occurrence.instanceTemplate)
 	for _, path := range paths {
-		for _, candidate := range candidates {
+		for candidate := range candidates {
 			if err := s.assign(); err != nil {
 				return nil, false, err
 			}
