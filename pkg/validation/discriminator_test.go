@@ -122,6 +122,52 @@ func TestParseRejectsAuthoredDiscriminatorOutsideSelectedRequests(t *testing.T) 
 	}
 }
 
+func TestParseRejectsDocumentWideExclusionsBeforeSchemaCompilation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		components string
+		pointer    string
+		message    string
+	}{
+		{
+			name:       "discriminator",
+			components: `{"Unused":{"discriminator":{"propertyName":"kind"}}}`,
+			pointer:    "#/components/schemas/Unused/discriminator",
+			message:    "authored discriminator is outside the Klopt profile",
+		},
+		{
+			name:       "external reference",
+			components: `{"Unused":{"$ref":"other.yaml#/Thing"}}`,
+			pointer:    "#/components/schemas/Unused",
+			message:    "external reference",
+		},
+		{
+			name:       "reference cycle",
+			components: `{"A":{"$ref":"#/components/schemas/B"},"B":{"$ref":"#/components/schemas/A"}}`,
+			pointer:    "#/components/schemas/A/$ref",
+			message:    "recursive schema reference reaching #/components/schemas/B is outside the Klopt profile",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			document := `{"openapi":"3.0.3","components":{"schemas":` + test.components +
+				`},"paths":{"/things":{"post":{"operationId":"selected","requestBody":{"content":` +
+				`{"application/json":{"schema":{"type":1}}}}}}}}`
+
+			parsed, err := validation.Parse([]byte(document))
+			require.Nil(t, parsed)
+			require.ErrorContains(t, err, test.pointer)
+			require.ErrorContains(t, err, test.message)
+			require.NotContains(t, err.Error(), "/type")
+		})
+	}
+}
+
 func TestParseKeepsOneOfRejectionAtItsOwnPointer(t *testing.T) {
 	t.Parallel()
 
@@ -135,7 +181,7 @@ func TestParseKeepsOneOfRejectionAtItsOwnPointer(t *testing.T) {
 			parsed, err := validation.Parse([]byte(documentWithSchema(schema, false)))
 			require.Nil(t, parsed)
 			require.ErrorContains(t, err, "compile schema at "+schemaPointer("/oneOf"))
-			require.ErrorContains(t, err, "unsupported keyword")
+			require.ErrorContains(t, err, "authored oneOf is outside the Klopt profile")
 			require.NotContains(t, err.Error(), "/discriminator")
 		})
 	}

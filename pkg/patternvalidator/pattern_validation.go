@@ -141,7 +141,7 @@ func Parse(source string, options ...Option) (*PatternValidation, error) {
 			}
 		}
 
-		specifications, err := translate(tree)
+		specifications, err := translate(tree, !validation.rejectNonASCII)
 		if err != nil {
 			return nil, err
 		}

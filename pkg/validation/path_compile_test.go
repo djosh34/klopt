@@ -293,7 +293,7 @@ func TestCompilePathDecoderRejectsReachableBinaryFormats(t *testing.T) {
 
 			decoder, err := compilePathDecoderForTest(t, "\n      parameters:\n        - "+test.parameter+"\n")
 			require.Nil(t, decoder)
-			require.ErrorContains(t, err, `format "binary" is legal OpenAPI but unsupported by this tool`)
+			require.ErrorContains(t, err, `format "binary" is legal OAS but outside the Klopt profile`)
 		})
 	}
 }

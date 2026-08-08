@@ -58,6 +58,10 @@ func TestParseInputEnforcesExactECMAPatternLimits(t *testing.T) {
 	// and each dot costs 23. These fixtures total exactly 1,048,576 and 1,048,577.
 	matcherAtLimit := strings.Repeat(`\S`, 5835) + strings.Repeat("a", 3661) + strings.Repeat(".", 492)
 	matcherOverLimit := strings.Repeat(`\S`, 5835) + strings.Repeat("a", 3665) + strings.Repeat(".", 491)
+	leadingMatcherAtLimit := "^(?=" + strings.Repeat(`\S`, 2942) + ")(?=" +
+		strings.Repeat(`\S`, 2943) + strings.Repeat("a", 4077) + strings.Repeat(".", 4) + ")a"
+	leadingMatcherOverLimit := "^(?=" + strings.Repeat(`\S`, 2942) + ")(?=" +
+		strings.Repeat(`\S`, 2943) + strings.Repeat("a", 4081) + strings.Repeat(".", 3) + ")a"
 
 	tests := []struct {
 		name    string
@@ -103,6 +107,11 @@ func TestParseInputEnforcesExactECMAPatternLimits(t *testing.T) {
 		},
 		{name: "matcher_at_limit", pattern: matcherAtLimit, accept: true},
 		{name: "matcher_over_limit", pattern: matcherOverLimit, reason: "translated matcher source exceeds 1048576 bytes"},
+		{name: "leading_matcher_at_limit", pattern: leadingMatcherAtLimit, accept: true},
+		{
+			name: "leading_matcher_over_limit", pattern: leadingMatcherOverLimit,
+			reason: "translated matcher source exceeds 1048576 bytes",
+		},
 	}
 
 	for _, test := range tests {
@@ -123,7 +132,7 @@ func TestParseInputEnforcesExactECMAPatternLimits(t *testing.T) {
 						require.NoError(t, err)
 						require.NotNil(t, model.root.pattern)
 
-						if test.name == "matcher_at_limit" {
+						if test.name == "matcher_at_limit" || test.name == "leading_matcher_at_limit" {
 							require.Equal(t, patternMatcherByteLimit, model.root.pattern.matcherBytes)
 						}
 
@@ -162,6 +171,13 @@ func TestParseInputRejectsOutsideProfileECMAPatterns(t *testing.T) {
 		`^(?=a)+a`,
 		`(?=a)a`,
 		`^(?=a)a|b`,
+		`^(?=a)`,
+		`^(?=a)$`,
+		`^(?=a)\b`,
+		`^(?=a)(?:)`,
+		`^(?=a)a{0}`,
+		`\é`,
+		`[\é]`,
 		`[z-a]`,
 		`a{2,1}`,
 		`(`,

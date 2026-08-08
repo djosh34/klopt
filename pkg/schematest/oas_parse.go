@@ -27,6 +27,14 @@ func parseInput(input Input) (*schemaModel, error) {
 		return nil, versionErr
 	}
 
+	if structuralErr := preflightDocumentStructure(document, root); structuralErr != nil {
+		return nil, structuralErr
+	}
+
+	if profileErr := validateDocumentProfile(document, root); profileErr != nil {
+		return nil, profileErr
+	}
+
 	schema, pointer, err := selectRequestSchema(document, root, input.OperationID)
 	if err != nil {
 		return nil, err
@@ -47,6 +55,188 @@ func parseInput(input Input) (*schemaModel, error) {
 	return &schemaModel{root: node}, nil
 }
 
+func preflightDocumentStructure(document *jsonValue, root map[string]*jsonValue) error {
+	paths, exists := root["paths"]
+	if !exists {
+		return errors.New("#/paths: required field is missing")
+	}
+
+	if paths.kind != jsonObject {
+		return errors.New("#/paths: must be an object")
+	}
+
+	preflight := cleanDocumentStructurePreflight{
+		document:        document,
+		activePathItems: make(map[string]bool),
+	}
+	seenPaths := make(map[string]string)
+
+	for _, path := range sortedObjectNames(paths.object) {
+		if strings.HasPrefix(path, "x-") {
+			continue
+		}
+
+		pointer := "#/paths/" + escapePointerToken(path)
+		if !strings.HasPrefix(path, "/") {
+			return fmt.Errorf("%s: path field must begin with '/'", pointer)
+		}
+
+		identity, err := templatedPathIdentity(path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", pointer, err)
+		}
+
+		if first, duplicate := seenPaths[identity]; duplicate {
+			return fmt.Errorf("%s: templated path is identical to %s", pointer, first)
+		}
+
+		seenPaths[identity] = pointer
+		if err := preflight.pathItem(paths.object[path], pointer); err != nil {
+			return err
+		}
+	}
+
+	return preflight.componentCallbacks(root["components"], "#/components")
+}
+
+type cleanDocumentStructurePreflight struct {
+	document        *jsonValue
+	activePathItems map[string]bool
+}
+
+//nolint:gocognit // Fixed fields, local targets, operations, and callbacks form one structural check.
+func (preflight *cleanDocumentStructurePreflight) pathItem(value *jsonValue, pointer string) error {
+	if value == nil || value.kind != jsonObject {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	if _, referenced := value.object["$ref"]; referenced {
+		for _, name := range sortedObjectNames(value.object) {
+			if name != "$ref" && !strings.HasPrefix(name, "x-") {
+				return fmt.Errorf(
+					"%s/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+					pointer,
+				)
+			}
+		}
+	}
+
+	allowed := map[string]bool{
+		"$ref": true, "summary": true, "description": true, "get": true, "put": true, "post": true,
+		"delete": true, "options": true, "head": true, "patch": true, "trace": true, "servers": true,
+		"parameters": true,
+	}
+	for _, name := range sortedObjectNames(value.object) {
+		if allowed[name] || strings.HasPrefix(name, "x-") {
+			continue
+		}
+
+		return fmt.Errorf("%s/%s: unknown Path Item Object field", pointer, escapePointerToken(name))
+	}
+
+	if parameters, exists := value.object["parameters"]; exists && parameters.kind != jsonArray {
+		return fmt.Errorf("%s/parameters: must be an array", pointer)
+	}
+
+	if reference, referenced := value.object["$ref"]; referenced {
+		if reference.kind != jsonString {
+			return nil
+		}
+
+		target, targetPointer, err := resolveLocalReference(
+			preflight.document,
+			reference.text,
+			pointer+"/$ref",
+		)
+		if err != nil {
+			return nil
+		}
+
+		if preflight.activePathItems[targetPointer] {
+			return nil
+		}
+
+		preflight.activePathItems[targetPointer] = true
+		defer delete(preflight.activePathItems, targetPointer)
+
+		return preflight.pathItem(target, targetPointer)
+	}
+
+	for _, method := range operationMethods {
+		operation, exists := value.object[method]
+		if !exists {
+			continue
+		}
+
+		if operation.kind != jsonObject {
+			return fmt.Errorf("%s/%s: must be an object", pointer, method)
+		}
+
+		if parameters, exists := operation.object["parameters"]; exists && parameters.kind != jsonArray {
+			return fmt.Errorf("%s/%s/parameters: must be an array", pointer, method)
+		}
+
+		if err := preflight.callbacks(
+			operation.object["callbacks"],
+			pointer+"/"+method+"/callbacks",
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (preflight *cleanDocumentStructurePreflight) callbacks(value *jsonValue, pointer string) error {
+	if value == nil {
+		return nil
+	}
+
+	if value.kind != jsonObject {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	for _, name := range sortedObjectNames(value.object) {
+		callback := value.object[name]
+
+		callbackPointer := pointer + "/" + escapePointerToken(name)
+		if callback == nil || callback.kind != jsonObject {
+			return fmt.Errorf("%s: must be an object", callbackPointer)
+		}
+
+		if _, referenced := callback.object["$ref"]; referenced {
+			continue
+		}
+
+		for _, expression := range sortedObjectNames(callback.object) {
+			if strings.HasPrefix(expression, "x-") {
+				continue
+			}
+
+			if err := preflight.pathItem(
+				callback.object[expression],
+				callbackPointer+"/"+escapePointerToken(expression),
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (preflight *cleanDocumentStructurePreflight) componentCallbacks(value *jsonValue, pointer string) error {
+	if value == nil {
+		return nil
+	}
+
+	if value.kind != jsonObject {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	return preflight.callbacks(value.object["callbacks"], pointer+"/callbacks")
+}
+
 func validateOpenAPIVersion(root map[string]*jsonValue) error {
 	value, exists := root["openapi"]
 	if !exists {
@@ -63,7 +253,7 @@ func validateOpenAPIVersion(root map[string]*jsonValue) error {
 	}
 
 	if version.major != "3" || version.minor != "0" {
-		return fmt.Errorf("#/openapi: feature set %s.%s is outside the supported 3.0 profile", version.major, version.minor)
+		return fmt.Errorf("#/openapi: feature set %s.%s is outside the Klopt 3.0 profile", version.major, version.minor)
 	}
 
 	return nil
@@ -444,7 +634,7 @@ func (parser *oasParser) parseSchemaReference(
 
 	if parser.resolving[targetPointer] {
 		return nil, fmt.Errorf(
-			"%s/$ref: recursive schema graph reaching %s is outside the schematest profile",
+			"%s/$ref: recursive schema graph reaching %s is outside the Klopt profile",
 			authoredPointer,
 			targetPointer,
 		)

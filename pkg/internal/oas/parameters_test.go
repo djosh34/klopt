@@ -250,8 +250,8 @@ func TestParseRejectsMalformedParameterListsAndIdentities(t *testing.T) {
 		opParams   string
 		contains   string
 	}{
-		{name: "path list shape", pathParams: `{}`, contains: "path item parameters"},
-		{name: "operation list shape", opParams: `{}`, contains: "operation parameters"},
+		{name: "path list shape", pathParams: `{}`, contains: "#/paths/~1items/parameters: must be an array"},
+		{name: "operation list shape", opParams: `{}`, contains: "#/paths/~1items/get/parameters: must be an array"},
 		{name: "null list", opParams: `null`, contains: "must be an array"},
 		{name: "bad reference", opParams: `[{$ref: '#/missing'}]`, contains: "resolve reference"},
 		{name: "parameter scalar", opParams: `[1]`, contains: "must be an object"},
@@ -301,8 +301,8 @@ func TestParseRejectsMalformedRequestBodyBranches(t *testing.T) {
 		operation string
 		contains  string
 	}{
-		{name: "operation scalar", operation: `1`, contains: "parse operation"},
-		{name: "operation null", operation: `null`, contains: "operation must be an object"},
+		{name: "operation scalar", operation: `1`, contains: "#/paths/~1items/get: must be an object"},
+		{name: "operation null", operation: `null`, contains: "#/paths/~1items/get: must be an object"},
 		{name: "body reference", operation: `{operationId: query, requestBody: {$ref: '#/missing'}}`, contains: "request body"},
 		{name: "body scalar", operation: `{operationId: query, requestBody: 1}`, contains: "parse operation"},
 		{name: "body null", operation: `{operationId: query, requestBody: null}`, contains: "must be an object"},

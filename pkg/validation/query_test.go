@@ -361,7 +361,11 @@ func TestQueryJSONContentRejectsInvalidShapesAtSourcePointers(t *testing.T) {
 
 			_, err := validation.Parse(querySpec("- " + test.parameter))
 			require.Error(t, err)
-			require.ErrorContains(t, err, `parameter "q"`)
+
+			if test.objectName != "Schema Object" {
+				require.ErrorContains(t, err, `parameter "q"`)
+			}
+
 			require.ErrorContains(t, err, test.objectName)
 			require.ErrorContains(t, err, test.pointer)
 		})
@@ -1120,7 +1124,7 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
       content: {application/json: {schema: {type: string}}}`, contains: "content cannot be combined with explode"},
 		{name: "content count", parameters: `- {name: q, in: query, content: {}}`, contains: "exactly one media type"},
 		{name: "content media type", parameters: `- {name: q, in: query, content: {text/plain: {schema: {type: string}}}}`, contains: "only application/json"},
-		{name: "content schema unsupported", parameters: `- {name: q, in: query, content: {application/json: {schema: {type: string, oneOf: [{type: string}]}}}}`, contains: "unsupported keyword"},
+		{name: "content schema unsupported", parameters: `- {name: q, in: query, content: {application/json: {schema: {type: string, oneOf: [{type: string}]}}}}`, contains: "authored oneOf is outside the Klopt profile"},
 		{name: "nested array", parameters: `- {name: q, in: query, schema: {type: array, items: {type: array, items: {type: string}}}}`, contains: "primitive type"},
 		{name: "array items missing", parameters: `- {name: q, in: query, schema: {type: array}}`, contains: "/items"},
 		{name: "nested deep child", parameters: `- name: filter
@@ -1143,7 +1147,7 @@ func TestQueryCompileRejectionsAndLiteralBracketOwnership(t *testing.T) {
 		{name: "schema not object", parameters: `- {name: q, in: query, schema: 1}`, contains: "Schema Object must be an object"},
 		{name: "type shape", parameters: `- {name: q, in: query, schema: {type: 1}}`, contains: "type"},
 		{name: "unsupported type", parameters: `- {name: q, in: query, schema: {type: 'null'}}`, contains: "unsupported type"},
-		{name: "unsupported schema", parameters: `- {name: q, in: query, schema: {type: string, oneOf: [{type: string}]}}`, contains: "unsupported keyword"},
+		{name: "unsupported schema", parameters: `- {name: q, in: query, schema: {type: string, oneOf: [{type: string}]}}`, contains: "authored oneOf is outside the Klopt profile"},
 		{name: "ownership collision", parameters: `- {name: lat, in: query, schema: {type: string}}
     - ` + objectParameter("form", true), contains: "ownership"},
 		{name: "bracket collision", parameters: `- {name: 'filter[key]', in: query, schema: {type: string}}

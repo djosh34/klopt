@@ -58,6 +58,12 @@ func TestValidateECMAScript51Semantics(t *testing.T) {
 		{name: "class range", pattern: "^[a-c]+$", value: "cab", want: true},
 		{name: "class literal hyphen after ranges", pattern: "^[A-Za-z0-9-_.]+$", value: "A-_.9", want: true},
 		{name: "astral class literal", pattern: "[😀]", value: "😀", want: true},
+		{name: "range into surrogates excludes post-surrogate BMP", pattern: "[a-😀]", value: "\ue000", want: false},
+		{name: "range out of surrogates includes post-surrogate BMP", pattern: "[😀-\\uFFFF]", value: "\ue000", want: true},
+		{
+			name:    "range across surrogate block includes both BMP boundaries",
+			pattern: "[\ud7ff-\ue000]", value: "\ue000", want: true,
+		},
 		{name: "astral class literal consumes one unit", pattern: "^[😀]$", value: "😀", want: false},
 		{name: "astral class literals consume both units", pattern: "^[😀][😀]$", value: "😀", want: true},
 		{name: "negated astral class literal", pattern: "[^😀]", value: "😀", want: false},
@@ -329,6 +335,8 @@ func TestParseEnforcesTranslatedRegexpBoundary(t *testing.T) {
 	// and the first overflow without reaching the AST-node limit.
 	atLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_661) + strings.Repeat(".", 492)
 	overLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_665) + strings.Repeat(".", 491)
+	cumulativeOverLimit := "^(?=" + strings.Repeat(`\S`, 2_942) + ")(?=" +
+		strings.Repeat(`\S`, 2_943) + strings.Repeat("a", 4_081) + strings.Repeat(".", 3) + ")a"
 
 	validation, err := Parse(atLimit)
 	require.NoError(t, err)
@@ -344,6 +352,14 @@ func TestParseEnforcesTranslatedRegexpBoundary(t *testing.T) {
 	require.Equal(t, "generated Go regexp bytes", complexity.Limit)
 	require.Equal(t, uint64(maximumGeneratedRegexpBytes), complexity.Maximum)
 	require.Equal(t, uint64(maximumGeneratedRegexpBytes+1), complexity.Observed)
+
+	validation, err = Parse(cumulativeOverLimit)
+	require.ErrorIs(t, err, ErrTooComplex)
+	require.Nil(t, validation)
+
+	validation, err = Parse(cumulativeOverLimit, RejectNonASCII)
+	require.NoError(t, err)
+	require.NotNil(t, validation)
 }
 
 func TestParseAndValidateNamedRobustnessMatrix(t *testing.T) {
@@ -443,7 +459,7 @@ func TestTranslationBranchesAndMalformedTrees(t *testing.T) {
 	require.Error(t, err)
 
 	malformedPrefix := leadingLookaheadTree(lookahead.Nodes, []patternsyntax.NodeID{0})
-	_, err = translateLeadingLookaheads(&malformedPrefix, malformedPrefix.Nodes[1])
+	_, err = translateLeadingLookaheads(&malformedPrefix, malformedPrefix.Nodes[1], true)
 	require.Error(t, err)
 
 	malformedRemainder := leadingLookaheadTree(
@@ -453,7 +469,7 @@ func TestTranslationBranchesAndMalformedTrees(t *testing.T) {
 		},
 		[]patternsyntax.NodeID{0, 1},
 	)
-	_, err = translateLeadingLookaheads(&malformedRemainder, malformedRemainder.Nodes[1])
+	_, err = translateLeadingLookaheads(&malformedRemainder, malformedRemainder.Nodes[1], true)
 	require.Error(t, err)
 
 	normalized := normalizeRuneSet([]runeRange{{low: 2, high: 3}, {low: 2, high: 4}})

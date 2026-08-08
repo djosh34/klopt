@@ -4,14 +4,11 @@ package patternvalidator
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"unicode"
 	"unicode/utf16"
 
 	"github.com/djosh34/klopt/pkg/internal/patternsyntax"
 )
-
-const maximumWrappedRegexpBytes = maximumGeneratedRegexpBytes - len("\\A(?:") - len(")")
 
 type checkSpecification struct {
 	source    string
@@ -20,10 +17,10 @@ type checkSpecification struct {
 }
 
 type translator struct {
-	tree    *patternsyntax.Tree
-	output  []byte
-	failure error
-	maximum int
+	tree            *patternsyntax.Tree
+	output          []byte
+	failure         error
+	translatedBytes *int
 }
 
 type runeRange struct {
@@ -53,14 +50,14 @@ var (
 	}
 )
 
-func translate(tree *patternsyntax.Tree) ([]checkSpecification, error) {
+func translate(tree *patternsyntax.Tree, accumulateChecks bool) ([]checkSpecification, error) {
 	root := tree.Nodes[tree.Root]
 
 	alternative := tree.Nodes[root.Children[0]]
 	if len(alternative.Children) >= 2 &&
 		tree.Nodes[alternative.Children[0]].Kind == patternsyntax.KindBeginInput &&
 		isLookahead(tree.Nodes[alternative.Children[1]].Kind) {
-		return translateLeadingLookaheads(tree, alternative)
+		return translateLeadingLookaheads(tree, alternative, accumulateChecks)
 	}
 
 	compiled, err := translateNode(tree, tree.Root)
@@ -74,8 +71,15 @@ func translate(tree *patternsyntax.Tree) ([]checkSpecification, error) {
 func translateLeadingLookaheads(
 	tree *patternsyntax.Tree,
 	alternative patternsyntax.Node,
+	accumulateChecks bool,
 ) ([]checkSpecification, error) {
 	checks := make([]checkSpecification, 0)
+	translatedBytes := 0
+
+	var patternBytes *int
+	if accumulateChecks {
+		patternBytes = &translatedBytes
+	}
 
 	index := 1
 	for index < len(alternative.Children) {
@@ -84,29 +88,25 @@ func translateLeadingLookaheads(
 			break
 		}
 
-		translated, err := translateNodeWithLimit(tree, node.Children[0], maximumWrappedRegexpBytes)
+		translated, err := translateWrapped(tree, node.Children, patternBytes)
 		if err != nil {
 			return nil, err
 		}
 
 		checks = append(checks, checkSpecification{
-			source:    joinedCheckSource("\\A(?:", translated, ")"),
-			wantMatch: node.Kind == patternsyntax.KindPositiveLookahead, span: node.Span,
+			source: translated, wantMatch: node.Kind == patternsyntax.KindPositiveLookahead,
+			span: node.Span,
 		})
 		index++
 	}
 
-	translated, err := translateSequenceWithLimit(
-		tree,
-		alternative.Children[index:],
-		maximumWrappedRegexpBytes,
-	)
+	translated, err := translateWrapped(tree, alternative.Children[index:], patternBytes)
 	if err != nil {
 		return nil, err
 	}
 
 	checks = append(checks, checkSpecification{
-		source: joinedCheckSource("\\A(?:", translated, ")"), wantMatch: true,
+		source: translated, wantMatch: true,
 		span: patternsyntax.Span{Start: 0, End: alternative.Span.End},
 	})
 
@@ -114,38 +114,39 @@ func translateLeadingLookaheads(
 }
 
 func translateNode(tree *patternsyntax.Tree, nodeID patternsyntax.NodeID) (string, error) {
-	return translateNodeWithLimit(tree, nodeID, maximumGeneratedRegexpBytes)
-}
-
-func translateNodeWithLimit(
-	tree *patternsyntax.Tree,
-	nodeID patternsyntax.NodeID,
-	maximum int,
-) (string, error) {
-	translation := translator{tree: tree, maximum: maximum}
+	translation := translator{tree: tree}
 	translation.writeNode(nodeID)
 
-	if translation.failure != nil {
-		return "", translation.failure
-	}
-
-	return string(translation.output), nil
+	return translation.result()
 }
 
 func translateSequence(tree *patternsyntax.Tree, nodes []patternsyntax.NodeID) (string, error) {
-	return translateSequenceWithLimit(tree, nodes, maximumGeneratedRegexpBytes)
-}
-
-func translateSequenceWithLimit(
-	tree *patternsyntax.Tree,
-	nodes []patternsyntax.NodeID,
-	maximum int,
-) (string, error) {
-	translation := translator{tree: tree, maximum: maximum}
+	translation := translator{tree: tree}
 	for _, node := range nodes {
 		translation.writeNode(node)
 	}
 
+	return translation.result()
+}
+
+func translateWrapped(
+	tree *patternsyntax.Tree,
+	nodes []patternsyntax.NodeID,
+	translatedBytes *int,
+) (string, error) {
+	translation := translator{tree: tree, translatedBytes: translatedBytes}
+	translation.write("\\A(?:", patternsyntax.Span{})
+
+	for _, node := range nodes {
+		translation.writeNode(node)
+	}
+
+	translation.write(")", patternsyntax.Span{})
+
+	return translation.result()
+}
+
+func (translation *translator) result() (string, error) {
 	if translation.failure != nil {
 		return "", translation.failure
 	}
@@ -288,17 +289,24 @@ func (translation *translator) writeClass(node patternsyntax.Node) {
 }
 
 func appendLiteralClassRange(ranges []runeRange, low rune, high rune) []runeRange {
-	if low != high || low <= 0xffff {
-		return append(ranges, runeRange{low: low, high: high})
+	if low < 0xd800 {
+		ranges = append(ranges, runeRange{low: low, high: min(high, 0xd7ff)})
 	}
 
-	highSurrogate, lowSurrogate := utf16.EncodeRune(low)
+	if low <= 0xdfff && high >= 0xd800 {
+		surrogateLow := max(low, 0xd800)
+		surrogateHigh := min(high, 0xdfff)
+		ranges = append(ranges, runeRange{
+			low:  mapSurrogate(surrogateLow),
+			high: mapSurrogate(surrogateHigh),
+		})
+	}
 
-	return append(
-		ranges,
-		runeRange{low: mapSurrogate(highSurrogate), high: mapSurrogate(highSurrogate)},
-		runeRange{low: mapSurrogate(lowSurrogate), high: mapSurrogate(lowSurrogate)},
-	)
+	if high > 0xdfff {
+		ranges = append(ranges, runeRange{low: max(low, 0xe000), high: high})
+	}
+
+	return ranges
 }
 
 func (translation *translator) writeRuneSet(ranges []runeRange, span patternsyntax.Span) {
@@ -354,22 +362,25 @@ func (translation *translator) write(piece string, _ patternsyntax.Span) {
 		return
 	}
 
-	maximum := translation.maximum
-	if maximum == 0 {
-		maximum = maximumGeneratedRegexpBytes
+	current := len(translation.output)
+	if translation.translatedBytes != nil {
+		current = *translation.translatedBytes
 	}
 
-	observed := len(translation.output) + len(piece)
-	if observed > maximum {
+	observed := current + len(piece)
+	if observed > maximumGeneratedRegexpBytes {
 		translation.failure = &ComplexityError{
 			Phase: "translation", Limit: "generated Go regexp bytes",
-			Maximum: uint64(maximum), Observed: uint64(observed),
+			Maximum: maximumGeneratedRegexpBytes, Observed: maximumGeneratedRegexpBytes + 1,
 		}
 
 		return
 	}
 
 	translation.output = append(translation.output, piece...)
+	if translation.translatedBytes != nil {
+		*translation.translatedBytes = observed
+	}
 }
 
 func normalizeRuneSet(ranges []runeRange) []runeRange {
@@ -421,10 +432,6 @@ func complementRuneSet(ranges []runeRange) []runeRange {
 	}
 
 	return result
-}
-
-func joinedCheckSource(parts ...string) string {
-	return strings.Join(parts, "")
 }
 
 func isLookahead(kind patternsyntax.Kind) bool {

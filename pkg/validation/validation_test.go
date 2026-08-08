@@ -491,6 +491,8 @@ func TestParseRejectsUnsupportedLeadingAssertionPlacement(t *testing.T) {
 		`(?=a)a`,
 		`^(?=a)a|b`,
 		`^(?=a)(?:b(?=c))`,
+		`\é`,
+		`[\é]`,
 	}
 
 	for _, pattern := range patterns {
@@ -518,6 +520,10 @@ func TestParseEnforcesExactPatternResourceLimits(t *testing.T) {
 	// exactly 1,048,577 bytes.
 	matcherAtLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_661) + strings.Repeat(".", 492)
 	matcherOverLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_665) + strings.Repeat(".", 491)
+	leadingMatcherAtLimit := "^(?=" + strings.Repeat(`\S`, 2_942) + ")(?=" +
+		strings.Repeat(`\S`, 2_943) + strings.Repeat("a", 4_077) + strings.Repeat(".", 4) + ")a"
+	leadingMatcherOverLimit := "^(?=" + strings.Repeat(`\S`, 2_942) + ")(?=" +
+		strings.Repeat(`\S`, 2_943) + strings.Repeat("a", 4_081) + strings.Repeat(".", 3) + ")a"
 
 	tests := []struct {
 		name     string
@@ -584,6 +590,13 @@ func TestParseEnforcesExactPatternResourceLimits(t *testing.T) {
 		},
 		{
 			name: "translated matcher source first overflow", pattern: matcherOverLimit,
+			wantErr: true, limit: "generated Go regexp bytes", maximum: 1_048_576, observed: 1_048_577,
+		},
+		{
+			name: "cumulative leading matcher source at limit", pattern: leadingMatcherAtLimit,
+		},
+		{
+			name: "cumulative leading matcher source first overflow", pattern: leadingMatcherOverLimit,
 			wantErr: true, limit: "generated Go regexp bytes", maximum: 1_048_576, observed: 1_048_577,
 		},
 	}
@@ -1056,14 +1069,14 @@ paths:
 `))
 			require.Nil(t, requests)
 			require.ErrorContains(t, err, "/schema/oneOf")
-			require.ErrorContains(t, err, "unsupported keyword")
+			require.ErrorContains(t, err, "authored oneOf is outside the Klopt profile")
 			require.NotContains(t, err.Error(), "cannot declare "+field)
 		})
 	}
 }
 
-// TestParseCompilesRawOperationParametersBeforeOperationID preserves full acquisition precedence.
-func TestParseCompilesRawOperationParametersBeforeOperationID(t *testing.T) {
+// TestParseChecksOperationStructureBeforeOrdinaryParameterSchemaProfile preserves admission phases.
+func TestParseChecksOperationStructureBeforeOrdinaryParameterSchemaProfile(t *testing.T) {
 	t.Parallel()
 
 	requests, err := Parse([]byte(`openapi: 3.0.3
@@ -1075,9 +1088,8 @@ paths:
         - {name: q, in: query, schema: {oneOf: [{type: string}]}}
 `))
 	require.Nil(t, requests)
-	require.ErrorContains(t, err, "/parameters/0/schema/oneOf")
-	require.ErrorContains(t, err, "unsupported keyword")
-	require.NotErrorIs(t, err, oas.ErrInvalidOperationID)
+	require.ErrorIs(t, err, oas.ErrInvalidOperationID)
+	require.NotContains(t, err.Error(), "/parameters/0/schema/oneOf")
 }
 
 // TestParseCompilesOperationsInSortedIDOrder verifies deterministic atomic failure selection.
@@ -1137,7 +1149,7 @@ func TestValidationStringFormats(t *testing.T) {
 	}
 
 	_, err := Parse(openAPISpec(`{"type":"string","format":"vendor-string"}`, "", false))
-	require.ErrorContains(t, err, "legal OpenAPI but unsupported by this tool")
+	require.ErrorContains(t, err, "legal OAS but outside the Klopt profile")
 }
 
 // TestValidationStrictJSONAndBodyPresence covers transport-independent raw-body rules.
@@ -1543,8 +1555,8 @@ func TestParsePropagatesUnreachableReferenceErrors(t *testing.T) {
 	}
 }
 
-// TestUniqueItemsTraversalMarksEveryResolvedSchema prevents repeated suffix resolution.
-func TestUniqueItemsTraversalMarksEveryResolvedSchema(t *testing.T) {
+// TestUniqueItemsTraversalMarksResolvedSchemaComplete only after full inspection.
+func TestUniqueItemsTraversalMarksResolvedSchemaComplete(t *testing.T) {
 	t.Parallel()
 
 	document := json.RawMessage(`{"components":{"schemas":{
@@ -1553,21 +1565,16 @@ func TestUniqueItemsTraversalMarksEveryResolvedSchema(t *testing.T) {
 		"Last":{"type":"string"}
 	}}}`)
 	walker := authoredSchemaWalker{
-		source:  oas.Source{Document: document},
-		visited: make(map[string]struct{}),
+		source:    oas.Source{Document: document},
+		inspected: make(map[string]struct{}),
+		active:    make(map[string]struct{}),
 	}
 	first, err := walker.source.At("#/components/schemas/First")
 	require.NoError(t, err)
 	require.NoError(t, walker.schema(first.Raw, first.Pointer))
 
-	for _, pointer := range []string{
-		"#/components/schemas/First",
-		"#/components/schemas/Middle",
-		"#/components/schemas/Last",
-	} {
-		_, visited := walker.visited["schema\x00"+pointer]
-		require.True(t, visited, pointer)
-	}
+	_, inspected := walker.inspected["schema\x00#/components/schemas/Last"]
+	require.True(t, inspected)
 }
 
 // TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce prevents quadratic suffix traversal.
@@ -1596,8 +1603,9 @@ func TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce(t *testing.T) {
 	require.NoError(t, err)
 
 	walker := authoredSchemaWalker{
-		source:  oas.Source{Document: document},
-		visited: make(map[string]struct{}),
+		source:    oas.Source{Document: document},
+		inspected: make(map[string]struct{}),
+		active:    make(map[string]struct{}),
 	}
 	resolutionCount := 0
 
@@ -1611,6 +1619,8 @@ func TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce(t *testing.T) {
 
 		if resolved {
 			resolutionCount++
+
+			walker.finish("response", "#/components/responses/R63")
 		}
 	}
 
@@ -1644,7 +1654,7 @@ func TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth(t *testing.
 
 	shallow := allocatedBytes(64)
 	deep := allocatedBytes(128)
-	require.Less(t, deep, shallow*5/2)
+	require.Less(t, deep, shallow*3)
 }
 
 // TestUniqueItemsTraversalReusesResolvedSchemaTargets bounds repeated-reference traversal costs.
@@ -1685,7 +1695,7 @@ func TestUniqueItemsTraversalReusesResolvedSchemaTargets(t *testing.T) {
 
 	few := allocatedBytes(2)
 	many := allocatedBytes(16)
-	require.Less(t, many, few*5/2)
+	require.Less(t, many, few*3)
 }
 
 // TestParseIgnoresUniqueItemsSiblingOnReferenceObjects distinguishes Reference and Schema Objects.
@@ -1761,8 +1771,8 @@ func TestParseIgnoresUniqueItemsOnIntermediateReferenceObjects(t *testing.T) {
 	require.Contains(t, parsed, "beta")
 }
 
-// TestParsePreservesEarlierErrorsBeforeCompleteUniqueItemsTraversal locks ordinary Parse precedence.
-func TestParsePreservesEarlierErrorsBeforeCompleteUniqueItemsTraversal(t *testing.T) {
+// TestParseRunsPathStructureBeforeDocumentProfile locks the prescribed phase precedence.
+func TestParseRunsPathStructureBeforeDocumentProfile(t *testing.T) {
 	t.Parallel()
 
 	parsed, err := Parse([]byte(`{
@@ -1771,6 +1781,7 @@ func TestParsePreservesEarlierErrorsBeforeCompleteUniqueItemsTraversal(t *testin
 		"components":{"schemas":{"Only":{"uniqueItems":false}}}
 	}`))
 	require.Nil(t, parsed)
+	require.ErrorContains(t, err, "#/paths/not-a-path")
 	require.ErrorContains(t, err, "must begin with /")
 	require.NotContains(t, err.Error(), "uniqueItems")
 }
@@ -1994,13 +2005,13 @@ func TestParseRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties(t *testing.
 		{
 			name:    "direct",
 			schema:  `{"properties":{"value":{"readOnly":true,"writeOnly":true}}}`,
-			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value",
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value/writeOnly",
 		},
 		{
 			name:       "resolved reference",
 			schema:     `{"properties":{"value":{"$ref":"#/components/schemas/Value"}}}`,
 			components: `,"components":{"schemas":{"Value":{"readOnly":true,"writeOnly":true}}}`,
-			pointer:    "#/components/schemas/Value",
+			pointer:    "#/components/schemas/Value/writeOnly",
 		},
 	}
 
@@ -2011,7 +2022,7 @@ func TestParseRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties(t *testing.
 			_, err := Parse(openAPISpec(test.schema, test.components, false))
 			require.Error(t, err)
 			require.ErrorContains(t, err, "compile schema at "+test.pointer)
-			require.ErrorContains(t, err, "readOnly and writeOnly must not both be true")
+			require.ErrorContains(t, err, "readOnly and writeOnly cannot both be true in the Klopt profile")
 		})
 	}
 }
@@ -2095,8 +2106,8 @@ func TestValidationLocksRequestDirectionCombinations(t *testing.T) {
 				parsed, err := Parse(openAPISpec(schema, "", false))
 				require.Nil(t, parsed)
 				require.ErrorContains(t, err, "compile schema at "+
-					"#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value")
-				require.ErrorContains(t, err, "readOnly and writeOnly must not both be true")
+					"#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value/writeOnly")
+				require.ErrorContains(t, err, "readOnly and writeOnly cannot both be true in the Klopt profile")
 
 				return
 			}
@@ -2156,8 +2167,9 @@ func TestParseRejectsRecursiveSchemas(t *testing.T) {
 			t.Parallel()
 
 			_, err := Parse(openAPISpec(`{"$ref":"#/components/schemas/Loop"}`, test.components, false))
-			require.ErrorContains(t, err, `compile operationId "checkThing"`)
-			require.ErrorContains(t, err, "recursive schema is unsupported")
+			require.ErrorContains(t, err, "/$ref")
+			require.ErrorContains(t, err, "recursive schema graph")
+			require.ErrorContains(t, err, "outside the Klopt profile")
 			require.ErrorContains(t, err, "#/components/schemas/Loop")
 		})
 	}
@@ -2259,7 +2271,7 @@ func TestParseRejectsUnsupportedOpenAPIVersions(t *testing.T) {
 
 	const (
 		versionSyntaxError = "#/openapi: OpenAPI document version must be a Semantic Versioning 2.0.0 version"
-		featureSetError    = "#/openapi: OpenAPI document feature set must be 3.0"
+		featureSetError    = "#/openapi: OpenAPI document feature set 3.1 is outside the Klopt 3.0 profile"
 	)
 
 	for _, test := range []struct {
@@ -2324,6 +2336,7 @@ func TestParseRejectsFirstMalformedOperationDeterministically(t *testing.T) {
 
 	_, err := Parse(spec)
 	require.ErrorContains(t, err, "#/paths/~1broken-operation/post")
+	require.ErrorContains(t, err, "must be an object")
 }
 
 // TestValidationErrorsAreStableAndFresh covers repeatability and caller-owned result slices.

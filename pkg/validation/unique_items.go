@@ -3,6 +3,7 @@ package validation
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -12,8 +13,8 @@ import (
 	"github.com/djosh34/klopt/pkg/internal/oas"
 )
 
-// rejectAuthoredSchemaExclusions walks every OpenAPI 3.0 Schema Object slot after
-// ordinary request acquisition and compilation have succeeded.
+// rejectAuthoredSchemaExclusions walks every OpenAPI 3.0 Schema Object slot before
+// ordinary request acquisition and compilation begin.
 func rejectAuthoredSchemaExclusions(document json.RawMessage) error {
 	root, ok := rawObject(document)
 	if !ok {
@@ -21,8 +22,10 @@ func rejectAuthoredSchemaExclusions(document json.RawMessage) error {
 	}
 
 	walker := authoredSchemaWalker{
-		source:  oas.Source{Document: document},
-		visited: make(map[string]struct{}),
+		source:             oas.Source{Document: document},
+		inspected:          make(map[string]struct{}),
+		active:             make(map[string]struct{}),
+		resolvedReferences: make(map[string]oas.LocatedSchema),
 	}
 
 	// Top-level schema-bearing fields have a fixed paths-before-components order.
@@ -35,8 +38,10 @@ func rejectAuthoredSchemaExclusions(document json.RawMessage) error {
 
 // authoredSchemaWalker traverses every OpenAPI object that can own a Schema Object.
 type authoredSchemaWalker struct {
-	source  oas.Source
-	visited map[string]struct{}
+	source             oas.Source
+	inspected          map[string]struct{}
+	active             map[string]struct{}
+	resolvedReferences map[string]oas.LocatedSchema
 }
 
 // paths traverses Path Item Objects in lexical path order.
@@ -77,6 +82,9 @@ func (walker *authoredSchemaWalker) components(raw json.RawMessage, pointer stri
 		{name: "responses", walk: walker.response},
 		{name: "headers", walk: walker.header},
 		{name: "callbacks", walk: walker.callback},
+		{name: "examples", walk: walker.example},
+		{name: "securitySchemes", walk: walker.securityScheme},
+		{name: "links", walk: walker.link},
 	} {
 		values, ok := rawObject(components[entry.name])
 		if !ok {
@@ -94,7 +102,11 @@ func (walker *authoredSchemaWalker) components(raw json.RawMessage, pointer stri
 }
 
 // pathItem traverses path-level parameters and operations.
-func (walker *authoredSchemaWalker) pathItem(raw json.RawMessage, pointer string) error {
+func (walker *authoredSchemaWalker) pathItem(raw json.RawMessage, pointer string) (result error) {
+	if err := rejectPathItemReferenceSiblings(raw, pointer); err != nil {
+		return err
+	}
+
 	raw, pointer, ok, err := walker.resolve("path item", raw, pointer)
 	if err != nil {
 		return err
@@ -103,6 +115,12 @@ func (walker *authoredSchemaWalker) pathItem(raw json.RawMessage, pointer string
 	if !ok {
 		return nil
 	}
+
+	defer func() {
+		if result == nil {
+			walker.finish("path item", pointer)
+		}
+	}()
 
 	members, ok := rawObject(raw)
 	if !ok {
@@ -113,11 +131,34 @@ func (walker *authoredSchemaWalker) pathItem(raw json.RawMessage, pointer string
 		return err
 	}
 
-	for _, method := range []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"} {
+	for _, method := range []string{"delete", "get", "head", "options", "patch", "post", "put", "trace"} {
 		if rawOperation, present := members[method]; present {
 			if err := walker.operation(rawOperation, appendSchemaPointer(pointer, method)); err != nil {
 				return err
 			}
+		}
+	}
+
+	return nil
+}
+
+// rejectPathItemReferenceSiblings rejects undefined Path Item reference conflicts.
+func rejectPathItemReferenceSiblings(raw json.RawMessage, pointer string) error {
+	pathItem, ok := rawObject(raw)
+	if !ok {
+		return nil
+	}
+
+	if _, referenced := pathItem["$ref"]; !referenced {
+		return nil
+	}
+
+	for name := range pathItem {
+		if name != "$ref" && !strings.HasPrefix(name, "x-") {
+			return fmt.Errorf(
+				"%s/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+				pointer,
+			)
 		}
 	}
 
@@ -176,7 +217,7 @@ func (walker *authoredSchemaWalker) parameters(raw json.RawMessage, pointer stri
 }
 
 // parameter traverses one resolved Parameter Object.
-func (walker *authoredSchemaWalker) parameter(raw json.RawMessage, pointer string) error {
+func (walker *authoredSchemaWalker) parameter(raw json.RawMessage, pointer string) (result error) {
 	raw, pointer, ok, err := walker.resolve("parameter", raw, pointer)
 	if err != nil {
 		return err
@@ -186,16 +227,26 @@ func (walker *authoredSchemaWalker) parameter(raw json.RawMessage, pointer strin
 		return nil
 	}
 
+	defer func() {
+		if result == nil {
+			walker.finish("parameter", pointer)
+		}
+	}()
+
 	members, ok := rawObject(raw)
 	if !ok {
 		return nil
+	}
+
+	if err := walker.examples(members["examples"], appendSchemaPointer(pointer, "examples")); err != nil {
+		return err
 	}
 
 	return walker.schemaOrContent(members, pointer)
 }
 
 // header traverses one resolved Header Object.
-func (walker *authoredSchemaWalker) header(raw json.RawMessage, pointer string) error {
+func (walker *authoredSchemaWalker) header(raw json.RawMessage, pointer string) (result error) {
 	raw, pointer, ok, err := walker.resolve("header", raw, pointer)
 	if err != nil {
 		return err
@@ -205,9 +256,19 @@ func (walker *authoredSchemaWalker) header(raw json.RawMessage, pointer string) 
 		return nil
 	}
 
+	defer func() {
+		if result == nil {
+			walker.finish("header", pointer)
+		}
+	}()
+
 	members, ok := rawObject(raw)
 	if !ok {
 		return nil
+	}
+
+	if err := walker.examples(members["examples"], appendSchemaPointer(pointer, "examples")); err != nil {
+		return err
 	}
 
 	return walker.schemaOrContent(members, pointer)
@@ -228,7 +289,7 @@ func (walker *authoredSchemaWalker) schemaOrContent(
 }
 
 // requestBody traverses one resolved Request Body Object.
-func (walker *authoredSchemaWalker) requestBody(raw json.RawMessage, pointer string) error {
+func (walker *authoredSchemaWalker) requestBody(raw json.RawMessage, pointer string) (result error) {
 	raw, pointer, ok, err := walker.resolve("request body", raw, pointer)
 	if err != nil {
 		return err
@@ -238,12 +299,49 @@ func (walker *authoredSchemaWalker) requestBody(raw json.RawMessage, pointer str
 		return nil
 	}
 
+	defer func() {
+		if result == nil {
+			walker.finish("request body", pointer)
+		}
+	}()
+
 	members, ok := rawObject(raw)
 	if !ok {
 		return nil
 	}
 
 	return walker.content(members["content"], appendSchemaPointer(pointer, "content"))
+}
+
+// examples traverses Example Object maps without inspecting example payloads.
+func (walker *authoredSchemaWalker) examples(raw json.RawMessage, pointer string) error {
+	examples, ok := rawObject(raw)
+	if !ok {
+		return nil
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(examples)) {
+		if err := walker.example(examples[name], appendSchemaPointer(pointer, name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// example follows one Example Object reference chain without inspecting its payload.
+func (walker *authoredSchemaWalker) example(raw json.RawMessage, pointer string) error {
+	return walker.referenceLeaf("example", raw, pointer)
+}
+
+// securityScheme follows one Security Scheme Object reference chain.
+func (walker *authoredSchemaWalker) securityScheme(raw json.RawMessage, pointer string) error {
+	return walker.referenceLeaf("security scheme", raw, pointer)
+}
+
+// link follows one Link Object reference chain.
+func (walker *authoredSchemaWalker) link(raw json.RawMessage, pointer string) error {
+	return walker.referenceLeaf("link", raw, pointer)
 }
 
 // responses traverses Response Objects in lexical status order.
@@ -267,7 +365,7 @@ func (walker *authoredSchemaWalker) responses(raw json.RawMessage, pointer strin
 }
 
 // response traverses one resolved Response Object.
-func (walker *authoredSchemaWalker) response(raw json.RawMessage, pointer string) error {
+func (walker *authoredSchemaWalker) response(raw json.RawMessage, pointer string) (result error) {
 	raw, pointer, ok, err := walker.resolve("response", raw, pointer)
 	if err != nil {
 		return err
@@ -276,6 +374,12 @@ func (walker *authoredSchemaWalker) response(raw json.RawMessage, pointer string
 	if !ok {
 		return nil
 	}
+
+	defer func() {
+		if result == nil {
+			walker.finish("response", pointer)
+		}
+	}()
 
 	members, ok := rawObject(raw)
 	if !ok {
@@ -289,7 +393,18 @@ func (walker *authoredSchemaWalker) response(raw json.RawMessage, pointer string
 		}
 	}
 
-	return walker.content(members["content"], appendSchemaPointer(pointer, "content"))
+	if err := walker.content(members["content"], appendSchemaPointer(pointer, "content")); err != nil {
+		return err
+	}
+
+	links, _ := rawObject(members["links"])
+	for _, name := range slices.Sorted(maps.Keys(links)) {
+		if err := walker.link(links[name], appendSchemaPointer(pointer, "links", name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // content traverses Media Type Objects in lexical media-type order.
@@ -321,6 +436,10 @@ func (walker *authoredSchemaWalker) mediaType(raw json.RawMessage, pointer strin
 		}
 	}
 
+	if err := walker.examples(members["examples"], appendSchemaPointer(pointer, "examples")); err != nil {
+		return err
+	}
+
 	encodings, _ := rawObject(members["encoding"])
 	for _, property := range slices.Sorted(maps.Keys(encodings)) {
 		encoding, ok := rawObject(encodings[property])
@@ -343,7 +462,7 @@ func (walker *authoredSchemaWalker) mediaType(raw json.RawMessage, pointer strin
 }
 
 // callback traverses callback Path Item Objects in lexical expression order.
-func (walker *authoredSchemaWalker) callback(raw json.RawMessage, pointer string) error {
+func (walker *authoredSchemaWalker) callback(raw json.RawMessage, pointer string) (result error) {
 	raw, pointer, ok, err := walker.resolve("callback", raw, pointer)
 	if err != nil {
 		return err
@@ -352,6 +471,12 @@ func (walker *authoredSchemaWalker) callback(raw json.RawMessage, pointer string
 	if !ok {
 		return nil
 	}
+
+	defer func() {
+		if result == nil {
+			walker.finish("callback", pointer)
+		}
+	}()
 
 	callback, ok := rawObject(raw)
 	if !ok {
@@ -371,19 +496,8 @@ func (walker *authoredSchemaWalker) callback(raw json.RawMessage, pointer string
 	return nil
 }
 
-// authoredSchemaPointer retains path tokens without copying every ancestor path.
-type authoredSchemaPointer struct {
-	base   string
-	parent *authoredSchemaPointer
-	token  string
-}
-
-// schema decodes one complete inline schema tree before traversing it.
+// schema resolves references and decodes each complete inline tree once.
 func (walker *authoredSchemaWalker) schema(raw json.RawMessage, pointer string) error {
-	if _, seen := walker.visited["schema\x00"+pointer]; seen {
-		return nil
-	}
-
 	value, err := rawValue(raw)
 	if err != nil {
 		return fmt.Errorf("decode schema at %s: %w", pointer, err)
@@ -391,87 +505,83 @@ func (walker *authoredSchemaWalker) schema(raw json.RawMessage, pointer string) 
 
 	members, object := value.(map[string]any)
 	if object {
-		if _, reference := members["$ref"]; !reference {
-			walker.markSeen("schema", pointer)
+		if _, referenced := members["$ref"]; !referenced {
+			return walker.schemaValue(value, pointer, pointer)
 		}
 	}
 
-	return walker.schemaValue(value, &authoredSchemaPointer{base: pointer})
-}
-
-// schemaValue inspects one decoded Schema Object and traverses its decoded children.
-func (walker *authoredSchemaWalker) schemaValue(value any, pointer *authoredSchemaPointer) error {
-	members, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	if reference, present := members["$ref"]; present {
-		return walker.referencedSchema(reference, pointer)
-	}
-
-	if _, present := members["uniqueItems"]; present {
-		return unsupportedUniqueItems(pointer.String())
-	}
-
-	if _, present := members["discriminator"]; present {
-		return unsupportedAuthoredDiscriminator(pointer.String())
-	}
-
-	return walker.nestedSchemaValues(members, pointer)
-}
-
-// referencedSchema preserves reference diagnostics while decoding only the resolved target tree.
-func (walker *authoredSchemaWalker) referencedSchema(
-	reference any,
-	pointer *authoredSchemaPointer,
-) error {
-	pointerString := pointer.String()
-	if walker.seen("schema", pointerString) {
-		return nil
-	}
-
-	if referenceString, ok := reference.(string); ok && walker.seen("schema reference", referenceString) {
-		return nil
-	}
-
-	raw, err := json.Marshal(map[string]any{"$ref": reference})
-	if err != nil {
-		return fmt.Errorf("encode schema reference at %s: %w", pointerString, err)
-	}
-
-	resolved, err := walker.source.ResolveAndInspect(
-		oas.LocatedSchema{Raw: raw, Pointer: pointerString},
-		func(authored oas.LocatedSchema) error {
-			walker.markSeen("schema", authored.Pointer)
-
-			return rejectAuthoredSchemaKeywords(authored)
-		},
-	)
+	resolved, err := walker.resolveReference(raw, pointer, "schema")
 	if err != nil {
 		return err
 	}
 
-	if walker.seen("resolved schema", resolved.Pointer) {
-		return nil
-	}
-
-	value, err := rawValue(resolved.Raw)
+	value, err = rawValue(resolved.Raw)
 	if err != nil {
 		return fmt.Errorf("decode schema at %s: %w", resolved.Pointer, err)
 	}
 
-	return walker.schemaValue(value, &authoredSchemaPointer{base: resolved.Pointer})
+	return walker.schemaValue(value, resolved.Pointer, pointer)
 }
 
-// nestedSchemaValues traverses nested Schema Object keywords in one fixed order.
-func (walker *authoredSchemaWalker) nestedSchemaValues(
-	members map[string]any,
-	pointer *authoredSchemaPointer,
-) error {
-	// Arrays retain source order and the properties map is lexical.
+// schemaValue fully inspects one decoded Schema Object before marking it complete.
+func (walker *authoredSchemaWalker) schemaValue(value any, pointer, usePointer string) error {
+	members, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("parse schema at %s: Schema Object must be an object", pointer)
+	}
+
+	if _, referenced := members["$ref"]; referenced {
+		raw, err := json.Marshal(members)
+		if err != nil {
+			return fmt.Errorf("encode schema reference at %s: %w", pointer, err)
+		}
+
+		return walker.schema(raw, pointer)
+	}
+
+	key := "schema\x00" + pointer
+	if _, active := walker.active[key]; active {
+		return fmt.Errorf(
+			"compile schema at %s/$ref: recursive schema graph reaching %s is outside the Klopt profile",
+			usePointer,
+			pointer,
+		)
+	}
+
+	if _, inspected := walker.inspected[key]; inspected {
+		return nil
+	}
+
+	walker.active[key] = struct{}{}
+	defer delete(walker.active, key)
+
+	if _, present := members["uniqueItems"]; present {
+		return unsupportedUniqueItems(pointer)
+	}
+
+	if _, present := members["discriminator"]; present {
+		if _, adjacentOneOf := members["oneOf"]; adjacentOneOf {
+			return unsupportedOneOf(pointer)
+		}
+
+		return unsupportedAuthoredDiscriminator(pointer)
+	}
+
+	if err := walker.nestedSchemaValues(members, pointer); err != nil {
+		return err
+	}
+
+	walker.inspected[key] = struct{}{}
+
+	return nil
+}
+
+// nestedSchemaValues traverses nested Schema Object slots in canonical order.
+//
+//nolint:cyclop // Nested Schema Object slots have one fixed canonical traversal order.
+func (walker *authoredSchemaWalker) nestedSchemaValues(members map[string]any, pointer string) error {
 	if items, present := members["items"]; present {
-		if err := walker.schemaValue(items, pointer.Append("items")); err != nil {
+		if err := walker.schemaValue(items, appendSchemaPointer(pointer, "items"), pointer); err != nil {
 			return err
 		}
 	}
@@ -482,33 +592,21 @@ func (walker *authoredSchemaWalker) nestedSchemaValues(
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(properties)) {
-		if err := walker.schemaValue(properties[name], pointer.Append("properties", name)); err != nil {
+		childPointer := appendSchemaPointer(pointer, "properties", name)
+		if err := walker.schemaValue(properties[name], childPointer, childPointer); err != nil {
 			return err
 		}
 	}
 
 	if additional, present := members["additionalProperties"]; present {
-		if err := walker.schemaValue(additional, pointer.Append("additionalProperties")); err != nil {
-			return err
+		if _, boolean := additional.(bool); !boolean {
+			childPointer := appendSchemaPointer(pointer, "additionalProperties")
+			if err := walker.schemaValue(additional, childPointer, childPointer); err != nil {
+				return err
+			}
 		}
 	}
 
-	if err := walker.schemaValueArrays(members, pointer); err != nil {
-		return err
-	}
-
-	if not, present := members["not"]; present {
-		return walker.schemaValue(not, pointer.Append("not"))
-	}
-
-	return nil
-}
-
-// schemaValueArrays traverses array-valued composition keywords in fixed order.
-func (walker *authoredSchemaWalker) schemaValueArrays(
-	members map[string]any,
-	pointer *authoredSchemaPointer,
-) error {
 	for _, keyword := range []string{"allOf", "anyOf", "oneOf"} {
 		children, ok := members[keyword].([]any)
 		if !ok {
@@ -516,59 +614,20 @@ func (walker *authoredSchemaWalker) schemaValueArrays(
 		}
 
 		for index, child := range children {
-			if err := walker.schemaValue(child, pointer.Append(keyword, strconv.Itoa(index))); err != nil {
+			childPointer := appendSchemaPointer(pointer, keyword, strconv.Itoa(index))
+			if err := walker.schemaValue(child, childPointer, childPointer); err != nil {
 				return err
 			}
 		}
 	}
 
+	if not, present := members["not"]; present {
+		childPointer := appendSchemaPointer(pointer, "not")
+
+		return walker.schemaValue(not, childPointer, childPointer)
+	}
+
 	return nil
-}
-
-// Append returns a linked child pointer without copying ancestor bytes.
-func (pointer *authoredSchemaPointer) Append(tokens ...string) *authoredSchemaPointer {
-	for _, token := range tokens {
-		pointer = &authoredSchemaPointer{parent: pointer, token: token}
-	}
-
-	return pointer
-}
-
-// String materializes one RFC 6901 pointer only when diagnostics or resolution need it.
-func (pointer *authoredSchemaPointer) String() string {
-	tokens := make([]string, 0)
-	for current := pointer; current != nil && current.parent != nil; current = current.parent {
-		tokens = append(tokens, current.token)
-	}
-
-	root := pointer
-	for root.parent != nil {
-		root = root.parent
-	}
-
-	result := append([]byte(nil), root.base...)
-	for index := len(tokens) - 1; index >= 0; index-- {
-		result = append(result, '/')
-		result = appendPointerToken(result, tokens[index])
-	}
-
-	return string(result)
-}
-
-// appendPointerToken appends one RFC 6901-escaped token.
-func appendPointerToken(result []byte, token string) []byte {
-	for index := range len(token) {
-		switch token[index] {
-		case '~':
-			result = append(result, "~0"...)
-		case '/':
-			result = append(result, "~1"...)
-		default:
-			result = append(result, token[index])
-		}
-	}
-
-	return result
 }
 
 // rawValue decodes one complete raw subtree without converting exact numbers to float64.
@@ -584,46 +643,123 @@ func rawValue(raw json.RawMessage) (any, error) {
 	return value, nil
 }
 
-// resolve follows a non-schema Reference Object while breaking traversal cycles.
+// resolve begins traversal of one non-schema referenceable object.
 func (walker *authoredSchemaWalker) resolve(
 	kind string,
 	raw json.RawMessage,
 	pointer string,
 ) (json.RawMessage, string, bool, error) {
-	if walker.seen(kind, pointer) {
-		return nil, "", false, nil
-	}
-
-	resolved, err := walker.source.ResolveAndInspect(
-		oas.LocatedSchema{Raw: raw, Pointer: pointer},
-		func(authored oas.LocatedSchema) error {
-			walker.markSeen(kind, authored.Pointer)
-
-			return nil
-		},
-	)
+	resolved, err := walker.resolveReference(raw, pointer, kind)
 	if err != nil {
 		return nil, "", false, err
 	}
 
+	if _, object := rawObject(resolved.Raw); !object {
+		return nil, "", false, fmt.Errorf(
+			"parse %s at %s: referenced %s must be an object",
+			kind,
+			resolved.Pointer,
+			kind,
+		)
+	}
+
+	key := kind + "\x00" + resolved.Pointer
+	if _, active := walker.active[key]; active {
+		return nil, "", false, fmt.Errorf(
+			"compile schema at %s/$ref: recursive %s reference reaching %s is outside the Klopt profile",
+			pointer,
+			kind,
+			resolved.Pointer,
+		)
+	}
+
+	if _, inspected := walker.inspected[key]; inspected {
+		return nil, "", false, nil
+	}
+
+	walker.active[key] = struct{}{}
+
 	return resolved.Raw, resolved.Pointer, true, nil
 }
 
-// seen records one typed object pointer and reports whether it was already traversed.
-func (walker *authoredSchemaWalker) seen(kind string, pointer string) bool {
+// finish marks one fully traversed non-schema object complete.
+func (walker *authoredSchemaWalker) finish(kind string, pointer string) {
 	key := kind + "\x00" + pointer
-	if _, ok := walker.visited[key]; ok {
-		return true
-	}
-
-	walker.markSeen(kind, pointer)
-
-	return false
+	delete(walker.active, key)
+	walker.inspected[key] = struct{}{}
 }
 
-// markSeen records one typed object pointer without changing traversal flow.
-func (walker *authoredSchemaWalker) markSeen(kind string, pointer string) {
-	walker.visited[kind+"\x00"+pointer] = struct{}{}
+// resolveReference follows one reference chain and classifies profile exclusions.
+//
+//nolint:cyclop // Cache, resolution, and the two profile exclusion causes are one ordered operation.
+func (walker *authoredSchemaWalker) resolveReference(
+	raw json.RawMessage,
+	pointer string,
+	kind string,
+) (oas.LocatedSchema, error) {
+	reference := ""
+	if members, ok := rawObject(raw); ok {
+		if err := json.Unmarshal(members["$ref"], &reference); err != nil {
+			reference = ""
+		}
+	}
+
+	if resolved, ok := walker.resolvedReferences[reference]; ok && reference != "" {
+		return resolved, nil
+	}
+
+	resolved, err := walker.source.Resolve(oas.LocatedSchema{Raw: raw, Pointer: pointer})
+	if err == nil {
+		if reference != "" {
+			if walker.resolvedReferences == nil {
+				walker.resolvedReferences = make(map[string]oas.LocatedSchema)
+			}
+
+			walker.resolvedReferences[reference] = resolved
+		}
+
+		return resolved, nil
+	}
+
+	var referenceError *oas.ReferenceError
+	if errors.As(err, &referenceError) {
+		switch {
+		case errors.Is(referenceError.Cause, oas.ErrExternalReference):
+			return oas.LocatedSchema{}, fmt.Errorf(
+				"compile schema at %s: external reference %q is outside the Klopt profile",
+				referenceError.AuthoredKeyword,
+				referenceError.Reference,
+			)
+		case errors.Is(referenceError.Cause, oas.ErrReferenceCycle):
+			return oas.LocatedSchema{}, fmt.Errorf(
+				"compile schema at %s: recursive %s reference reaching %s is outside the Klopt profile",
+				referenceError.AuthoredKeyword,
+				kind,
+				referenceError.Reference,
+			)
+		default:
+			return oas.LocatedSchema{}, fmt.Errorf(
+				"resolve %s reference at %s: %w",
+				kind,
+				referenceError.AuthoredKeyword,
+				referenceError,
+			)
+		}
+	}
+
+	return oas.LocatedSchema{}, fmt.Errorf("resolve %s at %s: %w", kind, pointer, err)
+}
+
+// referenceLeaf inspects a referenceable object with no nested Reference Object slots.
+func (walker *authoredSchemaWalker) referenceLeaf(kind string, raw json.RawMessage, pointer string) error {
+	_, resolvedPointer, ok, err := walker.resolve(kind, raw, pointer)
+	if err != nil || !ok {
+		return err
+	}
+
+	walker.finish(kind, resolvedPointer)
+
+	return nil
 }
 
 // rejectAuthoredSchemaUniqueItems rejects the uniqueItems exclusion without decoding its value.
@@ -660,6 +796,10 @@ func rejectAuthoredSchemaKeywords(schema oas.LocatedSchema) error {
 	}
 
 	if _, present := members["discriminator"]; present {
+		if _, adjacentOneOf := members["oneOf"]; adjacentOneOf {
+			return unsupportedOneOf(schema.Pointer)
+		}
+
 		return unsupportedAuthoredDiscriminator(schema.Pointer)
 	}
 
@@ -668,7 +808,18 @@ func rejectAuthoredSchemaKeywords(schema oas.LocatedSchema) error {
 
 // unsupportedUniqueItems reports the exact authored keyword pointer.
 func unsupportedUniqueItems(pointer string) error {
-	return fmt.Errorf("compile schema at %s/uniqueItems: unsupported keyword", pointer)
+	return fmt.Errorf(
+		"compile schema at %s/uniqueItems: authored uniqueItems is outside the Klopt profile",
+		pointer,
+	)
+}
+
+// unsupportedOneOf preserves oneOf's distinct attribution ahead of an adjacent discriminator.
+func unsupportedOneOf(pointer string) error {
+	return fmt.Errorf(
+		"compile schema at %s/oneOf: authored oneOf is outside the Klopt profile",
+		pointer,
+	)
 }
 
 // unsupportedAuthoredDiscriminator reports the deliberate profile exclusion at its authored pointer.

@@ -290,7 +290,7 @@ func TestBasicStringProductNegativeAssertionExpandsSurrogates(t *testing.T) {
 
 	searchState := &search{maxSteps: 10_000}
 	witness, found, err := searchState.findBasicStringWitnessAtLength(
-		parseBasicSearchPatterns(t, `^(?![^]$)`), 1,
+		parseBasicSearchPatterns(t, `^(?![^]$)[^]`), 1,
 	)
 	require.NoError(t, err)
 	require.True(t, found)

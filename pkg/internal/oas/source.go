@@ -39,16 +39,26 @@ type LocatedSchema struct {
 	Pointer string
 }
 
+// DocumentValidator validates the normalized document before semantic compilation.
+type DocumentValidator func(json.RawMessage) error
+
 // ParameterValidator validates one independently resolved raw Parameter Object.
 type ParameterValidator func(Source, LocatedSchema) error
 
 // ReferenceError describes a failed local reference chain.
 type ReferenceError struct {
-	Referrer  string
-	Reference string
-	Chain     []string
-	Cause     error
+	Referrer        string
+	AuthoredKeyword string
+	Reference       string
+	Chain           []string
+	Cause           error
 }
+
+// Reference exclusion causes distinguish profile exclusions from malformed references.
+var (
+	ErrExternalReference = errors.New("external reference")
+	ErrReferenceCycle    = errors.New("reference cycle")
+)
 
 // Error formats reference location and chain context.
 func (referenceError *ReferenceError) Error() string {
@@ -82,8 +92,25 @@ func Parse(spec []byte) (map[string]Source, error) {
 	return sources, err
 }
 
+// ParseWithProfileValidation validates the normalized document profile before request
+// acquisition, then validates every acquired raw Parameter Object.
+func ParseWithProfileValidation(
+	spec []byte,
+	validateDocument DocumentValidator,
+	validateParameter ParameterValidator,
+) (map[string]Source, json.RawMessage, error) {
+	if validateDocument == nil {
+		return nil, nil, errors.New("document validator must not be nil")
+	}
+
+	if validateParameter == nil {
+		return nil, nil, errors.New("parameter validator must not be nil")
+	}
+
+	return parseWithSemanticVersionPattern(spec, validateDocument, validateParameter, semanticVersionPattern)
+}
+
 // ParseWithParameterValidation validates every raw Parameter Object before merge or filtering.
-// It also returns the normalized document for validation that must run after request compilation.
 func ParseWithParameterValidation(
 	spec []byte,
 	validateParameter ParameterValidator,
@@ -97,7 +124,7 @@ func ParseWithParameterValidation(
 
 // parse ingests and acquires one OpenAPI document with optional raw Parameter Object validation.
 func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source, json.RawMessage, error) {
-	return parseWithSemanticVersionPattern(spec, validateParameter, semanticVersionPattern)
+	return parseWithSemanticVersionPattern(spec, nil, validateParameter, semanticVersionPattern)
 }
 
 // parseWithSemanticVersionPattern parses using the supplied version grammar.
@@ -105,6 +132,7 @@ func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source
 //nolint:cyclop // Document decoding, version admission, and request collection form one ordered parse.
 func parseWithSemanticVersionPattern(
 	spec []byte,
+	validateDocument DocumentValidator,
 	validateParameter ParameterValidator,
 	versionPattern string,
 ) (map[string]Source, json.RawMessage, error) {
@@ -156,18 +184,246 @@ func parseWithSemanticVersionPattern(
 	}
 
 	if versionParts[1] != "3" || versionParts[2] != "0" {
-		return nil, nil, fmt.Errorf("%s: OpenAPI document feature set must be 3.0", versionPointer)
+		return nil, nil, fmt.Errorf(
+			"%s: OpenAPI document feature set %s.%s is outside the Klopt 3.0 profile",
+			versionPointer,
+			versionParts[1],
+			versionParts[2],
+		)
 	}
 
 	normalized := append(json.RawMessage(nil), document...)
-	source := Source{Document: normalized}
 
-	sources, err := source.collectRequests(root["paths"], validateParameter)
+	source := Source{Document: normalized}
+	if structuralErr := preflightDocumentStructure(root, source); structuralErr != nil {
+		return nil, nil, structuralErr
+	}
+
+	if validateDocument != nil {
+		if profileErr := validateDocument(normalized); profileErr != nil {
+			return nil, nil, profileErr
+		}
+	}
+
+	type pendingParameter struct {
+		source Source
+		schema LocatedSchema
+	}
+
+	pending := make([]pendingParameter, 0)
+
+	queueParameter := validateParameter
+	if validateParameter != nil {
+		queueParameter = func(source Source, schema LocatedSchema) error {
+			pending = append(pending, pendingParameter{source: source, schema: schema})
+
+			return nil
+		}
+	}
+
+	sources, err := source.collectRequests(root["paths"], queueParameter)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	for _, parameter := range pending {
+		if err := validateParameter(parameter.source, parameter.schema); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	return sources, normalized, nil
+}
+
+// preflightDocumentStructure validates document structure without following references.
+func preflightDocumentStructure(root map[string]json.RawMessage, source Source) error {
+	pathsRaw, exists := root["paths"]
+	if !exists {
+		return errors.New("#/paths: required field is missing")
+	}
+
+	var paths map[string]json.RawMessage
+	if err := json.Unmarshal(pathsRaw, &paths); err != nil || paths == nil {
+		return errors.New("#/paths: must be an object")
+	}
+
+	preflight := documentStructurePreflight{
+		source:          source,
+		activePathItems: make(map[string]bool),
+	}
+	seenPaths := make(map[string]string)
+
+	for _, path := range slices.Sorted(maps.Keys(paths)) {
+		if strings.HasPrefix(path, "x-") {
+			continue
+		}
+
+		pointer := appendPointer("#/paths", path)
+
+		identity, _, err := ParsePathTemplate(path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", pointer, err)
+		}
+
+		if first, duplicate := seenPaths[identity]; duplicate {
+			return fmt.Errorf("%s: templated path is identical to %s", pointer, first)
+		}
+
+		seenPaths[identity] = pointer
+		if err := preflight.pathItem(paths[path], pointer); err != nil {
+			return err
+		}
+	}
+
+	return preflight.componentCallbacks(root["components"], "#/components")
+}
+
+// documentStructurePreflight owns structural local-reference traversal state.
+type documentStructurePreflight struct {
+	source          Source
+	activePathItems map[string]bool
+}
+
+// pathItem checks one authored Path Item and acyclic local targets without acquiring requests.
+//
+//nolint:cyclop,gocognit // Fixed fields, local targets, operations, and callbacks form one structural check.
+func (preflight *documentStructurePreflight) pathItem(raw json.RawMessage, pointer string) error {
+	var pathItem map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &pathItem); err != nil || pathItem == nil {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	if _, referenced := pathItem["$ref"]; referenced {
+		for name := range pathItem {
+			if name != "$ref" && !strings.HasPrefix(name, "x-") {
+				return fmt.Errorf(
+					"%s/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+					pointer,
+				)
+			}
+		}
+	}
+
+	allowed := map[string]struct{}{
+		"$ref": {}, "summary": {}, "description": {}, "get": {}, "put": {}, "post": {}, "delete": {},
+		"options": {}, "head": {}, "patch": {}, "trace": {}, "servers": {}, "parameters": {},
+	}
+	for name := range pathItem {
+		if _, ok := allowed[name]; ok || strings.HasPrefix(name, "x-") {
+			continue
+		}
+
+		return fmt.Errorf("%s: unknown Path Item Object field", appendPointer(pointer, name))
+	}
+
+	if parameters, exists := pathItem["parameters"]; exists {
+		var list []json.RawMessage
+		if err := json.Unmarshal(parameters, &list); err != nil || list == nil {
+			return fmt.Errorf("%s/parameters: must be an array", pointer)
+		}
+	}
+
+	if referenceRaw, referenced := pathItem["$ref"]; referenced {
+		var reference string
+		if err := json.Unmarshal(referenceRaw, &reference); err != nil {
+			return nil
+		}
+
+		target, err := preflight.source.At(reference)
+		if err != nil {
+			return nil
+		}
+
+		if preflight.activePathItems[target.Pointer] {
+			return nil
+		}
+
+		preflight.activePathItems[target.Pointer] = true
+		defer delete(preflight.activePathItems, target.Pointer)
+
+		return preflight.pathItem(target.Raw, target.Pointer)
+	}
+
+	for _, method := range []string{"delete", "get", "head", "options", "patch", "post", "put", "trace"} {
+		operation, exists := pathItem[method]
+		if !exists {
+			continue
+		}
+
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(operation, &object); err != nil || object == nil {
+			return fmt.Errorf("%s/%s: must be an object", pointer, method)
+		}
+
+		if parameters, exists := object["parameters"]; exists {
+			var list []json.RawMessage
+			if err := json.Unmarshal(parameters, &list); err != nil || list == nil {
+				return fmt.Errorf("%s/%s/parameters: must be an array", pointer, method)
+			}
+		}
+
+		if err := preflight.callbacks(object["callbacks"], appendPointer(pointer, method, "callbacks")); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// callbacks checks inline callback Path Items without following Callback Object references.
+//
+//nolint:cyclop // Container, callback, reference, and expression checks are one structural pass.
+func (preflight *documentStructurePreflight) callbacks(raw json.RawMessage, pointer string) error {
+	if raw == nil {
+		return nil
+	}
+
+	var callbacks map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &callbacks); err != nil || callbacks == nil {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(callbacks)) {
+		var callback map[string]json.RawMessage
+		if err := json.Unmarshal(callbacks[name], &callback); err != nil || callback == nil {
+			return fmt.Errorf("%s: must be an object", appendPointer(pointer, name))
+		}
+
+		if _, referenced := callback["$ref"]; referenced {
+			continue
+		}
+
+		callbackPointer := appendPointer(pointer, name)
+
+		for _, expression := range slices.Sorted(maps.Keys(callback)) {
+			if strings.HasPrefix(expression, "x-") {
+				continue
+			}
+
+			if err := preflight.pathItem(
+				callback[expression],
+				appendPointer(callbackPointer, expression),
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// componentCallbacks checks the reusable inline Callback Objects.
+func (preflight *documentStructurePreflight) componentCallbacks(raw json.RawMessage, pointer string) error {
+	if raw == nil {
+		return nil
+	}
+
+	var components map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &components); err != nil || components == nil {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	return preflight.callbacks(components["callbacks"], appendPointer(pointer, "callbacks"))
 }
 
 // rejectDuplicateJSONNames preflights decoded member-name uniqueness across one JSON document.
@@ -331,7 +587,7 @@ func (source Source) resolve(
 				current.Pointer,
 				reference,
 				append(chain, reference),
-				errors.New("reference cycle"),
+				ErrReferenceCycle,
 			)
 		}
 
@@ -843,7 +1099,7 @@ type operationChild struct {
 
 // operationChildren returns operation members in deterministic method order.
 func operationChildren(members map[string]json.RawMessage, pointer string) []operationChild {
-	methods := []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+	methods := []string{"delete", "get", "head", "options", "patch", "post", "put", "trace"}
 
 	operations := make([]operationChild, 0, len(methods))
 	for _, method := range methods {
@@ -923,7 +1179,7 @@ func pointerTokens(reference string) ([]string, error) {
 // validateLocalReference rejects external and non-pointer references.
 func validateLocalReference(reference string, parsed *url.URL) error {
 	if parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "" || parsed.RawQuery != "" {
-		return fmt.Errorf("external reference %q is unsupported", reference)
+		return fmt.Errorf("%w %q is unsupported", ErrExternalReference, reference)
 	}
 
 	if reference != "#" && (parsed.Fragment == "" || !strings.HasPrefix(parsed.Fragment, "/")) {
@@ -1032,9 +1288,10 @@ func appendPointer(pointer string, tokens ...string) string {
 // newReferenceError copies mutable chain data into a ReferenceError.
 func newReferenceError(referrer string, reference string, chain []string, cause error) *ReferenceError {
 	return &ReferenceError{
-		Referrer:  referrer,
-		Reference: reference,
-		Chain:     append([]string(nil), chain...),
-		Cause:     cause,
+		Referrer:        referrer,
+		AuthoredKeyword: appendPointer(referrer, "$ref"),
+		Reference:       reference,
+		Chain:           append([]string(nil), chain...),
+		Cause:           cause,
 	}
 }

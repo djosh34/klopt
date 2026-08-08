@@ -2,16 +2,18 @@
 package patternsyntax
 
 import (
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
 type parser struct {
-	source       string
-	position     int
-	tree         Tree
-	depth        int
-	captureCount uint64
-	references   []decimalReference
+	source           string
+	position         int
+	tree             Tree
+	depth            int
+	captureCount     uint64
+	references       []decimalReference
+	pendingClassUnit *classAtom
 }
 
 type decimalReference struct {
@@ -366,11 +368,11 @@ func (state *parser) parseClass() (NodeID, error) {
 	items := make([]ClassItem, 0)
 
 	for {
-		if state.position == len(state.source) {
+		if state.position == len(state.source) && state.pendingClassUnit == nil {
 			return 0, syntaxError(start, "character class has no closing bracket")
 		}
 
-		if state.source[state.position] == ']' {
+		if state.pendingClassUnit == nil && state.source[state.position] == ']' {
 			state.position++
 
 			return state.addNode(Node{
@@ -379,13 +381,13 @@ func (state *parser) parseClass() (NodeID, error) {
 			})
 		}
 
-		if state.position+1 < len(state.source) && state.source[state.position] == '&' &&
-			state.source[state.position+1] == '&' {
+		if state.pendingClassUnit == nil && state.position+1 < len(state.source) &&
+			state.source[state.position] == '&' && state.source[state.position+1] == '&' {
 			return 0, foreignError(state.position, "character-class set operations are not ECMAScript 5.1 syntax")
 		}
 
-		if state.position+1 < len(state.source) && state.source[state.position] == '[' &&
-			state.source[state.position+1] == ':' {
+		if state.pendingClassUnit == nil && state.position+1 < len(state.source) &&
+			state.source[state.position] == '[' && state.source[state.position+1] == ':' {
 			return 0, foreignError(state.position, "POSIX character classes are not ECMAScript 5.1 syntax")
 		}
 
@@ -394,8 +396,9 @@ func (state *parser) parseClass() (NodeID, error) {
 			return 0, err
 		}
 
-		if state.position < len(state.source) && state.source[state.position] == '-' &&
-			state.position+1 < len(state.source) && state.source[state.position+1] != ']' {
+		if state.pendingClassUnit == nil && state.position < len(state.source) &&
+			state.source[state.position] == '-' && state.position+1 < len(state.source) &&
+			state.source[state.position+1] != ']' {
 			dash := state.position
 			if state.source[state.position+1] == '-' {
 				return 0, foreignError(dash, "character-class set operations are not ECMAScript 5.1 syntax")
@@ -429,6 +432,13 @@ func (state *parser) parseClass() (NodeID, error) {
 
 //nolint:cyclop,gocyclo // Class escapes are a closed, flat grammar table.
 func (state *parser) parseClassAtom() (classAtom, error) {
+	if state.pendingClassUnit != nil {
+		pending := *state.pendingClassUnit
+		state.pendingClassUnit = nil
+
+		return pending, nil
+	}
+
 	start := state.position
 	if state.source[state.position] == '-' {
 		state.position++
@@ -439,6 +449,14 @@ func (state *parser) parseClassAtom() (classAtom, error) {
 	if state.source[state.position] != '\\' {
 		character, size := utf8.DecodeRuneInString(state.source[state.position:])
 		state.position += size
+
+		if character > 0xffff {
+			high, low := utf16.EncodeRune(character)
+			pending := singletonClassAtom(low, start, state.position)
+			state.pendingClassUnit = &pending
+
+			return singletonClassAtom(high, start, state.position), nil
+		}
 
 		return singletonClassAtom(character, start, state.position), nil
 	}
@@ -938,14 +956,9 @@ func hexValue(character byte) (byte, bool) {
 }
 
 func isIdentityEscape(character rune) bool {
-	if character > 0x7f {
-		return true
-	}
-
-	if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
-		character >= '0' && character <= '9' || character == '_' {
-		return false
-	}
-
-	return true
+	return character <= 0x7f &&
+		(character < 'a' || character > 'z') &&
+		(character < 'A' || character > 'Z') &&
+		(character < '0' || character > '9') &&
+		character != '_'
 }
