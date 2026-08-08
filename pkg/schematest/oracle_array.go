@@ -53,6 +53,7 @@ func evaluateArrayRules(
 	for index, item := range value.array {
 		itemOccurrence := rebaseChildOccurrence(
 			node.items,
+			occurrence,
 			occurrence.usePointer+"/items",
 			appendInstanceToken(occurrence.instanceTemplate, strconv.Itoa(index)),
 		)

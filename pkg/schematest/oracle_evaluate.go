@@ -71,11 +71,10 @@ type evaluation struct {
 	err     error
 }
 
-// evaluationCacheKey identifies one shared shape/value/instance evaluation.
+// evaluationCacheKey identifies one target-relative shared shape/value evaluation.
 type evaluationCacheKey struct {
-	shape            *schemaShape
-	value            *jsonValue
-	instanceTemplate string
+	shape *schemaShape
+	value *jsonValue
 }
 
 // evaluationCacheEntry retains a result and the occurrence that authored its paths.
@@ -151,9 +150,8 @@ func (context *evaluationContext) evaluateNode(
 	}
 
 	key := evaluationCacheKey{
-		shape:            node.schemaShape,
-		value:            value,
-		instanceTemplate: occurrence.instanceTemplate,
+		shape: node.schemaShape,
+		value: value,
 	}
 	if cached, exists := context.cache[key]; exists {
 		result = cached.result
@@ -204,15 +202,20 @@ func (context *evaluationContext) evaluateNode(
 	return result
 }
 
-// rebaseChildOccurrence carries a direct schema shape's evaluated use site and instance path to a child.
+// rebaseChildOccurrence carries a direct child's destination use, target, and instance paths.
 func rebaseChildOccurrence(
 	child *schemaNode,
+	parent schemaOccurrence,
 	usePointer string,
 	instanceTemplate string,
 ) schemaOccurrence {
 	childOccurrence := child.occurrence
 	childOccurrence.usePointer = usePointer
 	childOccurrence.instanceTemplate = instanceTemplate
+
+	if !childOccurrence.reference && strings.HasPrefix(usePointer, parent.usePointer+"/") {
+		childOccurrence.targetPointer = parent.targetPointer + strings.TrimPrefix(usePointer, parent.usePointer)
+	}
 
 	return childOccurrence
 }

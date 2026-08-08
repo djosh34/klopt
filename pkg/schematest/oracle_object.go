@@ -129,6 +129,7 @@ func evaluateDeclaredProperties(
 
 		propertyOccurrence := rebaseChildOccurrence(
 			property,
+			occurrence,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)
@@ -158,6 +159,7 @@ func evaluateAdditionalProperties(
 		if node.additionalProperties != nil {
 			additionalOccurrence := rebaseChildOccurrence(
 				node.additionalProperties,
+				occurrence,
 				occurrence.usePointer+"/additionalProperties",
 				appendInstanceToken(occurrence.instanceTemplate, name),
 			)

@@ -111,6 +111,7 @@ func rebaseCompositionOccurrence(
 ) schemaOccurrence {
 	return rebaseChildOccurrence(
 		child,
+		occurrence,
 		occurrence.usePointer+"/"+composition+"/"+strconv.Itoa(index),
 		occurrence.instanceTemplate,
 	)

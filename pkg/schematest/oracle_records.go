@@ -2,16 +2,30 @@
 package schematest
 
 import (
+	"fmt"
 	"iter"
+	"slices"
 	"strings"
 )
 
-// occurrenceTransform rebases evaluated use-site and instance paths without changing targets.
+// evaluationPointer is one parsed canonical RFC 6901 fragment path.
+type evaluationPointer struct {
+	tokens []string
+}
+
+// evaluationOccurrencePaths is the structured path identity parsed when a record is created.
+type evaluationOccurrencePaths struct {
+	use      evaluationPointer
+	target   evaluationPointer
+	instance evaluationPointer
+}
+
+// occurrenceTransform carries the complete source and destination provenance for one shared view.
 type occurrenceTransform struct {
-	fromUsePointer       string
-	toUsePointer         string
-	fromInstanceTemplate string
-	toInstanceTemplate   string
+	from      schemaOccurrence
+	to        schemaOccurrence
+	fromPaths evaluationOccurrencePaths
+	toPaths   evaluationOccurrencePaths
 }
 
 // evaluationRecordKind identifies the single fact carried by an evaluation record.
@@ -28,6 +42,7 @@ const (
 type evaluationRecord struct {
 	kind     evaluationRecordKind
 	identity ruleIdentity
+	paths    evaluationOccurrencePaths
 	level    string
 	branches []bool
 }
@@ -62,6 +77,7 @@ func newEvaluationRecords() *evaluationRecords {
 
 // append adds one local fact and returns its construction-time record.
 func (records *evaluationRecords) append(record evaluationRecord) *evaluationRecord {
+	record.paths = mustParseEvaluationOccurrence(record.identity.occurrence)
 	records.parts = append(records.parts, evaluationRecordPart{
 		records: []evaluationRecord{record},
 		count:   1,
@@ -116,10 +132,10 @@ func (records *evaluationRecords) rebased(from, to schemaOccurrence) *evaluation
 	}
 
 	transform := occurrenceTransform{
-		fromUsePointer:       from.usePointer,
-		toUsePointer:         to.usePointer,
-		fromInstanceTemplate: from.instanceTemplate,
-		toInstanceTemplate:   to.instanceTemplate,
+		from:      from,
+		to:        to,
+		fromPaths: mustParseEvaluationOccurrence(from),
+		toPaths:   mustParseEvaluationOccurrence(to),
 	}
 	if transform.empty() || records.count == 0 {
 		return records
@@ -357,46 +373,111 @@ func appendAnyOfTruth(result *evaluation, truth compositionTruth) *evaluationRec
 
 // empty reports whether a transform leaves every path unchanged.
 func (transform occurrenceTransform) empty() bool {
-	return transform.fromUsePointer == transform.toUsePointer &&
-		transform.fromInstanceTemplate == transform.toInstanceTemplate
+	return transform.from == transform.to
 }
 
-// rebaseEvaluationRecord changes only evaluated paths and keeps authored targets intact.
+// rebaseEvaluationRecord changes every occurrence path from complete source/destination provenance.
 func rebaseEvaluationRecord(record evaluationRecord, transform occurrenceTransform) evaluationRecord {
 	if transform.empty() {
 		return record
 	}
 
-	record.identity.occurrence = rebaseEvaluationOccurrence(record.identity.occurrence, transform)
+	localRule := record.paths.use.equal(transform.fromPaths.use) &&
+		record.paths.target.equal(transform.fromPaths.target)
+	record.paths.use = record.paths.use.rebased(transform.fromPaths.use, transform.toPaths.use)
+	record.paths.target = record.paths.target.rebased(transform.fromPaths.target, transform.toPaths.target)
+	record.paths.instance = record.paths.instance.rebased(
+		transform.fromPaths.instance,
+		transform.toPaths.instance,
+	)
+
+	record.identity.occurrence.usePointer = record.paths.use.String()
+	record.identity.occurrence.targetPointer = record.paths.target.String()
+
+	record.identity.occurrence.instanceTemplate = record.paths.instance.String()
+	if localRule {
+		record.identity.occurrence.reference = transform.to.reference
+	}
 
 	return record
 }
 
-// rebaseEvaluationOccurrence changes use and instance paths while preserving target metadata.
-func rebaseEvaluationOccurrence(occurrence schemaOccurrence, transform occurrenceTransform) schemaOccurrence {
-	occurrence.usePointer = replaceOccurrencePrefix(
-		occurrence.usePointer,
-		transform.fromUsePointer,
-		transform.toUsePointer,
-	)
-	occurrence.instanceTemplate = replaceOccurrencePrefix(
-		occurrence.instanceTemplate,
-		transform.fromInstanceTemplate,
-		transform.toInstanceTemplate,
-	)
+func mustParseEvaluationOccurrence(occurrence schemaOccurrence) evaluationOccurrencePaths {
+	use, err := parseEvaluationPointer(occurrence.usePointer)
+	if err != nil {
+		panic(fmt.Sprintf("invalid oracle use pointer %q: %v", occurrence.usePointer, err))
+	}
 
-	return occurrence
+	target, err := parseEvaluationPointer(occurrence.targetPointer)
+	if err != nil {
+		panic(fmt.Sprintf("invalid oracle target pointer %q: %v", occurrence.targetPointer, err))
+	}
+
+	instance, err := parseEvaluationPointer(occurrence.instanceTemplate)
+	if err != nil {
+		panic(fmt.Sprintf("invalid oracle instance template %q: %v", occurrence.instanceTemplate, err))
+	}
+
+	return evaluationOccurrencePaths{use: use, target: target, instance: instance}
 }
 
-// replaceOccurrencePrefix replaces one canonical path prefix and preserves relative descendants.
-func replaceOccurrencePrefix(value, from, to string) string {
-	if from == to || value == from {
-		return to
+func parseEvaluationPointer(pointer string) (evaluationPointer, error) {
+	if pointer == "" || pointer == "#" {
+		return evaluationPointer{}, nil
 	}
 
-	if strings.HasPrefix(value, from+"/") {
-		return to + strings.TrimPrefix(value, from)
+	if !strings.HasPrefix(pointer, "#/") {
+		return evaluationPointer{}, fmt.Errorf("must be a canonical fragment JSON Pointer")
 	}
 
-	return value
+	encoded := strings.Split(pointer[2:], "/")
+
+	tokens := make([]string, len(encoded))
+	for index, token := range encoded {
+		decoded, err := unescapePointerToken(token)
+		if err != nil {
+			return evaluationPointer{}, fmt.Errorf("token %d: %w", index, err)
+		}
+
+		if escapePointerToken(decoded) != token {
+			return evaluationPointer{}, fmt.Errorf("token %d is not canonical", index)
+		}
+
+		tokens[index] = decoded
+	}
+
+	return evaluationPointer{tokens: tokens}, nil
+}
+
+func (pointer evaluationPointer) String() string {
+	if len(pointer.tokens) == 0 {
+		return "#"
+	}
+
+	encoded := make([]string, len(pointer.tokens))
+	for index, token := range pointer.tokens {
+		encoded[index] = escapePointerToken(token)
+	}
+
+	return "#/" + strings.Join(encoded, "/")
+}
+
+func (pointer evaluationPointer) equal(other evaluationPointer) bool {
+	return slices.Equal(pointer.tokens, other.tokens)
+}
+
+func (pointer evaluationPointer) rebased(from, to evaluationPointer) evaluationPointer {
+	if from.equal(to) || !pointer.hasPrefix(from) {
+		return pointer
+	}
+
+	tokens := make([]string, 0, len(to.tokens)+len(pointer.tokens)-len(from.tokens))
+	tokens = append(tokens, to.tokens...)
+	tokens = append(tokens, pointer.tokens[len(from.tokens):]...)
+
+	return evaluationPointer{tokens: tokens}
+}
+
+func (pointer evaluationPointer) hasPrefix(prefix evaluationPointer) bool {
+	return len(pointer.tokens) >= len(prefix.tokens) && slices.Equal(pointer.tokens[:len(prefix.tokens)], prefix.tokens)
 }

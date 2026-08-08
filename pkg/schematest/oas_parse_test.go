@@ -515,7 +515,7 @@ func TestParseInputSharesRepeatedReferenceTargetStructure(t *testing.T) {
 	require.Same(t, model.root.allOf[0].allOf[0], model.root.allOf[1].allOf[0])
 }
 
-func TestParseInputExpandsInlineYAMLAliasSchemaOccurrences(t *testing.T) {
+func TestParseInputSharesInlineYAMLAliasSchemaShapes(t *testing.T) {
 	t.Parallel()
 
 	anchors := "x-schema-0: &s0 {type: string}\n"
@@ -535,7 +535,7 @@ func TestParseInputExpandsInlineYAMLAliasSchemaOccurrences(t *testing.T) {
 
 	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
 	require.NoError(t, err)
-	require.NotSame(t, model.root.allOf[0].schemaShape, model.root.allOf[1].schemaShape)
+	require.Same(t, model.root.allOf[0].schemaShape, model.root.allOf[1].schemaShape)
 }
 
 func TestParseInputKeepsAliasedSchemaDescendantTemplatesRelative(t *testing.T) {
@@ -564,7 +564,7 @@ paths:
 	require.NoError(t, err)
 	require.Equal(t, "#/a", model.root.properties["a"].occurrence.instanceTemplate)
 	require.Equal(t, "#/b", model.root.properties["b"].occurrence.instanceTemplate)
-	require.NotSame(t, model.root.properties["a"].schemaShape, model.root.properties["b"].schemaShape)
+	require.Same(t, model.root.properties["a"].schemaShape, model.root.properties["b"].schemaShape)
 	require.Equal(t, "#/child", model.root.properties["a"].properties["child"].occurrence.instanceTemplate)
 }
 

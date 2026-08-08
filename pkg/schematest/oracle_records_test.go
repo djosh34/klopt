@@ -3,6 +3,7 @@ package schematest
 
 import (
 	"fmt"
+	"iter"
 	"strings"
 	"testing"
 
@@ -139,6 +140,263 @@ func TestEvaluationRecordsCacheHitKeepsEveryFact(t *testing.T) {
 	require.Same(t, first.records, second.records.parts[0].nested)
 }
 
+func TestEvaluationCacheStructurallyRebasesCompleteReferenceIdentities(t *testing.T) {
+	t.Parallel()
+
+	document := `{
+		"openapi":"3.0.4",
+		"components":{"schemas":{
+			"Leaf":{"type":"string"},
+			"Shared":{"type":"object","properties":{"name":{"$ref":"#/components/schemas/Leaf"}}}
+		}},
+		"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
+			"allOf":[
+				{"$ref":"#/components/schemas/Shared"},
+				{"$ref":"#/components/schemas/Shared"}
+			]
+		}}}}}}}
+	}`
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	value, err := parseStrictJSON([]byte(`{"name":1}`))
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.NoError(t, result.err)
+
+	rootUse := model.root.occurrence.usePointer
+	sharedTarget := "#/components/schemas/Shared"
+	leafTarget := "#/components/schemas/Leaf"
+	require.Equal(t, []ruleIdentity{
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       rootUse + "/allOf/0/properties/name",
+			targetPointer:    leafTarget,
+			instanceTemplate: "#/name",
+			reference:        true,
+		}, oracleRuleType),
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       rootUse + "/allOf/1/properties/name",
+			targetPointer:    leafTarget,
+			instanceTemplate: "#/name",
+			reference:        true,
+		}, oracleRuleType),
+	}, evaluationRecordValues(result.failureRecords()))
+
+	var referenced []schemaOccurrence
+
+	for identity := range result.applicableRecords() {
+		if identity.rule == oracleRuleType && identity.occurrence.reference {
+			referenced = append(referenced, identity.occurrence)
+		}
+	}
+
+	require.Equal(t, []schemaOccurrence{
+		{
+			usePointer:       rootUse + "/allOf/0",
+			targetPointer:    sharedTarget,
+			instanceTemplate: "#",
+			reference:        true,
+		},
+		{
+			usePointer:       rootUse + "/allOf/0/properties/name",
+			targetPointer:    leafTarget,
+			instanceTemplate: "#/name",
+			reference:        true,
+		},
+		{
+			usePointer:       rootUse + "/allOf/1",
+			targetPointer:    sharedTarget,
+			instanceTemplate: "#",
+			reference:        true,
+		},
+		{
+			usePointer:       rootUse + "/allOf/1/properties/name",
+			targetPointer:    leafTarget,
+			instanceTemplate: "#/name",
+			reference:        true,
+		},
+	}, referenced)
+}
+
+func TestEvaluationCacheStructurallyRebasesInlineAliasTargets(t *testing.T) {
+	t.Parallel()
+
+	document := `openapi: 3.0.4
+x-shared: &shared
+  type: object
+  properties:
+    name: {type: string}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf: [*shared, *shared]
+`
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	require.Same(t, model.root.allOf[0].schemaShape, model.root.allOf[1].schemaShape)
+
+	value, err := parseStrictJSON([]byte(`{"name":"value"}`))
+	require.NoError(t, err)
+
+	context := evaluationContext{cache: make(map[evaluationCacheKey]evaluationCacheEntry)}
+	firstNode := model.root.allOf[0]
+	secondNode := model.root.allOf[1]
+	first := context.evaluateNode(firstNode, value, firstNode.occurrence)
+	second := context.evaluateNode(secondNode, value, secondNode.occurrence)
+
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.Same(t, first.records, second.records.parts[0].nested)
+
+	firstType := evaluationRecordValues(first.applicableRecords())
+	secondType := evaluationRecordValues(second.applicableRecords())
+
+	require.Equal(t, []ruleIdentity{
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       firstNode.occurrence.usePointer,
+			targetPointer:    firstNode.occurrence.targetPointer,
+			instanceTemplate: "#",
+		}, oracleRuleType),
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       firstNode.occurrence.usePointer + "/properties/name",
+			targetPointer:    firstNode.occurrence.targetPointer + "/properties/name",
+			instanceTemplate: "#/name",
+		}, oracleRuleType),
+	}, firstType)
+	require.Equal(t, []ruleIdentity{
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       secondNode.occurrence.usePointer,
+			targetPointer:    secondNode.occurrence.targetPointer,
+			instanceTemplate: "#",
+		}, oracleRuleType),
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       secondNode.occurrence.usePointer + "/properties/name",
+			targetPointer:    secondNode.occurrence.targetPointer + "/properties/name",
+			instanceTemplate: "#/name",
+		}, oracleRuleType),
+	}, secondType)
+}
+
+func TestEvaluationCacheRebasesBetweenAliasAndReferenceProvenance(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		branches string
+	}{
+		{name: "alias then reference", branches: "[*shared, {$ref: '#/components/schemas/Shared'}]"},
+		{name: "reference then alias", branches: "[{$ref: '#/components/schemas/Shared'}, *shared]"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			document := `openapi: 3.0.4
+x-shared: &shared
+  type: object
+  properties:
+    child: {type: string}
+components:
+  schemas:
+    Shared: *shared
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf: ` + test.branches + "\n"
+			model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+			require.NoError(t, err)
+			require.Same(t, model.root.allOf[0].schemaShape, model.root.allOf[1].schemaShape)
+
+			value, err := parseStrictJSON([]byte(`{"child":"value"}`))
+			require.NoError(t, err)
+
+			result := evaluate(model, value)
+			require.NoError(t, result.err)
+
+			rootUse := model.root.occurrence.usePointer
+			for index, branch := range model.root.allOf {
+				wantRoot := branch.occurrence
+				wantRoot.usePointer = rootUse + "/allOf/" + fmt.Sprint(index)
+				wantRoot.instanceTemplate = "#"
+				wantChild := schemaOccurrence{
+					usePointer:       wantRoot.usePointer + "/properties/child",
+					targetPointer:    wantRoot.targetPointer + "/properties/child",
+					instanceTemplate: "#/child",
+				}
+
+				require.Contains(t, evaluationRecordValues(result.applicableRecords()),
+					makeRuleIdentity(wantRoot, oracleRuleType))
+				require.Contains(t, evaluationRecordValues(result.applicableRecords()),
+					makeRuleIdentity(wantChild, oracleRuleType))
+			}
+		})
+	}
+}
+
+func TestEvaluationStructurallyRebasesUncachedInlineAliasDescendants(t *testing.T) {
+	t.Parallel()
+
+	document := `openapi: 3.0.4
+x-shared: &shared
+  type: object
+  properties:
+    child: {type: string}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                a: *shared
+                b: *shared
+`
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	value, err := parseStrictJSON([]byte(`{"a":{"child":"first"},"b":{"child":"second"}}`))
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.NoError(t, result.err)
+
+	var identities []ruleIdentity
+
+	for identity := range result.applicableRecords() {
+		if strings.HasSuffix(identity.occurrence.usePointer, "/properties/child") &&
+			identity.rule == oracleRuleType {
+			identities = append(identities, identity)
+		}
+	}
+
+	rootUse := model.root.occurrence.usePointer
+	require.Equal(t, []ruleIdentity{
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       rootUse + "/properties/a/properties/child",
+			targetPointer:    rootUse + "/properties/a/properties/child",
+			instanceTemplate: "#/a/child",
+		}, oracleRuleType),
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       rootUse + "/properties/b/properties/child",
+			targetPointer:    rootUse + "/properties/b/properties/child",
+			instanceTemplate: "#/b/child",
+		}, oracleRuleType),
+	}, identities)
+}
+
 func TestEvaluationRecordsShareAppendAndRebaseWithoutMaterializing(t *testing.T) {
 	t.Parallel()
 
@@ -174,6 +432,65 @@ func TestEvaluationRecordsShareAppendAndRebaseWithoutMaterializing(t *testing.T)
 		"failure|#/parent|#/member|anyOf",
 	}, evaluationRecordStrings(rebased))
 	require.Same(t, parent, rebased.parts[0].nested)
+}
+
+func TestEvaluationRecordRebaseUsesExactPointerTokenPrefixes(t *testing.T) {
+	t.Parallel()
+
+	records := newEvaluationRecords()
+	records.append(evaluationRecord{
+		kind: evaluationRecordApplicable,
+		identity: makeRuleIdentity(schemaOccurrence{
+			usePointer:       "#/schema/child",
+			targetPointer:    "#/target/child",
+			instanceTemplate: "#/member",
+		}, oracleRuleType),
+	})
+	records.append(evaluationRecord{
+		kind: evaluationRecordApplicable,
+		identity: makeRuleIdentity(schemaOccurrence{
+			usePointer:       "#/schema~1sibling/child",
+			targetPointer:    "#/target~1sibling/child",
+			instanceTemplate: "#/member~1sibling",
+		}, oracleRuleType),
+	})
+
+	rebased := records.rebased(
+		schemaOccurrence{
+			usePointer:       "#/schema",
+			targetPointer:    "#/target",
+			instanceTemplate: "#",
+		},
+		schemaOccurrence{
+			usePointer:       "#/use",
+			targetPointer:    "#/destination",
+			instanceTemplate: "#",
+		},
+	)
+
+	require.Equal(t, []ruleIdentity{
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       "#/use/child",
+			targetPointer:    "#/destination/child",
+			instanceTemplate: "#/member",
+		}, oracleRuleType),
+		makeRuleIdentity(schemaOccurrence{
+			usePointer:       "#/schema~1sibling/child",
+			targetPointer:    "#/target~1sibling/child",
+			instanceTemplate: "#/member~1sibling",
+		}, oracleRuleType),
+	}, evaluationRecordValues(selectEvaluationRecords(rebased, func(record evaluationRecord) (ruleIdentity, bool) {
+		return record.identity, true
+	})))
+}
+
+func evaluationRecordValues[T any](sequence iter.Seq[T]) []T {
+	var values []T
+	for value := range sequence {
+		values = append(values, value)
+	}
+
+	return values
 }
 
 func evaluationRecordStrings(records *evaluationRecords) []string {
