@@ -65,17 +65,15 @@ type compositionTruth struct {
 
 // evaluation is the complete clean evaluation of one JSON value.
 type evaluation struct {
-	valid        bool
-	applicable   []ruleIdentity
-	observed     []levelIdentity
-	allOf        []compositionTruth
-	anyOf        []compositionTruth
-	failures     []failureIdentity
-	failed       bool
-	fromCache    bool
-	materialized bool
-	records      *evaluationRecords
-	err          error
+	valid      bool
+	applicable evaluationQuery[ruleIdentity]
+	observed   evaluationQuery[levelIdentity]
+	allOf      evaluationQuery[compositionTruth]
+	anyOf      evaluationQuery[compositionTruth]
+	failures   evaluationQuery[failureIdentity]
+	failed     bool
+	records    *evaluationRecords
+	err        error
 }
 
 // evaluationCacheKey identifies one shared shape/value/instance evaluation.
@@ -150,6 +148,8 @@ func (context *evaluationContext) evaluateNode(
 	occurrence schemaOccurrence,
 ) evaluation {
 	result := evaluation{records: newEvaluationRecords()}
+	attachEvaluationQueries(&result)
+
 	if node == nil || node.schemaShape == nil {
 		result.err = errors.New("schema occurrence has no shape")
 
@@ -164,11 +164,7 @@ func (context *evaluationContext) evaluateNode(
 	if cached, exists := context.cache[key]; exists {
 		result = cached.result
 		result.records = result.records.rebased(cached.occurrence, occurrence)
-
-		result.fromCache = true
-		if occurrence.reference && result.recordsMaterialized() {
-			result.materializeRecords()
-		}
+		attachEvaluationQueries(&result)
 
 		return result
 	}
@@ -206,7 +202,6 @@ func (context *evaluationContext) evaluateNode(
 	result.valid = result.err == nil && !result.failed
 
 	if result.err == nil {
-		result.fromCache = false
 		context.cache[key] = evaluationCacheEntry{
 			occurrence: occurrence,
 			result:     result,
@@ -333,9 +328,7 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 
 // appendFailure records one exact failure and its validity contribution.
 func appendFailure(result *evaluation, identity failureIdentity) {
-	result.failures = append(result.failures, identity)
-	ensureEvaluationRecords(result)
-	result.records.failures.append(identity)
+	result.records.append(evaluationRecord{kind: evaluationRecordFailure, identity: identity})
 	result.failed = true
 }
 

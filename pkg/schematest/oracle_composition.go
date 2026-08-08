@@ -34,8 +34,7 @@ func evaluateAllOfRules(
 		return
 	}
 
-	truthIndex := len(result.allOf)
-	appendAllOfTruth(result, compositionTruth{
+	truth := appendAllOfTruth(result, compositionTruth{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleAllOf),
 		branches:     make([]bool, len(node.allOf)),
 	})
@@ -50,7 +49,7 @@ func evaluateAllOfRules(
 			return
 		}
 
-		result.allOf[truthIndex].branches[index] = childResult.valid
+		truth.branches[index] = childResult.valid
 		mergeEvaluation(result, childResult)
 	}
 }
@@ -67,15 +66,12 @@ func evaluateAnyOfRules(
 		return
 	}
 
-	truthIndex := len(result.anyOf)
-	appendAnyOfTruth(result, compositionTruth{
+	truth := appendAnyOfTruth(result, compositionTruth{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleAnyOf),
 		branches:     make([]bool, len(node.anyOf)),
 	})
 
-	branchFailures := make([]failureIdentity, 0)
-	branchFailureRecords := &evaluationRecordList[failureIdentity]{}
-	branchFailed := false
+	children := make([]evaluation, len(node.anyOf))
 	anyBranchValid := false
 
 	for index, child := range node.anyOf {
@@ -88,32 +84,22 @@ func evaluateAnyOfRules(
 			return
 		}
 
-		result.anyOf[truthIndex].branches[index] = childResult.valid
-		mergeEvaluationRecords(result, childResult)
+		children[index] = childResult
+		truth.branches[index] = childResult.valid
+		anyBranchValid = anyBranchValid || childResult.valid
+	}
 
-		if childResult.valid {
-			anyBranchValid = true
-
-			continue
-		}
-
-		branchFailed = branchFailed || childResult.failed
-		branchFailureRecords.appendList(&childResult.records.failures, occurrenceTransform{})
-
-		if !childResult.fromCache || childResult.materialized {
-			branchFailures = append(branchFailures, childResult.failures...)
+	for _, childResult := range children {
+		if anyBranchValid {
+			mergeEvaluationRecords(result, childResult)
+		} else {
+			mergeEvaluation(result, childResult)
 		}
 	}
 
-	if anyBranchValid {
-		return
+	if !anyBranchValid {
+		appendFailure(result, makeRuleIdentity(occurrence, oracleRuleAnyOf))
 	}
-
-	result.failed = result.failed || branchFailed
-	ensureEvaluationRecords(result)
-	result.records.failures.appendList(branchFailureRecords, occurrenceTransform{})
-	result.failures = append(result.failures, branchFailures...)
-	appendFailure(result, makeRuleIdentity(occurrence, oracleRuleAnyOf))
 }
 
 // rebaseCompositionOccurrence assigns a composition branch's use site and current instance.

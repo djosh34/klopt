@@ -19,7 +19,7 @@ func TestEvaluateAllOfKeepsLocalSiblingsConjunctiveAndRecordsEveryBranch(t *test
 	require.NoError(t, result.err)
 	require.False(t, result.valid)
 	require.Equal(t, [][]bool{{false, true}}, compositionTruthVectorsForTest(result.allOf))
-	require.Empty(t, result.anyOf)
+	require.True(t, evaluationQueryEmpty(result.anyOf))
 	require.Equal(
 		t,
 		[]string{"type", "minLength", "type", "pattern", "type", "pattern"},
@@ -84,7 +84,7 @@ func TestEvaluateAnyOfRecordsCompleteTruthMaskAndOnlyFailsWhenAllBranchesFail(t 
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
 			require.Equal(t, test.truth, compositionTruthVectorsForTest(result.anyOf))
-			require.Empty(t, result.allOf)
+			require.True(t, evaluationQueryEmpty(result.allOf))
 			require.Equal(
 				t,
 				[]string{"type", "type", "pattern", "type", "pattern"},
@@ -110,7 +110,7 @@ func TestEvaluatePatternOnlyAnyOfBranchIsTrueWhenPatternIsInapplicable(t *testin
 	require.Equal(t, [][]bool{{true, false}}, compositionTruthVectorsForTest(result.anyOf))
 	require.Equal(t, []string{"type", "type", "type"}, applicableRules(result.applicable))
 	require.Equal(t, []string{"number", "number"}, observedLevels(result.observed))
-	require.Empty(t, result.failures)
+	require.True(t, evaluationQueryEmpty(result.failures))
 }
 
 func TestEvaluateNestedCompositionPreservesBranchOrderAndIdentity(t *testing.T) {
@@ -139,14 +139,20 @@ func TestEvaluateNestedCompositionPreservesBranchOrderAndIdentity(t *testing.T) 
 	)
 }
 
-func compositionTruthVectorsForTest(values []compositionTruth) [][]bool {
-	if len(values) == 0 {
-		return nil
-	}
+func compositionTruthVectorsForTest(values any) [][]bool {
+	var result [][]bool
 
-	result := make([][]bool, 0, len(values))
-	for _, value := range values {
-		result = append(result, value.branches)
+	switch truths := values.(type) {
+	case []compositionTruth:
+		for _, truth := range truths {
+			result = append(result, truth.branches)
+		}
+	case evaluationQuery[compositionTruth]:
+		for truth := range truths {
+			result = append(result, truth.branches)
+		}
+	default:
+		panic("unsupported composition truth collection")
 	}
 
 	return result

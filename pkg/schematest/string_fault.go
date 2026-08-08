@@ -311,36 +311,30 @@ func stringFaultObjectiveKind(rule string) (stringSearchObjectiveKind, bool) {
 	}
 }
 
-func exactFailureClosure(actual, expected []failureIdentity) (bool, error) {
-	canonicalActual, err := canonicalFailureClosure(actual)
-	if err != nil {
-		return false, err
-	}
-
+func exactFailureClosure(actual evaluationQuery[failureIdentity], expected []failureIdentity) (bool, error) {
 	canonicalExpected, err := canonicalFailureClosure(expected)
 	if err != nil {
 		return false, err
 	}
 
-	if len(canonicalActual) != len(canonicalExpected) {
+	if evaluationQueryCount(actual) != len(canonicalExpected) {
 		return false, nil
 	}
 
-	matched := make([]bool, len(canonicalActual))
+	for actualFailure := range actual {
+		if _, compareErr := compareRuleIdentities(actualFailure, actualFailure); compareErr != nil {
+			return false, compareErr
+		}
 
-	for _, expectedFailure := range canonicalExpected {
 		found := false
 
-		for index, actualFailure := range canonicalActual {
-			if matched[index] || actualFailure.rule != expectedFailure.rule ||
-				!ruleOccurrenceMatches(actualFailure.occurrence, expectedFailure.occurrence) {
-				continue
+		for _, expectedFailure := range canonicalExpected {
+			if actualFailure.rule == expectedFailure.rule &&
+				ruleOccurrenceMatches(actualFailure.occurrence, expectedFailure.occurrence) {
+				found = true
+
+				break
 			}
-
-			matched[index] = true
-			found = true
-
-			break
 		}
 
 		if !found {

@@ -192,7 +192,8 @@ func TestWalkScalarFindsDirectedExactNonmultiple(t *testing.T) {
 				return false, result.err
 			}
 
-			if len(result.failures) != 1 || result.failures[0].rule != oracleRuleMultipleOf {
+			failure, hasFailure := evaluationQueryAt(result.failures, 0)
+			if !hasFailure || evaluationQueryCount(result.failures) != 1 || failure.rule != oracleRuleMultipleOf {
 				return false, nil
 			}
 

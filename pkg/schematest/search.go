@@ -284,8 +284,8 @@ func targetRowMatches(result evaluation, target validTarget, value *jsonValue) b
 }
 
 // levelWasObserved matches wildcard instance templates to concrete array members.
-func levelWasObserved(observed []levelIdentity, expected levelIdentity) bool {
-	for _, candidate := range observed {
+func levelWasObserved(observed evaluationQuery[levelIdentity], expected levelIdentity) bool {
+	for candidate := range observed {
 		if candidate.level != expected.level || !ruleOccurrenceMatches(candidate.occurrence, expected.occurrence) {
 			continue
 		}
@@ -304,7 +304,7 @@ func levelWasObserved(observed []levelIdentity, expected levelIdentity) bool {
 //
 //nolint:cyclop // allOf and anyOf truth vectors have deliberately separate locked levels.
 func compositionLevelWasObserved(result evaluation, expected levelIdentity) bool {
-	var truths []compositionTruth
+	var truths evaluationQuery[compositionTruth]
 
 	switch expected.rule {
 	case oracleRuleAllOf:
@@ -315,7 +315,7 @@ func compositionLevelWasObserved(result evaluation, expected levelIdentity) bool
 		return false
 	}
 
-	for _, truth := range truths {
+	for truth := range truths {
 		if !ruleOccurrenceMatches(truth.occurrence, expected.occurrence) {
 			continue
 		}
@@ -432,7 +432,7 @@ func rowValuePathPresentTokens(value *jsonValue, tokens []string) bool {
 }
 
 // kindWasObserved checks the clean type observation for one pinned occurrence.
-func kindWasObserved(observed []levelIdentity, occurrence schemaOccurrence, kind jsonKind) bool {
+func kindWasObserved(observed evaluationQuery[levelIdentity], occurrence schemaOccurrence, kind jsonKind) bool {
 	return levelWasObserved(observed, levelIdentity{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleType),
 		level:        jsonKindName(kind),
@@ -441,7 +441,7 @@ func kindWasObserved(observed []levelIdentity, occurrence schemaOccurrence, kind
 
 // branchTruthWasObserved checks one exact allOf or anyOf truth bit.
 func branchTruthWasObserved(result evaluation, pin applicabilityPin) bool {
-	var truths []compositionTruth
+	var truths evaluationQuery[compositionTruth]
 	if pin.composition == "allOf" {
 		truths = result.allOf
 	} else {
@@ -453,7 +453,7 @@ func branchTruthWasObserved(result evaluation, pin applicabilityPin) bool {
 		"/"+pin.composition,
 	)
 
-	for _, truth := range truths {
+	for truth := range truths {
 		if truth.rule != pin.composition || truth.occurrence.usePointer != parentUsePointer ||
 			!instanceTemplateMatches(pin.occurrence.instanceTemplate, truth.occurrence.instanceTemplate) {
 			continue

@@ -615,30 +615,30 @@ func TestCompositionCoverageScansAllWildcardTruthVectors(t *testing.T) {
 		planLevelMask+"2",
 	)
 
-	result := evaluation{anyOf: []compositionTruth{
-		{
-			ruleIdentity: makeRuleIdentity(
-				schemaOccurrence{
-					usePointer:       "#/schema",
-					targetPointer:    "#/schema",
-					instanceTemplate: "#/0",
-				},
-				oracleRuleAnyOf,
-			),
-			branches: []bool{true, false},
-		},
-		{
-			ruleIdentity: makeRuleIdentity(
-				schemaOccurrence{
-					usePointer:       "#/schema",
-					targetPointer:    "#/schema",
-					instanceTemplate: "#/1",
-				},
-				oracleRuleAnyOf,
-			),
-			branches: []bool{false, true},
-		},
-	}}
+	result := evaluation{records: newEvaluationRecords()}
+	appendAnyOfTruth(&result, compositionTruth{
+		ruleIdentity: makeRuleIdentity(
+			schemaOccurrence{
+				usePointer:       "#/schema",
+				targetPointer:    "#/schema",
+				instanceTemplate: "#/0",
+			},
+			oracleRuleAnyOf,
+		),
+		branches: []bool{true, false},
+	})
+	appendAnyOfTruth(&result, compositionTruth{
+		ruleIdentity: makeRuleIdentity(
+			schemaOccurrence{
+				usePointer:       "#/schema",
+				targetPointer:    "#/schema",
+				instanceTemplate: "#/1",
+			},
+			oracleRuleAnyOf,
+		),
+		branches: []bool{false, true},
+	})
+	attachEvaluationQueries(&result)
 
 	require.True(t, compositionLevelWasObserved(result, expected))
 }

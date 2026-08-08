@@ -1578,8 +1578,8 @@ func copyObjectWithMember(witness *jsonValue, name string, value *jsonValue) *js
 }
 
 // containsFailureRuleAtUse matches a wildcard planner identity to one concrete member.
-func containsFailureRuleAtUse(failures []failureIdentity, wanted failureIdentity) bool {
-	for _, failure := range failures {
+func containsFailureRuleAtUse(failures evaluationQuery[failureIdentity], wanted failureIdentity) bool {
+	for failure := range failures {
 		if failure.rule == wanted.rule && failure.occurrence.usePointer == wanted.occurrence.usePointer {
 			return true
 		}
@@ -1731,8 +1731,8 @@ func schemaNodeWithoutLocalRule(node *schemaNode, rule string) *schemaNode {
 }
 
 // containsFailureIdentity reports whether one evaluation contains a failure identity.
-func containsFailureIdentity(failures []failureIdentity, wanted failureIdentity) bool {
-	for _, failure := range failures {
+func containsFailureIdentity(failures evaluationQuery[failureIdentity], wanted failureIdentity) bool {
+	for failure := range failures {
 		if failure == wanted {
 			return true
 		}
@@ -2507,7 +2507,7 @@ func realizableAnyOfMasksForKind(node *schemaNode, kind jsonKind) ([]*big.Int, e
 // anyOfEvaluationMask extracts one parent anyOf truth vector as a low-bit mask.
 func anyOfEvaluationMask(result evaluation, occurrence schemaOccurrence) (*big.Int, bool) {
 	identity := makeRuleIdentity(occurrence, oracleRuleAnyOf)
-	for _, truth := range result.anyOf {
+	for truth := range result.anyOf {
 		if truth.ruleIdentity != identity {
 			continue
 		}

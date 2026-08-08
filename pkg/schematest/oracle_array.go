@@ -107,32 +107,15 @@ func evaluateArrayCountRule(
 
 // mergeEvaluationRecords appends non-failure child records in traversal order.
 func mergeEvaluationRecords(result *evaluation, child evaluation) {
-	ensureEvaluationRecords(result)
 	result.records.appendNonFailures(child.records)
-
-	if child.fromCache && !child.materialized {
-		return
-	}
-
-	result.applicable = append(result.applicable, child.applicable...)
-	result.observed = append(result.observed, child.observed...)
-	result.allOf = append(result.allOf, child.allOf...)
-	result.anyOf = append(result.anyOf, child.anyOf...)
 }
 
 // mergeEvaluation appends a child evaluation in traversal order.
 func mergeEvaluation(result *evaluation, child evaluation) {
-	mergeEvaluationRecords(result, child)
-	result.records.failures.appendList(&child.records.failures, occurrenceTransform{})
+	result.records.appendRecords(child.records)
 	result.failed = result.failed || child.failed
 
 	if child.err != nil {
 		result.err = child.err
 	}
-
-	if child.fromCache && !child.materialized {
-		return
-	}
-
-	result.failures = append(result.failures, child.failures...)
 }

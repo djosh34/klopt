@@ -74,14 +74,20 @@ func TestEvaluateEveryStringRuleKeepsItsOwnVerdictAndIdentity(t *testing.T) {
 
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
-	require.Equal(t, first, second)
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
 	require.False(t, first.valid)
 	require.Equal(t, []string{"type", "minLength", "maxLength", "pattern", "format"}, applicableRules(first.applicable))
 	require.Equal(t, []string{"string", "valid"}, observedLevels(first.observed))
 	require.Equal(t, []string{"minLength", "pattern", "format"}, failureRules(first.failures))
-	require.Equal(t, first.applicable[1].String(), first.failures[0].String())
-	require.Equal(t, first.applicable[3].String(), first.failures[1].String())
-	require.Equal(t, first.applicable[4].String(), first.failures[2].String())
+
+	for _, pair := range [][2]int{{1, 0}, {3, 1}, {4, 2}} {
+		applicable, applicableFound := evaluationQueryAt(first.applicable, pair[0])
+		failure, failureFound := evaluationQueryAt(first.failures, pair[1])
+
+		require.True(t, applicableFound)
+		require.True(t, failureFound)
+		require.Equal(t, applicable.String(), failure.String())
+	}
 }
 
 func TestEvaluatePatternsRemainIndependentWhenOneFails(t *testing.T) {
@@ -156,7 +162,7 @@ func TestEvaluateStringFormatsUseNativeApplicabilityAndBoundaries(t *testing.T) 
 
 					if valueTest.valid {
 						require.Equal(t, []string{"string", "valid"}, observedLevels(result.observed))
-						require.Empty(t, result.failures)
+						require.True(t, evaluationQueryEmpty(result.failures))
 					} else {
 						require.Equal(t, []string{"string"}, observedLevels(result.observed))
 						require.Equal(t, []string{"format"}, failureRules(result.failures))
@@ -290,7 +296,7 @@ func TestEvaluatePasswordFormatIsInert(t *testing.T) {
 		require.True(t, result.valid)
 		require.Equal(t, []string{"type"}, applicableRules(result.applicable))
 		require.Equal(t, []string{"string"}, observedLevels(result.observed))
-		require.Empty(t, result.failures)
+		require.True(t, evaluationQueryEmpty(result.failures))
 	}
 }
 
@@ -307,6 +313,9 @@ func TestEvaluateStringRuleTablesAreDeterministic(t *testing.T) {
 		second = append(second, evaluateSchemaValue(t, schema, value))
 	}
 
-	require.Equal(t, first, second)
+	for index := range first {
+		require.Equal(t, evaluationRecordStrings(first[index].records), evaluationRecordStrings(second[index].records))
+	}
+
 	require.Equal(t, "minLength,format", strings.Join(failureRules(first[0].failures), ","))
 }

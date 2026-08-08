@@ -101,13 +101,11 @@ func TestEvaluateExpandedYAMLCompositionDeterministically(t *testing.T) {
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
 	require.True(t, first.valid)
-	require.Equal(t, first, second)
-	require.Len(t, first.applicable, (1<<(depth+1))-1)
-	require.Len(t, first.allOf, (1<<depth)-1)
-	require.Equal(t, len(first.applicable), first.records.applicable.count)
-	require.Equal(t, len(first.allOf), first.records.allOf.count)
-	require.Empty(t, first.anyOf)
-	require.Empty(t, first.failures)
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
+	require.Equal(t, (1<<(depth+1))-1, evaluationQueryCount(first.applicable))
+	require.Equal(t, (1<<depth)-1, evaluationQueryCount(first.allOf))
+	require.True(t, evaluationQueryEmpty(first.anyOf))
+	require.True(t, evaluationQueryEmpty(first.failures))
 
 	expectedTruth := make([][]bool, (1<<depth)-1)
 	for index := range expectedTruth {
@@ -116,13 +114,13 @@ func TestEvaluateExpandedYAMLCompositionDeterministically(t *testing.T) {
 
 	require.Equal(t, expectedTruth, compositionTruthVectorsForTest(first.allOf))
 
-	firstTruth, ok := first.records.allOf.at(0)
+	firstTruth, ok := evaluationQueryAt(first.allOf, 0)
 	require.True(t, ok)
-	secondTruth, ok := second.records.allOf.at(0)
+	secondTruth, ok := evaluationQueryAt(second.allOf, 0)
 	require.True(t, ok)
 	require.Equal(t, firstTruth, secondTruth)
 
-	lastTruth, ok := first.records.allOf.at(first.records.allOf.count - 1)
+	lastTruth, ok := evaluationQueryAt(first.allOf, evaluationQueryCount(first.allOf)-1)
 	require.True(t, ok)
 	require.Equal(
 		t,
@@ -145,12 +143,12 @@ func TestEvaluateExpandedYAMLCompositionDeterministically(t *testing.T) {
 	require.NoError(t, firstInvalid.err)
 	require.NoError(t, secondInvalid.err)
 	require.False(t, firstInvalid.valid)
-	require.Equal(t, firstInvalid, secondInvalid)
-	require.Equal(t, 1<<depth, firstInvalid.records.failures.count)
+	require.Equal(t, evaluationRecordStrings(firstInvalid.records), evaluationRecordStrings(secondInvalid.records))
+	require.Equal(t, 1<<depth, evaluationQueryCount(firstInvalid.failures))
 
-	firstFailure, ok := firstInvalid.records.failures.at(0)
+	firstFailure, ok := evaluationQueryAt(firstInvalid.failures, 0)
 	require.True(t, ok)
-	lastFailure, ok := firstInvalid.records.failures.at(firstInvalid.records.failures.count - 1)
+	lastFailure, ok := evaluationQueryAt(firstInvalid.failures, evaluationQueryCount(firstInvalid.failures)-1)
 	require.True(t, ok)
 	require.Equal(
 		t,
@@ -186,12 +184,12 @@ func TestEvaluateExpandedYAMLCompositionRejectingLeafRemainsInvalid(t *testing.T
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
 	require.False(t, first.valid)
-	require.Equal(t, first, second)
-	require.Len(t, first.applicable, (1<<(depth+1))-1)
-	require.Len(t, first.allOf, (1<<depth)-1)
-	require.NotZero(t, first.records.failures.count)
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
+	require.Equal(t, (1<<(depth+1))-1, evaluationQueryCount(first.applicable))
+	require.Equal(t, (1<<depth)-1, evaluationQueryCount(first.allOf))
+	require.False(t, evaluationQueryEmpty(first.failures))
 
-	failure, ok := first.records.failures.at(0)
+	failure, ok := evaluationQueryAt(first.failures, 0)
 	require.True(t, ok)
 	require.Equal(
 		t,
@@ -218,13 +216,9 @@ func sharedYAMLCompositionDocument(depth int) string {
 `, depth)
 }
 
-func compositionIdentityStrings(values []compositionTruth) []string {
-	if len(values) == 0 {
-		return nil
-	}
-
-	result := make([]string, 0, len(values))
-	for _, value := range values {
+func compositionIdentityStrings(values evaluationQuery[compositionTruth]) []string {
+	var result []string
+	for value := range values {
 		result = append(result, value.String())
 	}
 
