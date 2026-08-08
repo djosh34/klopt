@@ -388,7 +388,7 @@ func TestMakePlanSemanticEnumDedupeKeepsFirstAuthoredMembers(t *testing.T) {
 		require.NoError(t, result.err)
 
 		planTarget := findValidTarget(t, plan, "|enum|level:"+test.level)
-		require.Contains(t, levelIdentityStrings(result.observed), planTarget.expected.String())
+		require.Contains(t, levelIdentityStrings(result.observedRecords()), planTarget.expected.String())
 	}
 }
 

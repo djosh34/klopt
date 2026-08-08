@@ -3,6 +3,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"math/big"
 	"sort"
 	"strings"
@@ -218,6 +219,7 @@ func (builder *planBuilder) compileAnyOfChildren(
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -329,6 +331,7 @@ func (builder *planBuilder) compileChildren(
 	if shape.items != nil {
 		itemOccurrence := rebasePlanOccurrence(
 			shape.items,
+			occurrence,
 			occurrence.usePointer+"/items",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
 		)
@@ -345,6 +348,7 @@ func (builder *planBuilder) compileChildren(
 
 		propertyOccurrence := rebasePlanOccurrence(
 			property,
+			occurrence,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)
@@ -359,6 +363,7 @@ func (builder *planBuilder) compileChildren(
 	if shape.additionalProperties != nil {
 		additionalOccurrence := rebasePlanOccurrence(
 			shape.additionalProperties,
+			occurrence,
 			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
 		)
@@ -373,6 +378,7 @@ func (builder *planBuilder) compileChildren(
 	for index, child := range shape.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -534,7 +540,7 @@ func typeFaultHasWitness(node *schemaNode) (bool, error) {
 	}
 
 	for _, member := range node.enum {
-		matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+		matches, err := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 		if err != nil {
 			return false, err
 		}
@@ -548,8 +554,6 @@ func typeFaultHasWitness(node *schemaNode) (bool, error) {
 }
 
 // compileEnumRules compiles semantic enum members and the enum fault.
-//
-//nolint:cyclop // Enum validity and faultability are separate canonical decisions.
 func (builder *planBuilder) compileEnumRules(
 	result *compiledNodePlan,
 	node *schemaNode,
@@ -561,15 +565,10 @@ func (builder *planBuilder) compileEnumRules(
 		return nil
 	}
 
-	members, err := canonicalPlanEnum(node.enum)
-	if err != nil {
-		return fmt.Errorf("%s/enum: %w", occurrence.targetPointer, err)
-	}
-
 	identity := makeRuleIdentity(occurrence, oracleRuleEnum)
 
-	for index, member := range members {
-		matches, matchErr := valueMatchesNodeKind(member, node.kind, node.nullable)
+	for _, member := range node.enum {
+		matches, matchErr := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 		if matchErr != nil {
 			return matchErr
 		}
@@ -578,7 +577,7 @@ func (builder *planBuilder) compileEnumRules(
 			continue
 		}
 
-		pins, realizable, pinErr := builder.validPinsForKind(validInherited, node, occurrence, member.kind)
+		pins, realizable, pinErr := builder.validPinsForKind(validInherited, node, occurrence, member.value.kind)
 		if pinErr != nil {
 			return pinErr
 		}
@@ -587,12 +586,7 @@ func (builder *planBuilder) compileEnumRules(
 			continue
 		}
 
-		authoredIndex := index
-		if index < len(node.enumIndices) {
-			authoredIndex = node.enumIndices[index]
-		}
-
-		builder.addValid(result, identity, "member:"+itoa(authoredIndex), pins)
+		builder.addValid(result, identity, "member:"+itoa(member.authoredIndex), pins)
 	}
 
 	pins, realizable, pinErr := builder.faultPinsForEnum(faultInherited, node, occurrence)
@@ -793,7 +787,7 @@ func (builder *planBuilder) compileObjectRules(
 		}
 	}
 
-	for _, name := range sortedStrings(node.required) {
+	for _, name := range node.required {
 		identity := makeRuleIdentity(
 			appendObjectMemberOccurrence(occurrence, name),
 			oracleRuleRequired,
@@ -976,6 +970,7 @@ func requiredPresenceOccurrence(node *schemaNode, occurrence schemaOccurrence, n
 	if property, exists := node.properties[name]; exists {
 		return rebasePlanOccurrence(
 			property,
+			occurrence,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)
@@ -1056,6 +1051,7 @@ func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]
 
 	itemOccurrence := rebasePlanOccurrence(
 		node.items,
+		occurrence,
 		occurrence.usePointer+"/items",
 		appendInstanceToken(occurrence.instanceTemplate, "*"),
 	)
@@ -1125,6 +1121,7 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 
 		additionalOccurrence := rebasePlanOccurrence(
 			shape.additionalProperties,
+			occurrence,
 			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
 		)
@@ -1408,7 +1405,7 @@ func anyOfMaskForTypeFault(node *schemaNode, occurrence schemaOccurrence) (*big.
 			return nil, false, err
 		}
 
-		for _, witness := range witnesses {
+		for witness := range witnesses.values() {
 			base := evaluateNode(withoutType, witness, occurrence)
 			if base.err != nil {
 				return nil, false, fmt.Errorf("evaluate type-fault witness: %w", base.err)
@@ -1423,7 +1420,7 @@ func anyOfMaskForTypeFault(node *schemaNode, occurrence schemaOccurrence) (*big.
 				return nil, false, fmt.Errorf("evaluate type-fault candidate: %w", actual.err)
 			}
 
-			if !containsFailureIdentity(actual.failures, identity) {
+			if !containsFailureIdentity(actual.failureRecords(), identity) {
 				continue
 			}
 
@@ -1466,7 +1463,7 @@ func anyOfMaskForFaultRule(
 	}
 
 	identity := makeRuleIdentity(occurrence, rule)
-	for _, witness := range witnesses {
+	for witness := range witnesses.values() {
 		base := evaluateNode(withoutRule, witness, occurrence)
 		if base.err != nil {
 			return nil, false, fmt.Errorf("evaluate %s-fault witness: %w", rule, base.err)
@@ -1481,7 +1478,7 @@ func anyOfMaskForFaultRule(
 			return nil, false, fmt.Errorf("evaluate %s-fault candidate: %w", rule, actual.err)
 		}
 
-		if !containsFailureIdentity(actual.failures, identity) {
+		if !containsFailureIdentity(actual.failureRecords(), identity) {
 			continue
 		}
 
@@ -1506,7 +1503,7 @@ func anyOfMaskForAdditionalFault(node *schemaNode, occurrence schemaOccurrence) 
 	extra := additionalPropertyWitnessName(node)
 	identity := makeRuleIdentity(appendObjectMemberOccurrence(occurrence, extra), oracleRuleAdditionalProperties)
 
-	for _, witness := range witnesses {
+	for witness := range witnesses.values() {
 		if witness == nil || witness.kind != jsonObject {
 			continue
 		}
@@ -1527,7 +1524,7 @@ func anyOfMaskForAdditionalFault(node *schemaNode, occurrence schemaOccurrence) 
 			return nil, false, fmt.Errorf("evaluate additional-property fault candidate: %w", actual.err)
 		}
 
-		if !containsFailureRuleAtUse(actual.failures, identity) {
+		if !containsFailureRuleAtUse(actual.failureRecords(), identity) {
 			continue
 		}
 
@@ -1578,8 +1575,8 @@ func copyObjectWithMember(witness *jsonValue, name string, value *jsonValue) *js
 }
 
 // containsFailureRuleAtUse matches a wildcard planner identity to one concrete member.
-func containsFailureRuleAtUse(failures []failureIdentity, wanted failureIdentity) bool {
-	for _, failure := range failures {
+func containsFailureRuleAtUse(failures iter.Seq[failureIdentity], wanted failureIdentity) bool {
+	for failure := range failures {
 		if failure.rule == wanted.rule && failure.occurrence.usePointer == wanted.occurrence.usePointer {
 			return true
 		}
@@ -1599,7 +1596,7 @@ func anyOfMaskForRequiredFault(node *schemaNode, occurrence schemaOccurrence, na
 
 	identity := makeRuleIdentity(appendObjectMemberOccurrence(occurrence, name), oracleRuleRequired)
 
-	for _, witness := range witnesses {
+	for witness := range witnesses.values() {
 		candidate := populateRequiredFaultWitness(witness, node, name)
 		if candidate == nil {
 			continue
@@ -1619,7 +1616,7 @@ func anyOfMaskForRequiredFault(node *schemaNode, occurrence schemaOccurrence, na
 			return nil, false, fmt.Errorf("evaluate required-fault candidate: %w", actual.err)
 		}
 
-		if !containsFailureIdentity(actual.failures, identity) {
+		if !containsFailureIdentity(actual.failureRecords(), identity) {
 			continue
 		}
 
@@ -1663,7 +1660,7 @@ func populateRequiredFaultWitness(witness *jsonValue, node *schemaNode, omitted 
 func requiredFaultSiblingPins(node *schemaNode, occurrence schemaOccurrence, omitted string) []applicabilityPin {
 	pins := make([]applicabilityPin, 0, len(node.required))
 
-	for _, name := range sortedStrings(node.required) {
+	for _, name := range node.required {
 		if name == omitted {
 			continue
 		}
@@ -1700,7 +1697,6 @@ func schemaNodeWithoutLocalRule(node *schemaNode, rule string) *schemaNode {
 		shape.nullable = false
 	case oracleRuleEnum:
 		shape.enum = nil
-		shape.enumIndices = nil
 	case oracleRuleMinimum, oracleRuleExclusiveMinimum:
 		shape.minimum = nil
 		shape.exclusiveMinimum = false
@@ -1731,8 +1727,8 @@ func schemaNodeWithoutLocalRule(node *schemaNode, rule string) *schemaNode {
 }
 
 // containsFailureIdentity reports whether one evaluation contains a failure identity.
-func containsFailureIdentity(failures []failureIdentity, wanted failureIdentity) bool {
-	for _, failure := range failures {
+func containsFailureIdentity(failures iter.Seq[failureIdentity], wanted failureIdentity) bool {
+	for failure := range failures {
 		if failure == wanted {
 			return true
 		}
@@ -1820,8 +1816,8 @@ func orderedTypeKinds(node *schemaNode) []jsonKind {
 func firstSiblingCompatibleKind(node *schemaNode, allowed map[jsonKind]bool) (jsonKind, bool) {
 	if node.enum != nil {
 		for _, member := range node.enum {
-			if member != nil && member.kind != jsonNull && allowed[member.kind] {
-				return member.kind, true
+			if member.value != nil && member.value.kind != jsonNull && allowed[member.value.kind] {
+				return member.value.kind, true
 			}
 		}
 	}
@@ -1880,16 +1876,16 @@ func branchEnumAcceptsKind(node *schemaNode, kind jsonKind) (bool, error) {
 	}
 
 	for _, member := range node.enum {
-		if member == nil {
+		if member.value == nil {
 			return false, errors.New("JSON enum member is nil")
 		}
 
-		matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+		matches, err := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 		if err != nil {
 			return false, err
 		}
 
-		if matches && member.kind == kind {
+		if matches && member.value.kind == kind {
 			return true, nil
 		}
 	}
@@ -2106,20 +2102,20 @@ func branchCanAcceptInteger(node *schemaNode, visiting map[*schemaNode]bool) (bo
 		matched := false
 
 		for _, member := range node.enum {
-			if member == nil {
+			if member.value == nil {
 				return false, errors.New("JSON enum member is nil")
 			}
 
-			if member.kind != jsonNumber {
+			if member.value.kind != jsonNumber {
 				continue
 			}
 
-			integer, err := member.number.isInteger()
+			integer, err := member.value.number.isInteger()
 			if err != nil {
 				return false, err
 			}
 
-			matches, err := valueMatchesNodeKind(member, node.kind, node.nullable)
+			matches, err := valueMatchesNodeKind(member.value, node.kind, node.nullable)
 			if err != nil {
 				return false, err
 			}
@@ -2278,7 +2274,7 @@ func anyOfMaskForEnumFaultWithKind(node *schemaNode) (*big.Int, jsonKind, bool, 
 			return nil, jsonNull, false, err
 		}
 
-		for _, witness := range witnesses {
+		for _, witness := range witnesses.generated {
 			matches, err := enumContainsValue(node, witness)
 			if err != nil {
 				return nil, jsonNull, false, err
@@ -2318,7 +2314,7 @@ func enumFaultKind(node *schemaNode) (jsonKind, bool, error) {
 			return jsonNull, false, err
 		}
 
-		for _, witness := range witnesses {
+		for _, witness := range witnesses.generated {
 			matches, err := enumContainsValue(node, witness)
 			if err != nil {
 				return jsonNull, false, err
@@ -2342,7 +2338,7 @@ func enumFaultKind(node *schemaNode) (jsonKind, bool, error) {
 				return jsonNull, false, fmt.Errorf("evaluate enum-fault candidate: %w", actual.err)
 			}
 
-			if containsFailureIdentity(actual.failures, identity) {
+			if containsFailureIdentity(actual.failureRecords(), identity) {
 				return kind, true, nil
 			}
 		}
@@ -2352,10 +2348,10 @@ func enumFaultKind(node *schemaNode) (jsonKind, bool, error) {
 }
 
 // canonicalEnumFaultWitnesses adds one deterministic string outside the authored enum.
-func canonicalEnumFaultWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
+func canonicalEnumFaultWitnesses(node *schemaNode, kind jsonKind) (canonicalWitnesses, error) {
 	witnesses, err := canonicalAnyOfWitnesses(node, kind)
 	if err != nil {
-		return nil, err
+		return canonicalWitnesses{}, err
 	}
 
 	if kind != jsonString {
@@ -2373,11 +2369,13 @@ func canonicalEnumFaultWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue,
 
 		contains, err := enumContainsValue(node, candidate)
 		if err != nil {
-			return nil, err
+			return canonicalWitnesses{}, err
 		}
 
 		if !contains {
-			return appendUniqueJSONWitness(witnesses, candidate)
+			err = witnesses.appendGenerated(candidate)
+
+			return witnesses, err
 		}
 	}
 }
@@ -2402,7 +2400,6 @@ func enumFaultKinds(node *schemaNode) []jsonKind {
 func schemaNodeWithoutEnum(node *schemaNode) *schemaNode {
 	shape := *node.schemaShape
 	shape.enum = nil
-	shape.enumIndices = nil
 
 	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}
 }
@@ -2410,7 +2407,7 @@ func schemaNodeWithoutEnum(node *schemaNode) *schemaNode {
 // enumContainsValue reports whether one value is semantically listed by an enum.
 func enumContainsValue(node *schemaNode, value *jsonValue) (bool, error) {
 	for _, member := range node.enum {
-		equal, err := jsonSemanticEqual(member, value)
+		equal, err := jsonValidatedSemanticEqual(member.value, value)
 		if err != nil {
 			return false, err
 		}
@@ -2468,7 +2465,7 @@ func realizableAnyOfMasksForKind(node *schemaNode, kind jsonKind) ([]*big.Int, e
 
 	masks := make([]*big.Int, 0)
 
-	for _, witness := range witnesses {
+	for witness := range witnesses.values() {
 		result := evaluateNode(node, witness, node.occurrence)
 		if result.err != nil {
 			return nil, fmt.Errorf("evaluate anyOf %s witness: %w", jsonKindName(kind), result.err)
@@ -2507,7 +2504,7 @@ func realizableAnyOfMasksForKind(node *schemaNode, kind jsonKind) ([]*big.Int, e
 // anyOfEvaluationMask extracts one parent anyOf truth vector as a low-bit mask.
 func anyOfEvaluationMask(result evaluation, occurrence schemaOccurrence) (*big.Int, bool) {
 	identity := makeRuleIdentity(occurrence, oracleRuleAnyOf)
-	for _, truth := range result.anyOf {
+	for truth := range result.compositionRecords(oracleRuleAnyOf) {
 		if truth.ruleIdentity != identity {
 			continue
 		}
@@ -2537,28 +2534,64 @@ func appendUniqueAnyOfMask(masks []*big.Int, candidate *big.Int) []*big.Int {
 	return append(masks, candidate)
 }
 
+// canonicalWitnesses keeps admitted values separate from deduplicated generated candidates.
+type canonicalWitnesses struct {
+	admitted  []*jsonValue
+	generated []*jsonValue
+}
+
+// values iterates admitted members followed by generated candidates.
+func (witnesses canonicalWitnesses) values() iter.Seq[*jsonValue] {
+	return func(yield func(*jsonValue) bool) {
+		for _, witness := range witnesses.admitted {
+			if !yield(witness) {
+				return
+			}
+		}
+
+		for _, witness := range witnesses.generated {
+			if !yield(witness) {
+				return
+			}
+		}
+	}
+}
+
+// appendGenerated deduplicates only within generated candidates.
+func (witnesses *canonicalWitnesses) appendGenerated(candidate *jsonValue) error {
+	var err error
+
+	witnesses.generated, err = appendUniqueJSONWitness(witnesses.generated, candidate)
+
+	return err
+}
+
 // canonicalAnyOfWitnesses returns authored and simple canonical values for one kind.
-func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
-	witnesses := make([]*jsonValue, 0)
-	if err := collectAnyOfWitnesses(node, kind, make(map[*schemaNode]bool), &witnesses); err != nil {
-		return nil, err
+func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) (canonicalWitnesses, error) {
+	admitted := make([]*jsonValue, 0)
+
+	generated := make([]*jsonValue, 0)
+	if err := collectAnyOfWitnesses(
+		node, kind, make(map[*schemaNode]bool), &admitted, &generated,
+	); err != nil {
+		return canonicalWitnesses{}, err
 	}
 
 	canonical, err := canonicalKindWitnesses(kind)
 	if err != nil {
-		return nil, err
+		return canonicalWitnesses{}, err
 	}
 
 	for _, witness := range canonical {
 		var appendErr error
 
-		witnesses, appendErr = appendUniqueJSONWitness(witnesses, witness)
+		generated, appendErr = appendUniqueJSONWitness(generated, witness)
 		if appendErr != nil {
-			return nil, appendErr
+			return canonicalWitnesses{}, appendErr
 		}
 	}
 
-	return witnesses, nil
+	return canonicalWitnesses{admitted: admitted, generated: generated}, nil
 }
 
 // collectAnyOfWitnesses collects values authored by the parent or its compositions.
@@ -2568,7 +2601,7 @@ func collectAnyOfWitnesses(
 	node *schemaNode,
 	kind jsonKind,
 	visiting map[*schemaNode]bool,
-	witnesses *[]*jsonValue,
+	admitted, generated *[]*jsonValue,
 ) error {
 	if node == nil || node.schemaShape == nil {
 		return errors.New("anyOf branch has no shape")
@@ -2582,24 +2615,15 @@ func collectAnyOfWitnesses(
 	defer delete(visiting, node)
 
 	for _, member := range node.enum {
-		if member == nil {
-			return errors.New("JSON enum member is nil")
-		}
-
-		if member.kind == kind {
-			var err error
-
-			*witnesses, err = appendUniqueJSONWitness(*witnesses, member)
-			if err != nil {
-				return err
-			}
+		if member.value.kind == kind {
+			*admitted = append(*admitted, member.value)
 		}
 	}
 
 	if node.defaultValue != nil && node.defaultValue.kind == kind {
 		var err error
 
-		*witnesses, err = appendUniqueJSONWitness(*witnesses, node.defaultValue)
+		*generated, err = appendUniqueJSONWitness(*generated, node.defaultValue)
 		if err != nil {
 			return err
 		}
@@ -2612,14 +2636,14 @@ func collectAnyOfWitnesses(
 		}
 
 		for _, witness := range minimumWitnesses {
-			*witnesses, err = appendUniqueJSONWitness(*witnesses, witness)
+			*generated, err = appendUniqueJSONWitness(*generated, witness)
 			if err != nil {
 				return err
 			}
 		}
 
 		if witness, exists := canonicalStringPatternWitness(node.pattern); exists {
-			*witnesses, err = appendUniqueJSONWitness(*witnesses, witness)
+			*generated, err = appendUniqueJSONWitness(*generated, witness)
 			if err != nil {
 				return err
 			}
@@ -2636,7 +2660,7 @@ func collectAnyOfWitnesses(
 
 			var appendErr error
 
-			*witnesses, appendErr = appendUniqueJSONWitness(*witnesses, value)
+			*generated, appendErr = appendUniqueJSONWitness(*generated, value)
 			if appendErr != nil {
 				return appendErr
 			}
@@ -2660,8 +2684,8 @@ func collectAnyOfWitnesses(
 
 			var appendErr error
 
-			*witnesses, appendErr = appendUniqueJSONWitness(
-				*witnesses,
+			*generated, appendErr = appendUniqueJSONWitness(
+				*generated,
 				&jsonValue{kind: jsonNumber, number: candidate},
 			)
 			if appendErr != nil {
@@ -2671,13 +2695,13 @@ func collectAnyOfWitnesses(
 	}
 
 	for _, child := range node.allOf {
-		if err := collectAnyOfWitnesses(child, kind, visiting, witnesses); err != nil {
+		if err := collectAnyOfWitnesses(child, kind, visiting, admitted, generated); err != nil {
 			return err
 		}
 	}
 
 	for _, child := range node.anyOf {
-		if err := collectAnyOfWitnesses(child, kind, visiting, witnesses); err != nil {
+		if err := collectAnyOfWitnesses(child, kind, visiting, admitted, generated); err != nil {
 			return err
 		}
 	}
@@ -2694,11 +2718,11 @@ const (
 
 // appendDirectedBoundWitness adds one exact scalar beyond a numeric bound.
 func appendDirectedBoundWitness(
-	witnesses []*jsonValue,
+	witnesses canonicalWitnesses,
 	node *schemaNode,
 	kind jsonKind,
 	rule string,
-) ([]*jsonValue, error) {
+) (canonicalWitnesses, error) {
 	if node == nil || kind != jsonNumber {
 		return witnesses, nil
 	}
@@ -2725,14 +2749,16 @@ func appendDirectedBoundWitness(
 
 	candidate, exists, err := shiftedExactNumber(bound, delta)
 	if err != nil {
-		return nil, err
+		return canonicalWitnesses{}, err
 	}
 
 	if !exists {
 		return witnesses, nil
 	}
 
-	return appendUniqueJSONWitness(witnesses, &jsonValue{kind: jsonNumber, number: candidate})
+	err = witnesses.appendGenerated(&jsonValue{kind: jsonNumber, number: candidate})
+
+	return witnesses, err
 }
 
 // shiftedExactNumber returns one exact decimal value at an integer offset.
@@ -3079,10 +3105,13 @@ func anyOfMaskPins(occurrence schemaOccurrence, count int, mask *big.Int) []appl
 }
 
 // rebasePlanOccurrence carries a child shape to its use site and instance template.
-func rebasePlanOccurrence(child *schemaNode, usePointer, instanceTemplate string) schemaOccurrence {
-	occurrence := child.occurrence
-	occurrence.usePointer = usePointer
-	occurrence.instanceTemplate = instanceTemplate
+func rebasePlanOccurrence(
+	child *schemaNode,
+	parent schemaOccurrence,
+	usePointer, instanceTemplate string,
+) schemaOccurrence {
+	occurrence := rebaseChildOccurrence(child, parent, usePointer, instanceTemplate)
+	occurrence.structured = nil
 
 	return occurrence
 }
@@ -3169,14 +3198,6 @@ func sortedSchemaPropertyNames(properties map[string]*schemaNode) []string {
 	return names
 }
 
-// sortedStrings returns a copied UTF-8 byte-ordered string list.
-func sortedStrings(values []string) []string {
-	result := append([]string(nil), values...)
-	sort.Strings(result)
-
-	return result
-}
-
 // containsString reports whether a required name is present.
 func containsString(values []string, wanted string) bool {
 	for _, value := range values {
@@ -3186,37 +3207,6 @@ func containsString(values []string, wanted string) bool {
 	}
 
 	return false
-}
-
-// canonicalPlanEnum deduplicates semantic enum values while keeping first-authored order.
-func canonicalPlanEnum(values []*jsonValue) ([]*jsonValue, error) {
-	members := make([]*jsonValue, 0, len(values))
-	for _, candidate := range values {
-		if candidate == nil {
-			return nil, errors.New("JSON enum member is nil")
-		}
-
-		duplicate := false
-
-		for _, existing := range members {
-			equal, err := jsonSemanticEqual(candidate, existing)
-			if err != nil {
-				return nil, err
-			}
-
-			if equal {
-				duplicate = true
-
-				break
-			}
-		}
-
-		if !duplicate {
-			members = append(members, candidate)
-		}
-	}
-
-	return members, nil
 }
 
 // firstCanonicalFault selects the first fault in canonical obligation order.
@@ -3626,7 +3616,7 @@ func faultTargetIsRealizable(node *schemaNode, occurrence schemaOccurrence, targ
 	if target.obligation.rule == oracleRuleType && node.enum != nil && node.kind != schemaAny {
 		expected := schemaNodeJSONKind(node.kind)
 		for _, member := range node.enum {
-			if member != nil && member.kind != expected {
+			if member.value != nil && member.value.kind != expected {
 				return true
 			}
 		}

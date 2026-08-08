@@ -154,8 +154,8 @@ func TestDeepJSONValueOperationsUseHeapBackedTraversal(t *testing.T) {
 	require.Equal(t, strings.Repeat("[", depth)+"1"+strings.Repeat("]", depth), string(encoded))
 }
 
-// TestYAMLAliasesExpandIntoIndependentJSONOccurrences proves per-occurrence tree ownership.
-func TestYAMLAliasesExpandIntoIndependentJSONOccurrences(t *testing.T) {
+// TestYAMLAliasesPreserveSharedJSONIdentity proves aliases remain a compact DAG.
+func TestYAMLAliasesPreserveSharedJSONIdentity(t *testing.T) {
 	t.Parallel()
 
 	value, err := decodeOpenAPIDocument([]byte("first: &value [{exact: 1.0}]\nsecond: *value\nthird: *value\n"))
@@ -165,10 +165,10 @@ func TestYAMLAliasesExpandIntoIndependentJSONOccurrences(t *testing.T) {
 	second := value.object["second"]
 	third := value.object["third"]
 
-	require.NotSame(t, first, second)
-	require.NotSame(t, second, third)
-	require.NotSame(t, first.array[0], second.array[0])
-	require.NotSame(t, second.array[0].object["exact"].number, third.array[0].object["exact"].number)
+	require.Same(t, first, second)
+	require.Same(t, second, third)
+	require.Same(t, first.array[0], second.array[0])
+	require.Same(t, second.array[0].object["exact"].number, third.array[0].object["exact"].number)
 
 	encoded, err := marshalStrict(value)
 	require.NoError(t, err)

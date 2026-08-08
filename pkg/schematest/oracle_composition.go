@@ -15,14 +15,12 @@ func evaluateCompositionRules(
 ) {
 	evaluateAllOfRules(context, result, node, occurrence, value)
 
-	if result.err != nil {
-		return
+	if result.err == nil {
+		evaluateAnyOfRules(context, result, node, occurrence, value)
 	}
-
-	evaluateAnyOfRules(context, result, node, occurrence, value)
 }
 
-// evaluateAllOfRules evaluates every allOf branch against the same complete value.
+// evaluateAllOfRules constructs the complete truth and children before publishing either.
 func evaluateAllOfRules(
 	context *evaluationContext,
 	result *evaluation,
@@ -34,28 +32,34 @@ func evaluateAllOfRules(
 		return
 	}
 
-	truthIndex := len(result.allOf)
-	appendAllOfTruth(result, compositionTruth{
+	truth := compositionTruth{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleAllOf),
 		branches:     make([]bool, len(node.allOf)),
-	})
+	}
 
+	children := make([]evaluation, len(node.allOf))
 	for index, child := range node.allOf {
 		childOccurrence := rebaseCompositionOccurrence(child, occurrence, "allOf", index)
-		childResult := context.evaluateNode(child, value, childOccurrence)
 
+		childResult := context.evaluateNode(child, value, childOccurrence)
 		if childResult.err != nil {
 			result.err = fmt.Errorf("%s branch %d: %w", occurrence.usePointer+"/allOf", index, childResult.err)
 
 			return
 		}
 
-		result.allOf[truthIndex].branches[index] = childResult.valid
-		mergeEvaluation(result, childResult)
+		truth.branches[index] = childResult.valid
+		children[index] = childResult
+	}
+
+	appendCompositionTruth(result, truth)
+
+	for _, child := range children {
+		appendEvaluation(result, child)
 	}
 }
 
-// evaluateAnyOfRules evaluates every anyOf branch and applies the aggregate failure closure.
+// evaluateAnyOfRules constructs the complete truth and children before publishing either.
 func evaluateAnyOfRules(
 	context *evaluationContext,
 	result *evaluation,
@@ -67,56 +71,44 @@ func evaluateAnyOfRules(
 		return
 	}
 
-	truthIndex := len(result.anyOf)
-	appendAnyOfTruth(result, compositionTruth{
+	truth := compositionTruth{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleAnyOf),
 		branches:     make([]bool, len(node.anyOf)),
-	})
-
-	branchFailures := make([]failureIdentity, 0)
-	branchFailureRecords := &evaluationRecordList[failureIdentity]{}
-	branchFailed := false
+	}
+	children := make([]evaluation, len(node.anyOf))
 	anyBranchValid := false
 
 	for index, child := range node.anyOf {
 		childOccurrence := rebaseCompositionOccurrence(child, occurrence, "anyOf", index)
-		childResult := context.evaluateNode(child, value, childOccurrence)
 
+		childResult := context.evaluateNode(child, value, childOccurrence)
 		if childResult.err != nil {
 			result.err = fmt.Errorf("%s branch %d: %w", occurrence.usePointer+"/anyOf", index, childResult.err)
 
 			return
 		}
 
-		result.anyOf[truthIndex].branches[index] = childResult.valid
-		mergeEvaluationRecords(result, childResult)
+		children[index] = childResult
+		truth.branches[index] = childResult.valid
+		anyBranchValid = anyBranchValid || childResult.valid
+	}
 
-		if childResult.valid {
-			anyBranchValid = true
+	appendCompositionTruth(result, truth)
 
-			continue
-		}
-
-		branchFailed = branchFailed || childResult.failed
-		branchFailureRecords.appendList(&childResult.records.failures, occurrenceTransform{})
-
-		if !childResult.fromCache || childResult.materialized {
-			branchFailures = append(branchFailures, childResult.failures...)
+	for _, childResult := range children {
+		if anyBranchValid {
+			appendEvaluationNonFailures(result, childResult)
+		} else {
+			appendEvaluation(result, childResult)
 		}
 	}
 
-	if anyBranchValid {
-		return
+	if !anyBranchValid {
+		appendFailure(result, makeRuleIdentity(occurrence, oracleRuleAnyOf))
 	}
-
-	result.failed = result.failed || branchFailed
-	ensureEvaluationRecords(result)
-	result.records.failures.appendList(branchFailureRecords, occurrenceTransform{})
-	result.failures = append(result.failures, branchFailures...)
-	appendFailure(result, makeRuleIdentity(occurrence, oracleRuleAnyOf))
 }
 
-// rebaseCompositionOccurrence assigns a composition branch's use site and current instance.
+// rebaseCompositionOccurrence applies the shared child provenance policy to a composition branch.
 func rebaseCompositionOccurrence(
 	child *schemaNode,
 	occurrence schemaOccurrence,
@@ -125,6 +117,7 @@ func rebaseCompositionOccurrence(
 ) schemaOccurrence {
 	return rebaseChildOccurrence(
 		child,
+		occurrence,
 		occurrence.usePointer+"/"+composition+"/"+strconv.Itoa(index),
 		occurrence.instanceTemplate,
 	)

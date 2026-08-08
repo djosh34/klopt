@@ -50,6 +50,7 @@ func decodeOpenAPIDocument(source []byte) (*jsonValue, error) {
 	decoder := yamlJSONDecoder{
 		anchors: make(map[string]ast.Node),
 		active:  make(map[ast.Node]bool),
+		decoded: make(map[ast.Node]*jsonValue),
 	}
 
 	return decoder.decode(file.Docs[0].Body)
@@ -58,6 +59,7 @@ func decodeOpenAPIDocument(source []byte) (*jsonValue, error) {
 type yamlJSONDecoder struct {
 	anchors map[string]ast.Node
 	active  map[ast.Node]bool
+	decoded map[ast.Node]*jsonValue
 	result  *jsonValue
 }
 
@@ -96,33 +98,37 @@ func (decoder *yamlJSONDecoder) decode(node ast.Node) (*jsonValue, error) {
 				))
 			}
 
-			decoder.assign(frame.destination, &jsonValue{kind: jsonNull})
+			decoder.assignDecoded(frame.node, frame.destination, &jsonValue{kind: jsonNull})
 		case *ast.BoolNode:
 			value, err := decodeYAMLBoolean(typed)
 			if err != nil {
 				return nil, yamlContextError(frame.context, err)
 			}
 
-			decoder.assign(frame.destination, value)
+			decoder.assignDecoded(frame.node, frame.destination, value)
 		case *ast.IntegerNode, *ast.FloatNode:
 			value, err := decodeYAMLNumber(typed.GetToken().Value)
 			if err != nil {
 				return nil, yamlContextError(frame.context, err)
 			}
 
-			decoder.assign(frame.destination, value)
+			decoder.assignDecoded(frame.node, frame.destination, value)
 		case *ast.StringNode:
 			value, err := decodeYAMLString(typed)
 			if err != nil {
 				return nil, yamlContextError(frame.context, err)
 			}
 
-			decoder.assign(frame.destination, value)
+			decoder.assignDecoded(frame.node, frame.destination, value)
 		case *ast.LiteralNode:
-			decoder.assign(frame.destination, &jsonValue{kind: jsonString, text: typed.Value.Value})
+			decoder.assignDecoded(
+				frame.node,
+				frame.destination,
+				&jsonValue{kind: jsonString, text: typed.Value.Value},
+			)
 		case *ast.SequenceNode:
 			value := &jsonValue{kind: jsonArray, array: make([]*jsonValue, len(typed.Values))}
-			decoder.assign(frame.destination, value)
+			decoder.assignDecoded(frame.node, frame.destination, value)
 
 			for index := len(typed.Values) - 1; index >= 0; index-- {
 				stack = append(stack, yamlDecodeFrame{
@@ -151,7 +157,7 @@ func (decoder *yamlJSONDecoder) decode(node ast.Node) (*jsonValue, error) {
 				names[index] = name
 			}
 
-			decoder.assign(frame.destination, value)
+			decoder.assignDecoded(frame.node, frame.destination, value)
 
 			for index := len(typed.Values) - 1; index >= 0; index-- {
 				name := names[index]
@@ -196,7 +202,7 @@ func (decoder *yamlJSONDecoder) decode(node ast.Node) (*jsonValue, error) {
 					node: nested, destination: frame.destination, context: frame.context,
 				})
 			} else {
-				decoder.assign(frame.destination, value)
+				decoder.assignDecoded(frame.node, frame.destination, value)
 			}
 		default:
 			return nil, yamlContextError(frame.context, fmt.Errorf(
@@ -219,6 +225,12 @@ func (decoder *yamlJSONDecoder) pushAliasTarget(
 		return yamlContextError(context, fmt.Errorf("YAML alias %q creates a cycle", name))
 	}
 
+	if value, decoded := decoder.decoded[target]; decoded {
+		decoder.assign(destination, value)
+
+		return nil
+	}
+
 	decoder.active[target] = true
 	*stack = append(
 		*stack,
@@ -227,6 +239,15 @@ func (decoder *yamlJSONDecoder) pushAliasTarget(
 	)
 
 	return nil
+}
+
+func (decoder *yamlJSONDecoder) assignDecoded(
+	node ast.Node,
+	destination yamlDecodeDestination,
+	value *jsonValue,
+) {
+	decoder.decoded[node] = value
+	decoder.assign(destination, value)
 }
 
 func (decoder *yamlJSONDecoder) assign(destination yamlDecodeDestination, value *jsonValue) {

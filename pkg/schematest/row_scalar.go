@@ -147,7 +147,10 @@ func scalarTargetNode(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if found, ok := scalarTargetNode(child, childOccurrence, target); ok {
 			return found, true
@@ -156,7 +159,10 @@ func scalarTargetNode(
 
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if found, ok := scalarTargetNode(child, childOccurrence, target); ok {
 			return found, true
@@ -174,60 +180,59 @@ func rowScalarValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 		return rowEnumValues(node.enum, kind)
 	}
 
-	var candidates []*jsonValue
-
-	candidates, err := canonicalKindWitnesses(kind)
-	if err != nil {
-		return nil, err
-	}
-
-	if node.defaultValue != nil && node.defaultValue.kind == kind {
-		candidates, err = appendUniqueJSONWitness(candidates, node.defaultValue)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	derived, err := canonicalAnyOfWitnesses(node, kind)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, candidate := range derived {
-		candidates, err = appendUniqueJSONWitness(candidates, candidate)
+	generated, err := canonicalKindWitnesses(kind)
+	if err != nil {
+		return nil, err
+	}
+
+	if node.defaultValue != nil && node.defaultValue.kind == kind {
+		generated, err = appendUniqueJSONWitness(generated, node.defaultValue)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	prefixCount := len(generated)
+	for _, candidate := range derived.generated {
+		generated, err = appendUniqueJSONWitness(generated, candidate)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	if kind == jsonString {
-		candidates, err = appendRowStringCandidates(candidates, node)
+		generated, err = appendRowStringCandidates(generated, node)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	candidates := make([]*jsonValue, 0, len(derived.admitted)+len(generated))
+	candidates = append(candidates, generated[:prefixCount]...)
+	candidates = append(candidates, derived.admitted...)
+	candidates = append(candidates, generated[prefixCount:]...)
+
 	return filterRowScalarValues(candidates, node, kind)
 }
 
 // rowEnumValues preserves authored enum order and uses already canonical members.
-func rowEnumValues(enum []*jsonValue, kind jsonKind) ([]*jsonValue, error) {
+func rowEnumValues(enum []enumMember, kind jsonKind) ([]*jsonValue, error) {
 	candidates := make([]*jsonValue, 0, len(enum))
-	for _, candidate := range enum {
-		if candidate == nil {
+	for _, member := range enum {
+		if member.value == nil {
 			return nil, errors.New("schematest: nil enum row value")
 		}
 
-		if candidate.kind != kind {
+		if member.value.kind != kind {
 			continue
 		}
 
-		var err error
-
-		candidates, err = appendUniqueJSONWitness(candidates, candidate)
-		if err != nil {
-			return nil, err
-		}
+		candidates = append(candidates, member.value)
 	}
 
 	return candidates, nil

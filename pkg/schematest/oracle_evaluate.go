@@ -44,6 +44,7 @@ const (
 type ruleIdentity struct {
 	occurrence schemaOccurrence
 	rule       string
+	structured *evaluationOccurrencePaths
 }
 
 // failureIdentity is the rule identity used by an exact failure closure.
@@ -65,35 +66,27 @@ type compositionTruth struct {
 
 // evaluation is the complete clean evaluation of one JSON value.
 type evaluation struct {
-	valid        bool
-	applicable   []ruleIdentity
-	observed     []levelIdentity
-	allOf        []compositionTruth
-	anyOf        []compositionTruth
-	failures     []failureIdentity
-	failed       bool
-	fromCache    bool
-	materialized bool
-	records      *evaluationRecords
-	err          error
+	valid   bool
+	failed  bool
+	records *evaluationRecords
+	err     error
 }
 
-// evaluationCacheKey identifies one shared shape/value/instance evaluation.
+// evaluationCacheKey identifies one target-relative shared shape/value evaluation.
 type evaluationCacheKey struct {
-	shape            *schemaShape
-	value            *jsonValue
-	instanceTemplate string
+	shape *schemaShape
+	value *jsonValue
 }
 
-// evaluationCacheEntry retains a result and the occurrence that authored its paths.
+// evaluationCacheEntry retains one canonical target-relative immutable result.
 type evaluationCacheEntry struct {
-	occurrence schemaOccurrence
-	result     evaluation
+	result evaluation
 }
 
 // evaluationContext carries one complete evaluation's shared-shape cache.
 type evaluationContext struct {
 	cache map[evaluationCacheKey]evaluationCacheEntry
+	base  schemaOccurrence
 }
 
 // String renders the stable rule portion of an obligation identity.
@@ -150,6 +143,7 @@ func (context *evaluationContext) evaluateNode(
 	occurrence schemaOccurrence,
 ) evaluation {
 	result := evaluation{records: newEvaluationRecords()}
+
 	if node == nil || node.schemaShape == nil {
 		result.err = errors.New("schema occurrence has no shape")
 
@@ -157,18 +151,15 @@ func (context *evaluationContext) evaluateNode(
 	}
 
 	key := evaluationCacheKey{
-		shape:            node.schemaShape,
-		value:            value,
-		instanceTemplate: occurrence.instanceTemplate,
+		shape: node.schemaShape,
+		value: value,
 	}
+	cacheBase := context.cacheBaseOccurrence()
+	occurrence = structuredEvaluationOccurrence(occurrence)
+
 	if cached, exists := context.cache[key]; exists {
 		result = cached.result
-		result.records = result.records.rebased(cached.occurrence, occurrence)
-
-		result.fromCache = true
-		if occurrence.reference && result.recordsMaterialized() {
-			result.materializeRecords()
-		}
+		result.records = result.records.rebased(cacheBase, occurrence)
 
 		return result
 	}
@@ -206,25 +197,50 @@ func (context *evaluationContext) evaluateNode(
 	result.valid = result.err == nil && !result.failed
 
 	if result.err == nil {
-		result.fromCache = false
-		context.cache[key] = evaluationCacheEntry{
-			occurrence: occurrence,
-			result:     result,
-		}
+		cached := result
+		cached.records = result.records.rebased(occurrence, cacheBase)
+		context.cache[key] = evaluationCacheEntry{result: cached}
 	}
 
 	return result
 }
 
-// rebaseChildOccurrence carries a direct schema shape's evaluated use site and instance path to a child.
+// cacheBaseOccurrence returns the context's once-parsed target-relative cache base.
+func (context *evaluationContext) cacheBaseOccurrence() schemaOccurrence {
+	if context.base.structured == nil {
+		context.base = structuredEvaluationOccurrence(schemaOccurrence{
+			usePointer:       "#",
+			targetPointer:    "#",
+			instanceTemplate: "#",
+		})
+	}
+
+	return context.base
+}
+
+// rebaseChildOccurrence carries a direct child's destination use, target, and instance paths.
 func rebaseChildOccurrence(
 	child *schemaNode,
+	parent schemaOccurrence,
 	usePointer string,
 	instanceTemplate string,
 ) schemaOccurrence {
+	parent = structuredEvaluationOccurrence(parent)
 	childOccurrence := child.occurrence
 	childOccurrence.usePointer = usePointer
 	childOccurrence.instanceTemplate = instanceTemplate
+
+	targetRoot := childOccurrence.targetPointer
+	if !childOccurrence.reference {
+		targetRoot = parent.structured.targetRoot.String()
+		if strings.HasPrefix(usePointer, parent.usePointer+"/") {
+			childOccurrence.targetPointer = parent.structured.target.String() +
+				strings.TrimPrefix(usePointer, parent.usePointer)
+		}
+	}
+
+	paths := mustParseEvaluationOccurrence(childOccurrence, targetRoot)
+	childOccurrence.structured = &paths
 
 	return childOccurrence
 }
@@ -305,15 +321,10 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 	identity := makeRuleIdentity(occurrence, oracleRuleEnum)
 	appendApplicable(result, identity)
 
-	for index, member := range node.enum {
-		authoredIndex := index
-		if index < len(node.enumIndices) {
-			authoredIndex = node.enumIndices[index]
-		}
-
-		equal, err := jsonSemanticEqual(value, member)
+	for _, member := range node.enum {
+		equal, err := jsonValidatedSemanticEqual(value, member.value)
 		if err != nil {
-			result.err = fmt.Errorf("%s member %d: %w", identity, authoredIndex, err)
+			result.err = fmt.Errorf("%s member %d: %w", identity, member.authoredIndex, err)
 
 			return
 		}
@@ -321,7 +332,7 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 		if equal {
 			appendObserved(result, levelIdentity{
 				ruleIdentity: identity,
-				level:        fmt.Sprintf("%s%d", oracleEnumLevelPrefix, authoredIndex),
+				level:        fmt.Sprintf("%s%d", oracleEnumLevelPrefix, member.authoredIndex),
 			})
 
 			return
@@ -333,15 +344,16 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 
 // appendFailure records one exact failure and its validity contribution.
 func appendFailure(result *evaluation, identity failureIdentity) {
-	result.failures = append(result.failures, identity)
-	ensureEvaluationRecords(result)
-	result.records.failures.append(identity)
+	result.records.append(makeEvaluationRecord(evaluationRecordFailure, identity))
 	result.failed = true
 }
 
 // makeRuleIdentity creates a stable clean occurrence/rule identity.
 func makeRuleIdentity(occurrence schemaOccurrence, rule string) ruleIdentity {
-	return ruleIdentity{occurrence: occurrence, rule: rule}
+	structured := occurrence.structured
+	occurrence.structured = nil
+
+	return ruleIdentity{occurrence: occurrence, rule: rule, structured: structured}
 }
 
 // jsonKindName returns the deterministic JSON spelling used by kind levels.

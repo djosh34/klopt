@@ -112,6 +112,7 @@ func (s *search) chargeNestedCompositions(
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -123,6 +124,7 @@ func (s *search) chargeNestedCompositions(
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -198,21 +200,16 @@ func rowDirectValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
 	candidates := make([]*jsonValue, 0)
 
 	if node.enum != nil {
-		for _, candidate := range node.enum {
-			if candidate == nil {
+		for _, member := range node.enum {
+			if member.value == nil {
 				return nil, errors.New("schematest: nil enum row value")
 			}
 
-			if candidate.kind != kind {
+			if member.value.kind != kind {
 				continue
 			}
 
-			var err error
-
-			candidates, err = appendUniqueJSONWitness(candidates, candidate)
-			if err != nil {
-				return nil, err
-			}
+			candidates = append(candidates, member.value)
 		}
 
 		return candidates, nil

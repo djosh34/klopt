@@ -162,6 +162,516 @@ func TestLockedPublicAPIGuardRejectsGrowth(t *testing.T) {
 	}
 }
 
+// TestOracleEvaluationHasNoParallelSemanticStores keeps records as the sole fact payload.
+func TestOracleEvaluationHasNoParallelSemanticStores(t *testing.T) {
+	t.Parallel()
+
+	require.Empty(t, parallelOracleStoreViolations(productionGuardPackage(t)))
+}
+
+// TestOracleStoreGuardRejectsCompatibilityFields proves renamed projections cannot return.
+func TestOracleStoreGuardRejectsCompatibilityFields(t *testing.T) {
+	t.Parallel()
+
+	base := `package schematest
+		type evaluationRecord struct{}; type evaluationRecordIdentity struct{}; type evaluationOccurrencePaths struct{}
+		type ruleIdentity struct{}; type levelIdentity struct{}; type compositionTruth struct{}
+		type occurrenceTransform struct{}; type evaluationRecordFilter uint8
+		type evaluationRecordPart struct {
+			records []evaluationRecord; nested *evaluationRecords; transform occurrenceTransform
+			filter evaluationRecordFilter; count int
+		}
+		type evaluationRecords struct { parts []evaluationRecordPart; count int; nonFailureCount int }
+		type evaluation struct { valid bool; failed bool; records *evaluationRecords; err error }
+	`
+	tests := []string{
+		strings.Replace(base, "err error", "err error; shadow legacyFailures", 1) +
+			`type legacyFailures struct { values []ruleIdentity }`,
+		strings.Replace(base, "count int\n\t\t}", "count int; identities []evaluationRecordIdentity\n\t\t}", 1),
+		strings.Replace(base, "valid bool", "valid string", 1),
+		base + `type evaluationCacheEntry struct { values []evaluationRecordIdentity }`,
+		base + `type pathBox struct { values []evaluationOccurrencePaths }; ` +
+			`type evaluationCacheResult struct { boxes []pathBox }`,
+	}
+
+	for _, source := range tests {
+		guardPackage := parseGuardPackage(t, map[string]string{"oracle.go": source})
+		require.NotEmpty(t, parallelOracleStoreViolations(guardPackage), source)
+	}
+}
+
+// parallelOracleStoreViolations proves evaluation.records is the sole heterogeneous semantic store.
+//
+//nolint:cyclop // Exact shapes and cache/result ownership are independent checks.
+func parallelOracleStoreViolations(guardPackage *sourceGuardPackage) []string {
+	evaluationType := packageObjectType(guardPackage, "evaluation")
+	recordsType := packageObjectType(guardPackage, "evaluationRecords")
+	partType := packageObjectType(guardPackage, "evaluationRecordPart")
+	recordType := packageObjectType(guardPackage, "evaluationRecord")
+	transformType := packageObjectType(guardPackage, "occurrenceTransform")
+
+	filterType := packageObjectType(guardPackage, "evaluationRecordFilter")
+	if evaluationType == nil || recordsType == nil || partType == nil || recordType == nil ||
+		transformType == nil || filterType == nil {
+		return []string{"missing oracle record types"}
+	}
+
+	booleanType := types.Typ[types.Bool]
+	integerType := types.Typ[types.Int]
+	errorType := types.Universe.Lookup("error").Type()
+	violations := exactOracleStructViolations(evaluationType, "evaluation", []oracleFieldShape{
+		{name: "valid", owned: booleanType},
+		{name: "failed", owned: booleanType},
+		{name: "records", owned: types.NewPointer(recordsType)},
+		{name: "err", owned: errorType},
+	})
+	violations = append(violations, exactOracleStructViolations(recordsType, "evaluationRecords", []oracleFieldShape{
+		{name: "parts", owned: types.NewSlice(partType)},
+		{name: "count", owned: integerType},
+		{name: "nonFailureCount", owned: integerType},
+	})...)
+	violations = append(violations, exactOracleStructViolations(partType, "evaluationRecordPart", []oracleFieldShape{
+		{name: "records", owned: types.NewSlice(recordType)},
+		{name: "nested", owned: types.NewPointer(recordsType)},
+		{name: "transform", owned: transformType},
+		{name: "filter", owned: filterType},
+		{name: "count", owned: integerType},
+	})...)
+
+	for _, name := range guardPackage.pkg.Scope().Names() {
+		object := guardPackage.pkg.Scope().Lookup(name)
+
+		structure, ok := types.Unalias(object.Type()).Underlying().(*types.Struct)
+		if !ok || !strings.Contains(strings.ToLower(name), "cache") &&
+			!strings.Contains(strings.ToLower(name), "result") {
+			continue
+		}
+
+		for index := range structure.NumFields() {
+			if oracleSemanticCollection(structure.Field(index).Type(), guardPackage) {
+				violations = append(violations, name+"."+structure.Field(index).Name())
+			}
+		}
+	}
+
+	return violations
+}
+
+// oracleFieldShape is one required field in an authoritative oracle struct.
+type oracleFieldShape struct {
+	name  string
+	owned types.Type
+}
+
+// exactOracleStructViolations reports the first mismatch from one authoritative struct.
+func exactOracleStructViolations(owned types.Type, name string, fields []oracleFieldShape) []string {
+	structure, ok := types.Unalias(owned).Underlying().(*types.Struct)
+	if !ok || structure.NumFields() != len(fields) {
+		return []string{name}
+	}
+
+	for index, field := range fields {
+		if structure.Field(index).Name() != field.name || !types.Identical(structure.Field(index).Type(), field.owned) {
+			return []string{name + "." + field.name}
+		}
+	}
+
+	return nil
+}
+
+// oracleSemanticCollection reports whether a type directly or transitively owns a typed oracle list.
+func oracleSemanticCollection(owned types.Type, guardPackage *sourceGuardPackage) bool {
+	semantic := make(map[types.Type]bool)
+
+	for _, name := range []string{
+		"evaluationRecord", "evaluationRecordIdentity", "evaluationOccurrencePaths",
+		"ruleIdentity", "levelIdentity", "compositionTruth",
+	} {
+		if candidate := packageObjectType(guardPackage, name); candidate != nil {
+			semantic[candidate] = true
+		}
+	}
+
+	authoritative := map[types.Type]bool{
+		packageObjectType(guardPackage, "evaluation"):        true,
+		packageObjectType(guardPackage, "evaluationRecords"): true,
+		packageObjectType(guardPackage, "schemaShape"):       true,
+		packageObjectType(guardPackage, "schemaNode"):        true,
+		packageObjectType(guardPackage, "jsonValue"):         true,
+	}
+
+	return ownsOracleSemanticCollection(owned, semantic, authoritative, false, make(map[types.Type]bool))
+}
+
+// ownsOracleSemanticCollection recursively recognizes direct and wrapped typed oracle lists.
+//
+//nolint:cyclop // Every Go wrapper form must participate in the semantic-store guard.
+func ownsOracleSemanticCollection(
+	owned types.Type,
+	semantic, authoritative map[types.Type]bool,
+	insideCollection bool,
+	visiting map[types.Type]bool,
+) bool {
+	owned = types.Unalias(owned)
+	if authoritative[owned] {
+		return false
+	}
+
+	if semantic[owned] {
+		return insideCollection
+	}
+
+	if visiting[owned] {
+		return false
+	}
+
+	visiting[owned] = true
+	defer delete(visiting, owned)
+
+	switch typed := owned.Underlying().(type) {
+	case *types.Pointer:
+		return ownsOracleSemanticCollection(typed.Elem(), semantic, authoritative, insideCollection, visiting)
+	case *types.Slice:
+		return ownsOracleSemanticCollection(typed.Elem(), semantic, authoritative, true, visiting)
+	case *types.Array:
+		return ownsOracleSemanticCollection(typed.Elem(), semantic, authoritative, true, visiting)
+	case *types.Map:
+		return ownsOracleSemanticCollection(typed.Key(), semantic, authoritative, true, visiting) ||
+			ownsOracleSemanticCollection(typed.Elem(), semantic, authoritative, true, visiting)
+	case *types.Struct:
+		for index := range typed.NumFields() {
+			if ownsOracleSemanticCollection(
+				typed.Field(index).Type(), semantic, authoritative, insideCollection, visiting,
+			) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// TestCanonicalMetadataHasNoParallelOrHotPathRepresentations locks admission-owned metadata.
+func TestCanonicalMetadataHasNoParallelOrHotPathRepresentations(t *testing.T) {
+	t.Parallel()
+
+	require.Empty(t, canonicalMetadataViolations(productionGuardPackage(t)))
+
+	tests := []string{
+		`package schematest; type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }; ` +
+			`type schemaShape struct { enum []enumMember; required []string; sourcePositions []int }`,
+		`package schematest; type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }; ` +
+			`type schemaShape struct { enum []enumMember; required []string; orderedRequired []string }`,
+		`package schematest
+			import "sort"
+			type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }
+			type schemaShape struct { enum []enumMember; required []string }
+			func evaluateRequiredMembers(node *schemaShape) { sort.Strings(node.required) }`,
+		`package schematest
+			type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }
+			type schemaShape struct { enum []enumMember; required []string }
+			func appendUniqueJSONWitness(values []*jsonValue, candidate *jsonValue) ([]*jsonValue, error) {
+				return values, nil
+			}
+			func rowScalarValues(admitted []*jsonValue, candidate *jsonValue) {
+				_, _ = appendUniqueJSONWitness(admitted, candidate)
+			}`,
+		`package schematest
+			type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }
+			type schemaShape struct { enum []enumMember; required []string }
+			func appendUniqueJSONWitness([]*jsonValue, *jsonValue) ([]*jsonValue, error) { return nil, nil }
+			func collectAnyOfWitnesses(node *schemaShape) {
+				for _, member := range node.enum { _, _ = appendUniqueJSONWitness(nil, member.value) }
+			}
+			func jsonValidatedSemanticEqual(*jsonValue, *jsonValue) (bool, error) { return false, nil }
+			func evaluateEnumRule(node *schemaShape, value *jsonValue) {
+				for _, member := range node.enum {
+					_, _ = jsonValidatedSemanticEqual(value, member.value)
+					_, _ = jsonValidatedSemanticEqual(value, member.value)
+				}
+			}
+			func compileObjectRules(node *schemaShape) {
+				ordered := append([]string(nil), node.required...); _ = ordered
+			}`,
+	}
+	for _, source := range tests {
+		guardPackage := parseGuardPackage(t, map[string]string{"model.go": source})
+		require.NotEmpty(t, canonicalMetadataViolations(guardPackage), source)
+	}
+}
+
+// canonicalMetadataViolations proves canonical metadata shape and direct hot-path consumption.
+//
+//nolint:cyclop,gocognit,gocyclo // Type and AST evidence intentionally cover independent bypass forms.
+func canonicalMetadataViolations(guardPackage *sourceGuardPackage) []string {
+	var violations []string
+
+	shapeType := packageObjectType(guardPackage, "schemaShape")
+	memberType := packageObjectType(guardPackage, "enumMember")
+
+	jsonType := packageObjectType(guardPackage, "jsonValue")
+	if shapeType == nil || memberType == nil || jsonType == nil {
+		return []string{"missing canonical metadata types"}
+	}
+
+	shape, ok := types.Unalias(shapeType).Underlying().(*types.Struct)
+	if !ok {
+		return []string{"schemaShape is not a struct"}
+	}
+
+	enumFound, requiredFound := false, false
+
+	for index := range shape.NumFields() {
+		field := shape.Field(index)
+
+		slice, sliceOK := types.Unalias(field.Type()).Underlying().(*types.Slice)
+		if !sliceOK {
+			continue
+		}
+
+		switch field.Name() {
+		case "enum":
+			enumFound = types.Identical(slice.Elem(), memberType)
+			if !enumFound {
+				violations = append(violations, "schemaShape.enum")
+			}
+		case "required":
+			requiredFound = basicTypeKind(slice.Elem()) == types.String
+			if !requiredFound {
+				violations = append(violations, "schemaShape.required")
+			}
+		default:
+			if types.Identical(slice.Elem(), memberType) || basicTypeKind(slice.Elem()) == types.Int ||
+				basicTypeKind(slice.Elem()) == types.String {
+				violations = append(violations, "parallel canonical metadata: schemaShape."+field.Name())
+			}
+		}
+	}
+
+	if !enumFound || !requiredFound {
+		violations = append(violations, "missing canonical schemaShape metadata")
+	}
+
+	member, ok := types.Unalias(memberType).Underlying().(*types.Struct)
+	if !ok || member.NumFields() != 2 || member.Field(0).Name() != "value" ||
+		!types.Identical(member.Field(0).Type(), types.NewPointer(jsonType)) ||
+		member.Field(1).Name() != "authoredIndex" || basicTypeKind(member.Field(1).Type()) != types.Int {
+		violations = append(violations, "enumMember")
+	}
+
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, functionOK := declaration.(*ast.FuncDecl)
+			if !functionOK || function.Body == nil {
+				continue
+			}
+
+			switch function.Name.Name {
+			case "collectAnyOfWitnesses":
+				if enumRangeRecanonicalizes(function) ||
+					functionCallUsesWrongFirstArgument(function, "appendUniqueJSONWitness", "generated") {
+					violations = append(violations, "planner re-deduplicates admitted enum")
+				}
+			case "canonicalAnyOfWitnesses", "rowScalarValues":
+				if functionCallUsesWrongFirstArgument(function, "appendUniqueJSONWitness", "generated") {
+					violations = append(violations, "generated witnesses compare against admitted enum")
+				}
+			case "evaluateEnumRule":
+				if countFunctionCalls(function, "jsonValidatedSemanticEqual") != 1 ||
+					functionCallsAny(function, "jsonSemanticEqual", "sort", "Sort", "SortFunc") {
+					violations = append(violations, "evaluator enum equality path")
+				}
+			case "compileEnumRules":
+				if functionCallsAny(function, "jsonSemanticEqual", "jsonValidatedSemanticEqual", "sort", "Sort", "SortFunc") {
+					violations = append(violations, "planner enum recanonicalization")
+				}
+			case "compileObjectRules", "evaluateRequiredMembers":
+				if functionCallsAny(function, "sort", "Sort", "SortFunc") ||
+					functionPassesSelectorToCall(function, "required") {
+					violations = append(violations, "required-name resort")
+				}
+			}
+		}
+	}
+
+	return violations
+}
+
+// basicTypeKind returns a type's basic kind or types.Invalid.
+func basicTypeKind(owned types.Type) types.BasicKind {
+	basic, ok := types.Unalias(owned).Underlying().(*types.Basic)
+	if !ok {
+		return types.Invalid
+	}
+
+	return basic.Kind()
+}
+
+// enumRangeRecanonicalizes detects calls other than direct append in the admitted enum loop.
+func enumRangeRecanonicalizes(function *ast.FuncDecl) bool {
+	violates := false
+
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		rangeStatement, ok := node.(*ast.RangeStmt)
+		if !ok {
+			return true
+		}
+
+		selector, ok := rangeStatement.X.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "enum" {
+			return true
+		}
+
+		ast.Inspect(rangeStatement.Body, func(child ast.Node) bool {
+			call, callOK := child.(*ast.CallExpr)
+			if callOK && identName(call.Fun) != "append" {
+				violates = true
+
+				return false
+			}
+
+			return true
+		})
+
+		return !violates
+	})
+
+	return violates
+}
+
+// functionCallUsesWrongFirstArgument checks a selected ownership seam's accumulator.
+func functionCallUsesWrongFirstArgument(function *ast.FuncDecl, calledName, wanted string) bool {
+	wrong := false
+
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || identName(call.Fun) != calledName || len(call.Args) == 0 {
+			return true
+		}
+
+		wrong = strings.TrimPrefix(expressionName(call.Args[0]), "*") != wanted
+
+		return !wrong
+	})
+
+	return wrong
+}
+
+// functionPassesSelectorToCall detects metadata handed to a recanonicalization helper.
+func functionPassesSelectorToCall(function *ast.FuncDecl, selectorName string) bool {
+	found := false
+
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		for _, argument := range call.Args {
+			ast.Inspect(argument, func(child ast.Node) bool {
+				selector, selectorOK := child.(*ast.SelectorExpr)
+				if selectorOK && selector.Sel.Name == selectorName {
+					found = true
+
+					return false
+				}
+
+				return true
+			})
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+// functionCallsAny reports whether a function calls any selected name.
+func functionCallsAny(function *ast.FuncDecl, names ...string) bool {
+	for _, name := range names {
+		if countFunctionCalls(function, name) > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// countFunctionCalls counts calls with one identifier or selector name.
+func countFunctionCalls(function *ast.FuncDecl, name string) int {
+	count := 0
+
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		called := identName(call.Fun)
+		if selector, selectorOK := call.Fun.(*ast.SelectorExpr); selectorOK {
+			called = selector.Sel.Name
+		}
+
+		if called == name {
+			count++
+		}
+
+		return true
+	})
+
+	return count
+}
+
+// TestStructuredOracleOccurrencesAreParsedOnlyAtOwnershipSeams locks record/cache path reuse.
+func TestStructuredOracleOccurrencesAreParsedOnlyAtOwnershipSeams(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	checked := map[string]bool{
+		"newEvaluationRecordIdentity": false,
+		"rebased":                     false,
+	}
+
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+
+			if _, wanted := checked[function.Name.Name]; !wanted {
+				continue
+			}
+
+			require.False(t, functionCallsAny(function, "mustParseEvaluationOccurrence", "parseEvaluationPointer"))
+			checked[function.Name.Name] = true
+		}
+	}
+
+	require.Equal(t, map[string]bool{"newEvaluationRecordIdentity": true, "rebased": true}, checked)
+}
+
+// TestValidatedJSONEqualityDoesNotSortObjects locks the allocation-free object comparison path.
+func TestValidatedJSONEqualityDoesNotSortObjects(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != "jsonValidatedSemanticEqual" {
+				continue
+			}
+
+			require.False(t, functionCallsAny(function, "sortedObjectNames", "sort", "Sort", "SortFunc"))
+
+			return
+		}
+	}
+
+	require.Fail(t, "jsonValidatedSemanticEqual is missing")
+}
+
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
 func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	t.Parallel()
@@ -1019,7 +1529,7 @@ func reachableOwnerTypes(
 func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
 	authorized := make(map[*types.TypeName]bool)
 	for _, root := range []string{
-		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext",
+		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext", "canonicalWitnesses",
 		"jsonActivePath", "jsonValuePair", "jsonValidationFrame", "jsonCloneFrame", "jsonMarshalFrame",
 		"strictJSONContainerFrame",
 	} {
@@ -1156,7 +1666,7 @@ func authorizedActiveLocalName(name string) bool {
 	lower := strings.ToLower(name)
 
 	for _, category := range []string{
-		"candidate", "witness", "parentpins", "parenttokens", "canonical",
+		"admitted", "candidate", "generated", "witness", "parentpins", "parenttokens", "canonical",
 		"derived", "edits", "elements", "filtered", "seeded", "selected", "values",
 	} {
 		if strings.Contains(lower, category) {

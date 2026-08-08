@@ -27,6 +27,7 @@ func (s *search) walkActiveScalarPinAlternatives(
 
 			branchOccurrence := rebasePlanOccurrence(
 				child,
+				anyOfOccurrence,
 				anyOfOccurrence.usePointer+"/anyOf/"+itoa(branch),
 				anyOfOccurrence.instanceTemplate,
 			)
@@ -68,7 +69,10 @@ func firstUnpinnedScalarAnyOf(
 			}
 
 			childOccurrence := rebasePlanOccurrence(
-				child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+				child,
+				occurrence,
+				occurrence.usePointer+"/anyOf/"+itoa(index),
+				occurrence.instanceTemplate,
 			)
 			if foundNode, foundOccurrence, found := firstUnpinnedScalarAnyOf(
 				child, childOccurrence, pins,
@@ -80,7 +84,10 @@ func firstUnpinnedScalarAnyOf(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if foundNode, foundOccurrence, found := firstUnpinnedScalarAnyOf(
 			child, childOccurrence, pins,

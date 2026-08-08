@@ -3,6 +3,7 @@ package schematest
 
 import (
 	"fmt"
+	"iter"
 	"strings"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestEvaluateAnyOfAggregateFailureHasParentIdentityAfterBranchFailures(t *te
 			"#/paths/~1/post/requestBody/content/application~1json/schema/anyOf/1|#|minimum",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf",
 		},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
@@ -59,7 +60,7 @@ func TestEvaluateRepeatedReferencedCompositionBranchesKeepDistinctUseSiteIdentit
 			"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/1/allOf/0|#|type",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/1/allOf/1|#|minimum",
 		},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 	require.Equal(
 		t,
@@ -68,7 +69,7 @@ func TestEvaluateRepeatedReferencedCompositionBranchesKeepDistinctUseSiteIdentit
 			"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0|#|allOf",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/1|#|allOf",
 		},
-		compositionIdentityStrings(result.allOf),
+		compositionIdentityStrings(result.compositionRecords(oracleRuleAllOf)),
 	)
 	require.Equal(
 		t,
@@ -101,28 +102,30 @@ func TestEvaluateExpandedYAMLCompositionDeterministically(t *testing.T) {
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
 	require.True(t, first.valid)
-	require.Equal(t, first, second)
-	require.Len(t, first.applicable, (1<<(depth+1))-1)
-	require.Len(t, first.allOf, (1<<depth)-1)
-	require.Equal(t, len(first.applicable), first.records.applicable.count)
-	require.Equal(t, len(first.allOf), first.records.allOf.count)
-	require.Empty(t, first.anyOf)
-	require.Empty(t, first.failures)
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
+	require.Equal(t, (1<<(depth+1))-1, evaluationRecordSequenceCount(first.applicableRecords()))
+	require.Equal(t, (1<<depth)-1, evaluationRecordSequenceCount(first.compositionRecords(oracleRuleAllOf)))
+	require.True(t, evaluationRecordSequenceEmpty(first.compositionRecords(oracleRuleAnyOf)))
+	require.True(t, evaluationRecordSequenceEmpty(first.failureRecords()))
 
 	expectedTruth := make([][]bool, (1<<depth)-1)
 	for index := range expectedTruth {
 		expectedTruth[index] = []bool{true, true}
 	}
 
-	require.Equal(t, expectedTruth, compositionTruthVectorsForTest(first.allOf))
+	require.Equal(t, expectedTruth, compositionTruthVectorsForTest(first.compositionRecords(oracleRuleAllOf)))
 
-	firstTruth, ok := first.records.allOf.at(0)
+	firstTruth, ok := evaluationRecordSequenceAt(first.compositionRecords(oracleRuleAllOf), 0)
 	require.True(t, ok)
-	secondTruth, ok := second.records.allOf.at(0)
+	secondTruth, ok := evaluationRecordSequenceAt(second.compositionRecords(oracleRuleAllOf), 0)
 	require.True(t, ok)
 	require.Equal(t, firstTruth, secondTruth)
 
-	lastTruth, ok := first.records.allOf.at(first.records.allOf.count - 1)
+	allOfRecords := first.compositionRecords(oracleRuleAllOf)
+	lastTruth, ok := evaluationRecordSequenceAt(
+		allOfRecords,
+		evaluationRecordSequenceCount(allOfRecords)-1,
+	)
 	require.True(t, ok)
 	require.Equal(
 		t,
@@ -145,12 +148,17 @@ func TestEvaluateExpandedYAMLCompositionDeterministically(t *testing.T) {
 	require.NoError(t, firstInvalid.err)
 	require.NoError(t, secondInvalid.err)
 	require.False(t, firstInvalid.valid)
-	require.Equal(t, firstInvalid, secondInvalid)
-	require.Equal(t, 1<<depth, firstInvalid.records.failures.count)
+	require.Equal(t, evaluationRecordStrings(firstInvalid.records), evaluationRecordStrings(secondInvalid.records))
+	require.Equal(t, 1<<depth, evaluationRecordSequenceCount(firstInvalid.failureRecords()))
 
-	firstFailure, ok := firstInvalid.records.failures.at(0)
+	firstFailure, ok := evaluationRecordSequenceAt(firstInvalid.failureRecords(), 0)
 	require.True(t, ok)
-	lastFailure, ok := firstInvalid.records.failures.at(firstInvalid.records.failures.count - 1)
+
+	failureRecords := firstInvalid.failureRecords()
+	lastFailure, ok := evaluationRecordSequenceAt(
+		failureRecords,
+		evaluationRecordSequenceCount(failureRecords)-1,
+	)
 	require.True(t, ok)
 	require.Equal(
 		t,
@@ -164,6 +172,84 @@ func TestEvaluateExpandedYAMLCompositionDeterministically(t *testing.T) {
 			strings.Repeat("/allOf/1", depth)+"|#|type",
 		lastFailure.String(),
 	)
+}
+
+func TestCompositionTruthQueriesAreMutationIsolatedAcrossCachedViews(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(sharedYAMLCompositionDocument(3)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	value, err := parseStrictJSON([]byte(`"text"`))
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.NoError(t, result.err)
+	before := compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf))
+	truth, ok := evaluationRecordSequenceAt(result.compositionRecords(oracleRuleAllOf), 0)
+	require.True(t, ok)
+
+	truth.branches[0] = false
+
+	result.records.forEach(func(record evaluationRecord) bool {
+		if record.kind == evaluationRecordComposition {
+			record.branches[0] = false
+		}
+
+		return true
+	})
+
+	require.Equal(t, before, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf)))
+
+	again := evaluate(model, value)
+	require.NoError(t, again.err)
+	require.Equal(t, before, compositionTruthVectorsForTest(again.compositionRecords(oracleRuleAllOf)))
+	require.Equal(t, evaluationRecordStrings(result.records), evaluationRecordStrings(again.records))
+}
+
+func TestFilteredPersistentCompositionRetainsConstantTimeCounts(t *testing.T) {
+	t.Parallel()
+
+	child := newEvaluationRecords()
+	child.append(makeEvaluationRecord(evaluationRecordApplicable, makeRuleIdentity(
+		schemaOccurrence{usePointer: "#/leaf", targetPointer: "#/leaf", instanceTemplate: "#"},
+		oracleRuleType,
+	)))
+	child.append(makeEvaluationRecord(evaluationRecordFailure, makeRuleIdentity(
+		schemaOccurrence{usePointer: "#/leaf", targetPointer: "#/leaf", instanceTemplate: "#"},
+		oracleRuleType,
+	)))
+
+	const depth = 20
+	for range depth {
+		parent := newEvaluationRecords()
+		parent.appendNonFailures(child)
+		parent.appendNonFailures(child)
+		child = parent
+	}
+
+	require.Equal(t, 1<<depth, child.count)
+	require.Equal(t, child.count, child.nonFailureCount)
+	require.Len(t, child.parts, 2)
+	require.Same(t, child.parts[0].nested, child.parts[1].nested)
+	require.Equal(t, depth+1, physicalEvaluationRecordNodeCount(child, make(map[*evaluationRecords]bool)))
+}
+
+func physicalEvaluationRecordNodeCount(records *evaluationRecords, seen map[*evaluationRecords]bool) int {
+	if records == nil || seen[records] {
+		return 0
+	}
+
+	seen[records] = true
+
+	count := 1
+	for _, part := range records.parts {
+		count += physicalEvaluationRecordNodeCount(part.nested, seen)
+	}
+
+	return count
 }
 
 func TestEvaluateExpandedYAMLCompositionRejectingLeafRemainsInvalid(t *testing.T) {
@@ -186,12 +272,12 @@ func TestEvaluateExpandedYAMLCompositionRejectingLeafRemainsInvalid(t *testing.T
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
 	require.False(t, first.valid)
-	require.Equal(t, first, second)
-	require.Len(t, first.applicable, (1<<(depth+1))-1)
-	require.Len(t, first.allOf, (1<<depth)-1)
-	require.NotZero(t, first.records.failures.count)
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
+	require.Equal(t, (1<<(depth+1))-1, evaluationRecordSequenceCount(first.applicableRecords()))
+	require.Equal(t, (1<<depth)-1, evaluationRecordSequenceCount(first.compositionRecords(oracleRuleAllOf)))
+	require.False(t, evaluationRecordSequenceEmpty(first.failureRecords()))
 
-	failure, ok := first.records.failures.at(0)
+	failure, ok := evaluationRecordSequenceAt(first.failureRecords(), 0)
 	require.True(t, ok)
 	require.Equal(
 		t,
@@ -218,13 +304,9 @@ func sharedYAMLCompositionDocument(depth int) string {
 `, depth)
 }
 
-func compositionIdentityStrings(values []compositionTruth) []string {
-	if len(values) == 0 {
-		return nil
-	}
-
-	result := make([]string, 0, len(values))
-	for _, value := range values {
+func compositionIdentityStrings(values iter.Seq[compositionTruth]) []string {
+	var result []string
+	for value := range values {
 		result = append(result, value.String())
 	}
 

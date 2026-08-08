@@ -99,11 +99,11 @@ func TestCleanOracleAnyOfBodyAndParametersUsesOnlyBodyComposition(t *testing.T) 
 			result := evaluate(model, value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.allOf, compositionTruthVectorsForTest(result.allOf))
-			require.Equal(t, test.anyOf, compositionTruthVectorsForTest(result.anyOf))
-			require.Equal(t, test.applicable, identityStrings(result.applicable))
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, identityStrings(result.failures))
+			require.Equal(t, test.allOf, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf)))
+			require.Equal(t, test.anyOf, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAnyOf)))
+			require.Equal(t, test.applicable, identityStrings(result.applicableRecords()))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, identityStrings(result.failureRecords()))
 		})
 	}
 }
@@ -167,9 +167,9 @@ func TestCleanOracleRequiredNullableClosedObjectUsesExplicitRequestSemantics(t *
 			result := evaluate(model, value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.applicable, identityStrings(result.applicable))
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, identityStrings(result.failures))
+			require.Equal(t, test.applicable, identityStrings(result.applicableRecords()))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, identityStrings(result.failureRecords()))
 		})
 	}
 }
@@ -186,11 +186,11 @@ func TestCleanOracleAlphaAndZetaCorpusSemanticsAreAuthored(t *testing.T) {
 	alphaResult := evaluate(alpha, alphaValue)
 	require.NoError(t, alphaResult.err)
 	require.True(t, alphaResult.valid)
-	require.Empty(t, alphaResult.failures)
-	require.Equal(t, [][]bool{{true, true}}, compositionTruthVectorsForTest(alphaResult.allOf))
-	require.Empty(t, alphaResult.anyOf)
-	require.Contains(t, levelIdentityStrings(alphaResult.observed), alphaSchemaPointer+"/properties/enum|#/enum|enum|level:member:0")
-	require.Contains(t, levelIdentityStrings(alphaResult.observed), alphaSchemaPointer+"/properties/text|#/text|format|level:valid")
+	require.True(t, evaluationRecordSequenceEmpty(alphaResult.failureRecords()))
+	require.Equal(t, [][]bool{{true, true}}, compositionTruthVectorsForTest(alphaResult.compositionRecords(oracleRuleAllOf)))
+	require.True(t, evaluationRecordSequenceEmpty(alphaResult.compositionRecords(oracleRuleAnyOf)))
+	require.Contains(t, levelIdentityStrings(alphaResult.observedRecords()), alphaSchemaPointer+"/properties/enum|#/enum|enum|level:member:0")
+	require.Contains(t, levelIdentityStrings(alphaResult.observedRecords()), alphaSchemaPointer+"/properties/text|#/text|format|level:valid")
 
 	for _, test := range []struct {
 		name     string
@@ -223,9 +223,9 @@ func TestCleanOracleAlphaAndZetaCorpusSemanticsAreAuthored(t *testing.T) {
 			result := evaluate(zeta, value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.truth, compositionTruthVectorsForTest(result.anyOf))
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Empty(t, result.failures)
+			require.Equal(t, test.truth, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAnyOf)))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.True(t, evaluationRecordSequenceEmpty(result.failureRecords()))
 		})
 	}
 }
@@ -267,7 +267,7 @@ func TestCleanOracleFailureIdentitiesDistinguishRuleAndBranchOccurrences(t *test
 			result := evaluateSchemaValue(t, test.schema, test.value)
 			require.NoError(t, result.err)
 			require.False(t, result.valid)
-			require.Equal(t, test.want, identityStrings(result.failures))
+			require.Equal(t, test.want, identityStrings(result.failureRecords()))
 		})
 	}
 }
@@ -309,26 +309,17 @@ func TestCleanOracleEvaluationDoesNotDependOnMapConstructionOrder(t *testing.T) 
 	require.NoError(t, first.err)
 	require.NoError(t, repeat.err)
 	require.NoError(t, second.err)
-	require.Equal(t, first, repeat)
-	require.Equal(t, first, second)
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(repeat.records))
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
 	require.Equal(t, []string{
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a|#/a|pattern",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/z|#/z|minimum",
 		"#/paths/~1/post/requestBody/content/application~1json/schema|#/extra|additionalProperties",
-	}, identityStrings(first.failures))
+	}, identityStrings(first.failureRecords()))
 }
 
-func levelIdentityStrings(identities []levelIdentity) []string {
-	if len(identities) == 0 {
-		return nil
-	}
-
-	result := make([]string, 0, len(identities))
-	for _, identity := range identities {
-		result = append(result, identity.String())
-	}
-
-	return result
+func levelIdentityStrings(identities any) []string {
+	return mapLevelIdentitiesForTest(identities, func(identity levelIdentity) string { return identity.String() })
 }
 
 func cleanCorpusModel(t *testing.T, path, operationID string) *schemaModel {

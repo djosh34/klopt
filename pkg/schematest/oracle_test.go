@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"iter"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,9 +29,9 @@ func TestEvaluateTypelessSchemaAdmitsEveryJSONKind(t *testing.T) {
 			result := evaluateSchemaValue(t, `{}`, test.value)
 			require.NoError(t, result.err)
 			require.True(t, result.valid)
-			require.Equal(t, []string{"type"}, applicableRules(result.applicable))
-			require.Equal(t, []string{test.kind}, observedLevels(result.observed))
-			require.Empty(t, result.failures)
+			require.Equal(t, []string{"type"}, applicableRules(result.applicableRecords()))
+			require.Equal(t, []string{test.kind}, observedLevels(result.observedRecords()))
+			require.True(t, evaluationRecordSequenceEmpty(result.failureRecords()))
 		})
 	}
 }
@@ -72,9 +73,9 @@ func TestEvaluateExplicitKindsUseJSONKindAndExactIntegerMembership(t *testing.T)
 			result := evaluateSchemaValue(t, test.schema, test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, []string{"type"}, applicableRules(result.applicable))
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, []string{"type"}, applicableRules(result.applicableRecords()))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -136,11 +137,11 @@ func TestEvaluateNullableIsSameObjectAndLeavesEnumActive(t *testing.T) {
 			result := evaluateSchemaValue(t, test.schema, "null")
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 
 			if test.name == "explicit nullable keeps enum active" {
-				require.Equal(t, []string{"type", "enum"}, applicableRules(result.applicable))
+				require.Equal(t, []string{"type", "enum"}, applicableRules(result.applicableRecords()))
 			}
 		})
 	}
@@ -169,8 +170,8 @@ func TestEvaluateEnumsUseCleanJSONSemantics(t *testing.T) {
 			result := evaluateSchemaValue(t, schema, test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.valid, len(result.failures) == 0)
-			require.Equal(t, []string{"type", "enum"}, applicableRules(result.applicable))
+			require.Equal(t, test.valid, evaluationRecordSequenceEmpty(result.failureRecords()))
+			require.Equal(t, []string{"type", "enum"}, applicableRules(result.applicableRecords()))
 		})
 	}
 }
@@ -181,9 +182,9 @@ func TestEvaluateEnumDuplicateMembersKeepFirstAuthoredLevel(t *testing.T) {
 	result := evaluateSchemaValue(t, `{"enum":[1,1.0,{"a":1,"b":2},{"b":2.0,"a":1}]}`, `{"b":2,"a":1}`)
 	require.NoError(t, result.err)
 	require.True(t, result.valid)
-	require.Equal(t, []string{"type", "enum"}, applicableRules(result.applicable))
-	require.Equal(t, []string{"object", "member:2"}, observedLevels(result.observed))
-	require.Empty(t, result.failures)
+	require.Equal(t, []string{"type", "enum"}, applicableRules(result.applicableRecords()))
+	require.Equal(t, []string{"object", "member:2"}, observedLevels(result.observedRecords()))
+	require.True(t, evaluationRecordSequenceEmpty(result.failureRecords()))
 }
 
 func TestEvaluateKeepsSiblingFailuresAndOrderDeterministic(t *testing.T) {
@@ -195,20 +196,18 @@ func TestEvaluateKeepsSiblingFailuresAndOrderDeterministic(t *testing.T) {
 
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
-	require.Equal(t, first, second)
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
 	require.False(t, first.valid)
-	require.Equal(t, []string{"type", "enum"}, applicableRules(first.applicable))
-	require.Empty(t, first.observed)
-	require.Equal(t, []string{"type", "enum"}, failureRules(first.failures))
+	require.Equal(t, []string{"type", "enum"}, applicableRules(first.applicableRecords()))
+	require.True(t, evaluationRecordSequenceEmpty(first.observedRecords()))
+	require.Equal(t, []string{"type", "enum"}, failureRules(first.failureRecords()))
 	require.Equal(
 		t,
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|type",
-		first.failures[0].String(),
-	)
-	require.Equal(
-		t,
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|enum",
-		first.failures[1].String(),
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|enum",
+		},
+		identityStrings(first.failureRecords()),
 	)
 }
 
@@ -286,8 +285,8 @@ func TestEvaluateNumericBoundsUseExactComparisons(t *testing.T) {
 			result := evaluateSchemaValue(t, test.schema, test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -343,7 +342,7 @@ func TestEvaluateMultipleOfAndIntegerMembershipRemainExact(t *testing.T) {
 			result := evaluateSchemaValue(t, test.schema, test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -489,8 +488,8 @@ func TestEvaluateNumericFormatsUseNativeApplicabilityAndExactRanges(t *testing.T
 			result := evaluateSchemaValue(t, test.schema, test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -505,27 +504,27 @@ func TestEvaluateNumericFailureIdentitiesAreDeterministic(t *testing.T) {
 
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
-	require.Equal(t, first, second)
+	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
 	require.False(t, first.valid)
 	require.Equal(
 		t,
 		[]string{"type", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "format"},
-		applicableRules(first.applicable),
+		applicableRules(first.applicableRecords()),
 	)
 	require.Equal(
 		t,
 		[]string{"exclusiveMinimum", "exclusiveMaximum", "multipleOf", "format"},
-		failureRules(first.failures),
+		failureRules(first.failureRecords()),
 	)
 	require.Equal(
 		t,
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|exclusiveMinimum",
-		first.failures[0].String(),
-	)
-	require.Equal(
-		t,
-		"#/paths/~1/post/requestBody/content/application~1json/schema|#|format",
-		first.failures[3].String(),
+		[]string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|exclusiveMinimum",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|exclusiveMaximum",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|multipleOf",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|format",
+		},
+		identityStrings(first.failureRecords()),
 	)
 }
 
@@ -592,9 +591,9 @@ func TestEvaluateArrayCountsUseExistingArrayLengthAndIgnoreWrongKinds(t *testing
 			result := evaluateSchemaValue(t, test.schema, test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.applicable, applicableRules(result.applicable))
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.applicable, applicableRules(result.applicableRecords()))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -617,13 +616,13 @@ func TestEvaluateArrayItemsOnlyExistingIndices(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|minItems",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/items|#/0|type",
 		},
-		identityStrings(result.applicable),
+		identityStrings(result.applicableRecords()),
 	)
-	require.Equal(t, []string{"array", "number"}, observedLevels(result.observed))
+	require.Equal(t, []string{"array", "number"}, observedLevels(result.observedRecords()))
 	require.Equal(
 		t,
 		[]string{"#/paths/~1/post/requestBody/content/application~1json/schema|#|minItems"},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
@@ -644,7 +643,7 @@ func TestEvaluateNestedArrayItemFailuresKeepNumericInstanceIdentity(t *testing.T
 			"#/paths/~1/post/requestBody/content/application~1json/schema/items/items|#/0/1|type",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/items/items|#/1/0|type",
 		},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
@@ -709,9 +708,9 @@ func TestEvaluateObjectRulesUseStableCountsRequirednessAndMemberOrder(t *testing
 			result := evaluateSchemaValue(t, test.schema, test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.applicable, applicableRules(result.applicable))
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.applicable, applicableRules(result.applicableRecords()))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -730,13 +729,13 @@ func TestEvaluateObjectRulesSortRequiredAndAdditionalMembersByUTF8(t *testing.T)
 	require.Equal(
 		t,
 		[]string{"type", "required", "required", "additionalProperties", "additionalProperties", "additionalProperties"},
-		applicableRules(result.applicable),
+		applicableRules(result.applicableRecords()),
 	)
-	require.Equal(t, []string{"object", "present", "present"}, observedLevels(result.observed))
+	require.Equal(t, []string{"object", "present", "present"}, observedLevels(result.observedRecords()))
 	require.Equal(
 		t,
 		[]string{"additionalProperties", "additionalProperties", "additionalProperties"},
-		failureRules(result.failures),
+		failureRules(result.failureRecords()),
 	)
 	require.Equal(
 		t,
@@ -745,7 +744,7 @@ func TestEvaluateObjectRulesSortRequiredAndAdditionalMembersByUTF8(t *testing.T)
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#/z|additionalProperties",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#/é|additionalProperties",
 		},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
@@ -773,9 +772,9 @@ func TestEvaluateObjectRulesValidateSuppliedReadOnlyWriteOnlyAndNestedValues(t *
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/read|#/read|type",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/write|#/write|type",
 		},
-		identityStrings(result.applicable),
+		identityStrings(result.applicableRecords()),
 	)
-	require.Equal(t, []string{"object", "object", "present", "number"}, observedLevels(result.observed))
+	require.Equal(t, []string{"object", "object", "present", "number"}, observedLevels(result.observedRecords()))
 	require.Equal(
 		t,
 		[]string{
@@ -783,7 +782,7 @@ func TestEvaluateObjectRulesValidateSuppliedReadOnlyWriteOnlyAndNestedValues(t *
 				"properties/child|#/nested/child|type",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/read|#/read|type",
 		},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
@@ -823,7 +822,7 @@ paths:
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a/properties/child|#/a/child|type",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/b/properties/child|#/b/child|type",
 		},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
@@ -845,13 +844,13 @@ func TestEvaluateObjectAdditionalSchemaUsesOnlySuppliedMembers(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema/additionalProperties|#/invalid|type",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/additionalProperties|#/valid|type",
 		},
-		identityStrings(result.applicable),
+		identityStrings(result.applicableRecords()),
 	)
-	require.Equal(t, []string{"object", "number"}, observedLevels(result.observed))
+	require.Equal(t, []string{"object", "number"}, observedLevels(result.observedRecords()))
 	require.Equal(
 		t,
 		[]string{"#/paths/~1/post/requestBody/content/application~1json/schema/additionalProperties|#/invalid|type"},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
@@ -867,7 +866,7 @@ func TestEvaluateRejectsMalformedPrivateJSONValue(t *testing.T) {
 	result := evaluate(model, &jsonValue{kind: jsonNumber})
 	require.Error(t, result.err)
 	require.False(t, result.valid)
-	require.Empty(t, result.applicable)
+	require.True(t, evaluationRecordSequenceEmpty(result.applicableRecords()))
 }
 
 func evaluateSchemaValue(t *testing.T, schema, value string) evaluation {
@@ -885,53 +884,55 @@ func evaluateSchemaValue(t *testing.T, schema, value string) evaluation {
 	return evaluate(model, parsed)
 }
 
-func applicableRules(identities []ruleIdentity) []string {
-	if len(identities) == 0 {
-		return nil
-	}
+func applicableRules(identities any) []string {
+	return mapRuleIdentitiesForTest(identities, func(identity ruleIdentity) string { return identity.rule })
+}
 
-	result := make([]string, 0, len(identities))
-	for _, identity := range identities {
-		result = append(result, identity.rule)
+func observedLevels(identities any) []string {
+	return mapLevelIdentitiesForTest(identities, func(identity levelIdentity) string { return identity.level })
+}
+
+func failureRules(identities any) []string {
+	return mapRuleIdentitiesForTest(identities, func(identity ruleIdentity) string { return identity.rule })
+}
+
+func identityStrings(identities any) []string {
+	return mapRuleIdentitiesForTest(identities, func(identity ruleIdentity) string { return identity.String() })
+}
+
+func mapRuleIdentitiesForTest(identities any, convert func(ruleIdentity) string) []string {
+	var result []string
+
+	switch values := identities.(type) {
+	case []ruleIdentity:
+		for _, identity := range values {
+			result = append(result, convert(identity))
+		}
+	case iter.Seq[ruleIdentity]:
+		for identity := range values {
+			result = append(result, convert(identity))
+		}
+	default:
+		panic("unsupported rule identity collection")
 	}
 
 	return result
 }
 
-func observedLevels(identities []levelIdentity) []string {
-	if len(identities) == 0 {
-		return nil
-	}
+func mapLevelIdentitiesForTest(identities any, convert func(levelIdentity) string) []string {
+	var result []string
 
-	result := make([]string, 0, len(identities))
-	for _, identity := range identities {
-		result = append(result, identity.level)
-	}
-
-	return result
-}
-
-func failureRules(identities []failureIdentity) []string {
-	if len(identities) == 0 {
-		return nil
-	}
-
-	result := make([]string, 0, len(identities))
-	for _, identity := range identities {
-		result = append(result, identity.rule)
-	}
-
-	return result
-}
-
-func identityStrings(identities []ruleIdentity) []string {
-	if len(identities) == 0 {
-		return nil
-	}
-
-	result := make([]string, 0, len(identities))
-	for _, identity := range identities {
-		result = append(result, identity.String())
+	switch values := identities.(type) {
+	case []levelIdentity:
+		for _, identity := range values {
+			result = append(result, convert(identity))
+		}
+	case iter.Seq[levelIdentity]:
+		for identity := range values {
+			result = append(result, convert(identity))
+		}
+	default:
+		panic("unsupported level identity collection")
 	}
 
 	return result

@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"strings"
 )
 
@@ -111,7 +112,10 @@ func collectActiveStringRules(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if err := collectActiveStringRules(child, childOccurrence, pins, objective, rules); err != nil {
 			return err
@@ -121,7 +125,10 @@ func collectActiveStringRules(
 	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if !pinned || !states[index] && !stringObjectiveWithin(objective, childOccurrence) {
 			continue
@@ -182,7 +189,7 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 				return false, fmt.Errorf("evaluate directed string fault: %w", result.err)
 			}
 
-			matches, matchErr := exactFailureClosure(result.failures, target.closure)
+			matches, matchErr := exactFailureClosure(result.failureRecords(), target.closure)
 			if matchErr != nil || !matches {
 				return false, matchErr
 			}
@@ -226,6 +233,7 @@ func resolveStringFaultTarget(
 			node: node.items,
 			occurrence: rebasePlanOccurrence(
 				node.items,
+				occurrence,
 				occurrence.usePointer+"/items",
 				appendInstanceToken(occurrence.instanceTemplate, "*"),
 			),
@@ -238,6 +246,7 @@ func resolveStringFaultTarget(
 			node: property,
 			occurrence: rebasePlanOccurrence(
 				property,
+				occurrence,
 				occurrence.usePointer+"/properties/"+escapePointerToken(name),
 				appendInstanceToken(occurrence.instanceTemplate, name),
 			),
@@ -249,6 +258,7 @@ func resolveStringFaultTarget(
 			node: node.additionalProperties,
 			occurrence: rebasePlanOccurrence(
 				node.additionalProperties,
+				occurrence,
 				occurrence.usePointer+"/additionalProperties",
 				appendInstanceToken(occurrence.instanceTemplate, "*"),
 			),
@@ -260,6 +270,7 @@ func resolveStringFaultTarget(
 			node: composed,
 			occurrence: rebasePlanOccurrence(
 				composed,
+				occurrence,
 				occurrence.usePointer+"/allOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			),
@@ -271,6 +282,7 @@ func resolveStringFaultTarget(
 			node: composed,
 			occurrence: rebasePlanOccurrence(
 				composed,
+				occurrence,
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			),
@@ -311,33 +323,32 @@ func stringFaultObjectiveKind(rule string) (stringSearchObjectiveKind, bool) {
 	}
 }
 
-func exactFailureClosure(actual, expected []failureIdentity) (bool, error) {
-	canonicalActual, err := canonicalFailureClosure(actual)
-	if err != nil {
-		return false, err
-	}
-
+func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIdentity) (bool, error) {
 	canonicalExpected, err := canonicalFailureClosure(expected)
 	if err != nil {
 		return false, err
 	}
 
-	if len(canonicalActual) != len(canonicalExpected) {
+	if evaluationRecordSequenceCount(actual) != len(canonicalExpected) {
 		return false, nil
 	}
 
-	matched := make([]bool, len(canonicalActual))
+	consumed := make([]bool, len(canonicalExpected))
 
-	for _, expectedFailure := range canonicalExpected {
+	for actualFailure := range actual {
+		if _, compareErr := compareRuleIdentities(actualFailure, actualFailure); compareErr != nil {
+			return false, compareErr
+		}
+
 		found := false
 
-		for index, actualFailure := range canonicalActual {
-			if matched[index] || actualFailure.rule != expectedFailure.rule ||
+		for index, expectedFailure := range canonicalExpected {
+			if consumed[index] || actualFailure.rule != expectedFailure.rule ||
 				!ruleOccurrenceMatches(actualFailure.occurrence, expectedFailure.occurrence) {
 				continue
 			}
 
-			matched[index] = true
+			consumed[index] = true
 			found = true
 
 			break

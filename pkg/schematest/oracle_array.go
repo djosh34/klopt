@@ -53,12 +53,13 @@ func evaluateArrayRules(
 	for index, item := range value.array {
 		itemOccurrence := rebaseChildOccurrence(
 			node.items,
+			occurrence,
 			occurrence.usePointer+"/items",
 			appendInstanceToken(occurrence.instanceTemplate, strconv.Itoa(index)),
 		)
 
 		itemResult := context.evaluateNode(node.items, item, itemOccurrence)
-		mergeEvaluation(result, itemResult)
+		appendEvaluation(result, itemResult)
 
 		if result.err != nil {
 			return
@@ -78,19 +79,9 @@ func evaluateArrayCountRule(
 	identity := makeRuleIdentity(occurrence, rule)
 	appendApplicable(result, identity)
 
-	actual, err := parseExactNumber(strconv.Itoa(count))
-	if err != nil {
-		return fmt.Errorf("%s: parse array length: %w", identity, err)
-	}
-
-	comparison, err := actual.compare(bound.number)
+	violated, err := countBoundViolated(count, bound, minimum)
 	if err != nil {
 		return fmt.Errorf("%s: compare array length: %w", identity, err)
-	}
-
-	violated := comparison < 0
-	if !minimum {
-		violated = comparison > 0
 	}
 
 	if violated {
@@ -103,36 +94,4 @@ func evaluateArrayCountRule(
 	}
 
 	return nil
-}
-
-// mergeEvaluationRecords appends non-failure child records in traversal order.
-func mergeEvaluationRecords(result *evaluation, child evaluation) {
-	ensureEvaluationRecords(result)
-	result.records.appendNonFailures(child.records)
-
-	if child.fromCache && !child.materialized {
-		return
-	}
-
-	result.applicable = append(result.applicable, child.applicable...)
-	result.observed = append(result.observed, child.observed...)
-	result.allOf = append(result.allOf, child.allOf...)
-	result.anyOf = append(result.anyOf, child.anyOf...)
-}
-
-// mergeEvaluation appends a child evaluation in traversal order.
-func mergeEvaluation(result *evaluation, child evaluation) {
-	mergeEvaluationRecords(result, child)
-	result.records.failures.appendList(&child.records.failures, occurrenceTransform{})
-	result.failed = result.failed || child.failed
-
-	if child.err != nil {
-		result.err = child.err
-	}
-
-	if child.fromCache && !child.materialized {
-		return
-	}
-
-	result.failures = append(result.failures, child.failures...)
 }

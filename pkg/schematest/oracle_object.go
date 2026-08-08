@@ -1,10 +1,6 @@
 package schematest
 
-import (
-	"fmt"
-	"sort"
-	"strconv"
-)
+import "fmt"
 
 const (
 	// oracleRuleMinProperties identifies an inclusive lower bound on object members.
@@ -82,17 +78,14 @@ func evaluateObjectCounts(
 	return nil
 }
 
-// evaluateRequiredMembers evaluates required members in UTF-8 member order.
+// evaluateRequiredMembers evaluates the admission-canonical required members.
 func evaluateRequiredMembers(
 	result *evaluation,
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	members map[string]*jsonValue,
 ) {
-	required := append([]string(nil), node.required...)
-	sort.Strings(required)
-
-	for _, name := range required {
+	for _, name := range node.required {
 		identity := makeRuleIdentity(
 			appendObjectMemberOccurrence(occurrence, name),
 			oracleRuleRequired,
@@ -129,11 +122,12 @@ func evaluateDeclaredProperties(
 
 		propertyOccurrence := rebaseChildOccurrence(
 			property,
+			occurrence,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)
 		propertyResult := context.evaluateNode(property, members[name], propertyOccurrence)
-		mergeEvaluation(result, propertyResult)
+		appendEvaluation(result, propertyResult)
 
 		if result.err != nil {
 			return
@@ -158,13 +152,14 @@ func evaluateAdditionalProperties(
 		if node.additionalProperties != nil {
 			additionalOccurrence := rebaseChildOccurrence(
 				node.additionalProperties,
+				occurrence,
 				occurrence.usePointer+"/additionalProperties",
 				appendInstanceToken(occurrence.instanceTemplate, name),
 			)
 			additionalResult := context.evaluateNode(
 				node.additionalProperties, members[name], additionalOccurrence,
 			)
-			mergeEvaluation(result, additionalResult)
+			appendEvaluation(result, additionalResult)
 
 			if result.err != nil {
 				return
@@ -198,19 +193,9 @@ func evaluateObjectCountRule(
 	identity := makeRuleIdentity(occurrence, rule)
 	appendApplicable(result, identity)
 
-	actual, err := parseExactNumber(strconv.Itoa(count))
-	if err != nil {
-		return fmt.Errorf("%s: parse object member count: %w", identity, err)
-	}
-
-	comparison, err := actual.compare(bound.number)
+	violated, err := countBoundViolated(count, bound, minimum)
 	if err != nil {
 		return fmt.Errorf("%s: compare object member count: %w", identity, err)
-	}
-
-	violated := comparison < 0
-	if !minimum {
-		violated = comparison > 0
 	}
 
 	if violated {
@@ -228,6 +213,10 @@ func evaluateObjectCountRule(
 // appendObjectMemberOccurrence gives one member rule its concrete instance path.
 func appendObjectMemberOccurrence(occurrence schemaOccurrence, name string) schemaOccurrence {
 	occurrence.instanceTemplate = appendInstanceToken(occurrence.instanceTemplate, name)
+	if occurrence.structured != nil {
+		paths := mustParseEvaluationOccurrence(occurrence, occurrence.structured.targetRoot.String())
+		occurrence.structured = &paths
+	}
 
 	return occurrence
 }

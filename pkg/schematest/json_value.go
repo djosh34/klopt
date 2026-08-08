@@ -36,8 +36,6 @@ type jsonValue struct {
 }
 
 // jsonSemanticEqual compares two JSON values using JSON Schema semantics.
-//
-//nolint:cyclop,gocognit // The pair stack handles each of JSON's six semantic kinds directly.
 func jsonSemanticEqual(left, right *jsonValue) (bool, error) {
 	if err := validateJSONValue(left); err != nil {
 		return false, fmt.Errorf("left JSON value: %w", err)
@@ -47,6 +45,13 @@ func jsonSemanticEqual(left, right *jsonValue) (bool, error) {
 		return false, fmt.Errorf("right JSON value: %w", err)
 	}
 
+	return jsonValidatedSemanticEqual(left, right)
+}
+
+// jsonValidatedSemanticEqual compares values already validated at their ownership boundary.
+//
+//nolint:cyclop,gocognit // The pair stack handles each of JSON's six semantic kinds directly.
+func jsonValidatedSemanticEqual(left, right *jsonValue) (bool, error) {
 	work := []jsonValuePair{{left: left, right: right}}
 	for len(work) > 0 {
 		pair := work[len(work)-1]
@@ -88,13 +93,13 @@ func jsonSemanticEqual(left, right *jsonValue) (bool, error) {
 				return false, nil
 			}
 
-			for _, name := range sortedObjectNames(pair.left.object) {
+			for name, leftMember := range pair.left.object {
 				rightMember, exists := pair.right.object[name]
 				if !exists {
 					return false, nil
 				}
 
-				work = append(work, jsonValuePair{left: pair.left.object[name], right: rightMember})
+				work = append(work, jsonValuePair{left: leftMember, right: rightMember})
 			}
 		default:
 			return false, fmt.Errorf("unknown JSON kind %d", pair.left.kind)

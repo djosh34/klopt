@@ -2,10 +2,47 @@
 package schematest
 
 import (
+	"iter"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestExactFailureClosureConsumesExpectedIdentitiesOnce(t *testing.T) {
+	t.Parallel()
+
+	first := makeRuleIdentity(
+		schemaOccurrence{usePointer: "#/a", targetPointer: "#/a", instanceTemplate: "#"},
+		oracleRuleType,
+	)
+	second := makeRuleIdentity(
+		schemaOccurrence{usePointer: "#/b", targetPointer: "#/b", instanceTemplate: "#"},
+		oracleRuleType,
+	)
+	sequence := func(values ...failureIdentity) iter.Seq[failureIdentity] {
+		return func(yield func(failureIdentity) bool) {
+			for _, value := range values {
+				if !yield(value) {
+					return
+				}
+			}
+		}
+	}
+
+	matches, err := exactFailureClosure(sequence(first, first), []failureIdentity{first, second})
+	require.NoError(t, err)
+	require.False(t, matches)
+	matches, err = exactFailureClosure(sequence(second, first), []failureIdentity{first, second})
+	require.NoError(t, err)
+	require.True(t, matches)
+
+	malformed := makeRuleIdentity(schemaOccurrence{
+		usePointer: "not-a-pointer", targetPointer: "#", instanceTemplate: "#",
+	}, oracleRuleType)
+	matches, err = exactFailureClosure(sequence(malformed), []failureIdentity{first})
+	require.Error(t, err)
+	require.False(t, matches)
+}
 
 func TestFindStringFaultRowDirectsEachPatternInAuthoredOrder(t *testing.T) {
 	t.Parallel()
@@ -29,7 +66,7 @@ func TestFindStringFaultRowDirectsEachPatternInAuthoredOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "b", row.text)
-	require.Equal(t, identityStrings(second.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(second.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowTriesLeadingAssertionFailureAlternatives(t *testing.T) {
@@ -47,7 +84,7 @@ func TestFindStringFaultRowTriesLeadingAssertionFailureAlternatives(t *testing.T
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "a", row.text)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowDirectsLengthBoundsAndPreservesPatterns(t *testing.T) {
@@ -78,7 +115,7 @@ func TestFindStringFaultRowDirectsLengthBoundsAndPreservesPatterns(t *testing.T)
 			require.NoError(t, err)
 			require.True(t, found)
 			require.Equal(t, test.want, row.text)
-			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 		})
 	}
 }
@@ -168,7 +205,7 @@ func TestFindStringFaultRowResolvesNestedScalarTargets(t *testing.T) {
 			require.True(t, resolved)
 
 			result := evaluateNode(node, row, occurrence)
-			matches, err := exactFailureClosure(result.failures, target.closure)
+			matches, err := exactFailureClosure(result.failureRecords(), target.closure)
 			require.NoError(t, err)
 			require.True(t, matches)
 		})
@@ -189,7 +226,7 @@ func TestFindStringFaultRowDirectsLengthWithoutAnAuthoredPattern(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Empty(t, row.text)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowLeavesContradictoryObjectiveUncovered(t *testing.T) {
@@ -258,7 +295,7 @@ func TestFindStringFaultRowSearchesFormatsIncrementally(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, found)
 			test.checkValue(t, row.text)
-			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 		})
 	}
 }
@@ -285,7 +322,7 @@ func TestFindStringFaultRowFindsNonLowercaseValidEmail(t *testing.T) {
 	patternMatches, err := cleanPatternMatches(model.root.pattern, row.text)
 	require.NoError(t, err)
 	require.False(t, patternMatches)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowDirectedFalseExpandsSurrogates(t *testing.T) {

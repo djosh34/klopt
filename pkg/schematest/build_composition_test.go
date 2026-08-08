@@ -7,6 +7,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations pins plan/oracle identity agreement.
+func TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(`openapi: 3.0.4
+x-shared: &outer
+  type: object
+  properties:
+    child: {type: string, minLength: 1}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                a: *outer
+                b: *outer
+`)
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 10000}, func(Case) error {
+		return nil
+	})
+	require.NoError(t, err)
+
+	rootUse := "#/paths/~1/post/requestBody/content/application~1json/schema"
+	for _, branch := range []struct{ use, instance string }{
+		{use: "/properties/a/properties/child", instance: "#/a/child"},
+		{use: "/properties/b/properties/child", instance: "#/b/child"},
+	} {
+		require.Contains(t, report.Covered, rootUse+branch.use+"|"+branch.instance+"|type|level:string")
+		require.Contains(t, report.Covered, rootUse+branch.use+"|"+branch.instance+"|minLength|level:valid")
+		require.Contains(t, report.Covered, rootUse+branch.use+"|"+branch.instance+"|minLength|fault:minLength")
+	}
+
+	model, parseErr := parseInput(Input{OpenAPI: document, OperationID: "selected"})
+	require.NoError(t, parseErr)
+
+	plan, planErr := makePlan(model)
+	require.NoError(t, planErr)
+
+	var targets []string
+
+	for _, fault := range plan.faultTargets {
+		if fault.obligation.rule == oracleRuleMinLength {
+			targets = append(targets, fault.obligation.occurrence.targetPointer)
+		}
+	}
+
+	require.Equal(t, []string{
+		rootUse + "/properties/a/properties/child",
+		rootUse + "/properties/b/properties/child",
+	}, targets)
+}
+
 // TestBuildMergesAllOfArrayItemSchemas verifies composed item witnesses.
 func TestBuildMergesAllOfArrayItemSchemas(t *testing.T) {
 	t.Parallel()
@@ -615,31 +672,29 @@ func TestCompositionCoverageScansAllWildcardTruthVectors(t *testing.T) {
 		planLevelMask+"2",
 	)
 
-	result := evaluation{anyOf: []compositionTruth{
-		{
-			ruleIdentity: makeRuleIdentity(
-				schemaOccurrence{
-					usePointer:       "#/schema",
-					targetPointer:    "#/schema",
-					instanceTemplate: "#/0",
-				},
-				oracleRuleAnyOf,
-			),
-			branches: []bool{true, false},
-		},
-		{
-			ruleIdentity: makeRuleIdentity(
-				schemaOccurrence{
-					usePointer:       "#/schema",
-					targetPointer:    "#/schema",
-					instanceTemplate: "#/1",
-				},
-				oracleRuleAnyOf,
-			),
-			branches: []bool{false, true},
-		},
-	}}
-
+	result := evaluation{records: newEvaluationRecords()}
+	appendAnyOfTruth(&result, compositionTruth{
+		ruleIdentity: makeRuleIdentity(
+			schemaOccurrence{
+				usePointer:       "#/schema",
+				targetPointer:    "#/schema",
+				instanceTemplate: "#/0",
+			},
+			oracleRuleAnyOf,
+		),
+		branches: []bool{true, false},
+	})
+	appendAnyOfTruth(&result, compositionTruth{
+		ruleIdentity: makeRuleIdentity(
+			schemaOccurrence{
+				usePointer:       "#/schema",
+				targetPointer:    "#/schema",
+				instanceTemplate: "#/1",
+			},
+			oracleRuleAnyOf,
+		),
+		branches: []bool{false, true},
+	})
 	require.True(t, compositionLevelWasObserved(result, expected))
 }
 

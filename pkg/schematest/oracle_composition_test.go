@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"iter"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,21 +19,21 @@ func TestEvaluateAllOfKeepsLocalSiblingsConjunctiveAndRecordsEveryBranch(t *test
 
 	require.NoError(t, result.err)
 	require.False(t, result.valid)
-	require.Equal(t, [][]bool{{false, true}}, compositionTruthVectorsForTest(result.allOf))
-	require.Empty(t, result.anyOf)
+	require.Equal(t, [][]bool{{false, true}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf)))
+	require.True(t, evaluationRecordSequenceEmpty(result.compositionRecords(oracleRuleAnyOf)))
 	require.Equal(
 		t,
 		[]string{"type", "minLength", "type", "pattern", "type", "pattern"},
-		applicableRules(result.applicable),
+		applicableRules(result.applicableRecords()),
 	)
-	require.Equal(t, []string{"string", "string", "string", "valid"}, observedLevels(result.observed))
+	require.Equal(t, []string{"string", "string", "string", "valid"}, observedLevels(result.observedRecords()))
 	require.Equal(
 		t,
 		[]string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|minLength",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0|#|pattern",
 		},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
@@ -83,15 +84,15 @@ func TestEvaluateAnyOfRecordsCompleteTruthMaskAndOnlyFailsWhenAllBranchesFail(t 
 
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.truth, compositionTruthVectorsForTest(result.anyOf))
-			require.Empty(t, result.allOf)
+			require.Equal(t, test.truth, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAnyOf)))
+			require.True(t, evaluationRecordSequenceEmpty(result.compositionRecords(oracleRuleAllOf)))
 			require.Equal(
 				t,
 				[]string{"type", "type", "pattern", "type", "pattern"},
-				applicableRules(result.applicable),
+				applicableRules(result.applicableRecords()),
 			)
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -107,10 +108,10 @@ func TestEvaluatePatternOnlyAnyOfBranchIsTrueWhenPatternIsInapplicable(t *testin
 
 	require.NoError(t, result.err)
 	require.True(t, result.valid)
-	require.Equal(t, [][]bool{{true, false}}, compositionTruthVectorsForTest(result.anyOf))
-	require.Equal(t, []string{"type", "type", "type"}, applicableRules(result.applicable))
-	require.Equal(t, []string{"number", "number"}, observedLevels(result.observed))
-	require.Empty(t, result.failures)
+	require.Equal(t, [][]bool{{true, false}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAnyOf)))
+	require.Equal(t, []string{"type", "type", "type"}, applicableRules(result.applicableRecords()))
+	require.Equal(t, []string{"number", "number"}, observedLevels(result.observedRecords()))
+	require.True(t, evaluationRecordSequenceEmpty(result.failureRecords()))
 }
 
 func TestEvaluateNestedCompositionPreservesBranchOrderAndIdentity(t *testing.T) {
@@ -125,8 +126,8 @@ func TestEvaluateNestedCompositionPreservesBranchOrderAndIdentity(t *testing.T) 
 
 	require.NoError(t, result.err)
 	require.False(t, result.valid)
-	require.Equal(t, [][]bool{{false, false}}, compositionTruthVectorsForTest(result.allOf))
-	require.Equal(t, [][]bool{{false, false}}, compositionTruthVectorsForTest(result.anyOf))
+	require.Equal(t, [][]bool{{false, false}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf)))
+	require.Equal(t, [][]bool{{false, false}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAnyOf)))
 	require.Equal(
 		t,
 		[]string{
@@ -135,18 +136,24 @@ func TestEvaluateNestedCompositionPreservesBranchOrderAndIdentity(t *testing.T) 
 			"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0|#|anyOf",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/1|#|type",
 		},
-		identityStrings(result.failures),
+		identityStrings(result.failureRecords()),
 	)
 }
 
-func compositionTruthVectorsForTest(values []compositionTruth) [][]bool {
-	if len(values) == 0 {
-		return nil
-	}
+func compositionTruthVectorsForTest(values any) [][]bool {
+	var result [][]bool
 
-	result := make([][]bool, 0, len(values))
-	for _, value := range values {
-		result = append(result, value.branches)
+	switch truths := values.(type) {
+	case []compositionTruth:
+		for _, truth := range truths {
+			result = append(result, truth.branches)
+		}
+	case iter.Seq[compositionTruth]:
+		for truth := range truths {
+			result = append(result, truth.branches)
+		}
+	default:
+		panic("unsupported composition truth collection")
 	}
 
 	return result
