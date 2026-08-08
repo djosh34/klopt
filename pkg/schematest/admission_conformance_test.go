@@ -295,6 +295,118 @@ func TestPublicAdmissionConformance(t *testing.T) {
 	}
 }
 
+func TestPublicStructuralAdmissionConformance(t *testing.T) {
+	t.Parallel()
+
+	const exclusion = `"components":{"schemas":{"Unused":{"discriminator":{"propertyName":"kind"}}}}`
+
+	tests := []struct {
+		name       string
+		document   string
+		diagnostic admissionDiagnostic
+	}{
+		{
+			name:     "missing paths",
+			document: `{"openapi":"3.0.4",` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths",
+				production: "#/paths: required field is missing",
+				clean:      "#/paths: required field is missing",
+			},
+		},
+		{
+			name:     "non-object paths",
+			document: `{"openapi":"3.0.4","paths":[],` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths",
+				production: "#/paths: must be an object",
+				clean:      "#/paths: must be an object",
+			},
+		},
+		{
+			name:     "invalid path key",
+			document: `{"openapi":"3.0.4","paths":{"not-a-path":{}},` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths/not-a-path",
+				production: `#/paths/not-a-path: path template "not-a-path" must begin with /`,
+				clean:      `#/paths/not-a-path: path field must begin with '/'`,
+			},
+		},
+		{
+			name:     "invalid path template",
+			document: `{"openapi":"3.0.4","paths":{"/things/{id":{}},` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths/~1things~1{id",
+				production: `#/paths/~1things~1{id: path template "/things/{id" has an unmatched {`,
+				clean:      `#/paths/~1things~1{id: path template has an unmatched '{'`,
+			},
+		},
+		{
+			name:     "non-object path item",
+			document: `{"openapi":"3.0.4","paths":{"/things":false},` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths/~1things",
+				production: "#/paths/~1things: must be an object",
+				clean:      "#/paths/~1things: must be an object",
+			},
+		},
+		{
+			name:     "non-object operation",
+			document: `{"openapi":"3.0.4","paths":{"/things":{"post":false}},` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths/~1things/post",
+				production: "#/paths/~1things/post: must be an object",
+				clean:      "#/paths/~1things/post: must be an object",
+			},
+		},
+		{
+			name: "top-level Path Item reference sibling conflict",
+			document: `{"openapi":"3.0.4","x-path":{"get":{"operationId":"selected",` +
+				`"requestBody":{"content":{"application/json":{"schema":{}}}}}},` +
+				`"paths":{"/things":{"$ref":"#/x-path","get":{}}}}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths/~1things/$ref",
+				production: "#/paths/~1things/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+				clean:      "#/paths/~1things/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+			},
+		},
+		{
+			name: "callback Path Item reference sibling conflict",
+			document: `{"openapi":"3.0.4","x-path":{},` +
+				`"paths":{"/things":{"post":{"operationId":"selected",` +
+				`"requestBody":{"content":{"application/json":{"schema":{}}}},` +
+				`"callbacks":{"Bad":{"/callback":{"$ref":"#/x-path","summary":"conflict"}}}}}}}`,
+			diagnostic: admissionDiagnostic{
+				class:   admissionInvalidOAS,
+				pointer: "#/paths/~1things/post/callbacks/Bad/~1callback/$ref",
+				production: "#/paths/~1things/post/callbacks/Bad/~1callback/$ref: " +
+					"Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+				clean: "#/paths/~1things/post/callbacks/Bad/~1callback/$ref: " +
+					"Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			assertProductionAdmission(t, []byte(test.document), test.diagnostic)
+			assertCleanAdmission(t, []byte(test.document), test.diagnostic)
+		})
+	}
+
+	t.Run("Path Item reference extension sibling", func(t *testing.T) {
+		t.Parallel()
+
+		document := []byte(`{"openapi":"3.0.4","x-path":{"post":{"operationId":"selected",` +
+			`"requestBody":{"content":{"application/json":{"schema":{}}}}}},` +
+			`"paths":{"/things":{"$ref":"#/x-path","x-note":true}}}`)
+		diagnostic := admissionDiagnostic{class: admissionAccepted}
+		assertProductionAdmission(t, document, diagnostic)
+		assertCleanAdmission(t, document, diagnostic)
+	})
+}
+
 func TestPublicDocumentProfileTraversalConformance(t *testing.T) {
 	t.Parallel()
 

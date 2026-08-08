@@ -570,11 +570,11 @@ func TestParseValidatesEveryPathBeforeOperationAcquisition(t *testing.T) {
 	}{
 		"identical hierarchy": {
 			paths:    "  /pets/{id}: {}\n  /pets/{name}: {}\n",
-			contains: "identical templated hierarchy",
+			contains: "templated path is identical",
 		},
 		"unknown Path Item field": {
 			paths:    "  /pets:\n    connect: {}\n",
-			contains: `unknown Path Item field "connect"`,
+			contains: `#/paths/~1pets/connect: unknown Path Item Object field`,
 		},
 		"reached external Path Item": {
 			paths:    "  /pets:\n    $ref: other.yaml#/Pets\n",

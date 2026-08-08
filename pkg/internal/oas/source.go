@@ -192,6 +192,10 @@ func parseWithSemanticVersionPattern(
 		)
 	}
 
+	if structuralErr := preflightDocumentStructure(root); structuralErr != nil {
+		return nil, nil, structuralErr
+	}
+
 	normalized := append(json.RawMessage(nil), document...)
 	if validateDocument != nil {
 		if profileErr := validateDocument(normalized); profileErr != nil {
@@ -229,6 +233,152 @@ func parseWithSemanticVersionPattern(
 	}
 
 	return sources, normalized, nil
+}
+
+// preflightDocumentStructure validates document structure without following references.
+func preflightDocumentStructure(root map[string]json.RawMessage) error {
+	pathsRaw, exists := root["paths"]
+	if !exists {
+		return errors.New("#/paths: required field is missing")
+	}
+
+	var paths map[string]json.RawMessage
+	if err := json.Unmarshal(pathsRaw, &paths); err != nil || paths == nil {
+		return errors.New("#/paths: must be an object")
+	}
+
+	seenPaths := make(map[string]string)
+
+	for _, path := range slices.Sorted(maps.Keys(paths)) {
+		if strings.HasPrefix(path, "x-") {
+			continue
+		}
+
+		pointer := appendPointer("#/paths", path)
+
+		identity, _, err := ParsePathTemplate(path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", pointer, err)
+		}
+
+		if first, duplicate := seenPaths[identity]; duplicate {
+			return fmt.Errorf("%s: templated path is identical to %s", pointer, first)
+		}
+
+		seenPaths[identity] = pointer
+		if err := preflightPathItemStructure(paths[path], pointer); err != nil {
+			return err
+		}
+	}
+
+	return preflightComponentCallbacks(root["components"], "#/components")
+}
+
+// preflightPathItemStructure checks one authored Path Item without following its reference.
+//
+//nolint:cyclop // Fixed fields, operation shapes, and callback descent form one structural check.
+func preflightPathItemStructure(raw json.RawMessage, pointer string) error {
+	var pathItem map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &pathItem); err != nil || pathItem == nil {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	if _, referenced := pathItem["$ref"]; referenced {
+		for name := range pathItem {
+			if name != "$ref" && !strings.HasPrefix(name, "x-") {
+				return fmt.Errorf(
+					"%s/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+					pointer,
+				)
+			}
+		}
+	}
+
+	allowed := map[string]struct{}{
+		"$ref": {}, "summary": {}, "description": {}, "get": {}, "put": {}, "post": {}, "delete": {},
+		"options": {}, "head": {}, "patch": {}, "trace": {}, "servers": {}, "parameters": {},
+	}
+	for name := range pathItem {
+		if _, ok := allowed[name]; ok || strings.HasPrefix(name, "x-") {
+			continue
+		}
+
+		return fmt.Errorf("%s: unknown Path Item Object field", appendPointer(pointer, name))
+	}
+
+	for _, method := range []string{"delete", "get", "head", "options", "patch", "post", "put", "trace"} {
+		operation, exists := pathItem[method]
+		if !exists {
+			continue
+		}
+
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(operation, &object); err != nil || object == nil {
+			return fmt.Errorf("%s/%s: must be an object", pointer, method)
+		}
+
+		if err := preflightCallbacksStructure(object["callbacks"], appendPointer(pointer, method, "callbacks")); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// preflightCallbacksStructure checks inline callback Path Items without following references.
+//
+//nolint:cyclop // Container, callback, reference, and expression checks are one structural pass.
+func preflightCallbacksStructure(raw json.RawMessage, pointer string) error {
+	if raw == nil {
+		return nil
+	}
+
+	var callbacks map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &callbacks); err != nil || callbacks == nil {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(callbacks)) {
+		var callback map[string]json.RawMessage
+		if err := json.Unmarshal(callbacks[name], &callback); err != nil || callback == nil {
+			return fmt.Errorf("%s: must be an object", appendPointer(pointer, name))
+		}
+
+		if _, referenced := callback["$ref"]; referenced {
+			continue
+		}
+
+		callbackPointer := appendPointer(pointer, name)
+
+		for _, expression := range slices.Sorted(maps.Keys(callback)) {
+			if strings.HasPrefix(expression, "x-") {
+				continue
+			}
+
+			if err := preflightPathItemStructure(
+				callback[expression],
+				appendPointer(callbackPointer, expression),
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// preflightComponentCallbacks checks the reusable inline Callback Objects.
+func preflightComponentCallbacks(raw json.RawMessage, pointer string) error {
+	if raw == nil {
+		return nil
+	}
+
+	var components map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &components); err != nil || components == nil {
+		return fmt.Errorf("%s: must be an object", pointer)
+	}
+
+	return preflightCallbacksStructure(components["callbacks"], appendPointer(pointer, "callbacks"))
 }
 
 // rejectDuplicateJSONNames preflights decoded member-name uniqueness across one JSON document.

@@ -90,6 +90,10 @@ func (validator *documentProfileValidator) components(value *jsonValue, pointer 
 }
 
 func (validator *documentProfileValidator) pathItem(value *jsonValue, pointer string) error {
+	if err := rejectPathItemReferenceSiblings(value, pointer); err != nil {
+		return err
+	}
+
 	return validator.resolvedObject(
 		value,
 		pointer,
@@ -110,6 +114,27 @@ func (validator *documentProfileValidator) pathItem(value *jsonValue, pointer st
 			return nil
 		},
 	)
+}
+
+func rejectPathItemReferenceSiblings(value *jsonValue, pointer string) error {
+	if value == nil || value.kind != jsonObject {
+		return nil
+	}
+
+	if _, referenced := value.object["$ref"]; !referenced {
+		return nil
+	}
+
+	for _, name := range sortedObjectNames(value.object) {
+		if name != "$ref" && !strings.HasPrefix(name, "x-") {
+			return fmt.Errorf(
+				"%s/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+				pointer,
+			)
+		}
+	}
+
+	return nil
 }
 
 //nolint:cyclop // Operation Object schema slots have one fixed traversal order.

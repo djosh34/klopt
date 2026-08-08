@@ -103,6 +103,10 @@ func (walker *authoredSchemaWalker) components(raw json.RawMessage, pointer stri
 
 // pathItem traverses path-level parameters and operations.
 func (walker *authoredSchemaWalker) pathItem(raw json.RawMessage, pointer string) (result error) {
+	if err := rejectPathItemReferenceSiblings(raw, pointer); err != nil {
+		return err
+	}
+
 	raw, pointer, ok, err := walker.resolve("path item", raw, pointer)
 	if err != nil {
 		return err
@@ -132,6 +136,29 @@ func (walker *authoredSchemaWalker) pathItem(raw json.RawMessage, pointer string
 			if err := walker.operation(rawOperation, appendSchemaPointer(pointer, method)); err != nil {
 				return err
 			}
+		}
+	}
+
+	return nil
+}
+
+// rejectPathItemReferenceSiblings rejects undefined Path Item reference conflicts.
+func rejectPathItemReferenceSiblings(raw json.RawMessage, pointer string) error {
+	pathItem, ok := rawObject(raw)
+	if !ok {
+		return nil
+	}
+
+	if _, referenced := pathItem["$ref"]; !referenced {
+		return nil
+	}
+
+	for name := range pathItem {
+		if name != "$ref" && !strings.HasPrefix(name, "x-") {
+			return fmt.Errorf(
+				"%s/$ref: Path Item Object fields beside $ref have undefined OAS 3.0 behavior",
+				pointer,
+			)
 		}
 	}
 

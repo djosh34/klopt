@@ -1771,8 +1771,8 @@ func TestParseIgnoresUniqueItemsOnIntermediateReferenceObjects(t *testing.T) {
 	require.Contains(t, parsed, "beta")
 }
 
-// TestParseRunsDocumentProfileBeforePathAcquisition locks the prescribed phase precedence.
-func TestParseRunsDocumentProfileBeforePathAcquisition(t *testing.T) {
+// TestParseRunsPathStructureBeforeDocumentProfile locks the prescribed phase precedence.
+func TestParseRunsPathStructureBeforeDocumentProfile(t *testing.T) {
 	t.Parallel()
 
 	parsed, err := Parse([]byte(`{
@@ -1781,8 +1781,9 @@ func TestParseRunsDocumentProfileBeforePathAcquisition(t *testing.T) {
 		"components":{"schemas":{"Only":{"uniqueItems":false}}}
 	}`))
 	require.Nil(t, parsed)
-	require.ErrorContains(t, err, "#/components/schemas/Only/uniqueItems")
-	require.ErrorContains(t, err, "outside the Klopt profile")
+	require.ErrorContains(t, err, "#/paths/not-a-path")
+	require.ErrorContains(t, err, "must begin with /")
+	require.NotContains(t, err.Error(), "uniqueItems")
 }
 
 // TestParseSelectsUniqueItemsDeterministically uses lexical maps and the documented nested keyword order.
@@ -2334,8 +2335,8 @@ func TestParseRejectsFirstMalformedOperationDeterministically(t *testing.T) {
 	}`)
 
 	_, err := Parse(spec)
-	require.ErrorContains(t, err, "#/paths/~1broken-ref/$ref")
-	require.ErrorContains(t, err, "member \"components\" does not exist")
+	require.ErrorContains(t, err, "#/paths/~1broken-operation/post")
+	require.ErrorContains(t, err, "must be an object")
 }
 
 // TestValidationErrorsAreStableAndFresh covers repeatability and caller-owned result slices.
