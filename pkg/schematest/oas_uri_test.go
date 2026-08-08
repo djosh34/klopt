@@ -23,10 +23,13 @@ func TestValidateURIReferenceAcceptsRFC3986IPLiteralForms(t *testing.T) {
 		"https://[1::8]/",
 		"https://[::ffff:192.0.2.128]/",
 		"https://[1:2:3:4:5:6:192.0.2.1]:443/path?query#fragment",
+		"https://[::1]:/docs",
 		"https://[v1.a]/",
+		"https://[v1.docs]:/docs",
 		"https://[VAF.a:b!$&'()*+,;=-._~]:443/",
 	} {
-		require.NoError(t, validateURIReference(value), value)
+		_, err := validateURIReference(value)
+		require.NoError(t, err, value)
 	}
 }
 
@@ -46,10 +49,24 @@ func TestValidateURIReferenceRejectsMalformedIPLiteralForms(t *testing.T) {
 		"https://[v1.a%20b]/",
 		"https://[v1.a/b]/",
 		"https://[::1]extra/",
-		"https://[::1]:/",
 		"https://[::1]:port/",
 	} {
-		require.Error(t, validateURIReference(value), value)
+		_, err := validateURIReference(value)
+		require.Error(t, err, value)
+	}
+}
+
+func TestValidateURIReferenceClassifiesValidatedScheme(t *testing.T) {
+	t.Parallel()
+
+	for value, want := range map[string]uriReferenceClass{
+		"https://example.test/path": uriNonRelativeReference,
+		"urn:example:name":          uriNonRelativeReference,
+		"../relative/path":          uriRelativeReference,
+	} {
+		classification, err := validateURIReference(value)
+		require.NoError(t, err)
+		require.Equal(t, want, classification)
 	}
 }
 
@@ -85,6 +102,16 @@ func TestParseInputAnnotationIPLiteralParity(t *testing.T) {
 			name:       "XML namespace IPv6",
 			jsonSchema: `{"xml":{"namespace":"urn://[2001:db8::1]/name"}}`,
 			yamlSchema: `xml: {namespace: "urn://[2001:db8::1]/name"}`,
+		},
+		{
+			name:       "external documentation IPv6 empty port",
+			jsonSchema: `{"externalDocs":{"url":"https://[::1]:/docs"}}`,
+			yamlSchema: `externalDocs: {url: "https://[::1]:/docs"}`,
+		},
+		{
+			name:       "external documentation IPvFuture empty port",
+			jsonSchema: `{"externalDocs":{"url":"https://[v1.docs]:/docs"}}`,
+			yamlSchema: `externalDocs: {url: "https://[v1.docs]:/docs"}`,
 		},
 		{
 			name:        "external documentation malformed bracket host",

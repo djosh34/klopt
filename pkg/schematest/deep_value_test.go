@@ -40,6 +40,52 @@ paths:
 	requireDeepZeroStepBuild(t, []byte(document))
 }
 
+// TestJSONValueInternerDeduplicatesNestedSemanticValuesDeterministically checks iterative canonicalization.
+func TestJSONValueInternerDeduplicatesNestedSemanticValuesDeterministically(t *testing.T) {
+	t.Parallel()
+
+	one, err := parseExactNumber("1")
+	require.NoError(t, err)
+	onePointZero, err := parseExactNumber("1.0")
+	require.NoError(t, err)
+
+	first := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{
+		"ä": {kind: jsonArray, array: []*jsonValue{{kind: jsonNumber, number: onePointZero}}},
+		"z": {kind: jsonBoolean, boolean: true},
+	}}
+	second := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{
+		"z": {kind: jsonBoolean, boolean: true},
+		"ä": {kind: jsonArray, array: []*jsonValue{{kind: jsonNumber, number: one}}},
+	}}
+	interner := jsonValueInterner{
+		valueIDs: make(map[*jsonValue]int),
+		shapeIDs: make(map[string]int),
+		visiting: make(map[*jsonValue]bool),
+	}
+
+	firstID, err := interner.intern(first)
+	require.NoError(t, err)
+	secondID, err := interner.intern(second)
+	require.NoError(t, err)
+	require.Equal(t, firstID, secondID)
+}
+
+// TestJSONValueInternerRejectsCycle checks malformed private enum state.
+func TestJSONValueInternerRejectsCycle(t *testing.T) {
+	t.Parallel()
+
+	cycle := &jsonValue{kind: jsonArray}
+	cycle.array = []*jsonValue{cycle}
+	interner := jsonValueInterner{
+		valueIDs: make(map[*jsonValue]int),
+		shapeIDs: make(map[string]int),
+		visiting: make(map[*jsonValue]bool),
+	}
+
+	_, err := interner.intern(cycle)
+	require.ErrorContains(t, err, "cycle")
+}
+
 // TestDeepYAMLBuildFinishesWithoutProcessStackFailure isolates a fatal-stack regression probe.
 func TestDeepYAMLBuildFinishesWithoutProcessStackFailure(t *testing.T) {
 	t.Parallel()
@@ -64,7 +110,9 @@ paths:
 		return
 	}
 
-	command := exec.Command(os.Args[0], "-test.run=^TestDeepYAMLBuildFinishesWithoutProcessStackFailure$", "-test.count=1")
+	command := exec.CommandContext(
+		t.Context(), os.Args[0], "-test.run=^TestDeepYAMLBuildFinishesWithoutProcessStackFailure$", "-test.count=1",
+	)
 
 	command.Env = append(os.Environ(), "SCHEMATEST_DEEP_YAML_PROBE=1")
 	output, err := command.CombinedOutput()
@@ -81,7 +129,9 @@ func TestDeepJSONBuildFinishesWithoutProcessStackFailure(t *testing.T) {
 		return
 	}
 
-	command := exec.Command(os.Args[0], "-test.run=^TestDeepJSONBuildFinishesWithoutProcessStackFailure$", "-test.count=1")
+	command := exec.CommandContext(
+		t.Context(), os.Args[0], "-test.run=^TestDeepJSONBuildFinishesWithoutProcessStackFailure$", "-test.count=1",
+	)
 
 	command.Env = append(os.Environ(), "SCHEMATEST_DEEP_JSON_PROBE=1")
 	output, err := command.CombinedOutput()

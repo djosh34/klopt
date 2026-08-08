@@ -272,19 +272,102 @@ func (interner *jsonValueInterner) intern(value *jsonValue) (int, error) {
 		return identifier, nil
 	}
 
-	if interner.visiting[value] {
-		return 0, errors.New("JSON value contains a cycle")
+	frame := &jsonInternFrame{value: value}
+	for frame != nil {
+		if !frame.entered {
+			if err := interner.enter(frame); err != nil {
+				return 0, err
+			}
+		}
+
+		child, name, hasChild := frame.nextChild()
+		if !hasChild {
+			interner.finish(frame)
+			frame = frame.parent
+
+			continue
+		}
+
+		complete, err := interner.appendChild(frame, child, name)
+		if err != nil {
+			return 0, err
+		}
+
+		if complete {
+			continue
+		}
+
+		frame = &jsonInternFrame{value: child, parent: frame}
 	}
 
-	interner.visiting[value] = true
-	defer delete(interner.visiting, value)
+	return interner.valueIDs[value], nil
+}
 
-	signature, err := interner.signature(value)
-	if err != nil {
-		return 0, err
+func (interner *jsonValueInterner) enter(frame *jsonInternFrame) error {
+	if interner.visiting[frame.value] {
+		return errors.New("JSON value contains a cycle")
 	}
 
-	key := string(signature)
+	interner.visiting[frame.value] = true
+	frame.entered = true
+	frame.signature = []byte{byte(frame.value.kind)}
+
+	switch frame.value.kind {
+	case jsonNull:
+	case jsonBoolean:
+		if frame.value.boolean {
+			frame.signature = append(frame.signature, 1)
+		}
+	case jsonNumber:
+		if frame.value.number == nil {
+			return errors.New("JSON number is nil")
+		}
+
+		decimal, err := frame.value.number.canonicalDecimal()
+		if err != nil {
+			return fmt.Errorf("canonicalize JSON number: %w", err)
+		}
+
+		frame.signature = appendCanonicalString(frame.signature, decimal)
+	case jsonString:
+		frame.signature = appendCanonicalString(frame.signature, frame.value.text)
+	case jsonArray:
+	case jsonObject:
+		frame.names = sortedObjectNames(frame.value.object)
+	default:
+		return fmt.Errorf("unknown JSON kind %d", frame.value.kind)
+	}
+
+	return nil
+}
+
+func (interner *jsonValueInterner) appendChild(frame *jsonInternFrame, child *jsonValue, name string) (bool, error) {
+	identifier, exists := interner.valueIDs[child]
+	if !exists {
+		if child == nil {
+			return false, errors.New("JSON value is nil")
+		}
+
+		if interner.visiting[child] {
+			return false, errors.New("JSON value contains a cycle")
+		}
+
+		return false, nil
+	}
+
+	if frame.value.kind == jsonObject {
+		frame.signature = appendCanonicalString(frame.signature, name)
+	}
+
+	frame.signature = strconv.AppendInt(frame.signature, int64(identifier), decimalRadix)
+	frame.signature = append(frame.signature, ';')
+	frame.index++
+
+	return true, nil
+}
+
+func (interner *jsonValueInterner) finish(frame *jsonInternFrame) {
+	key := string(frame.signature)
 
 	identifier, exists := interner.shapeIDs[key]
 	if !exists {
@@ -292,59 +375,34 @@ func (interner *jsonValueInterner) intern(value *jsonValue) (int, error) {
 		interner.shapeIDs[key] = identifier
 	}
 
-	interner.valueIDs[value] = identifier
-
-	return identifier, nil
+	interner.valueIDs[frame.value] = identifier
+	delete(interner.visiting, frame.value)
 }
 
-func (interner *jsonValueInterner) signature(value *jsonValue) ([]byte, error) {
-	signature := []byte{byte(value.kind)}
+type jsonInternFrame struct {
+	value     *jsonValue
+	parent    *jsonInternFrame
+	signature []byte
+	names     []string
+	index     int
+	entered   bool
+}
 
-	switch value.kind {
-	case jsonNull:
-	case jsonBoolean:
-		if value.boolean {
-			signature = append(signature, 1)
-		}
-	case jsonNumber:
-		if value.number == nil {
-			return nil, errors.New("JSON number is nil")
-		}
-
-		decimal, err := value.number.canonicalDecimal()
-		if err != nil {
-			return nil, fmt.Errorf("canonicalize JSON number: %w", err)
-		}
-
-		signature = appendCanonicalString(signature, decimal)
-	case jsonString:
-		signature = appendCanonicalString(signature, value.text)
+func (frame *jsonInternFrame) nextChild() (*jsonValue, string, bool) {
+	switch frame.value.kind {
 	case jsonArray:
-		for _, child := range value.array {
-			identifier, err := interner.intern(child)
-			if err != nil {
-				return nil, err
-			}
-
-			signature = strconv.AppendInt(signature, int64(identifier), decimalRadix)
-			signature = append(signature, ';')
+		if frame.index < len(frame.value.array) {
+			return frame.value.array[frame.index], "", true
 		}
 	case jsonObject:
-		for _, name := range sortedObjectNames(value.object) {
-			identifier, err := interner.intern(value.object[name])
-			if err != nil {
-				return nil, err
-			}
+		if frame.index < len(frame.names) {
+			name := frame.names[frame.index]
 
-			signature = appendCanonicalString(signature, name)
-			signature = strconv.AppendInt(signature, int64(identifier), decimalRadix)
-			signature = append(signature, ';')
+			return frame.value.object[name], name, true
 		}
-	default:
-		return nil, fmt.Errorf("unknown JSON kind %d", value.kind)
 	}
 
-	return signature, nil
+	return nil, "", false
 }
 
 func appendCanonicalString(destination []byte, value string) []byte {

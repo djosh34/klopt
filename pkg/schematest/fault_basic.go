@@ -3,6 +3,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"math/big"
 )
 
 // errFaultNotFound leaves an unrealizable planned fault uncovered.
@@ -180,4 +181,53 @@ func applyFault(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, er
 	}
 
 	return applyNonCompositionFault(parent, fault, s)
+}
+
+// copyJSONValue deep-copies one transient parent or fault witness.
+func copyJSONValue(value *jsonValue, copied map[*jsonValue]*jsonValue) (*jsonValue, error) {
+	if value == nil {
+		return nil, errors.New("JSON value is nil")
+	}
+
+	if existing, ok := copied[value]; ok {
+		return existing, nil
+	}
+
+	clone := &jsonValue{kind: value.kind, boolean: value.boolean, text: value.text}
+	copied[value] = clone
+
+	if value.number != nil {
+		clone.number = &exactNumber{
+			numerator:   new(big.Int).Set(value.number.numerator),
+			denominator: new(big.Int).Set(value.number.denominator),
+			exponent:    new(big.Int).Set(value.number.exponent),
+			scale:       new(big.Int).Set(value.number.scale),
+		}
+	}
+
+	if value.array != nil {
+		clone.array = make([]*jsonValue, len(value.array))
+		for index, element := range value.array {
+			copiedElement, err := copyJSONValue(element, copied)
+			if err != nil {
+				return nil, err
+			}
+
+			clone.array[index] = copiedElement
+		}
+	}
+
+	if value.object != nil {
+		clone.object = make(map[string]*jsonValue, len(value.object))
+		for name, member := range value.object {
+			copiedMember, err := copyJSONValue(member, copied)
+			if err != nil {
+				return nil, err
+			}
+
+			clone.object[name] = copiedMember
+		}
+	}
+
+	return clone, nil
 }

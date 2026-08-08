@@ -8,18 +8,27 @@ import (
 	"strings"
 )
 
-func validateURIReference(value string) error {
+type uriReferenceClass uint8
+
+const (
+	uriRelativeReference uriReferenceClass = iota
+	uriNonRelativeReference
+)
+
+func validateURIReference(value string) (uriReferenceClass, error) {
+	classification := uriRelativeReference
+
 	reference, fragment, hasFragment := strings.Cut(value, "#")
 	if hasFragment {
 		if err := validateURIFragment(fragment); err != nil {
-			return fmt.Errorf("invalid fragment: %w", err)
+			return classification, fmt.Errorf("invalid fragment: %w", err)
 		}
 	}
 
 	hierarchical, query, hasQuery := strings.Cut(reference, "?")
 	if hasQuery {
 		if err := validateURIComponent(query, "-._~!$&'()*+,;=:@/?"); err != nil {
-			return fmt.Errorf("invalid query: %w", err)
+			return classification, fmt.Errorf("invalid query: %w", err)
 		}
 	}
 
@@ -28,9 +37,10 @@ func validateURIReference(value string) error {
 	slash := strings.IndexByte(hierarchical, '/')
 	if colon >= 0 && (slash < 0 || colon < slash) {
 		if !validURIScheme(hierarchical[:colon]) {
-			return errors.New("invalid URI scheme")
+			return classification, errors.New("invalid URI scheme")
 		}
 
+		classification = uriNonRelativeReference
 		hierarchical = hierarchical[colon+1:]
 	}
 
@@ -45,27 +55,15 @@ func validateURIReference(value string) error {
 		}
 
 		if err := validateURIAuthority(authority); err != nil {
-			return fmt.Errorf("invalid authority: %w", err)
+			return classification, fmt.Errorf("invalid authority: %w", err)
 		}
 	}
 
 	if err := validateURIComponent(path, "-._~!$&'()*+,;=:@/"); err != nil {
-		return fmt.Errorf("invalid path: %w", err)
+		return classification, fmt.Errorf("invalid path: %w", err)
 	}
 
-	return nil
-}
-
-func isAbsoluteURI(value string) bool {
-	hierarchical := value
-	if separator := strings.IndexAny(hierarchical, "?#"); separator >= 0 {
-		hierarchical = hierarchical[:separator]
-	}
-
-	colon := strings.IndexByte(hierarchical, ':')
-	slash := strings.IndexByte(hierarchical, '/')
-
-	return colon >= 0 && (slash < 0 || colon < slash) && validURIScheme(hierarchical[:colon])
+	return classification, nil
 }
 
 func validateURIAuthority(authority string) error {
@@ -93,7 +91,7 @@ func validateURIAuthority(authority string) error {
 			return fmt.Errorf("invalid IP literal: %w", err)
 		}
 
-		return validateURIPortSuffix(hostAndPort[closingBracket+1:], true)
+		return validateURIPortSuffix(hostAndPort[closingBracket+1:])
 	}
 
 	if strings.ContainsAny(hostAndPort, "[]") {
@@ -103,7 +101,7 @@ func validateURIAuthority(authority string) error {
 	host := hostAndPort
 	if separator := strings.LastIndexByte(hostAndPort, ':'); separator >= 0 {
 		host = hostAndPort[:separator]
-		if err := validateURIPortSuffix(hostAndPort[separator:], false); err != nil {
+		if err := validateURIPortSuffix(hostAndPort[separator:]); err != nil {
 			return err
 		}
 	}
@@ -152,17 +150,13 @@ func validateIPvFuture(literal string) error {
 	return nil
 }
 
-func validateURIPortSuffix(suffix string, requireDigits bool) error {
+func validateURIPortSuffix(suffix string) error {
 	if suffix == "" {
 		return nil
 	}
 
 	if suffix[0] != ':' {
 		return errors.New("unexpected characters after host")
-	}
-
-	if requireDigits && len(suffix) == 1 {
-		return errors.New("port must contain decimal digits")
 	}
 
 	for index := 1; index < len(suffix); index++ {
