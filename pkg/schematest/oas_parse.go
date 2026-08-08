@@ -27,7 +27,7 @@ func parseInput(input Input) (*schemaModel, error) {
 		return nil, versionErr
 	}
 
-	if structuralErr := preflightDocumentStructure(root); structuralErr != nil {
+	if structuralErr := preflightDocumentStructure(document, root); structuralErr != nil {
 		return nil, structuralErr
 	}
 
@@ -55,7 +55,7 @@ func parseInput(input Input) (*schemaModel, error) {
 	return &schemaModel{root: node}, nil
 }
 
-func preflightDocumentStructure(root map[string]*jsonValue) error {
+func preflightDocumentStructure(document *jsonValue, root map[string]*jsonValue) error {
 	paths, exists := root["paths"]
 	if !exists {
 		return errors.New("#/paths: required field is missing")
@@ -65,6 +65,10 @@ func preflightDocumentStructure(root map[string]*jsonValue) error {
 		return errors.New("#/paths: must be an object")
 	}
 
+	preflight := cleanDocumentStructurePreflight{
+		document:        document,
+		activePathItems: make(map[string]bool),
+	}
 	seenPaths := make(map[string]string)
 
 	for _, path := range sortedObjectNames(paths.object) {
@@ -87,15 +91,21 @@ func preflightDocumentStructure(root map[string]*jsonValue) error {
 		}
 
 		seenPaths[identity] = pointer
-		if err := preflightPathItemStructure(paths.object[path], pointer); err != nil {
+		if err := preflight.pathItem(paths.object[path], pointer); err != nil {
 			return err
 		}
 	}
 
-	return preflightComponentCallbacks(root["components"], "#/components")
+	return preflight.componentCallbacks(root["components"], "#/components")
 }
 
-func preflightPathItemStructure(value *jsonValue, pointer string) error {
+type cleanDocumentStructurePreflight struct {
+	document        *jsonValue
+	activePathItems map[string]bool
+}
+
+//nolint:gocognit // Fixed fields, local targets, operations, and callbacks form one structural check.
+func (preflight *cleanDocumentStructurePreflight) pathItem(value *jsonValue, pointer string) error {
 	if value == nil || value.kind != jsonObject {
 		return fmt.Errorf("%s: must be an object", pointer)
 	}
@@ -124,6 +134,34 @@ func preflightPathItemStructure(value *jsonValue, pointer string) error {
 		return fmt.Errorf("%s/%s: unknown Path Item Object field", pointer, escapePointerToken(name))
 	}
 
+	if parameters, exists := value.object["parameters"]; exists && parameters.kind != jsonArray {
+		return fmt.Errorf("%s/parameters: must be an array", pointer)
+	}
+
+	if reference, referenced := value.object["$ref"]; referenced {
+		if reference.kind != jsonString {
+			return nil
+		}
+
+		target, targetPointer, err := resolveLocalReference(
+			preflight.document,
+			reference.text,
+			pointer+"/$ref",
+		)
+		if err != nil {
+			return nil
+		}
+
+		if preflight.activePathItems[targetPointer] {
+			return nil
+		}
+
+		preflight.activePathItems[targetPointer] = true
+		defer delete(preflight.activePathItems, targetPointer)
+
+		return preflight.pathItem(target, targetPointer)
+	}
+
 	for _, method := range operationMethods {
 		operation, exists := value.object[method]
 		if !exists {
@@ -134,7 +172,11 @@ func preflightPathItemStructure(value *jsonValue, pointer string) error {
 			return fmt.Errorf("%s/%s: must be an object", pointer, method)
 		}
 
-		if err := preflightCallbacksStructure(
+		if parameters, exists := operation.object["parameters"]; exists && parameters.kind != jsonArray {
+			return fmt.Errorf("%s/%s/parameters: must be an array", pointer, method)
+		}
+
+		if err := preflight.callbacks(
 			operation.object["callbacks"],
 			pointer+"/"+method+"/callbacks",
 		); err != nil {
@@ -145,7 +187,7 @@ func preflightPathItemStructure(value *jsonValue, pointer string) error {
 	return nil
 }
 
-func preflightCallbacksStructure(value *jsonValue, pointer string) error {
+func (preflight *cleanDocumentStructurePreflight) callbacks(value *jsonValue, pointer string) error {
 	if value == nil {
 		return nil
 	}
@@ -171,7 +213,7 @@ func preflightCallbacksStructure(value *jsonValue, pointer string) error {
 				continue
 			}
 
-			if err := preflightPathItemStructure(
+			if err := preflight.pathItem(
 				callback.object[expression],
 				callbackPointer+"/"+escapePointerToken(expression),
 			); err != nil {
@@ -183,7 +225,7 @@ func preflightCallbacksStructure(value *jsonValue, pointer string) error {
 	return nil
 }
 
-func preflightComponentCallbacks(value *jsonValue, pointer string) error {
+func (preflight *cleanDocumentStructurePreflight) componentCallbacks(value *jsonValue, pointer string) error {
 	if value == nil {
 		return nil
 	}
@@ -192,7 +234,7 @@ func preflightComponentCallbacks(value *jsonValue, pointer string) error {
 		return fmt.Errorf("%s: must be an object", pointer)
 	}
 
-	return preflightCallbacksStructure(value.object["callbacks"], pointer+"/callbacks")
+	return preflight.callbacks(value.object["callbacks"], pointer+"/callbacks")
 }
 
 func validateOpenAPIVersion(root map[string]*jsonValue) error {

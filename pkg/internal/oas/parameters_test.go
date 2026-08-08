@@ -250,8 +250,8 @@ func TestParseRejectsMalformedParameterListsAndIdentities(t *testing.T) {
 		opParams   string
 		contains   string
 	}{
-		{name: "path list shape", pathParams: `{}`, contains: "path item parameters"},
-		{name: "operation list shape", opParams: `{}`, contains: "operation parameters"},
+		{name: "path list shape", pathParams: `{}`, contains: "#/paths/~1items/parameters: must be an array"},
+		{name: "operation list shape", opParams: `{}`, contains: "#/paths/~1items/get/parameters: must be an array"},
 		{name: "null list", opParams: `null`, contains: "must be an array"},
 		{name: "bad reference", opParams: `[{$ref: '#/missing'}]`, contains: "resolve reference"},
 		{name: "parameter scalar", opParams: `[1]`, contains: "must be an object"},

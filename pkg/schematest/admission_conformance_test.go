@@ -360,6 +360,45 @@ func TestPublicStructuralAdmissionConformance(t *testing.T) {
 			},
 		},
 		{
+			name:     "referenced Path Item has non-object operation",
+			document: `{"openapi":"3.0.4","x-path":{"post":false},"paths":{"/things":{"$ref":"#/x-path"}},` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/x-path/post",
+				production: "#/x-path/post: must be an object",
+				clean:      "#/x-path/post: must be an object",
+			},
+		},
+		{
+			name:     "Path Item parameters must be an array",
+			document: `{"openapi":"3.0.4","paths":{"/things":{"parameters":false}},` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths/~1things/parameters",
+				production: "#/paths/~1things/parameters: must be an array",
+				clean:      "#/paths/~1things/parameters: must be an array",
+			},
+		},
+		{
+			name:     "Operation parameters must be an array",
+			document: `{"openapi":"3.0.4","paths":{"/things":{"post":{"parameters":false}}},` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/paths/~1things/post/parameters",
+				production: "#/paths/~1things/post/parameters: must be an array",
+				clean:      "#/paths/~1things/post/parameters: must be an array",
+			},
+		},
+		{
+			name: "callback-reached Path Item target has non-object operation",
+			document: `{"openapi":"3.0.4","x-path":{"post":false},` +
+				`"paths":{"/things":{"post":{"operationId":"selected",` +
+				`"requestBody":{"content":{"application/json":{"schema":{}}}},` +
+				`"callbacks":{"Bad":{"/callback":{"$ref":"#/x-path"}}}}}},` + exclusion + `}`,
+			diagnostic: admissionDiagnostic{
+				class: admissionInvalidOAS, pointer: "#/x-path/post",
+				production: "#/x-path/post: must be an object",
+				clean:      "#/x-path/post: must be an object",
+			},
+		},
+		{
 			name: "top-level Path Item reference sibling conflict",
 			document: `{"openapi":"3.0.4","x-path":{"get":{"operationId":"selected",` +
 				`"requestBody":{"content":{"application/json":{"schema":{}}}}}},` +
