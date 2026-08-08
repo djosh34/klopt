@@ -144,6 +144,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -165,6 +166,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 
 			childOccurrence := rebasePlanOccurrence(
 				child,
+				occurrence,
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
@@ -181,6 +183,7 @@ func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, pins []appli
 		for index, child := range node.anyOf {
 			childOccurrence := rebasePlanOccurrence(
 				child,
+				occurrence,
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
@@ -313,6 +316,7 @@ func rowComposedArrayDefaultLengthsAt(
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -333,6 +337,7 @@ func rowComposedArrayDefaultLengthsAt(
 
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -401,6 +406,7 @@ func rowNestedArrayBoundsAt(
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -426,6 +432,7 @@ func rowNestedArrayBoundsAt(
 
 			childOccurrence := rebasePlanOccurrence(
 				child,
+				occurrence,
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
@@ -445,6 +452,7 @@ func rowNestedArrayBoundsAt(
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -705,6 +713,7 @@ func rowNestedObjectMinimumProperties(
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -731,6 +740,7 @@ func rowNestedObjectMinimumProperties(
 
 			childOccurrence := rebasePlanOccurrence(
 				child,
+				occurrence,
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
@@ -840,6 +850,7 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, pins []appl
 					node: source.node,
 					occurrence: rebasePlanOccurrence(
 						source.node,
+						source.occurrence,
 						source.occurrence.usePointer,
 						appendInstanceToken(occurrence.instanceTemplate, name),
 					),
@@ -973,6 +984,7 @@ func rowAdditionalPropertySources(
 		if current.additionalProperties != nil {
 			additionalOccurrence := rebasePlanOccurrence(
 				current.additionalProperties,
+				currentOccurrence,
 				currentOccurrence.usePointer+"/additionalProperties",
 				appendInstanceToken(currentOccurrence.instanceTemplate, "*"),
 			)
@@ -988,6 +1000,7 @@ func rowAdditionalPropertySources(
 		for index, child := range current.allOf {
 			childOccurrence := rebasePlanOccurrence(
 				child,
+				currentOccurrence,
 				currentOccurrence.usePointer+"/allOf/"+itoa(index),
 				currentOccurrence.instanceTemplate,
 			)
@@ -1015,6 +1028,7 @@ func rowAdditionalPropertySources(
 
 				childOccurrence := rebasePlanOccurrence(
 					child,
+					currentOccurrence,
 					currentOccurrence.usePointer+"/anyOf/"+itoa(index),
 					currentOccurrence.instanceTemplate,
 				)
@@ -1034,6 +1048,7 @@ func rowAdditionalPropertySources(
 		for index, child := range current.anyOf {
 			childOccurrence := rebasePlanOccurrence(
 				child,
+				currentOccurrence,
 				currentOccurrence.usePointer+"/anyOf/"+itoa(index),
 				currentOccurrence.instanceTemplate,
 			)
@@ -1167,6 +1182,7 @@ func collectRowObjectMembers(
 		property := node.properties[name]
 		propertyOccurrence := rebasePlanOccurrence(
 			property,
+			occurrence,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)
@@ -1183,7 +1199,10 @@ func collectRowObjectMembers(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if err := collectRowObjectMembers(
 			child, childOccurrence, specs, required, pins, requiredAllowed, visiting,
@@ -1194,7 +1213,10 @@ func collectRowObjectMembers(
 
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 
 		branchRequired := requiredAllowed && rowCompositionPinTruth(pins, childOccurrence, "anyOf", index)

@@ -213,6 +213,10 @@ func evaluateObjectCountRule(
 // appendObjectMemberOccurrence gives one member rule its concrete instance path.
 func appendObjectMemberOccurrence(occurrence schemaOccurrence, name string) schemaOccurrence {
 	occurrence.instanceTemplate = appendInstanceToken(occurrence.instanceTemplate, name)
+	if occurrence.structured != nil {
+		paths := mustParseEvaluationOccurrence(occurrence, occurrence.structured.targetRoot.String())
+		occurrence.structured = &paths
+	}
 
 	return occurrence
 }

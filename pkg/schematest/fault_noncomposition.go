@@ -218,7 +218,10 @@ func activeSchemaAllowsKind(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if !activeSchemaAllowsKind(child, childOccurrence, pins, kind, visiting) {
 			return false
@@ -236,7 +239,10 @@ func activeSchemaAllowsKind(
 		}
 
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if activeSchemaAllowsKind(child, childOccurrence, pins, kind, visiting) {
 			return true
@@ -261,7 +267,10 @@ func cloneWithoutFaultRule(
 	shape.allOf = append([]*schemaNode(nil), node.allOf...)
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if target.usePointer == childOccurrence.usePointer ||
 			strings.HasPrefix(target.usePointer, childOccurrence.usePointer+"/") {
@@ -272,7 +281,10 @@ func cloneWithoutFaultRule(
 	shape.anyOf = append([]*schemaNode(nil), node.anyOf...)
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if target.usePointer == childOccurrence.usePointer ||
 			strings.HasPrefix(target.usePointer, childOccurrence.usePointer+"/") {
@@ -1016,34 +1028,47 @@ func faultSchemaChildren(node *schemaNode, occurrence schemaOccurrence) []faultS
 	children := make([]faultSchemaChild, 0)
 	if node.items != nil {
 		children = append(children, faultSchemaChild{node.items, rebasePlanOccurrence(
-			node.items, occurrence.usePointer+"/items", appendInstanceToken(occurrence.instanceTemplate, "*"),
+			node.items,
+			occurrence,
+			occurrence.usePointer+"/items",
+			appendInstanceToken(occurrence.instanceTemplate, "*"),
 		)})
 	}
 
 	for _, name := range sortedSchemaPropertyNames(node.properties) {
 		property := node.properties[name]
 		children = append(children, faultSchemaChild{property, rebasePlanOccurrence(
-			property, occurrence.usePointer+"/properties/"+escapePointerToken(name),
+			property,
+			occurrence,
+			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)})
 	}
 
 	if node.additionalProperties != nil {
 		children = append(children, faultSchemaChild{node.additionalProperties, rebasePlanOccurrence(
-			node.additionalProperties, occurrence.usePointer+"/additionalProperties",
+			node.additionalProperties,
+			occurrence,
+			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
 		)})
 	}
 
 	for index, child := range node.allOf {
 		children = append(children, faultSchemaChild{child, rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)})
 	}
 
 	for index, child := range node.anyOf {
 		children = append(children, faultSchemaChild{child, rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)})
 	}
 

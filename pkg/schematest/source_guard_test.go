@@ -173,23 +173,25 @@ func TestOracleEvaluationHasNoParallelSemanticStores(t *testing.T) {
 func TestOracleStoreGuardRejectsCompatibilityFields(t *testing.T) {
 	t.Parallel()
 
+	base := `package schematest
+		type evaluationRecord struct{}; type evaluationRecordIdentity struct{}; type evaluationOccurrencePaths struct{}
+		type ruleIdentity struct{}; type levelIdentity struct{}; type compositionTruth struct{}
+		type occurrenceTransform struct{}; type evaluationRecordFilter uint8
+		type evaluationRecordPart struct {
+			records []evaluationRecord; nested *evaluationRecords; transform occurrenceTransform
+			filter evaluationRecordFilter; count int
+		}
+		type evaluationRecords struct { parts []evaluationRecordPart; count int; nonFailureCount int }
+		type evaluation struct { valid bool; failed bool; records *evaluationRecords; err error }
+	`
 	tests := []string{
-		`package schematest
-			type evaluationRecordPart struct{}; type evaluationRecords struct { parts []evaluationRecordPart }
-			type ruleIdentity struct{}; type evaluation struct {
-				valid bool; failed bool; records *evaluationRecords; err error; shadow []ruleIdentity
-			}`,
-		`package schematest
-			type evaluationRecordPart struct{}; type evaluationRecords struct { parts []evaluationRecordPart }
-			type evaluation struct { valid bool; failed bool; records []evaluationRecords; err error }`,
-		`package schematest
-			type evaluationRecordPart struct{}; type ruleIdentity struct{}
-			type evaluationRecords struct { parts []evaluationRecordPart; failures []ruleIdentity }
-			type evaluation struct { valid bool; failed bool; records *evaluationRecords; err error }`,
-		`package schematest
-			type evaluationRecordPart struct{}; type evaluationRecords struct { parts []evaluationRecordPart }
-			type ruleIdentity struct{}; type evaluation struct { valid bool; failed bool; records *evaluationRecords; err error }
-			type evaluationCacheEntry struct { result evaluation; oracle []ruleIdentity }`,
+		strings.Replace(base, "err error", "err error; shadow legacyFailures", 1) +
+			`type legacyFailures struct { values []ruleIdentity }`,
+		strings.Replace(base, "count int\n\t\t}", "count int; identities []evaluationRecordIdentity\n\t\t}", 1),
+		strings.Replace(base, "valid bool", "valid string", 1),
+		base + `type evaluationCacheEntry struct { values []evaluationRecordIdentity }`,
+		base + `type pathBox struct { values []evaluationOccurrencePaths }; ` +
+			`type evaluationCacheResult struct { boxes []pathBox }`,
 	}
 
 	for _, source := range tests {
@@ -200,80 +202,54 @@ func TestOracleStoreGuardRejectsCompatibilityFields(t *testing.T) {
 
 // parallelOracleStoreViolations proves evaluation.records is the sole heterogeneous semantic store.
 //
-//nolint:cyclop // Each independent representation invariant has one explicit check.
+//nolint:cyclop // Exact shapes and cache/result ownership are independent checks.
 func parallelOracleStoreViolations(guardPackage *sourceGuardPackage) []string {
-	var violations []string
-
 	evaluationType := packageObjectType(guardPackage, "evaluation")
 	recordsType := packageObjectType(guardPackage, "evaluationRecords")
-
 	partType := packageObjectType(guardPackage, "evaluationRecordPart")
-	if evaluationType == nil || recordsType == nil || partType == nil {
+	recordType := packageObjectType(guardPackage, "evaluationRecord")
+	transformType := packageObjectType(guardPackage, "occurrenceTransform")
+
+	filterType := packageObjectType(guardPackage, "evaluationRecordFilter")
+	if evaluationType == nil || recordsType == nil || partType == nil || recordType == nil ||
+		transformType == nil || filterType == nil {
 		return []string{"missing oracle record types"}
 	}
 
-	evaluationStruct, ok := types.Unalias(evaluationType).Underlying().(*types.Struct)
-	if !ok {
-		return []string{"evaluation is not a struct"}
-	}
-
-	allowed := map[string]bool{"valid": true, "failed": true, "records": true, "err": true}
-
-	for index := range evaluationStruct.NumFields() {
-		field := evaluationStruct.Field(index)
-		if !allowed[field.Name()] {
-			violations = append(violations, "evaluation."+field.Name())
-
-			continue
-		}
-
-		if field.Name() == "records" && !types.Identical(field.Type(), types.NewPointer(recordsType)) {
-			violations = append(violations, "evaluation.records")
-		}
-	}
-
-	recordsStruct, ok := types.Unalias(recordsType).Underlying().(*types.Struct)
-	if !ok {
-		return append(violations, "evaluationRecords is not a struct")
-	}
-
-	partsFound := false
-
-	for index := range recordsStruct.NumFields() {
-		field := recordsStruct.Field(index)
-
-		slice, sliceOK := types.Unalias(field.Type()).Underlying().(*types.Slice)
-		if field.Name() == "parts" && sliceOK && types.Identical(slice.Elem(), partType) {
-			partsFound = true
-
-			continue
-		}
-
-		if sliceOK {
-			violations = append(violations, "evaluationRecords."+field.Name())
-		}
-	}
-
-	if !partsFound {
-		violations = append(violations, "evaluationRecords.parts")
-	}
+	booleanType := types.Typ[types.Bool]
+	integerType := types.Typ[types.Int]
+	errorType := types.Universe.Lookup("error").Type()
+	violations := exactOracleStructViolations(evaluationType, "evaluation", []oracleFieldShape{
+		{name: "valid", owned: booleanType},
+		{name: "failed", owned: booleanType},
+		{name: "records", owned: types.NewPointer(recordsType)},
+		{name: "err", owned: errorType},
+	})
+	violations = append(violations, exactOracleStructViolations(recordsType, "evaluationRecords", []oracleFieldShape{
+		{name: "parts", owned: types.NewSlice(partType)},
+		{name: "count", owned: integerType},
+		{name: "nonFailureCount", owned: integerType},
+	})...)
+	violations = append(violations, exactOracleStructViolations(partType, "evaluationRecordPart", []oracleFieldShape{
+		{name: "records", owned: types.NewSlice(recordType)},
+		{name: "nested", owned: types.NewPointer(recordsType)},
+		{name: "transform", owned: transformType},
+		{name: "filter", owned: filterType},
+		{name: "count", owned: integerType},
+	})...)
 
 	for _, name := range guardPackage.pkg.Scope().Names() {
 		object := guardPackage.pkg.Scope().Lookup(name)
 
-		structure, structureOK := types.Unalias(object.Type()).Underlying().(*types.Struct)
-		if !structureOK || name == "evaluation" || name == "evaluationRecords" || name == "evaluationRecordPart" {
-			continue
-		}
-
-		if !strings.Contains(strings.ToLower(name), "cache") && !strings.Contains(strings.ToLower(name), "result") {
+		structure, ok := types.Unalias(object.Type()).Underlying().(*types.Struct)
+		if !ok || !strings.Contains(strings.ToLower(name), "cache") &&
+			!strings.Contains(strings.ToLower(name), "result") {
 			continue
 		}
 
 		for index := range structure.NumFields() {
-			field := structure.Field(index)
-			if oracleSemanticCollection(field.Type(), guardPackage) {
-				violations = append(violations, name+"."+field.Name())
+			if oracleSemanticCollection(structure.Field(index).Type(), guardPackage) {
+				violations = append(violations, name+"."+structure.Field(index).Name())
 			}
 		}
 	}
@@ -281,17 +257,94 @@ func parallelOracleStoreViolations(guardPackage *sourceGuardPackage) []string {
 	return violations
 }
 
-// oracleSemanticCollection reports whether a type is a parallel typed oracle list.
+// oracleFieldShape is one required field in an authoritative oracle struct.
+type oracleFieldShape struct {
+	name  string
+	owned types.Type
+}
+
+// exactOracleStructViolations reports the first mismatch from one authoritative struct.
+func exactOracleStructViolations(owned types.Type, name string, fields []oracleFieldShape) []string {
+	structure, ok := types.Unalias(owned).Underlying().(*types.Struct)
+	if !ok || structure.NumFields() != len(fields) {
+		return []string{name}
+	}
+
+	for index, field := range fields {
+		if structure.Field(index).Name() != field.name || !types.Identical(structure.Field(index).Type(), field.owned) {
+			return []string{name + "." + field.name}
+		}
+	}
+
+	return nil
+}
+
+// oracleSemanticCollection reports whether a type directly or transitively owns a typed oracle list.
 func oracleSemanticCollection(owned types.Type, guardPackage *sourceGuardPackage) bool {
-	slice, ok := types.Unalias(owned).Underlying().(*types.Slice)
-	if !ok {
+	semantic := make(map[types.Type]bool)
+
+	for _, name := range []string{
+		"evaluationRecord", "evaluationRecordIdentity", "evaluationOccurrencePaths",
+		"ruleIdentity", "levelIdentity", "compositionTruth",
+	} {
+		if candidate := packageObjectType(guardPackage, name); candidate != nil {
+			semantic[candidate] = true
+		}
+	}
+
+	authoritative := map[types.Type]bool{
+		packageObjectType(guardPackage, "evaluation"):        true,
+		packageObjectType(guardPackage, "evaluationRecords"): true,
+		packageObjectType(guardPackage, "schemaShape"):       true,
+		packageObjectType(guardPackage, "schemaNode"):        true,
+		packageObjectType(guardPackage, "jsonValue"):         true,
+	}
+
+	return ownsOracleSemanticCollection(owned, semantic, authoritative, false, make(map[types.Type]bool))
+}
+
+// ownsOracleSemanticCollection recursively recognizes direct and wrapped typed oracle lists.
+//
+//nolint:cyclop // Every Go wrapper form must participate in the semantic-store guard.
+func ownsOracleSemanticCollection(
+	owned types.Type,
+	semantic, authoritative map[types.Type]bool,
+	insideCollection bool,
+	visiting map[types.Type]bool,
+) bool {
+	owned = types.Unalias(owned)
+	if authoritative[owned] {
 		return false
 	}
 
-	for _, name := range []string{"evaluationRecord", "ruleIdentity", "levelIdentity", "compositionTruth"} {
-		candidate := packageObjectType(guardPackage, name)
-		if candidate != nil && types.Identical(slice.Elem(), candidate) {
-			return true
+	if semantic[owned] {
+		return insideCollection
+	}
+
+	if visiting[owned] {
+		return false
+	}
+
+	visiting[owned] = true
+	defer delete(visiting, owned)
+
+	switch typed := owned.Underlying().(type) {
+	case *types.Pointer:
+		return ownsOracleSemanticCollection(typed.Elem(), semantic, authoritative, insideCollection, visiting)
+	case *types.Slice:
+		return ownsOracleSemanticCollection(typed.Elem(), semantic, authoritative, true, visiting)
+	case *types.Array:
+		return ownsOracleSemanticCollection(typed.Elem(), semantic, authoritative, true, visiting)
+	case *types.Map:
+		return ownsOracleSemanticCollection(typed.Key(), semantic, authoritative, true, visiting) ||
+			ownsOracleSemanticCollection(typed.Elem(), semantic, authoritative, true, visiting)
+	case *types.Struct:
+		for index := range typed.NumFields() {
+			if ownsOracleSemanticCollection(
+				typed.Field(index).Type(), semantic, authoritative, insideCollection, visiting,
+			) {
+				return true
+			}
 		}
 	}
 
@@ -309,6 +362,11 @@ func TestCanonicalMetadataHasNoParallelOrHotPathRepresentations(t *testing.T) {
 			`type schemaShape struct { enum []enumMember; required []string; sourcePositions []int }`,
 		`package schematest; type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }; ` +
 			`type schemaShape struct { enum []enumMember; required []string; orderedRequired []string }`,
+		`package schematest
+			import "sort"
+			type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }
+			type schemaShape struct { enum []enumMember; required []string }
+			func evaluateRequiredMembers(node *schemaShape) { sort.Strings(node.required) }`,
 		`package schematest
 			type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }
 			type schemaShape struct { enum []enumMember; required []string }
@@ -401,8 +459,13 @@ func canonicalMetadataViolations(guardPackage *sourceGuardPackage) []string {
 
 			switch function.Name.Name {
 			case "collectAnyOfWitnesses":
-				if enumRangeRecanonicalizes(function) {
+				if enumRangeRecanonicalizes(function) ||
+					functionCallUsesWrongFirstArgument(function, "appendUniqueJSONWitness", "generated") {
 					violations = append(violations, "planner re-deduplicates admitted enum")
+				}
+			case "canonicalAnyOfWitnesses":
+				if functionCallUsesWrongFirstArgument(function, "appendUniqueJSONWitness", "generated") {
+					violations = append(violations, "canonical witnesses compare against admitted enum")
 				}
 			case "evaluateEnumRule":
 				if countFunctionCalls(function, "jsonValidatedSemanticEqual") != 1 ||
@@ -413,7 +476,7 @@ func canonicalMetadataViolations(guardPackage *sourceGuardPackage) []string {
 				if functionCallsAny(function, "jsonSemanticEqual", "jsonValidatedSemanticEqual", "sort", "Sort", "SortFunc") {
 					violations = append(violations, "planner enum recanonicalization")
 				}
-			case "compileObjectRules", "evaluateObjectRules":
+			case "compileObjectRules", "evaluateRequiredMembers":
 				if functionCallsAny(function, "sort", "Sort", "SortFunc") ||
 					functionPassesSelectorToCall(function, "required") {
 					violations = append(violations, "required-name resort")
@@ -465,6 +528,24 @@ func enumRangeRecanonicalizes(function *ast.FuncDecl) bool {
 	})
 
 	return violates
+}
+
+// functionCallUsesWrongFirstArgument checks a selected ownership seam's accumulator.
+func functionCallUsesWrongFirstArgument(function *ast.FuncDecl, calledName, wanted string) bool {
+	wrong := false
+
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || identName(call.Fun) != calledName || len(call.Args) == 0 {
+			return true
+		}
+
+		wrong = strings.TrimPrefix(expressionName(call.Args[0]), "*") != wanted
+
+		return !wrong
+	})
+
+	return wrong
 }
 
 // functionPassesSelectorToCall detects metadata handed to a recanonicalization helper.
@@ -530,6 +611,35 @@ func countFunctionCalls(function *ast.FuncDecl, name string) int {
 	})
 
 	return count
+}
+
+// TestStructuredOracleOccurrencesAreParsedOnlyAtOwnershipSeams locks record/cache path reuse.
+func TestStructuredOracleOccurrencesAreParsedOnlyAtOwnershipSeams(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	checked := map[string]bool{
+		"newEvaluationRecordIdentity": false,
+		"rebased":                     false,
+	}
+
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+
+			if _, wanted := checked[function.Name.Name]; !wanted {
+				continue
+			}
+
+			require.False(t, functionCallsAny(function, "mustParseEvaluationOccurrence", "parseEvaluationPointer"))
+			checked[function.Name.Name] = true
+		}
+	}
+
+	require.Equal(t, map[string]bool{"newEvaluationRecordIdentity": true, "rebased": true}, checked)
 }
 
 // TestValidatedJSONEqualityDoesNotSortObjects locks the allocation-free object comparison path.
@@ -1547,7 +1657,7 @@ func authorizedActiveLocalName(name string) bool {
 	lower := strings.ToLower(name)
 
 	for _, category := range []string{
-		"candidate", "witness", "parentpins", "parenttokens", "canonical",
+		"admitted", "candidate", "generated", "witness", "parentpins", "parenttokens", "canonical",
 		"derived", "edits", "elements", "filtered", "seeded", "selected", "values",
 	} {
 		if strings.Contains(lower, category) {

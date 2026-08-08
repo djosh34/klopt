@@ -109,6 +109,7 @@ func rowChildSchemaSourceSetsAt(
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -138,6 +139,7 @@ func rowChildSchemaSourceSetsAt(
 
 			childOccurrence := rebasePlanOccurrence(
 				child,
+				occurrence,
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
@@ -159,6 +161,7 @@ func rowChildSchemaSourceSetsAt(
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -247,6 +250,7 @@ func rowChildSchemaSource(
 
 		childOccurrence := rebasePlanOccurrence(
 			node.items,
+			occurrence,
 			occurrence.usePointer+"/items",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
 		)
@@ -260,6 +264,7 @@ func rowChildSchemaSource(
 
 		childOccurrence := rebasePlanOccurrence(
 			property,
+			occurrence,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)

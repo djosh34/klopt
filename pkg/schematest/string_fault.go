@@ -112,7 +112,10 @@ func collectActiveStringRules(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if err := collectActiveStringRules(child, childOccurrence, pins, objective, rules); err != nil {
 			return err
@@ -122,7 +125,10 @@ func collectActiveStringRules(
 	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if !pinned || !states[index] && !stringObjectiveWithin(objective, childOccurrence) {
 			continue
@@ -227,6 +233,7 @@ func resolveStringFaultTarget(
 			node: node.items,
 			occurrence: rebasePlanOccurrence(
 				node.items,
+				occurrence,
 				occurrence.usePointer+"/items",
 				appendInstanceToken(occurrence.instanceTemplate, "*"),
 			),
@@ -239,6 +246,7 @@ func resolveStringFaultTarget(
 			node: property,
 			occurrence: rebasePlanOccurrence(
 				property,
+				occurrence,
 				occurrence.usePointer+"/properties/"+escapePointerToken(name),
 				appendInstanceToken(occurrence.instanceTemplate, name),
 			),
@@ -250,6 +258,7 @@ func resolveStringFaultTarget(
 			node: node.additionalProperties,
 			occurrence: rebasePlanOccurrence(
 				node.additionalProperties,
+				occurrence,
 				occurrence.usePointer+"/additionalProperties",
 				appendInstanceToken(occurrence.instanceTemplate, "*"),
 			),
@@ -261,6 +270,7 @@ func resolveStringFaultTarget(
 			node: composed,
 			occurrence: rebasePlanOccurrence(
 				composed,
+				occurrence,
 				occurrence.usePointer+"/allOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			),
@@ -272,6 +282,7 @@ func resolveStringFaultTarget(
 			node: composed,
 			occurrence: rebasePlanOccurrence(
 				composed,
+				occurrence,
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			),

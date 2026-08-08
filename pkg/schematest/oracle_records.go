@@ -29,10 +29,11 @@ type evaluationRecordIdentity struct {
 }
 
 func newEvaluationRecordIdentity(identity ruleIdentity) evaluationRecordIdentity {
-	return evaluationRecordIdentity{
-		occurrence: mustParseEvaluationOccurrence(identity.occurrence, identity.targetRoot),
-		rule:       identity.rule,
+	if identity.structured == nil {
+		identity.structured = structuredEvaluationOccurrence(identity.occurrence).structured
 	}
+
+	return evaluationRecordIdentity{occurrence: *identity.structured, rule: identity.rule}
 }
 
 func (identity evaluationRecordIdentity) project() ruleIdentity {
@@ -47,12 +48,19 @@ func (identity evaluationRecordIdentity) project() ruleIdentity {
 	}
 }
 
+func cloneEvaluationRecordIdentity(identity evaluationRecordIdentity) evaluationRecordIdentity {
+	identity.occurrence.use.tokens = slices.Clone(identity.occurrence.use.tokens)
+	identity.occurrence.target.tokens = slices.Clone(identity.occurrence.target.tokens)
+	identity.occurrence.instance.tokens = slices.Clone(identity.occurrence.instance.tokens)
+	identity.occurrence.targetRoot.tokens = slices.Clone(identity.occurrence.targetRoot.tokens)
+
+	return identity
+}
+
 // occurrenceTransform carries the complete source and destination provenance for one shared view.
 type occurrenceTransform struct {
-	from      schemaOccurrence
-	to        schemaOccurrence
-	fromPaths evaluationOccurrencePaths
-	toPaths   evaluationOccurrencePaths
+	from evaluationOccurrencePaths
+	to   evaluationOccurrencePaths
 }
 
 // evaluationRecordKind identifies the single fact carried by an evaluation record.
@@ -160,15 +168,10 @@ func (records *evaluationRecords) rebased(from, to schemaOccurrence) *evaluation
 		return nil
 	}
 
-	from = withEvaluationTargetRoot(from)
-	to = withEvaluationTargetRoot(to)
+	from = structuredEvaluationOccurrence(from)
+	to = structuredEvaluationOccurrence(to)
 
-	transform := occurrenceTransform{
-		from:      from,
-		to:        to,
-		fromPaths: mustParseEvaluationOccurrence(from, from.targetRoot),
-		toPaths:   mustParseEvaluationOccurrence(to, to.targetRoot),
-	}
+	transform := occurrenceTransform{from: *from.structured, to: *to.structured}
 	if transform.empty() || records.count == 0 {
 		return records
 	}
@@ -204,6 +207,7 @@ func (records *evaluationRecords) forEachWithTransforms(
 					record = rebaseEvaluationRecord(record, transform)
 				}
 
+				record.identity = cloneEvaluationRecordIdentity(record.identity)
 				if record.kind == evaluationRecordComposition {
 					record.branches = slices.Clone(record.branches)
 				}
@@ -358,7 +362,11 @@ func appendAnyOfTruth(result *evaluation, truth compositionTruth) {
 }
 
 func (transform occurrenceTransform) empty() bool {
-	return transform.from == transform.to
+	return transform.from.reference == transform.to.reference &&
+		transform.from.use.equal(transform.to.use) &&
+		transform.from.target.equal(transform.to.target) &&
+		transform.from.instance.equal(transform.to.instance) &&
+		transform.from.targetRoot.equal(transform.to.targetRoot)
 }
 
 // rebaseEvaluationRecord rebases only targets owned by this transform's provenance root.
@@ -368,14 +376,14 @@ func rebaseEvaluationRecord(record evaluationRecord, transform occurrenceTransfo
 	}
 
 	occurrence := record.identity.occurrence
-	localRoot := occurrence.targetRoot.equal(transform.fromPaths.targetRoot)
-	localRule := localRoot && occurrence.use.equal(transform.fromPaths.use)
-	occurrence.use = occurrence.use.rebased(transform.fromPaths.use, transform.toPaths.use)
+	localRoot := occurrence.targetRoot.equal(transform.from.targetRoot)
+	localRule := localRoot && occurrence.use.equal(transform.from.use)
+	occurrence.use = occurrence.use.rebased(transform.from.use, transform.to.use)
 
-	occurrence.instance = occurrence.instance.rebased(transform.fromPaths.instance, transform.toPaths.instance)
+	occurrence.instance = occurrence.instance.rebased(transform.from.instance, transform.to.instance)
 	if localRoot {
-		occurrence.target = occurrence.target.rebased(transform.fromPaths.target, transform.toPaths.target)
-		occurrence.targetRoot = transform.toPaths.targetRoot
+		occurrence.target = occurrence.target.rebased(transform.from.target, transform.to.target)
+		occurrence.targetRoot = transform.to.targetRoot
 	}
 
 	if localRule {
@@ -387,10 +395,13 @@ func rebaseEvaluationRecord(record evaluationRecord, transform occurrenceTransfo
 	return record
 }
 
-func withEvaluationTargetRoot(occurrence schemaOccurrence) schemaOccurrence {
-	if occurrence.targetRoot == "" {
-		occurrence.targetRoot = occurrence.targetPointer
+func structuredEvaluationOccurrence(occurrence schemaOccurrence) schemaOccurrence {
+	if occurrence.structured != nil {
+		return occurrence
 	}
+
+	paths := mustParseEvaluationOccurrence(occurrence, occurrence.targetPointer)
+	occurrence.structured = &paths
 
 	return occurrence
 }

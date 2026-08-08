@@ -147,7 +147,10 @@ func scalarTargetNode(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if found, ok := scalarTargetNode(child, childOccurrence, target); ok {
 			return found, true
@@ -156,7 +159,10 @@ func scalarTargetNode(
 
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if found, ok := scalarTargetNode(child, childOccurrence, target); ok {
 			return found, true

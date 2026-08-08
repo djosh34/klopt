@@ -112,6 +112,7 @@ func (s *search) chargeNestedCompositions(
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
@@ -123,6 +124,7 @@ func (s *search) chargeNestedCompositions(
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)

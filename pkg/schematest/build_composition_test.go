@@ -12,13 +12,10 @@ func TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations(t *testi
 	t.Parallel()
 
 	document := []byte(`openapi: 3.0.4
-components:
-  schemas:
-    Inner: {type: string, minLength: 1}
-    Outer:
-      type: object
-      properties:
-        child: {$ref: '#/components/schemas/Inner'}
+x-shared: &outer
+  type: object
+  properties:
+    child: {type: string, minLength: 1}
 paths:
   /:
     post:
@@ -29,8 +26,8 @@ paths:
             schema:
               type: object
               properties:
-                a: {$ref: '#/components/schemas/Outer'}
-                b: {$ref: '#/components/schemas/Outer'}
+                a: *outer
+                b: *outer
 `)
 	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 10000}, func(Case) error {
 		return nil
@@ -46,6 +43,25 @@ paths:
 		require.Contains(t, report.Covered, rootUse+branch.use+"|"+branch.instance+"|minLength|level:valid")
 		require.Contains(t, report.Covered, rootUse+branch.use+"|"+branch.instance+"|minLength|fault:minLength")
 	}
+
+	model, parseErr := parseInput(Input{OpenAPI: document, OperationID: "selected"})
+	require.NoError(t, parseErr)
+
+	plan, planErr := makePlan(model)
+	require.NoError(t, planErr)
+
+	var targets []string
+
+	for _, fault := range plan.faultTargets {
+		if fault.obligation.rule == oracleRuleMinLength {
+			targets = append(targets, fault.obligation.occurrence.targetPointer)
+		}
+	}
+
+	require.Equal(t, []string{
+		rootUse + "/properties/a/properties/child",
+		rootUse + "/properties/b/properties/child",
+	}, targets)
 }
 
 // TestBuildMergesAllOfArrayItemSchemas verifies composed item witnesses.

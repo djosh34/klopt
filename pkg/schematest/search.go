@@ -191,7 +191,10 @@ func collectActiveSameInstancePropertyNames(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if err := collectActiveSameInstancePropertyNames(child, childOccurrence, visiting, names); err != nil {
 			return err
@@ -229,7 +232,10 @@ func activeSchemaForbidsMember(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 
 		forbidden, err := activeSchemaForbidsMember(child, childOccurrence, pins, name, visiting)
@@ -249,7 +255,10 @@ func activeSchemaForbidsMember(
 		}
 
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 
 		forbidden, err := activeSchemaForbidsMember(child, childOccurrence, pins, name, visiting)

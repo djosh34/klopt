@@ -132,7 +132,10 @@ func collectActiveNumberRules(
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if err := collectActiveNumberRules(
 			child, childOccurrence, pins, rules, falseBranchObjective,
@@ -150,7 +153,10 @@ func collectActiveNumberRules(
 		}
 
 		childOccurrence := rebasePlanOccurrence(
-			child, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(index),
+			occurrence.instanceTemplate,
 		)
 		if err := collectActiveNumberRules(
 			child, childOccurrence, pins, rules, falseBranchObjective,

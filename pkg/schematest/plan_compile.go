@@ -219,9 +219,9 @@ func (builder *planBuilder) compileAnyOfChildren(
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
-			occurrence,
 		)
 
 		childPlan, err := builder.compileNode(
@@ -331,9 +331,9 @@ func (builder *planBuilder) compileChildren(
 	if shape.items != nil {
 		itemOccurrence := rebasePlanOccurrence(
 			shape.items,
+			occurrence,
 			occurrence.usePointer+"/items",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
-			occurrence,
 		)
 		if err := builder.compileDirectChild(
 			result, node, occurrence, shape.items, itemOccurrence, jsonArray,
@@ -348,9 +348,9 @@ func (builder *planBuilder) compileChildren(
 
 		propertyOccurrence := rebasePlanOccurrence(
 			property,
+			occurrence,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
-			occurrence,
 		)
 		if err := builder.compileDirectChild(
 			result, node, occurrence, property, propertyOccurrence, jsonObject,
@@ -363,9 +363,9 @@ func (builder *planBuilder) compileChildren(
 	if shape.additionalProperties != nil {
 		additionalOccurrence := rebasePlanOccurrence(
 			shape.additionalProperties,
+			occurrence,
 			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
-			occurrence,
 		)
 		if err := builder.compileDirectChild(
 			result, node, occurrence, shape.additionalProperties, additionalOccurrence, jsonObject,
@@ -378,9 +378,9 @@ func (builder *planBuilder) compileChildren(
 	for index, child := range shape.allOf {
 		childOccurrence := rebasePlanOccurrence(
 			child,
+			occurrence,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
-			occurrence,
 		)
 		if err := builder.compileAllOfChild(
 			result, node, occurrence, child, childOccurrence, index,
@@ -970,9 +970,9 @@ func requiredPresenceOccurrence(node *schemaNode, occurrence schemaOccurrence, n
 	if property, exists := node.properties[name]; exists {
 		return rebasePlanOccurrence(
 			property,
+			occurrence,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
-			occurrence,
 		)
 	}
 
@@ -1051,9 +1051,9 @@ func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]
 
 	itemOccurrence := rebasePlanOccurrence(
 		node.items,
+		occurrence,
 		occurrence.usePointer+"/items",
 		appendInstanceToken(occurrence.instanceTemplate, "*"),
-		occurrence,
 	)
 
 	return []applicabilityPin{canonicalPresencePin(itemOccurrence, presence)}, nil
@@ -1121,9 +1121,9 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 
 		additionalOccurrence := rebasePlanOccurrence(
 			shape.additionalProperties,
+			occurrence,
 			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
-			occurrence,
 		)
 		pins = append(pins, canonicalPresencePin(additionalOccurrence, presence))
 	}
@@ -2534,8 +2534,12 @@ func appendUniqueAnyOfMask(masks []*big.Int, candidate *big.Int) []*big.Int {
 
 // canonicalAnyOfWitnesses returns authored and simple canonical values for one kind.
 func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
-	witnesses := make([]*jsonValue, 0)
-	if err := collectAnyOfWitnesses(node, kind, make(map[*schemaNode]bool), &witnesses); err != nil {
+	admitted := make([]*jsonValue, 0)
+
+	generated := make([]*jsonValue, 0)
+	if err := collectAnyOfWitnesses(
+		node, kind, make(map[*schemaNode]bool), &admitted, &generated,
+	); err != nil {
 		return nil, err
 	}
 
@@ -2547,13 +2551,13 @@ func canonicalAnyOfWitnesses(node *schemaNode, kind jsonKind) ([]*jsonValue, err
 	for _, witness := range canonical {
 		var appendErr error
 
-		witnesses, appendErr = appendUniqueJSONWitness(witnesses, witness)
+		generated, appendErr = appendUniqueJSONWitness(generated, witness)
 		if appendErr != nil {
 			return nil, appendErr
 		}
 	}
 
-	return witnesses, nil
+	return append(admitted, generated...), nil
 }
 
 // collectAnyOfWitnesses collects values authored by the parent or its compositions.
@@ -2563,7 +2567,7 @@ func collectAnyOfWitnesses(
 	node *schemaNode,
 	kind jsonKind,
 	visiting map[*schemaNode]bool,
-	witnesses *[]*jsonValue,
+	admitted, generated *[]*jsonValue,
 ) error {
 	if node == nil || node.schemaShape == nil {
 		return errors.New("anyOf branch has no shape")
@@ -2578,14 +2582,14 @@ func collectAnyOfWitnesses(
 
 	for _, member := range node.enum {
 		if member.value.kind == kind {
-			*witnesses = append(*witnesses, member.value)
+			*admitted = append(*admitted, member.value)
 		}
 	}
 
 	if node.defaultValue != nil && node.defaultValue.kind == kind {
 		var err error
 
-		*witnesses, err = appendUniqueJSONWitness(*witnesses, node.defaultValue)
+		*generated, err = appendUniqueJSONWitness(*generated, node.defaultValue)
 		if err != nil {
 			return err
 		}
@@ -2598,14 +2602,14 @@ func collectAnyOfWitnesses(
 		}
 
 		for _, witness := range minimumWitnesses {
-			*witnesses, err = appendUniqueJSONWitness(*witnesses, witness)
+			*generated, err = appendUniqueJSONWitness(*generated, witness)
 			if err != nil {
 				return err
 			}
 		}
 
 		if witness, exists := canonicalStringPatternWitness(node.pattern); exists {
-			*witnesses, err = appendUniqueJSONWitness(*witnesses, witness)
+			*generated, err = appendUniqueJSONWitness(*generated, witness)
 			if err != nil {
 				return err
 			}
@@ -2622,7 +2626,7 @@ func collectAnyOfWitnesses(
 
 			var appendErr error
 
-			*witnesses, appendErr = appendUniqueJSONWitness(*witnesses, value)
+			*generated, appendErr = appendUniqueJSONWitness(*generated, value)
 			if appendErr != nil {
 				return appendErr
 			}
@@ -2646,8 +2650,8 @@ func collectAnyOfWitnesses(
 
 			var appendErr error
 
-			*witnesses, appendErr = appendUniqueJSONWitness(
-				*witnesses,
+			*generated, appendErr = appendUniqueJSONWitness(
+				*generated,
 				&jsonValue{kind: jsonNumber, number: candidate},
 			)
 			if appendErr != nil {
@@ -2657,13 +2661,13 @@ func collectAnyOfWitnesses(
 	}
 
 	for _, child := range node.allOf {
-		if err := collectAnyOfWitnesses(child, kind, visiting, witnesses); err != nil {
+		if err := collectAnyOfWitnesses(child, kind, visiting, admitted, generated); err != nil {
 			return err
 		}
 	}
 
 	for _, child := range node.anyOf {
-		if err := collectAnyOfWitnesses(child, kind, visiting, witnesses); err != nil {
+		if err := collectAnyOfWitnesses(child, kind, visiting, admitted, generated); err != nil {
 			return err
 		}
 	}
@@ -3067,19 +3071,11 @@ func anyOfMaskPins(occurrence schemaOccurrence, count int, mask *big.Int) []appl
 // rebasePlanOccurrence carries a child shape to its use site and instance template.
 func rebasePlanOccurrence(
 	child *schemaNode,
+	parent schemaOccurrence,
 	usePointer, instanceTemplate string,
-	parent ...schemaOccurrence,
 ) schemaOccurrence {
-	if len(parent) == 1 {
-		occurrence := rebaseChildOccurrence(child, parent[0], usePointer, instanceTemplate)
-		occurrence.targetRoot = ""
-
-		return occurrence
-	}
-
-	occurrence := child.occurrence
-	occurrence.usePointer = usePointer
-	occurrence.instanceTemplate = instanceTemplate
+	occurrence := rebaseChildOccurrence(child, parent, usePointer, instanceTemplate)
+	occurrence.structured = nil
 
 	return occurrence
 }
