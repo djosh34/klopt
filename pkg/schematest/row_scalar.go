@@ -3,7 +3,6 @@ package schematest
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
@@ -269,7 +268,8 @@ func filterRowScalarValues(candidates []*jsonValue, node *schemaNode, kind jsonK
 
 // appendRowStringCandidates adds valid format and length witnesses in stable order.
 //
-//nolint:cyclop // Pattern, format, and length witnesses are one ordered frontier.
+
+// appendRowStringCandidates adds only fixed small string seeds; directed lengths remain lazy.
 func appendRowStringCandidates(candidates []*jsonValue, node *schemaNode) ([]*jsonValue, error) {
 	for _, sample := range rowStringFormatSamples(node.format) {
 		var err error
@@ -295,24 +295,6 @@ func appendRowStringCandidates(candidates []*jsonValue, node *schemaNode) ([]*js
 		candidates, err = appendUniqueJSONWitness(
 			candidates, &jsonValue{kind: jsonString, text: "a@b"},
 		)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	for _, count := range []*exactCount{node.minLength, node.maxLength} {
-		length, fits, err := exactCountUint64(count)
-		if err != nil {
-			return nil, err
-		}
-
-		if !fits || length > maxPlanStringWitnessLength || length > uint64(^uint(0)>>1) {
-			continue
-		}
-
-		candidate := &jsonValue{kind: jsonString, text: strings.Repeat("a", int(length))}
-
-		candidates, err = appendUniqueJSONWitness(candidates, candidate)
 		if err != nil {
 			return nil, err
 		}

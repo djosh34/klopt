@@ -43,6 +43,13 @@ func TestNonCompositionFaultFamiliesHaveExactClosures(t *testing.T) {
 					continue
 				}
 
+				unreachable, unreachableErr := faultIsSyntacticallyUnreachable(fault, model)
+				require.NoError(t, unreachableErr)
+
+				if unreachable {
+					continue
+				}
+
 				parent, found, replayErr := regenerateParent(plan, fault, searchState)
 				require.NoError(t, replayErr, fault.obligation.String())
 				require.True(t, found, fault.obligation.String())
@@ -55,7 +62,7 @@ func TestNonCompositionFaultFamiliesHaveExactClosures(t *testing.T) {
 				result := evaluate(model, derivative)
 				require.NoError(t, result.err, fault.obligation.String())
 				require.False(t, result.valid, fault.obligation.String())
-				matches, matchErr := exactFailureClosure(result.failureRecords(), fault.expected)
+				matches, matchErr := faultFailureClosureMatches(result.failureRecords(), fault)
 				require.NoError(t, matchErr)
 				require.True(
 					t, matches, "%s: actual=%v expected=%v",

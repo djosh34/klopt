@@ -145,17 +145,23 @@ func TestBuildVisitsMaximumFaultInsideAnyOfContext(t *testing.T) {
 		{JSON: []byte(`100`), Valid: true},
 		{JSON: []byte(`100`), Valid: true},
 		{JSON: []byte(`100`), Valid: true},
+		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`101`), Valid: false},
 	}, cases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 21,
+		Steps: 25,
 		Covered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:number",
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|fault:type",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maximum|level:valid",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maximum|fault:maximum",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:1",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/anyOf/0|#|type|level:number",
+		},
+		Uncovered: []string{
+			"#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|fault:anyOf",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/anyOf/0|#|type|fault:type",
 		},
 	}, report)
 }

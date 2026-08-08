@@ -367,7 +367,7 @@ func firstReplacementDerivative(
 				continue
 			}
 
-			matched, err := derivativeHasClosure(model, derivative, fault.expected)
+			matched, err := derivativeMatchesFault(model, derivative, fault)
 			if err != nil {
 				return nil, false, err
 			}
@@ -499,7 +499,7 @@ func buildArrayCountDerivative(
 		array.array = append(array.array, item)
 	}
 
-	matched, matchErr := derivativeHasClosure(s.model, candidate, fault.expected)
+	matched, matchErr := derivativeMatchesFault(s.model, candidate, fault)
 
 	return candidate, matched, matchErr
 }
@@ -707,7 +707,7 @@ func findObjectShrinkDerivative(
 				delete(candidateObject.object, name)
 			}
 
-			matched, matchErr := derivativeHasClosure(s.model, candidate, fault.expected)
+			matched, matchErr := derivativeMatchesFault(s.model, candidate, fault)
 			if matchErr != nil || !matched {
 				return false, matchErr
 			}
@@ -787,7 +787,7 @@ func findObjectGrowthDerivative(
 		}
 
 		if len(object.object) == desired {
-			matched, err := derivativeHasClosure(s.model, candidate, fault.expected)
+			matched, err := derivativeMatchesFault(s.model, candidate, fault)
 			if err != nil || !matched {
 				return false, err
 			}
@@ -863,7 +863,7 @@ func findRequiredDerivative(parent *jsonValue, fault faultProgram, s *search) (*
 
 		delete(object.object, name)
 
-		matched, err := derivativeHasClosure(s.model, candidate, fault.expected)
+		matched, err := derivativeMatchesFault(s.model, candidate, fault)
 		if err != nil || matched {
 			return candidate, matched, err
 		}
@@ -927,7 +927,7 @@ func findAdditionalPropertyDerivative(
 
 				object.object[name] = value
 
-				matched, matchErr := derivativeHasClosure(s.model, candidate, fault.expected)
+				matched, matchErr := derivativeMatchesFault(s.model, candidate, fault)
 				if matchErr != nil || !matched {
 					return false, matchErr
 				}
@@ -945,7 +945,7 @@ func findAdditionalPropertyDerivative(
 	return nil, false, nil
 }
 
-func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure []failureIdentity) (bool, error) {
+func derivativeMatchesFault(model *schemaModel, derivative *jsonValue, fault faultProgram) (bool, error) {
 	result := evaluate(model, derivative)
 	if result.err != nil {
 		return false, fmt.Errorf("evaluate fault derivative: %w", result.err)
@@ -955,7 +955,11 @@ func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure []f
 		return false, nil
 	}
 
-	return exactFailureClosure(result.failureRecords(), closure)
+	return faultFailureClosureMatches(result.failureRecords(), fault)
+}
+
+func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure []failureIdentity) (bool, error) {
+	return derivativeMatchesFault(model, derivative, faultProgram{expected: closure})
 }
 
 // resolveExactFaultTarget follows canonical schema children to one authored rule occurrence.

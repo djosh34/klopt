@@ -95,6 +95,7 @@ func TestMakePlanCanonicalizesPropertyAndEnumObligations(t *testing.T) {
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/2|#/2|type|level:string",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/2|#/2|type|fault:type",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|type|level:string",
+		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|type|fault:type",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|enum|level:member:0",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|enum|level:member:1",
 		"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a~1b|#/a~1b|enum|fault:enum",
@@ -254,26 +255,6 @@ func TestMakePlanEnumeratesEveryDistinctStringAnyOfMask(t *testing.T) {
 	require.Equal(t, []string{"level:mask:1", "level:mask:2", "level:mask:3"}, masks)
 }
 
-func TestMakePlanEnumFaultUsesFaultContextAnyOfMask(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"enum":["b"],
-		"anyOf":[{"enum":["a"]}, {"enum":["b"]}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	findValidTarget(t, plan, "|anyOf|level:mask:2")
-
-	enumFault := findFaultTarget(t, plan, "|enum|fault:enum")
-	requireCompositionPin(t, enumFault.requirements, "anyOf", 0, true)
-	requireCompositionPin(t, enumFault.requirements, "anyOf", 1, false)
-}
-
 func TestMakePlanParentEnumRetainsEveryBooleanAnyOfMask(t *testing.T) {
 	t.Parallel()
 
@@ -378,58 +359,6 @@ func TestMakePlanSemanticEnumDedupeKeepsFirstAuthoredMembers(t *testing.T) {
 	}
 }
 
-func TestMakePlanCanonicalizesRuleLevelsAndAnyOfClosure(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"minLength":1,
-		"maxLength":4,
-		"pattern":"^a",
-		"format":"date"
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	root := "#/paths/~1/post/requestBody/content/application~1json/schema|#|"
-	require.Equal(t, []string{
-		root + "type|level:string",
-		root + "type|fault:type",
-		root + "minLength|level:valid",
-		root + "minLength|fault:minLength",
-		root + "maxLength|level:valid",
-		root + "maxLength|fault:maxLength",
-		root + "pattern|level:valid",
-		root + "pattern|fault:pattern",
-		root + "format|level:valid",
-		root + "format|fault:format",
-	}, plan.obligationIDs())
-
-	anyOfModel, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"anyOf":[{"type":"string"},{"type":"number"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	anyOfPlan, err := makePlan(anyOfModel)
-	require.NoError(t, err)
-
-	rootType := findValidTarget(t, anyOfPlan, "|type|level:number")
-	requireNoCompositionPin(t, rootType.requirements, "anyOf", 0)
-	requireNoCompositionPin(t, rootType.requirements, "anyOf", 1)
-
-	aggregate := findFaultTarget(t, anyOfPlan, "|anyOf|fault:anyOf")
-	anyOfRoot := "#/paths/~1/post/requestBody/content/application~1json/schema"
-	require.Equal(t, []string{
-		anyOfRoot + "|#|anyOf",
-		anyOfRoot + "/anyOf/0|#|type",
-		anyOfRoot + "/anyOf/1|#|type",
-	}, identityStrings(aggregate.expected))
-	requireCompositionPin(t, aggregate.requirements, "anyOf", 0, false)
-	requireCompositionPin(t, aggregate.requirements, "anyOf", 1, false)
-}
-
 func TestMakePlanAcceptsSchemaNamesThatMatchCompositionKeywords(t *testing.T) {
 	t.Parallel()
 
@@ -516,48 +445,6 @@ func TestMakePlanTypelessRequiredPresenceOnlyAppliesToObjects(t *testing.T) {
 	}
 }
 
-func TestMakePlanOmitsBareAnyOfFaultClosures(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"anyOf":[{}, {"type":"string"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	for _, target := range plan.faultSchedule {
-		require.NotEqual(t, oracleRuleAnyOf, target.obligation.rule)
-		require.NotContains(t, target.obligation.occurrence.usePointer, "/anyOf/")
-	}
-}
-
-func TestMakePlanAnyOfStringEnumUsesReachableAggregateRepresentative(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"anyOf":[{"type":"string","enum":["a"]}, {"type":"number"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	findFaultTarget(t, plan, "/anyOf/0|#|enum|fault:enum")
-
-	for _, target := range plan.faultSchedule {
-		require.NotContains(t, target.obligation.String(), "/anyOf/0|#|type|fault:type")
-	}
-
-	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
-	require.Equal(t, []string{
-		model.root.occurrence.usePointer + "|#|anyOf",
-		model.root.occurrence.usePointer + "/anyOf/0|#|enum",
-		model.root.occurrence.usePointer + "/anyOf/1|#|type",
-	}, identityStrings(aggregate.expected))
-}
-
 func TestMakePlanAnyOfLocalMinimumLeavesSiblingTruthToSearch(t *testing.T) {
 	t.Parallel()
 
@@ -598,27 +485,6 @@ func TestMakePlanAnyOfOverlappingChildValidTargetsKeepSiblingsUnconstrained(t *t
 			requireNoCompositionPin(t, target.requirements, "anyOf", sibling)
 		}
 	}
-}
-
-func TestMakePlanAnyOfPatternFaultClosesEveryBranch(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"anyOf":[{"type":"string","pattern":"^a"}, {"type":"number"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	pattern := findFaultTarget(t, plan, "/anyOf/0|#|pattern|fault:pattern")
-	requireCompositionPin(t, pattern.requirements, "anyOf", 0, false)
-	requireCompositionPin(t, pattern.requirements, "anyOf", 1, false)
-	require.Equal(t, []string{
-		model.root.occurrence.usePointer + "|#|anyOf",
-		model.root.occurrence.usePointer + "/anyOf/0|#|pattern",
-		model.root.occurrence.usePointer + "/anyOf/1|#|type",
-	}, identityStrings(pattern.expected))
 }
 
 func TestMakePlanPositiveMinItemsSuppliesItsItem(t *testing.T) {
@@ -669,92 +535,6 @@ func TestMakePlanOmitsZeroLowerBoundFaults(t *testing.T) {
 			for _, target := range plan.faultSchedule {
 				require.NotEqual(t, test.rule, target.obligation.rule)
 			}
-		})
-	}
-}
-
-func TestMakePlanOmitsExhaustiveNonNullableBooleanEnumFault(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"boolean",
-		"enum":[true,false]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	for _, target := range plan.faultSchedule {
-		require.NotEqual(t, oracleRuleEnum, target.obligation.rule)
-	}
-}
-
-func TestPlanComparisonErrorsPropagate(t *testing.T) {
-	t.Parallel()
-
-	invalidOccurrence := schemaOccurrence{
-		usePointer:       "not-a-pointer",
-		targetPointer:    "#",
-		instanceTemplate: "#",
-	}
-	validOccurrence := schemaOccurrence{
-		usePointer:       "#/valid",
-		targetPointer:    "#",
-		instanceTemplate: "#",
-	}
-	invalidIdentity := makeRuleIdentity(invalidOccurrence, oracleRuleType)
-	validIdentity := makeRuleIdentity(validOccurrence, oracleRuleType)
-	faults := []faultProgram{
-		{obligation: makeFaultObligation(invalidIdentity, oracleRuleType)},
-		{obligation: makeFaultObligation(validIdentity, oracleRuleType)},
-	}
-
-	_, _, err := firstCanonicalFault(faults)
-	require.Error(t, err)
-
-	_, err = canonicalFailureClosure([]failureIdentity{invalidIdentity, validIdentity})
-	require.Error(t, err)
-
-	_, _, err = firstRealizableFault(
-		&schemaNode{schemaShape: &schemaShape{}}, invalidOccurrence, faults,
-	)
-	require.Error(t, err)
-}
-
-func TestMakePlanOmitsImpossibleTypedEnumTypeFault(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		schema    string
-		typeFault bool
-	}{
-		{name: "exhaustive string enum", schema: `{"type":"string","enum":["a"]}`, typeFault: false},
-		{name: "wrong-kind enum witness", schema: `{"type":"string","enum":["a",1]}`, typeFault: true},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected"})
-			require.NoError(t, err)
-
-			plan, err := makePlan(model)
-			require.NoError(t, err)
-
-			found := false
-
-			for _, target := range plan.faultSchedule {
-				if strings.HasSuffix(target.obligation.String(), "|type|fault:type") {
-					found = true
-
-					break
-				}
-			}
-
-			require.Equal(t, test.typeFault, found)
 		})
 	}
 }

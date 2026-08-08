@@ -672,6 +672,31 @@ func TestValidatedJSONEqualityDoesNotSortObjects(t *testing.T) {
 	require.Fail(t, "jsonValidatedSemanticEqual is missing")
 }
 
+// TestPlannerCallGraphIsDeclarative forbids candidate search and oracle evaluation below makePlan.
+func TestPlannerCallGraphIsDeclarative(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	functions := guardFunctions(guardPackage)
+	planner, ok := guardPackage.pkg.Scope().Lookup("makePlan").(*types.Func)
+	require.True(t, ok)
+
+	for function := range reachableGuardFunctions(guardPackage, functions, planner) {
+		declaration := functions[function]
+		if declaration == nil {
+			continue
+		}
+
+		for _, called := range calledGuardFunctions(guardPackage, declaration.Body) {
+			name := strings.ToLower(called.Name())
+			forbidden := strings.HasPrefix(name, "evaluate") || strings.Contains(name, "witness") ||
+				strings.Contains(name, "candidate") || strings.Contains(name, "realizable") ||
+				(strings.Contains(name, "scalar") && called.Name() != "addScalarRule")
+			require.Falsef(t, forbidden, "planner function %s calls forbidden %s", function.Name(), called.Name())
+		}
+	}
+}
+
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
 func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	t.Parallel()

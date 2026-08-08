@@ -53,6 +53,6 @@ func TestPlanRequirementsCarryExactCountAndFaultProgram(t *testing.T) {
 	})
 
 	fault := findFaultTarget(t, plan, "|#/id|required|fault:required")
-	require.NotNil(t, fault.alternatives)
-	require.Equal(t, fault.expected, fault.alternatives.expected)
+	require.Nil(t, fault.alternatives)
+	require.Equal(t, failureSet{failureIdentity(fault.obligation.ruleIdentity)}, fault.expected)
 }

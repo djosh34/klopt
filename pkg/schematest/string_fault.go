@@ -323,26 +323,28 @@ func stringFaultObjectiveKind(rule string) (stringSearchObjectiveKind, bool) {
 	}
 }
 
+//nolint:cyclop // Exact matching validates and consumes every identity explicitly.
 func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIdentity) (bool, error) {
-	canonicalExpected, err := canonicalFailureClosure(expected)
-	if err != nil {
-		return false, err
+	for _, expectedFailure := range expected {
+		if _, err := compareRuleIdentities(expectedFailure, expectedFailure); err != nil {
+			return false, err
+		}
 	}
 
-	if evaluationRecordSequenceCount(actual) != len(canonicalExpected) {
+	if evaluationRecordSequenceCount(actual) != len(expected) {
 		return false, nil
 	}
 
-	consumed := make([]bool, len(canonicalExpected))
+	consumed := make([]bool, len(expected))
 
 	for actualFailure := range actual {
-		if _, compareErr := compareRuleIdentities(actualFailure, actualFailure); compareErr != nil {
-			return false, compareErr
+		if _, err := compareRuleIdentities(actualFailure, actualFailure); err != nil {
+			return false, err
 		}
 
 		found := false
 
-		for index, expectedFailure := range canonicalExpected {
+		for index, expectedFailure := range expected {
 			if consumed[index] || actualFailure.rule != expectedFailure.rule ||
 				!ruleOccurrenceMatches(actualFailure.occurrence, expectedFailure.occurrence) {
 				continue
@@ -360,6 +362,49 @@ func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIde
 	}
 
 	return true, nil
+}
+
+// faultFailureClosureMatches verifies one actual closure against the symbolic
+// branch-local domains without materializing their Cartesian product.
+func faultFailureClosureMatches(actual iter.Seq[failureIdentity], fault faultProgram) (bool, error) {
+	failures := make([]failureIdentity, 0)
+	for failure := range actual {
+		failures = append(failures, failure)
+	}
+
+	return closureProgramMatches(failures, fault.expected, fault.alternatives)
+}
+
+func closureProgramMatches(
+	actual []failureIdentity,
+	expected failureSet,
+	program *faultClosureProgram,
+) (bool, error) {
+	if program == nil {
+		return exactFailureClosure(failureSequence(actual), expected)
+	}
+
+	for alternative := program.alternatives; alternative != nil; alternative = alternative.next {
+		combined := append(append(failureSet(nil), expected...), alternative.expected...)
+		remaining := appendClosurePrograms(alternative.closure, program.next)
+
+		matches, err := closureProgramMatches(actual, combined, remaining)
+		if err != nil || matches {
+			return matches, err
+		}
+	}
+
+	return false, nil
+}
+
+func failureSequence(failures []failureIdentity) iter.Seq[failureIdentity] {
+	return func(yield func(failureIdentity) bool) {
+		for _, failure := range failures {
+			if !yield(failure) {
+				return
+			}
+		}
+	}
 }
 
 //nolint:cyclop // Pattern, length, seed, and failure-alternative phases share one objective seam.

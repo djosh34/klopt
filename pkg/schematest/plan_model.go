@@ -80,11 +80,20 @@ type validIntent struct {
 // failureSet is one immutable expected failure identity set.
 type failureSet = []failureIdentity
 
-// faultClosureProgram links closure alternatives without materializing a
-// Cartesian product.
+// faultClosureProgram is one branch-local closure domain. Its linked
+// alternatives and successor domains describe a lazy product without storing
+// any product tuple.
 type faultClosureProgram struct {
-	expected failureSet
-	next     *faultClosureProgram
+	alternatives *faultClosureAlternative
+	next         *faultClosureProgram
+}
+
+// faultClosureAlternative is one declarative way to make a branch false.
+type faultClosureAlternative struct {
+	requirements []requirement
+	expected     failureSet
+	closure      *faultClosureProgram
+	next         *faultClosureAlternative
 }
 
 // faultProgram is one isolated invalid obligation and its requirements.

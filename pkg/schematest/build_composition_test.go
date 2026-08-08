@@ -612,12 +612,14 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 		{JSON: []byte(`[""]`), Valid: true},
 		{JSON: []byte(`[[]]`), Valid: true},
 		{JSON: []byte(`[{}]`), Valid: true},
+		{JSON: []byte(`null`), Valid: false},
 	}, cases)
 	require.Equal(t, Report{
 		Stop:  MaxStepsReached,
 		Steps: 10000,
 		Covered: []string{
 			schemaPointer + "|#|type|level:array",
+			schemaPointer + "|#|type|fault:type",
 			schemaPointer + "|#|anyOf|level:mask:1",
 			schemaPointer + "|#|anyOf|level:mask:2",
 			schemaPointer + "/anyOf/0|#|type|level:array",

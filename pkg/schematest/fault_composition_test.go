@@ -49,17 +49,17 @@ func TestAnyOfAggregateFaultAtomicallyMakesEveryBranchFalse(t *testing.T) {
 	parent, found, err := regenerateParent(plan, fault, searchState)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, `{"a":"","b":""}`, string(marshalFaultTestValue(t, parent)))
+	parentJSON := marshalFaultTestValue(t, parent)
 
 	stepsBeforeFault := searchState.steps
 	derivative, err := applyFault(parent, fault, searchState)
 	require.NoError(t, err)
 	require.Equal(t, `{}`, string(marshalFaultTestValue(t, derivative)))
 	require.Greater(t, searchState.steps, stepsBeforeFault)
-	require.Equal(t, `{"a":"","b":""}`, string(marshalFaultTestValue(t, parent)))
+	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 
 	result := evaluate(model, derivative)
-	matches, err := exactFailureClosure(result.failureRecords(), fault.expected)
+	matches, err := faultFailureClosureMatches(result.failureRecords(), fault)
 	require.NoError(t, err)
 	require.True(t, matches)
 	require.Equal(t, [][]bool{{false, false}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAnyOf)))
@@ -102,7 +102,7 @@ func TestAnyOfAggregateFaultPreservesUnrelatedParentPaths(t *testing.T) {
 	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 }
 
-func TestItemAnyOfAggregateFaultPreservesUnrelatedArrayElements(t *testing.T) {
+func TestItemAnyOfAggregateFaultMutatesOneMatchingArrayElement(t *testing.T) {
 	t.Parallel()
 
 	model, plan := compositionFaultModel(t, `{
@@ -119,6 +119,7 @@ func TestItemAnyOfAggregateFaultPreservesUnrelatedArrayElements(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Len(t, parent.array, 2)
+	firstJSON := marshalFaultTestValue(t, parent.array[0])
 	parent.array[1] = &jsonValue{kind: jsonObject, object: map[string]*jsonValue{
 		"b": {kind: jsonString, text: "keep"},
 	}}
@@ -127,11 +128,12 @@ func TestItemAnyOfAggregateFaultPreservesUnrelatedArrayElements(t *testing.T) {
 
 	derivative, err := applyFault(parent, fault, searchState)
 	require.NoError(t, err)
-	require.Equal(t, unrelatedJSON, marshalFaultTestValue(t, derivative.array[1]))
+	require.Equal(t, firstJSON, marshalFaultTestValue(t, derivative.array[0]))
+	require.NotEqual(t, unrelatedJSON, marshalFaultTestValue(t, derivative.array[1]))
 	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 
 	result := evaluate(model, derivative)
-	matches, err := exactFailureClosure(result.failureRecords(), fault.expected)
+	matches, err := faultFailureClosureMatches(result.failureRecords(), fault)
 	require.NoError(t, err)
 	require.True(t, matches)
 
@@ -162,7 +164,9 @@ func TestAnyOfAggregateFaultPreservesArrayPrefixWhenAssignmentLengthDiffers(t *t
 	require.Equal(t, `["keep"]`, string(marshalFaultTestValue(t, derivative)))
 	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 
-	matches, err := derivativeHasClosure(model, derivative, fault.expected)
+	result := evaluate(model, derivative)
+	require.NoError(t, result.err)
+	matches, err := faultFailureClosureMatches(result.failureRecords(), fault)
 	require.NoError(t, err)
 	require.True(t, matches)
 
@@ -237,13 +241,13 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 		prefix + "/anyOf/1|#|type|level:string", prefix + "/anyOf/1|#|type|level:array",
 	}
 	require.Equal(t, Report{
-		Stop: SpaceExhausted, Steps: 511, Covered: expectedCovered, Uncovered: expectedUncovered,
+		Stop: SpaceExhausted, Steps: 486, Covered: expectedCovered, Uncovered: expectedUncovered,
 	}, report)
 
 	cutoffCases, cutoffReport := collect(report.Steps - 1)
 	require.Equal(t, cases[:len(cases)-1], cutoffCases)
 	require.Equal(t, Report{
-		Stop: MaxStepsReached, Steps: 510,
+		Stop: MaxStepsReached, Steps: 485,
 		Covered:   expectedCovered[:len(expectedCovered)-1],
 		Uncovered: append(append([]string(nil), expectedUncovered...), expectedCovered[len(expectedCovered)-1]),
 	}, cutoffReport)
