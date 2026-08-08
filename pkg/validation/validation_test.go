@@ -1069,7 +1069,7 @@ paths:
 `))
 			require.Nil(t, requests)
 			require.ErrorContains(t, err, "/schema/oneOf")
-			require.ErrorContains(t, err, "unsupported keyword")
+			require.ErrorContains(t, err, "authored oneOf is outside the Klopt profile")
 			require.NotContains(t, err.Error(), "cannot declare "+field)
 		})
 	}
@@ -1149,7 +1149,7 @@ func TestValidationStringFormats(t *testing.T) {
 	}
 
 	_, err := Parse(openAPISpec(`{"type":"string","format":"vendor-string"}`, "", false))
-	require.ErrorContains(t, err, "legal OpenAPI but unsupported by this tool")
+	require.ErrorContains(t, err, "legal OAS but outside the Klopt profile")
 }
 
 // TestValidationStrictJSONAndBodyPresence covers transport-independent raw-body rules.
@@ -2006,13 +2006,13 @@ func TestParseRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties(t *testing.
 		{
 			name:    "direct",
 			schema:  `{"properties":{"value":{"readOnly":true,"writeOnly":true}}}`,
-			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value",
+			pointer: "#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value/writeOnly",
 		},
 		{
 			name:       "resolved reference",
 			schema:     `{"properties":{"value":{"$ref":"#/components/schemas/Value"}}}`,
 			components: `,"components":{"schemas":{"Value":{"readOnly":true,"writeOnly":true}}}`,
-			pointer:    "#/components/schemas/Value",
+			pointer:    "#/components/schemas/Value/writeOnly",
 		},
 	}
 
@@ -2023,7 +2023,7 @@ func TestParseRejectsReadOnlyAndWriteOnlyTogetherOnRequestProperties(t *testing.
 			_, err := Parse(openAPISpec(test.schema, test.components, false))
 			require.Error(t, err)
 			require.ErrorContains(t, err, "compile schema at "+test.pointer)
-			require.ErrorContains(t, err, "readOnly and writeOnly must not both be true")
+			require.ErrorContains(t, err, "readOnly and writeOnly cannot both be true in the Klopt profile")
 		})
 	}
 }
@@ -2107,8 +2107,8 @@ func TestValidationLocksRequestDirectionCombinations(t *testing.T) {
 				parsed, err := Parse(openAPISpec(schema, "", false))
 				require.Nil(t, parsed)
 				require.ErrorContains(t, err, "compile schema at "+
-					"#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value")
-				require.ErrorContains(t, err, "readOnly and writeOnly must not both be true")
+					"#/paths/~1things/post/requestBody/content/application~1json/schema/properties/value/writeOnly")
+				require.ErrorContains(t, err, "readOnly and writeOnly cannot both be true in the Klopt profile")
 
 				return
 			}
@@ -2271,7 +2271,7 @@ func TestParseRejectsUnsupportedOpenAPIVersions(t *testing.T) {
 
 	const (
 		versionSyntaxError = "#/openapi: OpenAPI document version must be a Semantic Versioning 2.0.0 version"
-		featureSetError    = "#/openapi: OpenAPI document feature set must be 3.0"
+		featureSetError    = "#/openapi: OpenAPI document feature set 3.1 is outside the Klopt 3.0 profile"
 	)
 
 	for _, test := range []struct {

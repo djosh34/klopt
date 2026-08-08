@@ -44,7 +44,7 @@ func resolvePathItemReference(document, value *jsonValue, pointer string) (*json
 
 		if visited[targetPointer] {
 			return nil, "", fmt.Errorf(
-				"%s/$ref: recursive path item reference reaching %s is outside the schematest profile",
+				"%s/$ref: recursive path item reference reaching %s is outside the Klopt profile",
 				pointer,
 				targetPointer,
 			)
@@ -81,7 +81,7 @@ func resolveReferenceChain(document, value *jsonValue, pointer, objectName strin
 
 		if visited[targetPointer] {
 			return nil, "", fmt.Errorf(
-				"%s/$ref: recursive %s reference reaching %s is outside the schematest profile",
+				"%s/$ref: recursive %s reference reaching %s is outside the Klopt profile",
 				pointer,
 				objectName,
 				targetPointer,
@@ -140,7 +140,7 @@ func resolveLocalReference(document *jsonValue, reference, authoredPointer strin
 
 func parseLocalReferenceFragment(reference, authoredPointer string) (string, error) {
 	if !strings.HasPrefix(reference, "#") {
-		return "", fmt.Errorf("%s: external reference %q is outside the schematest profile", authoredPointer, reference)
+		return "", fmt.Errorf("%s: external reference %q is outside the Klopt profile", authoredPointer, reference)
 	}
 
 	encodedFragment := strings.TrimPrefix(reference, "#")

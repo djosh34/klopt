@@ -13,7 +13,7 @@ import (
 func TestParseEnforcesTheClosedFormatTypeContract(t *testing.T) {
 	t.Parallel()
 
-	const unsupported = "legal OpenAPI but unsupported by this tool"
+	const profileExclusion = "legal OAS but outside the Klopt profile"
 
 	types := []string{"boolean", "integer", "number", "string", "array", "object"}
 	formats := []string{
@@ -42,7 +42,7 @@ func TestParseEnforcesTheClosedFormatTypeContract(t *testing.T) {
 
 				require.Error(t, err)
 				require.ErrorContains(t, err, "/format")
-				require.ErrorContains(t, err, "invalid type/format pair")
+				require.ErrorContains(t, err, profileExclusion)
 			})
 		}
 	}
@@ -52,17 +52,17 @@ func TestParseEnforcesTheClosedFormatTypeContract(t *testing.T) {
 		schema   string
 		contains string
 	}{
-		{name: "unknown", schema: `{"type":"string","format":"hostname"}`, contains: unsupported},
-		{name: "binary", schema: `{"type":"string","format":"binary"}`, contains: unsupported},
-		{name: "string numeric", schema: `{"type":"string","format":"int32"}`, contains: "invalid type/format pair"},
-		{name: "string floating", schema: `{"type":"string","format":"double"}`, contains: "invalid type/format pair"},
-		{name: "boolean string", schema: `{"type":"boolean","format":"date"}`, contains: "invalid type/format pair"},
-		{name: "boolean numeric", schema: `{"type":"boolean","format":"int64"}`, contains: "invalid type/format pair"},
-		{name: "integer floating", schema: `{"type":"integer","format":"float"}`, contains: "invalid type/format pair"},
-		{name: "integer string", schema: `{"type":"integer","format":"uuid"}`, contains: "invalid type/format pair"},
-		{name: "number string", schema: `{"type":"number","format":"email"}`, contains: "invalid type/format pair"},
-		{name: "array string", schema: `{"type":"array","format":"email","items":{}}`, contains: "invalid type/format pair"},
-		{name: "object numeric", schema: `{"type":"object","format":"int32"}`, contains: "invalid type/format pair"},
+		{name: "unknown", schema: `{"type":"string","format":"hostname"}`, contains: profileExclusion},
+		{name: "binary", schema: `{"type":"string","format":"binary"}`, contains: profileExclusion},
+		{name: "string numeric", schema: `{"type":"string","format":"int32"}`, contains: profileExclusion},
+		{name: "string floating", schema: `{"type":"string","format":"double"}`, contains: profileExclusion},
+		{name: "boolean string", schema: `{"type":"boolean","format":"date"}`, contains: profileExclusion},
+		{name: "boolean numeric", schema: `{"type":"boolean","format":"int64"}`, contains: profileExclusion},
+		{name: "integer floating", schema: `{"type":"integer","format":"float"}`, contains: profileExclusion},
+		{name: "integer string", schema: `{"type":"integer","format":"uuid"}`, contains: profileExclusion},
+		{name: "number string", schema: `{"type":"number","format":"email"}`, contains: profileExclusion},
+		{name: "array string", schema: `{"type":"array","format":"email","items":{}}`, contains: profileExclusion},
+		{name: "object numeric", schema: `{"type":"object","format":"int32"}`, contains: profileExclusion},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

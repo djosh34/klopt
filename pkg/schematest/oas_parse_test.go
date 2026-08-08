@@ -697,7 +697,7 @@ paths:
 
 			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
 			require.ErrorContains(t, err, "#/components/requestBodies/B/$ref")
-			require.ErrorContains(t, err, "outside the schematest profile")
+			require.ErrorContains(t, err, "outside the Klopt profile")
 		})
 	}
 }
@@ -1027,7 +1027,7 @@ func TestBuildRejectsDocumentWideDiscriminatorBeforeSelectedSchemaCompilation(t 
 	require.EqualError(
 		t,
 		err,
-		"#/components/schemas/Unused/discriminator: authored discriminator is outside the schematest profile",
+		"#/components/schemas/Unused/discriminator: authored discriminator is outside the Klopt profile",
 	)
 }
 
@@ -1081,7 +1081,7 @@ func TestBuildKeepsOneOfAttributionAheadOfAdjacentDiscriminator(t *testing.T) {
 		t,
 		err,
 		"#/paths/~1/post/requestBody/content/application~1json/schema/oneOf: "+
-			"authored oneOf is outside the schematest profile",
+			"authored oneOf is outside the Klopt profile",
 	)
 }
 
@@ -1720,9 +1720,9 @@ func TestParseInputOpenAPIVersionProfile(t *testing.T) {
 		{version: "3.0.0-01", wantError: "must be a valid Semantic Version"},
 		{version: "3.0.0+", wantError: "must be a valid Semantic Version"},
 		{version: "3.0.0+bad_meta", wantError: "must be a valid Semantic Version"},
-		{version: "2.0.0", wantError: "feature set 2.0 is outside the supported 3.0 profile"},
-		{version: "3.1.0", wantError: "feature set 3.1 is outside the supported 3.0 profile"},
-		{version: "4.0.0", wantError: "feature set 4.0 is outside the supported 3.0 profile"},
+		{version: "2.0.0", wantError: "feature set 2.0 is outside the Klopt 3.0 profile"},
+		{version: "3.1.0", wantError: "feature set 3.1 is outside the Klopt 3.0 profile"},
+		{version: "4.0.0", wantError: "feature set 4.0 is outside the Klopt 3.0 profile"},
 	} {
 		t.Run("reject_"+test.version, func(t *testing.T) {
 			t.Parallel()
@@ -1741,6 +1741,6 @@ func TestParseInputRejectsOpenAPIVersionBeforeRequestSelection(t *testing.T) {
 	t.Parallel()
 
 	_, err := parseInput(Input{OpenAPI: []byte(`{"openapi":"3.1.0"}`), OperationID: "missing"})
-	require.ErrorContains(t, err, "#/openapi: feature set 3.1 is outside the supported 3.0 profile")
+	require.ErrorContains(t, err, "#/openapi: feature set 3.1 is outside the Klopt 3.0 profile")
 	require.NotContains(t, err.Error(), "operationId")
 }

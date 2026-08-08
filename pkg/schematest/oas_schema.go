@@ -119,7 +119,7 @@ func (parser *oasParser) parseSchemaObject(
 func validateSchemaKeywords(object map[string]*jsonValue, pointer string) error {
 	for _, name := range sortedObjectNames(object) {
 		if name == "oneOf" || name == "not" || name == "discriminator" || name == "uniqueItems" {
-			return fmt.Errorf("%s/%s: authored %s is outside the schematest profile", pointer, name, name)
+			return fmt.Errorf("%s/%s: authored %s is outside the Klopt profile", pointer, name, name)
 		}
 
 		if schemaKeywords[name] || strings.HasPrefix(name, "x-") {
@@ -226,7 +226,7 @@ func parseSchemaEnum(object map[string]*jsonValue, pointer string) ([]*jsonValue
 	}
 
 	if len(value.array) == 0 {
-		return nil, nil, fmt.Errorf("%s/enum: empty enum is outside the schematest profile", pointer)
+		return nil, nil, fmt.Errorf("%s/enum: empty enum is outside the Klopt profile", pointer)
 	}
 
 	members := make([]*jsonValue, 0, len(value.array))
@@ -392,11 +392,16 @@ func parseSchemaFormat(object map[string]*jsonValue, kind schemaKind, pointer st
 
 	format, supported := schemaFormats[value.text]
 	if !supported {
-		return schemaFormatNone, fmt.Errorf("%s/format: format %q is legal OAS but outside the schematest profile", pointer, value.text)
+		return schemaFormatNone, fmt.Errorf("%s/format: format %q is legal OAS but outside the Klopt profile", pointer, value.text)
 	}
 
 	if !formatAllowedForKind(format, kind) {
-		return schemaFormatNone, fmt.Errorf("%s/format: format %q is outside the profile for type %q", pointer, value.text, schemaKindName(kind))
+		return schemaFormatNone, fmt.Errorf(
+			"%s/format: type/format pair %q/%q is legal OAS but outside the Klopt profile",
+			pointer,
+			schemaKindName(kind),
+			value.text,
+		)
 	}
 
 	return format, nil
@@ -481,7 +486,7 @@ func parseStringFields(node *schemaNode, object map[string]*jsonValue, pointer s
 
 	node.pattern, err = parseECMAPattern(value.text)
 	if err != nil {
-		return fmt.Errorf("%s/pattern: outside the schematest ECMA profile: %w", pointer, err)
+		return fmt.Errorf("%s/pattern: authored pattern is outside the Klopt profile: %w", pointer, err)
 	}
 
 	return nil
@@ -579,7 +584,10 @@ func (parser *oasParser) parseProperties(
 		}
 
 		if property.readOnly && property.writeOnly {
-			return nil, fmt.Errorf("%s/writeOnly: a property cannot be both readOnly and writeOnly", propertyPointer)
+			return nil, fmt.Errorf(
+				"%s/writeOnly: readOnly and writeOnly cannot both be true in the Klopt profile",
+				propertyPointer,
+			)
 		}
 
 		parsed[name] = property

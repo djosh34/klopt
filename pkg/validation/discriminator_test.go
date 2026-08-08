@@ -181,7 +181,7 @@ func TestParseKeepsOneOfRejectionAtItsOwnPointer(t *testing.T) {
 			parsed, err := validation.Parse([]byte(documentWithSchema(schema, false)))
 			require.Nil(t, parsed)
 			require.ErrorContains(t, err, "compile schema at "+schemaPointer("/oneOf"))
-			require.ErrorContains(t, err, "unsupported keyword")
+			require.ErrorContains(t, err, "authored oneOf is outside the Klopt profile")
 			require.NotContains(t, err.Error(), "/discriminator")
 		})
 	}

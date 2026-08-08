@@ -67,7 +67,7 @@ func validateOpenAPIVersion(root map[string]*jsonValue) error {
 	}
 
 	if version.major != "3" || version.minor != "0" {
-		return fmt.Errorf("#/openapi: feature set %s.%s is outside the supported 3.0 profile", version.major, version.minor)
+		return fmt.Errorf("#/openapi: feature set %s.%s is outside the Klopt 3.0 profile", version.major, version.minor)
 	}
 
 	return nil
@@ -448,7 +448,7 @@ func (parser *oasParser) parseSchemaReference(
 
 	if parser.resolving[targetPointer] {
 		return nil, fmt.Errorf(
-			"%s/$ref: recursive schema graph reaching %s is outside the schematest profile",
+			"%s/$ref: recursive schema graph reaching %s is outside the Klopt profile",
 			authoredPointer,
 			targetPointer,
 		)

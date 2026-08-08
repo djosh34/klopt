@@ -177,7 +177,12 @@ func parseWithSemanticVersionPattern(
 	}
 
 	if versionParts[1] != "3" || versionParts[2] != "0" {
-		return nil, nil, fmt.Errorf("%s: OpenAPI document feature set must be 3.0", versionPointer)
+		return nil, nil, fmt.Errorf(
+			"%s: OpenAPI document feature set %s.%s is outside the Klopt 3.0 profile",
+			versionPointer,
+			versionParts[1],
+			versionParts[2],
+		)
 	}
 
 	normalized := append(json.RawMessage(nil), document...)

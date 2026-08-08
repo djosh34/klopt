@@ -354,7 +354,12 @@ func schemaMembers(schema oas.LocatedSchema) (map[string]json.RawMessage, error)
 func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessage) error {
 	for _, keyword := range []string{"oneOf", "not"} {
 		if _, ok := members[keyword]; ok {
-			return fmt.Errorf("compile schema at %s/%s: unsupported keyword", pointer, keyword)
+			return fmt.Errorf(
+				"compile schema at %s/%s: authored %s is outside the Klopt profile",
+				pointer,
+				keyword,
+				keyword,
+			)
 		}
 	}
 
@@ -648,8 +653,12 @@ func compileEnum(validation *Validation, pointer string, members map[string]json
 	}
 
 	var values []json.RawMessage
-	if err := json.Unmarshal(raw, &values); err != nil || values == nil || len(values) == 0 {
-		return keywordError(pointer, "enum", errors.New("must be a non-empty array"))
+	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
+		return keywordError(pointer, "enum", errors.New("must be an array"))
+	}
+
+	if len(values) == 0 {
+		return keywordError(pointer, "enum", errors.New("empty enum is outside the Klopt profile"))
 	}
 
 	validation.EnumValidation.Values = make([]json.RawMessage, 0, len(values))
@@ -773,7 +782,10 @@ func (compiler *schemaCompiler) compileString(
 
 		compiled, err := patternvalidator.Parse(pattern, compiler.patternOptions...)
 		if err != nil {
-			return keywordError(pointer, "pattern", err)
+			return keywordError(pointer, "pattern", fmt.Errorf(
+				"authored pattern is outside the Klopt profile: %w",
+				err,
+			))
 		}
 
 		validation.StringValidation.Pattern = pattern
@@ -830,7 +842,7 @@ func compileFormat(
 		return compileValidationStringFormat(validation, pointer, format)
 	default:
 		return keywordError(pointer, "format", fmt.Errorf(
-			"format %q is legal OpenAPI but unsupported by this tool", format,
+			"format %q is legal OAS but outside the Klopt profile", format,
 		))
 	}
 
@@ -853,7 +865,7 @@ func compileValidationStringFormat(validation *Validation, pointer string, forma
 // invalidFormatPair reports a format attached to an incompatible explicit type.
 func invalidFormatPair(pointer string, typeName string, format string) error {
 	return keywordError(pointer, "format", fmt.Errorf(
-		"invalid type/format pair: format %q does not apply to type %q", format, typeName,
+		"type/format pair %q/%q is legal OAS but outside the Klopt profile", typeName, format,
 	))
 }
 
@@ -1044,9 +1056,10 @@ func (compiler *schemaCompiler) requestPropertyReadOnly(property oas.LocatedSche
 	}
 
 	if readOnly && writeOnly {
-		return false, fmt.Errorf(
-			"compile schema at %s: readOnly and writeOnly must not both be true",
+		return false, keywordError(
 			resolved.Pointer,
+			"writeOnly",
+			errors.New("readOnly and writeOnly cannot both be true in the Klopt profile"),
 		)
 	}
 

@@ -309,7 +309,7 @@ func (validator *documentProfileValidator) schema(value *jsonValue, pointer stri
 
 	if validator.schemaActive[resolved] {
 		return fmt.Errorf(
-			"%s/$ref: recursive schema graph reaching %s is outside the schematest profile",
+			"%s/$ref: recursive schema graph reaching %s is outside the Klopt profile",
 			pointer,
 			resolvedPointer,
 		)
@@ -328,15 +328,15 @@ func (validator *documentProfileValidator) schema(value *jsonValue, pointer stri
 	}
 
 	if _, present := object["uniqueItems"]; present {
-		return fmt.Errorf("%s/uniqueItems: authored uniqueItems is outside the schematest profile", resolvedPointer)
+		return fmt.Errorf("%s/uniqueItems: authored uniqueItems is outside the Klopt profile", resolvedPointer)
 	}
 
 	if _, present := object["discriminator"]; present {
 		if _, adjacentOneOf := object["oneOf"]; adjacentOneOf {
-			return fmt.Errorf("%s/oneOf: authored oneOf is outside the schematest profile", resolvedPointer)
+			return fmt.Errorf("%s/oneOf: authored oneOf is outside the Klopt profile", resolvedPointer)
 		}
 
-		return fmt.Errorf("%s/discriminator: authored discriminator is outside the schematest profile", resolvedPointer)
+		return fmt.Errorf("%s/discriminator: authored discriminator is outside the Klopt profile", resolvedPointer)
 	}
 
 	if err := validator.nestedSchemas(object, resolvedPointer); err != nil {
@@ -408,7 +408,7 @@ func (validator *documentProfileValidator) resolvedObject(
 	key := kind + "\x00" + resolvedPointer
 	if validator.active[key] {
 		return fmt.Errorf(
-			"%s/$ref: recursive %s reference reaching %s is outside the schematest profile",
+			"%s/$ref: recursive %s reference reaching %s is outside the Klopt profile",
 			pointer,
 			kind,
 			resolvedPointer,

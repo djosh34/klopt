@@ -676,12 +676,18 @@ func rejectAuthoredSchemaKeywords(schema oas.LocatedSchema) error {
 
 // unsupportedUniqueItems reports the exact authored keyword pointer.
 func unsupportedUniqueItems(pointer string) error {
-	return fmt.Errorf("compile schema at %s/uniqueItems: unsupported keyword", pointer)
+	return fmt.Errorf(
+		"compile schema at %s/uniqueItems: authored uniqueItems is outside the Klopt profile",
+		pointer,
+	)
 }
 
 // unsupportedOneOf preserves oneOf's distinct attribution ahead of an adjacent discriminator.
 func unsupportedOneOf(pointer string) error {
-	return fmt.Errorf("compile schema at %s/oneOf: unsupported keyword", pointer)
+	return fmt.Errorf(
+		"compile schema at %s/oneOf: authored oneOf is outside the Klopt profile",
+		pointer,
+	)
 }
 
 // unsupportedAuthoredDiscriminator reports the deliberate profile exclusion at its authored pointer.

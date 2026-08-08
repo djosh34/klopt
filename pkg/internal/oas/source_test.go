@@ -655,7 +655,7 @@ func TestParseClassifiesOpenAPIVersionErrorsAtAuthoredLocation(t *testing.T) {
 		{
 			name:      "unsupported feature set",
 			version:   `"3.1.0"`,
-			wantError: "#/openapi: OpenAPI document feature set must be 3.0",
+			wantError: "#/openapi: OpenAPI document feature set 3.1 is outside the Klopt 3.0 profile",
 		},
 	}
 
@@ -690,6 +690,6 @@ func TestParseRejectsOpenAPIVersionBeforeRequestAcquisition(t *testing.T) {
 	})
 
 	require.Nil(t, sources)
-	require.ErrorContains(t, err, "#/openapi: OpenAPI document feature set must be 3.0")
+	require.ErrorContains(t, err, "#/openapi: OpenAPI document feature set 3.1 is outside the Klopt 3.0 profile")
 	require.False(t, called)
 }
