@@ -347,9 +347,91 @@ func TestPublicDocumentProfileTraversalConformance(t *testing.T) {
 			diagnostic: admissionDiagnostic{
 				class:      admissionInvalidOAS,
 				pointer:    "#/components/examples/Bad/$ref",
-				production: `resolve example at #/components/examples/Bad: resolve reference "#/components/examples/Missing" from #/components/examples/Bad through #/components/examples/Missing: pointer #/components/examples token "Missing": member "Missing" does not exist`,
+				production: `resolve example reference at #/components/examples/Bad/$ref: resolve reference "#/components/examples/Missing" from #/components/examples/Bad through #/components/examples/Missing: pointer #/components/examples token "Missing": member "Missing" does not exist`,
 				clean:      `#/components/examples/Bad/$ref: local reference target #/components/examples/Missing does not exist`,
 			},
+		},
+		{
+			name:     "malformed local example reference remains invalid OAS",
+			document: `{"openapi":"3.0.4",` + selected + `,"components":{"examples":{"Bad":{"$ref":"#/bad~2"}}}}`,
+			diagnostic: admissionDiagnostic{
+				class:      admissionInvalidOAS,
+				pointer:    "#/components/examples/Bad/$ref",
+				production: `resolve example reference at #/components/examples/Bad/$ref: resolve reference "#/bad~2" from #/components/examples/Bad through #/bad~2: reference "#/bad~2" token "bad~2": ~2 is invalid`,
+				clean:      `#/components/examples/Bad/$ref: malformed JSON Pointer token "bad~2": unknown escape ~2`,
+			},
+		},
+		{
+			name:     "external path item before request collection",
+			document: `{"openapi":"3.0.4","paths":{"/external":{"$ref":"other.yaml#/Path"},"/things":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{}}}}}}}}`,
+			diagnostic: admissionDiagnostic{
+				class:      admissionProfileExcluded,
+				pointer:    "#/paths/~1external/$ref",
+				production: `compile schema at #/paths/~1external/$ref: external reference "other.yaml#/Path" is outside the Klopt profile`,
+				clean:      `#/paths/~1external/$ref: external reference "other.yaml#/Path" is outside the Klopt profile`,
+			},
+		},
+		{
+			name: "cyclic path items before request collection",
+			document: `{"openapi":"3.0.4","paths":{` +
+				`"/a":{"$ref":"#/paths/~1b"},"/b":{"$ref":"#/paths/~1a"},` +
+				`"/things":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{}}}}}}}}`,
+			diagnostic: referenceProfileDiagnostic(
+				"#/paths/~1a/$ref",
+				"recursive path item reference reaching #/paths/~1b is outside the Klopt profile",
+			),
+		},
+		{
+			name: "external request body before acquisition",
+			document: `{"openapi":"3.0.4","paths":{"/things":{"post":{` +
+				`"operationId":"selected","requestBody":{"$ref":"other.yaml#/Body"}}}}}`,
+			diagnostic: admissionDiagnostic{
+				class:      admissionProfileExcluded,
+				pointer:    "#/paths/~1things/post/requestBody/$ref",
+				production: `compile schema at #/paths/~1things/post/requestBody/$ref: external reference "other.yaml#/Body" is outside the Klopt profile`,
+				clean:      `#/paths/~1things/post/requestBody/$ref: external reference "other.yaml#/Body" is outside the Klopt profile`,
+			},
+		},
+		{
+			name: "cyclic request bodies before acquisition",
+			document: `{"openapi":"3.0.4","paths":{"/things":{"post":{` +
+				`"operationId":"selected","requestBody":{"$ref":"#/components/requestBodies/A"}}}},` +
+				`"components":{"requestBodies":{` +
+				`"A":{"$ref":"#/components/requestBodies/B"},"B":{"$ref":"#/components/requestBodies/A"}}}}`,
+			diagnostic: referenceProfileDiagnostic(
+				"#/components/requestBodies/B/$ref",
+				"recursive request body reference reaching #/components/requestBodies/A is outside the Klopt profile",
+			),
+		},
+		{
+			name: "orphan discriminator before missing operation ID",
+			document: `{"openapi":"3.0.4","paths":{"/things":{"post":{` +
+				`"requestBody":{"content":{"application/json":{"schema":{}}}}}}},` +
+				`"components":{"schemas":{"Unused":{"discriminator":{"propertyName":"kind"}}}}}`,
+			diagnostic: documentProfileDiagnostic(
+				"#/components/schemas/Unused/discriminator",
+				"authored discriminator is outside the Klopt profile",
+			),
+		},
+		{
+			name: "orphan discriminator before empty operation ID",
+			document: `{"openapi":"3.0.4","paths":{"/things":{"post":{` +
+				`"operationId":"","requestBody":{"content":{"application/json":{"schema":{}}}}}}},` +
+				`"components":{"schemas":{"Unused":{"discriminator":{"propertyName":"kind"}}}}}`,
+			diagnostic: documentProfileDiagnostic(
+				"#/components/schemas/Unused/discriminator",
+				"authored discriminator is outside the Klopt profile",
+			),
+		},
+		{
+			name: "orphan discriminator before private-invalid operation ID",
+			document: `{"openapi":"3.0.4","paths":{"/things":{"post":{` +
+				`"operationId":"not valid","requestBody":{"content":{"application/json":{"schema":{}}}}}}},` +
+				`"components":{"schemas":{"Unused":{"discriminator":{"propertyName":"kind"}}}}}`,
+			diagnostic: documentProfileDiagnostic(
+				"#/components/schemas/Unused/discriminator",
+				"authored discriminator is outside the Klopt profile",
+			),
 		},
 		{
 			name: "canonical delete before get",
@@ -391,6 +473,52 @@ func TestPublicDocumentProfileTraversalConformance(t *testing.T) {
 				clean:      slot.pointer + `: external reference "other.yaml#/` + externalTarget(slot.name) + `" is outside the Klopt profile`,
 			},
 		})
+	}
+
+	targets := []struct {
+		name  string
+		value string
+	}{
+		{name: "scalar", value: "1"},
+		{name: "null", value: "null"},
+		{name: "array", value: "[]"},
+	}
+
+	referenceKinds := []struct {
+		name       string
+		kind       string
+		components string
+	}{
+		{name: "schema", kind: "schema", components: `"schemas":{"Bad":{"$ref":"#/x-target"}}`},
+		{name: "example", kind: "example", components: `"examples":{"Bad":{"$ref":"#/x-target"}}`},
+		{name: "link", kind: "link", components: `"links":{"Bad":{"$ref":"#/x-target"}}`},
+		{name: "security scheme", kind: "security scheme", components: `"securitySchemes":{"Bad":{"$ref":"#/x-target"}}`},
+		{name: "response", kind: "response", components: `"responses":{"Bad":{"$ref":"#/x-target"}}`},
+	}
+	for _, target := range targets {
+		for _, referenceKind := range referenceKinds {
+			production := "parse " + referenceKind.kind + " at #/x-target: referenced " +
+				referenceKind.kind + " must be an object"
+			if referenceKind.kind == "schema" {
+				production = "parse schema at #/x-target: Schema Object must be an object"
+			}
+
+			tests = append(tests, struct {
+				name       string
+				document   string
+				diagnostic admissionDiagnostic
+			}{
+				name: "non-object " + target.name + " " + referenceKind.name + " target",
+				document: `{"openapi":"3.0.4",` + selected + `,"x-target":` + target.value +
+					`,"components":{` + referenceKind.components + `}}`,
+				diagnostic: admissionDiagnostic{
+					class:      admissionInvalidOAS,
+					pointer:    "#/x-target",
+					production: production,
+					clean:      "#/x-target: must be an object",
+				},
+			})
+		}
 	}
 
 	for _, test := range tests {
@@ -461,7 +589,12 @@ func TestPublicPatternLimitConformance(t *testing.T) {
 		{name: "AST nodes", below: strings.Repeat("a", 9_997), exact: strings.Repeat("a", 9_998), over: strings.Repeat("a", 9_999)},
 		{name: "leading assertions", below: "^" + strings.Repeat("(?=a)", 63) + "a", exact: "^" + strings.Repeat("(?=a)", 64) + "a", over: "^" + strings.Repeat("(?=a)", 65) + "a"},
 		{name: "counted endpoint", below: "a{999}", exact: "a{1000}", over: "a{1001}"},
-		{name: "cumulative repeat product", below: "(?:a{10}){99}", exact: "(?:a{10}){100}", over: "(?:a{10}){101}"},
+		{
+			name:  "cumulative repeat product",
+			below: "(?:(?:(?:a{3}){3}){3}){37}",
+			exact: "(?:(?:a{10}){10}){10}",
+			over:  "(?:(?:a{7}){11}){13}",
+		},
 		{name: "translated matcher source", below: matcherBelow, exact: matcherExact, over: matcherOver},
 		{name: "cumulative leading translated source", below: leadingBelow, exact: leadingExact, over: leadingOver},
 	}
@@ -493,6 +626,15 @@ func TestPublicAstralCharacterClassConformance(t *testing.T) {
 	}{
 		{name: "astral class atoms", pattern: "[😀]", admitted: true},
 		{name: "astral class range", pattern: "[😀-😁]", admitted: false},
+		{name: "range into surrogate block", pattern: "[a-😀]", admitted: true},
+		{name: "range out of surrogate block", pattern: "[😀-\\uFFFF]", admitted: true},
+		{name: "range across surrogate block", pattern: "[\ud7ff-\ue000]", admitted: true},
+		{
+			name: "surrogate split translated source overflow",
+			pattern: strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_661) +
+				strings.Repeat(".", 491) + "[\ud7ff-\ue000]",
+			admitted: false,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -514,8 +656,8 @@ func assertPublicPatternAdmission(t *testing.T, pattern string, admitted bool) {
 		require.Contains(t, parsed, "selected")
 	} else {
 		require.Nil(t, parsed)
-		require.ErrorContains(t, productionErr, pointer)
-		require.ErrorContains(t, productionErr, "outside the Klopt profile")
+		require.Equal(t, admissionProfileExcluded, classifyAdmission(productionErr))
+		require.Equal(t, pointer, admissionPointer(productionErr))
 	}
 
 	report, cleanErr := schematest.Build(schematest.Input{
@@ -526,9 +668,45 @@ func assertPublicPatternAdmission(t *testing.T, pattern string, admitted bool) {
 		require.Equal(t, schematest.MaxStepsReached, report.Stop)
 	} else {
 		require.Equal(t, schematest.Report{}, report)
-		require.ErrorContains(t, cleanErr, pointer)
-		require.ErrorContains(t, cleanErr, "outside the Klopt profile")
+		require.Equal(t, admissionProfileExcluded, classifyAdmission(cleanErr))
+		require.Equal(t, pointer, admissionPointer(cleanErr))
 	}
+}
+
+func classifyAdmission(err error) admissionClass {
+	if err == nil {
+		return admissionAccepted
+	}
+
+	if strings.Contains(err.Error(), "Klopt profile") || strings.Contains(err.Error(), "Klopt 3.0 profile") {
+		return admissionProfileExcluded
+	}
+
+	return admissionInvalidOAS
+}
+
+func admissionPointer(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := err.Error()
+
+	start := strings.IndexByte(message, '#')
+	if start == -1 {
+		return ""
+	}
+
+	end := len(message)
+	for index := start; index < len(message); index++ {
+		if message[index] == ':' || message[index] == ' ' || message[index] == '"' {
+			end = index
+
+			break
+		}
+	}
+
+	return message[start:end]
 }
 
 func referenceProfileDiagnostic(pointer, detail string) admissionDiagnostic {
@@ -583,7 +761,8 @@ func assertProductionAdmission(t *testing.T, document []byte, diagnostic admissi
 
 	require.Nil(t, parsed)
 	require.EqualError(t, err, diagnostic.production)
-	require.NotEmpty(t, diagnostic.pointer)
+	require.Equal(t, diagnostic.class, classifyAdmission(err))
+	require.Equal(t, diagnostic.pointer, admissionPointer(err))
 }
 
 func assertCleanAdmission(t *testing.T, document []byte, diagnostic admissionDiagnostic) {
@@ -609,6 +788,7 @@ func assertCleanAdmission(t *testing.T, document []byte, diagnostic admissionDia
 
 	require.Equal(t, schematest.Report{}, report)
 	require.EqualError(t, err, diagnostic.clean)
+	require.Equal(t, diagnostic.class, classifyAdmission(err))
+	require.Equal(t, diagnostic.pointer, admissionPointer(err))
 	require.False(t, called)
-	require.NotEmpty(t, diagnostic.pointer)
 }

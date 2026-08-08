@@ -58,6 +58,12 @@ func TestValidateECMAScript51Semantics(t *testing.T) {
 		{name: "class range", pattern: "^[a-c]+$", value: "cab", want: true},
 		{name: "class literal hyphen after ranges", pattern: "^[A-Za-z0-9-_.]+$", value: "A-_.9", want: true},
 		{name: "astral class literal", pattern: "[😀]", value: "😀", want: true},
+		{name: "range into surrogates excludes post-surrogate BMP", pattern: "[a-😀]", value: "\ue000", want: false},
+		{name: "range out of surrogates includes post-surrogate BMP", pattern: "[😀-\\uFFFF]", value: "\ue000", want: true},
+		{
+			name:    "range across surrogate block includes both BMP boundaries",
+			pattern: "[\ud7ff-\ue000]", value: "\ue000", want: true,
+		},
 		{name: "astral class literal consumes one unit", pattern: "^[😀]$", value: "😀", want: false},
 		{name: "astral class literals consume both units", pattern: "^[😀][😀]$", value: "😀", want: true},
 		{name: "negated astral class literal", pattern: "[^😀]", value: "😀", want: false},

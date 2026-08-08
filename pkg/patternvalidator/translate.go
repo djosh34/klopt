@@ -289,15 +289,24 @@ func (translation *translator) writeClass(node patternsyntax.Node) {
 }
 
 func appendLiteralClassRange(ranges []runeRange, low rune, high rune) []runeRange {
-	if low >= 0xd800 && low <= 0xdfff {
-		low = mapSurrogate(low)
+	if low < 0xd800 {
+		ranges = append(ranges, runeRange{low: low, high: min(high, 0xd7ff)})
 	}
 
-	if high >= 0xd800 && high <= 0xdfff {
-		high = mapSurrogate(high)
+	if low <= 0xdfff && high >= 0xd800 {
+		surrogateLow := max(low, 0xd800)
+		surrogateHigh := min(high, 0xdfff)
+		ranges = append(ranges, runeRange{
+			low:  mapSurrogate(surrogateLow),
+			high: mapSurrogate(surrogateHigh),
+		})
 	}
 
-	return append(ranges, runeRange{low: low, high: high})
+	if high > 0xdfff {
+		ranges = append(ranges, runeRange{low: max(low, 0xe000), high: high})
+	}
+
+	return ranges
 }
 
 func (translation *translator) writeRuneSet(ranges []runeRange, span patternsyntax.Span) {

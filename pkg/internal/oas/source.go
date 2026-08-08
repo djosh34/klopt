@@ -92,8 +92,8 @@ func Parse(spec []byte) (map[string]Source, error) {
 	return sources, err
 }
 
-// ParseWithProfileValidation completes structural request acquisition, validates the
-// normalized document profile, then validates every raw Parameter Object.
+// ParseWithProfileValidation validates the normalized document profile before request
+// acquisition, then validates every acquired raw Parameter Object.
 func ParseWithProfileValidation(
 	spec []byte,
 	validateDocument DocumentValidator,
@@ -193,6 +193,12 @@ func parseWithSemanticVersionPattern(
 	}
 
 	normalized := append(json.RawMessage(nil), document...)
+	if validateDocument != nil {
+		if profileErr := validateDocument(normalized); profileErr != nil {
+			return nil, nil, profileErr
+		}
+	}
+
 	source := Source{Document: normalized}
 
 	type pendingParameter struct {
@@ -214,12 +220,6 @@ func parseWithSemanticVersionPattern(
 	sources, err := source.collectRequests(root["paths"], queueParameter)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	if validateDocument != nil {
-		if err := validateDocument(normalized); err != nil {
-			return nil, nil, err
-		}
 	}
 
 	for _, parameter := range pending {

@@ -361,7 +361,11 @@ func TestQueryJSONContentRejectsInvalidShapesAtSourcePointers(t *testing.T) {
 
 			_, err := validation.Parse(querySpec("- " + test.parameter))
 			require.Error(t, err)
-			require.ErrorContains(t, err, `parameter "q"`)
+
+			if test.objectName != "Schema Object" {
+				require.ErrorContains(t, err, `parameter "q"`)
+			}
+
 			require.ErrorContains(t, err, test.objectName)
 			require.ErrorContains(t, err, test.pointer)
 		})

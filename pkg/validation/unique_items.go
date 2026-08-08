@@ -500,7 +500,7 @@ func (walker *authoredSchemaWalker) schema(raw json.RawMessage, pointer string) 
 func (walker *authoredSchemaWalker) schemaValue(value any, pointer, usePointer string) error {
 	members, ok := value.(map[string]any)
 	if !ok {
-		return nil
+		return fmt.Errorf("parse schema at %s: Schema Object must be an object", pointer)
 	}
 
 	if _, referenced := members["$ref"]; referenced {
@@ -572,9 +572,11 @@ func (walker *authoredSchemaWalker) nestedSchemaValues(members map[string]any, p
 	}
 
 	if additional, present := members["additionalProperties"]; present {
-		childPointer := appendSchemaPointer(pointer, "additionalProperties")
-		if err := walker.schemaValue(additional, childPointer, childPointer); err != nil {
-			return err
+		if _, boolean := additional.(bool); !boolean {
+			childPointer := appendSchemaPointer(pointer, "additionalProperties")
+			if err := walker.schemaValue(additional, childPointer, childPointer); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -623,6 +625,15 @@ func (walker *authoredSchemaWalker) resolve(
 	resolved, err := walker.resolveReference(raw, pointer, kind)
 	if err != nil {
 		return nil, "", false, err
+	}
+
+	if _, object := rawObject(resolved.Raw); !object {
+		return nil, "", false, fmt.Errorf(
+			"parse %s at %s: referenced %s must be an object",
+			kind,
+			resolved.Pointer,
+			kind,
+		)
 	}
 
 	key := kind + "\x00" + resolved.Pointer
@@ -698,6 +709,13 @@ func (walker *authoredSchemaWalker) resolveReference(
 				referenceError.AuthoredKeyword,
 				kind,
 				referenceError.Reference,
+			)
+		default:
+			return oas.LocatedSchema{}, fmt.Errorf(
+				"resolve %s reference at %s: %w",
+				kind,
+				referenceError.AuthoredKeyword,
+				referenceError,
 			)
 		}
 	}
