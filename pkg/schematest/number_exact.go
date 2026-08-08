@@ -46,8 +46,22 @@ func parseExactNumber(source string) (*exactNumber, error) {
 		return nil, fmt.Errorf("number has trailing data at byte %d", parts.end)
 	}
 
+	fraction := new(big.Int).SetUint64(uint64(parts.fractionDigits))
+
+	scale := new(big.Int).Sub(fraction, parts.authoredExponent)
+	if scale.Sign() < 0 {
+		scale.SetInt64(0)
+	}
+
+	normalizedDigits := strings.TrimRight(parts.digits, "0")
+
+	trailingZeros := len(parts.digits) - len(normalizedDigits)
+	if normalizedDigits == "" {
+		normalizedDigits = "0"
+	}
+
 	coefficient := new(big.Int)
-	if _, ok := coefficient.SetString(parts.digits, decimalRadix); !ok {
+	if _, ok := coefficient.SetString(normalizedDigits, decimalRadix); !ok {
 		return nil, errors.New("number has invalid decimal digits")
 	}
 
@@ -55,13 +69,8 @@ func parseExactNumber(source string) (*exactNumber, error) {
 		coefficient.Neg(coefficient)
 	}
 
-	fraction := new(big.Int).SetUint64(uint64(parts.fractionDigits))
 	exponent := new(big.Int).Sub(parts.authoredExponent, fraction)
-
-	scale := new(big.Int).Sub(fraction, parts.authoredExponent)
-	if scale.Sign() < 0 {
-		scale.SetInt64(0)
-	}
+	exponent.Add(exponent, new(big.Int).SetUint64(uint64(trailingZeros)))
 
 	return newExactNumber(coefficient, big.NewInt(1), exponent, scale)
 }
@@ -243,17 +252,13 @@ func (number *exactNumber) normalize() {
 	number.numerator.Quo(number.numerator, gcd)
 	number.denominator.Quo(number.denominator, gcd)
 
-	remainder := new(big.Int)
-	for {
-		remainder.Rem(number.numerator, big.NewInt(decimalRadix))
-
-		if remainder.Sign() != 0 {
-			return
-		}
-
-		number.numerator.Quo(number.numerator, big.NewInt(decimalRadix))
-		number.exponent.Add(number.exponent, big.NewInt(1))
+	zeros := decimalTrailingZeros(new(big.Int).Abs(number.numerator))
+	if zeros == 0 {
+		return
 	}
+
+	number.numerator.Quo(number.numerator, decimalPower(zeros))
+	number.exponent.Add(number.exponent, new(big.Int).SetUint64(zeros))
 }
 
 // validate checks the exact-number representation invariant.
@@ -515,9 +520,11 @@ func (number *exactNumber) finiteDecimal() (*big.Int, *big.Int, error) {
 	}
 
 	exponent := new(big.Int).Sub(number.exponent, new(big.Int).SetUint64(decimalPlaces))
-	for new(big.Int).Rem(coefficient, big.NewInt(decimalRadix)).Sign() == 0 {
-		coefficient.Quo(coefficient, big.NewInt(decimalRadix))
-		exponent.Add(exponent, big.NewInt(1))
+
+	zeros := decimalTrailingZeros(new(big.Int).Abs(coefficient))
+	if zeros > 0 {
+		coefficient.Quo(coefficient, decimalPower(zeros))
+		exponent.Add(exponent, new(big.Int).SetUint64(zeros))
 	}
 
 	return coefficient, exponent, nil
@@ -604,32 +611,72 @@ func renderScientificDecimal(digits string, exponent *big.Int) string {
 	return body
 }
 
-// removeFactor removes all copies of factor from value.
+// removeFactor finds the largest factor power and removes it with one division.
 func removeFactor(value *big.Int, factor int64) (uint64, *big.Int) {
+	count := factorMultiplicity(value, factor)
+
 	remaining := new(big.Int).Set(value)
-	divisor := big.NewInt(factor)
-	remainder := new(big.Int)
-
-	var count uint64
-
-	for {
-		quotient := new(big.Int)
-		quotient.QuoRem(remaining, divisor, remainder)
-
-		if remainder.Sign() != 0 {
-			return count, remaining
-		}
-
-		remaining = quotient
-		count++
+	if count > 0 {
+		remaining.Quo(remaining, integerPower(factor, count))
 	}
+
+	return count, remaining
 }
 
-// decimalTrailingZeros counts factors of ten in a positive integer.
-func decimalTrailingZeros(value *big.Int) uint64 {
-	zeros, _ := removeFactor(value, decimalRadix)
+// factorMultiplicity locates the largest dividing factor power by exponential and binary search.
+func factorMultiplicity(value *big.Int, factor int64) uint64 {
+	if value.Sign() == 0 {
+		return 0
+	}
 
-	return zeros
+	limit := uint64(value.BitLen())
+	lower := uint64(0)
+	upper := uint64(1)
+
+	for upper <= limit && divisibleByPower(value, factor, upper) {
+		lower = upper
+		if upper > limit/binaryFactor {
+			upper = limit + 1
+
+			break
+		}
+
+		upper *= 2
+	}
+
+	if upper > limit {
+		upper = limit + 1
+	}
+
+	for lower+1 < upper {
+		middle := lower + (upper-lower)/binaryFactor
+		if divisibleByPower(value, factor, middle) {
+			lower = middle
+		} else {
+			upper = middle
+		}
+	}
+
+	return lower
+}
+
+// divisibleByPower reports whether value is divisible by factor^exponent.
+func divisibleByPower(value *big.Int, factor int64, exponent uint64) bool {
+	power := integerPower(factor, exponent)
+
+	return new(big.Int).Rem(value, power).Sign() == 0
+}
+
+// decimalTrailingZeros counts paired factors of two and five in a positive integer.
+func decimalTrailingZeros(value *big.Int) uint64 {
+	twos := factorMultiplicity(value, binaryFactor)
+
+	fives := factorMultiplicity(value, quinaryFactor)
+	if fives < twos {
+		return fives
+	}
+
+	return twos
 }
 
 // integerPower returns base raised to exponent.
