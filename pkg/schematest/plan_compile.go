@@ -146,30 +146,21 @@ func (builder *planBuilder) compileNode(
 
 	allOfIdentity := makeRuleIdentity(occurrence, oracleRuleAllOf)
 	if len(node.allOf) > 0 {
-		allOfPins, realizable, err := builder.validAnyOfPins(node, occurrence, validPins)
-		if err != nil {
-			return compiledNodePlan{}, err
-		}
-
-		if realizable {
-			builder.addValid(
-				&result,
-				allOfIdentity,
-				planLevelAllTrue,
-				appendPlanPins(allOfPins, allOfValidPins(occurrence, len(node.allOf))...),
-			)
-		}
+		builder.addValid(
+			&result,
+			allOfIdentity,
+			planLevelAllTrue,
+			appendPlanPins(validPins, allOfValidPins(occurrence, len(node.allOf))...),
+		)
 	}
 
 	anyOfIdentity := makeRuleIdentity(occurrence, oracleRuleAnyOf)
 
 	if len(node.anyOf) > 0 {
-		masks, err := realizableAnyOfMasks(node)
-		if err != nil {
-			return compiledNodePlan{}, err
-		}
+		one := big.NewInt(1)
 
-		for _, mask := range masks {
+		limit := new(big.Int).Lsh(one, uint(len(node.anyOf)))
+		for mask := big.NewInt(1); mask.Cmp(limit) < 0; mask.Add(mask, one) {
 			builder.addValid(
 				&result,
 				anyOfIdentity,
@@ -574,15 +565,6 @@ func (builder *planBuilder) compileEnumRules(
 
 	for index := range node.enum {
 		member := node.enum[index]
-
-		matches, matchErr := valueMatchesNodeKind(member.value, node.kind, node.nullable)
-		if matchErr != nil {
-			return matchErr
-		}
-
-		if !matches {
-			continue
-		}
 
 		pins, realizable, pinErr := builder.validPinsForKind(validInherited, node, occurrence, member.value.kind)
 		if pinErr != nil {
@@ -1216,7 +1198,9 @@ func objectMinimumNeedsMember(minimum *exactCount, presentCount int) (bool, erro
 	return comparison < 0, nil
 }
 
-// validPinsForKind adds local defaults and the exact parent anyOf state.
+// validPinsForKind records the target kind and local structural defaults.
+// Composition truth is added only when the target itself names a composition
+// level or lies on a branch activation path.
 func (builder *planBuilder) validPinsForKind(
 	inherited []requirement,
 	node *schemaNode,
@@ -1224,10 +1208,6 @@ func (builder *planBuilder) validPinsForKind(
 	kind jsonKind,
 ) ([]requirement, bool, error) {
 	pins := appendPlanPins(inherited)
-
-	if node != nil && !nodeAcceptsKindForTarget(node, kind) {
-		return nil, false, nil
-	}
 
 	if node != nil {
 		defaults, err := defaultPresencePinsForKind(node, occurrence, kind)
@@ -1238,21 +1218,7 @@ func (builder *planBuilder) validPinsForKind(
 		pins = appendPlanPins(pins, defaults...)
 	}
 
-	pins = appendPlanPins(pins, kindPin(occurrence, kind))
-	if node == nil || len(node.anyOf) == 0 {
-		return pins, true, nil
-	}
-
-	mask, realizable, err := anyOfMaskForKind(node, kind)
-	if err != nil {
-		return nil, false, err
-	}
-
-	if !realizable {
-		return nil, false, nil
-	}
-
-	return appendPlanPins(pins, anyOfMaskPins(occurrence, len(node.anyOf), mask)...), true, nil
+	return appendPlanPins(pins, kindPin(occurrence, kind)), true, nil
 }
 
 // faultPinsForKind adds the local kind and the exact parent anyOf state.
@@ -1279,26 +1245,15 @@ func (builder *planBuilder) faultPinsForKind(
 	return appendPlanPins(pins, anyOfMaskPins(occurrence, len(node.anyOf), mask)...), true, nil
 }
 
-// validAnyOfPins chooses one nonempty parent state for an untyped local target.
+// validAnyOfPins preserves inherited requirements for an untyped local target.
+// A sibling anyOf is not a target requirement and search must discover its
+// compatible truth vector.
 func (builder *planBuilder) validAnyOfPins(
-	node *schemaNode,
-	occurrence schemaOccurrence,
+	_ *schemaNode,
+	_ schemaOccurrence,
 	inherited []requirement,
 ) ([]requirement, bool, error) {
-	if len(node.anyOf) == 0 {
-		return appendPlanPins(inherited), true, nil
-	}
-
-	mask, realizable, err := anyOfMaskForAny(node)
-	if err != nil {
-		return nil, false, err
-	}
-
-	if !realizable {
-		return nil, false, nil
-	}
-
-	return appendPlanPins(inherited, anyOfMaskPins(occurrence, len(node.anyOf), mask)...), true, nil
+	return appendPlanPins(inherited), true, nil
 }
 
 // faultPinsForAny chooses one nonempty parent state for a fault outside this node.

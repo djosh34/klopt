@@ -199,13 +199,16 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 
 	cases, report := collect(1_000_000)
 	require.Equal(t, []Case{
+		{JSON: []byte(`{"b":""}`), Valid: true},
 		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
+		{JSON: []byte(`{"b":""}`), Valid: true},
+		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
 		{JSON: []byte(`{"a":""}`), Valid: true},
 		{JSON: []byte(`{"a":""}`), Valid: true},
 		{JSON: []byte(`{"b":""}`), Valid: true},
 		{JSON: []byte(`{"b":""}`), Valid: true},
 		{JSON: []byte(`{"a":""}`), Valid: true},
+		{JSON: []byte(`{"b":""}`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`{}`), Valid: false},
 		{JSON: []byte(`{}`), Valid: false},
@@ -217,7 +220,8 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 	prefix := "#/paths/~1/post/requestBody/content/application~1json/schema"
 	expectedCovered := []string{
 		prefix + "|#|type|level:object", prefix + "|#|type|fault:type",
-		prefix + "|#|anyOf|level:mask:1", prefix + "|#|anyOf|fault:anyOf",
+		prefix + "|#|anyOf|level:mask:1", prefix + "|#|anyOf|level:mask:2",
+		prefix + "|#|anyOf|level:mask:3", prefix + "|#|anyOf|fault:anyOf",
 		prefix + "/anyOf/0|#|type|level:object", prefix + "/anyOf/0|#/a|required|level:present",
 		prefix + "/anyOf/0|#/a|required|fault:required",
 		prefix + "/anyOf/1|#|type|level:object", prefix + "/anyOf/1|#/b|required|level:present",
@@ -233,13 +237,13 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 		prefix + "/anyOf/1|#|type|level:string", prefix + "/anyOf/1|#|type|level:array",
 	}
 	require.Equal(t, Report{
-		Stop: SpaceExhausted, Steps: 525, Covered: expectedCovered, Uncovered: expectedUncovered,
+		Stop: SpaceExhausted, Steps: 511, Covered: expectedCovered, Uncovered: expectedUncovered,
 	}, report)
 
 	cutoffCases, cutoffReport := collect(report.Steps - 1)
 	require.Equal(t, cases[:len(cases)-1], cutoffCases)
 	require.Equal(t, Report{
-		Stop: MaxStepsReached, Steps: 524,
+		Stop: MaxStepsReached, Steps: 510,
 		Covered:   expectedCovered[:len(expectedCovered)-1],
 		Uncovered: append(append([]string(nil), expectedUncovered...), expectedCovered[len(expectedCovered)-1]),
 	}, cutoffReport)

@@ -223,7 +223,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("7"), Valid: true},
 				{JSON: []byte("7"), Valid: true},
 			},
-			wantSteps: 51,
+			wantSteps: 56,
 			covered: []string{
 				"|#|anyOf|level:mask:1",
 				"|#|anyOf|level:mask:2",
@@ -278,9 +278,8 @@ func TestBuildSearchesNumericFalseBranchObjectives(t *testing.T) {
 			name:   "unconstrained true branch",
 			schema: `{"type":"number","anyOf":[{}, {"maximum":0}]}`,
 			wantCases: []Case{
-				{JSON: []byte("9"), Valid: true},
-				{JSON: []byte("7"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
+				{JSON: []byte("7"), Valid: true},
 			},
 			masks: []string{"1", "3"},
 		},
@@ -291,7 +290,6 @@ func TestBuildSearchesNumericFalseBranchObjectives(t *testing.T) {
 				{JSON: []byte("1"), Valid: true},
 				{JSON: []byte("1"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
-				{JSON: []byte("1"), Valid: true},
 			},
 			masks: []string{"1", "2"},
 		},
@@ -356,7 +354,7 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 			name:   "explicit number with integer branch",
 			schema: `{"type":"number","anyOf":[{}, {"type":"integer"}]}`,
 			wantCases: []Case{
-				{JSON: []byte("-0.7"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("-0.7"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
 			},
@@ -368,7 +366,7 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 			name:   "planner integer and number branches",
 			schema: `{"anyOf":[{"type":"integer"},{"type":"number"}]}`,
 			wantCases: []Case{
-				{JSON: []byte("-0.8"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("0.2"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
@@ -378,14 +376,14 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 				{JSON: []byte("null"), Valid: false},
 			},
 			wantStop:  SpaceExhausted,
-			wantSteps: 147,
+			wantSteps: 1740,
 			masks:     []string{"2", "3"},
 		},
 		{
 			name:   "nested integer branch",
 			schema: `{"type":"number","anyOf":[{}, {"allOf":[{"type":"integer"}]}]}`,
 			wantCases: []Case{
-				{JSON: []byte("-0.2"), Valid: true},
+				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("0.9"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
 			},

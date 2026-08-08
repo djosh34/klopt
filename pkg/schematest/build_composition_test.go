@@ -606,6 +606,12 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 		{JSON: []byte(`[""]`), Valid: true},
 		{JSON: []byte(`[[]]`), Valid: true},
 		{JSON: []byte(`[{}]`), Valid: true},
+		{JSON: []byte(`[null]`), Valid: true},
+		{JSON: []byte(`[false]`), Valid: true},
+		{JSON: []byte(`[0]`), Valid: true},
+		{JSON: []byte(`[""]`), Valid: true},
+		{JSON: []byte(`[[]]`), Valid: true},
+		{JSON: []byte(`[{}]`), Valid: true},
 	}, cases)
 	require.Equal(t, Report{
 		Stop:  MaxStepsReached,
@@ -638,6 +644,7 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 			schemaPointer + "/items|#/*|type|level:object",
 		},
 		Uncovered: []string{
+			schemaPointer + "|#|anyOf|level:mask:3",
 			schemaPointer + "|#|anyOf|fault:anyOf",
 			schemaPointer + "/anyOf/0|#|type|fault:type",
 			schemaPointer + "/anyOf/0|#|maxItems|fault:maxItems",

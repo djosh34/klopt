@@ -232,7 +232,7 @@ func TestMakePlanEnumeratesBooleanAnyOfMasks(t *testing.T) {
 	findValidTarget(t, plan, "|anyOf|level:mask:2")
 }
 
-func TestMakePlanEnumeratesDistinctStringAnyOfMasks(t *testing.T) {
+func TestMakePlanEnumeratesEveryDistinctStringAnyOfMask(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -251,7 +251,7 @@ func TestMakePlanEnumeratesDistinctStringAnyOfMasks(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, []string{"level:mask:1", "level:mask:2"}, masks)
+	require.Equal(t, []string{"level:mask:1", "level:mask:2", "level:mask:3"}, masks)
 }
 
 func TestMakePlanEnumFaultUsesFaultContextAnyOfMask(t *testing.T) {
@@ -274,7 +274,7 @@ func TestMakePlanEnumFaultUsesFaultContextAnyOfMask(t *testing.T) {
 	requireCompositionPin(t, enumFault.requirements, "anyOf", 1, false)
 }
 
-func TestMakePlanParentEnumExcludesDisallowedBooleanAnyOfMask(t *testing.T) {
+func TestMakePlanParentEnumRetainsEveryBooleanAnyOfMask(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -287,13 +287,7 @@ func TestMakePlanParentEnumExcludesDisallowedBooleanAnyOfMask(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	findValidTarget(t, plan, "|anyOf|level:mask:2")
-
-	for _, target := range plan.validSchedule {
-		if target.obligation.rule == oracleRuleAnyOf {
-			require.NotContains(t, target.obligation.component, "mask:1")
-		}
-	}
+	require.Equal(t, []string{"level:mask:1", "level:mask:2", "level:mask:3"}, anyOfLevelComponents(plan))
 }
 
 func TestMakePlanDerivesStringAnyOfWitnessFromMinLength(t *testing.T) {
@@ -311,7 +305,7 @@ func TestMakePlanDerivesStringAnyOfWitnessFromMinLength(t *testing.T) {
 	findValidTarget(t, plan, "|anyOf|level:mask:1")
 }
 
-func TestMakePlanOmitsMasksInapplicableToExplicitType(t *testing.T) {
+func TestMakePlanRetainsMasksInapplicableToExplicitType(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -323,12 +317,10 @@ func TestMakePlanOmitsMasksInapplicableToExplicitType(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	for _, target := range plan.validSchedule {
-		require.NotEqual(t, oracleRuleAnyOf, target.obligation.rule)
-	}
+	require.Equal(t, []string{"level:mask:1", "level:mask:2", "level:mask:3"}, anyOfLevelComponents(plan))
 }
 
-func TestMakePlanOmitsUnreachableGenericBooleanMasks(t *testing.T) {
+func TestMakePlanRetainsUnreachableGenericBooleanMasks(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -339,13 +331,7 @@ func TestMakePlanOmitsUnreachableGenericBooleanMasks(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	findValidTarget(t, plan, "|anyOf|level:mask:3")
-
-	for _, target := range plan.validSchedule {
-		if target.obligation.rule == oracleRuleAnyOf {
-			require.NotContains(t, target.obligation.component, "mask:1")
-		}
-	}
+	require.Equal(t, []string{"level:mask:1", "level:mask:2", "level:mask:3"}, anyOfLevelComponents(plan))
 }
 
 func TestMakePlanSemanticEnumDedupeKeepsFirstAuthoredMembers(t *testing.T) {
@@ -430,8 +416,8 @@ func TestMakePlanCanonicalizesRuleLevelsAndAnyOfClosure(t *testing.T) {
 	require.NoError(t, err)
 
 	rootType := findValidTarget(t, anyOfPlan, "|type|level:number")
-	requireCompositionPin(t, rootType.requirements, "anyOf", 0, false)
-	requireCompositionPin(t, rootType.requirements, "anyOf", 1, true)
+	requireNoCompositionPin(t, rootType.requirements, "anyOf", 0)
+	requireNoCompositionPin(t, rootType.requirements, "anyOf", 1)
 
 	aggregate := findFaultTarget(t, anyOfPlan, "|anyOf|fault:anyOf")
 	anyOfRoot := "#/paths/~1/post/requestBody/content/application~1json/schema"
@@ -572,7 +558,7 @@ func TestMakePlanAnyOfStringEnumUsesReachableAggregateRepresentative(t *testing.
 	}, identityStrings(aggregate.expected))
 }
 
-func TestMakePlanAnyOfLocalMinimumUsesCompatibleNumericBranch(t *testing.T) {
+func TestMakePlanAnyOfLocalMinimumLeavesSiblingTruthToSearch(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -584,23 +570,9 @@ func TestMakePlanAnyOfLocalMinimumUsesCompatibleNumericBranch(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	for _, target := range []struct {
-		name string
-		want string
-	}{
-		{name: "valid", want: "|minimum|level:valid"},
-		{name: "fault", want: "|minimum|fault:minimum"},
-	} {
-		var pins []requirement
-		if target.name == "valid" {
-			pins = findValidTarget(t, plan, target.want).requirements
-		} else {
-			pins = findFaultTarget(t, plan, target.want).requirements
-		}
-
-		requireCompositionPin(t, pins, "anyOf", 0, false)
-		requireCompositionPin(t, pins, "anyOf", 1, true)
-	}
+	pins := findValidTarget(t, plan, "|minimum|level:valid").requirements
+	requireNoCompositionPin(t, pins, "anyOf", 0)
+	requireNoCompositionPin(t, pins, "anyOf", 1)
 }
 
 func TestMakePlanAnyOfOverlappingChildValidTargetsKeepSiblingsUnconstrained(t *testing.T) {
@@ -787,7 +759,7 @@ func TestMakePlanOmitsImpossibleTypedEnumTypeFault(t *testing.T) {
 	}
 }
 
-func TestMakePlanEnumeratesReachableIntegerNumberAnyOfMasks(t *testing.T) {
+func TestMakePlanEnumeratesEveryIntegerNumberAnyOfMask(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
@@ -798,12 +770,7 @@ func TestMakePlanEnumeratesReachableIntegerNumberAnyOfMasks(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	findValidTarget(t, plan, "|anyOf|level:mask:2")
-	findValidTarget(t, plan, "|anyOf|level:mask:3")
-
-	for _, target := range plan.validSchedule {
-		require.NotContains(t, target.obligation.String(), "|anyOf|level:mask:1")
-	}
+	require.Equal(t, []string{"level:mask:1", "level:mask:2", "level:mask:3"}, anyOfLevelComponents(plan))
 }
 
 func TestMakePlanPositiveMinPropertiesPinsDeclaredMemberPresent(t *testing.T) {

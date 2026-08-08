@@ -115,10 +115,6 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[""]`), Valid: true},
-		{JSON: []byte(`[""]`), Valid: true},
-		{JSON: []byte(`[0]`), Valid: true},
-		{JSON: []byte(`[""]`), Valid: true},
-		{JSON: []byte(`[0]`), Valid: true},
 	}
 
 	firstReport, firstCases, err := collect()
