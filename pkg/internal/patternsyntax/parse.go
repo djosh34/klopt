@@ -938,14 +938,9 @@ func hexValue(character byte) (byte, bool) {
 }
 
 func isIdentityEscape(character rune) bool {
-	if character > 0x7f {
-		return true
-	}
-
-	if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
-		character >= '0' && character <= '9' || character == '_' {
-		return false
-	}
-
-	return true
+	return character <= 0x7f &&
+		(character < 'a' || character > 'z') &&
+		(character < 'A' || character > 'Z') &&
+		(character < '0' || character > '9') &&
+		character != '_'
 }

@@ -491,6 +491,8 @@ func TestParseRejectsUnsupportedLeadingAssertionPlacement(t *testing.T) {
 		`(?=a)a`,
 		`^(?=a)a|b`,
 		`^(?=a)(?:b(?=c))`,
+		`\é`,
+		`[\é]`,
 	}
 
 	for _, pattern := range patterns {
@@ -518,6 +520,10 @@ func TestParseEnforcesExactPatternResourceLimits(t *testing.T) {
 	// exactly 1,048,577 bytes.
 	matcherAtLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_661) + strings.Repeat(".", 492)
 	matcherOverLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_665) + strings.Repeat(".", 491)
+	leadingMatcherAtLimit := "^(?=" + strings.Repeat(`\S`, 2_942) + ")(?=" +
+		strings.Repeat(`\S`, 2_943) + strings.Repeat("a", 4_077) + strings.Repeat(".", 4) + ")a"
+	leadingMatcherOverLimit := "^(?=" + strings.Repeat(`\S`, 2_942) + ")(?=" +
+		strings.Repeat(`\S`, 2_943) + strings.Repeat("a", 4_081) + strings.Repeat(".", 3) + ")a"
 
 	tests := []struct {
 		name     string
@@ -584,6 +590,13 @@ func TestParseEnforcesExactPatternResourceLimits(t *testing.T) {
 		},
 		{
 			name: "translated matcher source first overflow", pattern: matcherOverLimit,
+			wantErr: true, limit: "generated Go regexp bytes", maximum: 1_048_576, observed: 1_048_577,
+		},
+		{
+			name: "cumulative leading matcher source at limit", pattern: leadingMatcherAtLimit,
+		},
+		{
+			name: "cumulative leading matcher source first overflow", pattern: leadingMatcherOverLimit,
 			wantErr: true, limit: "generated Go regexp bytes", maximum: 1_048_576, observed: 1_048_577,
 		},
 	}

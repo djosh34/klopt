@@ -19,7 +19,7 @@ func TestParseAcceptsClosedGrammar(t *testing.T) {
 		`\d\D\s\S\w\W`, "[]", "[^]", "[-a]", "[a-]", `[a-z]`, `[a-b-c]`, `[A-Za-z0-9-_.]+`,
 		`[^\d\sA-Z]`, `[\b\x41\u0062\cC\cz]`, "[^^]",
 		"^(?=a)(?!ab)a", "^(?=a|b)a",
-		"é", `\é`,
+		"é",
 	}
 
 	for _, pattern := range patterns {
@@ -54,6 +54,8 @@ func TestParseClassifiesRejectionsAtOriginalByte(t *testing.T) {
 		{name: "zero decimal", pattern: `\01`, kind: ErrorInvalidSyntax, offset: 2},
 		{name: "unknown escape", pattern: `\a`, kind: ErrorInvalidSyntax, offset: 0},
 		{name: "identifier escape", pattern: `\_`, kind: ErrorInvalidSyntax, offset: 0},
+		{name: "non-ASCII identity escape", pattern: `\é`, kind: ErrorInvalidSyntax, offset: 0},
+		{name: "non-ASCII class identity escape", pattern: `[\é]`, kind: ErrorInvalidSyntax, offset: 1},
 		{name: "backreference", pattern: `\1(a)`, kind: ErrorUnsupported, offset: 0},
 		{name: "class decimal reference", pattern: `[\1](a)`, kind: ErrorUnsupported, offset: 1},
 		{name: "out of range decimal", pattern: `\2(a)`, kind: ErrorInvalidSyntax, offset: 0},
@@ -209,7 +211,7 @@ func TestParseCoversAcceptedEscapeAndRepeatForms(t *testing.T) {
 	t.Parallel()
 
 	for _, pattern := range []string{
-		`[\D\S\w\W\f\n\r\t\v\0\x41\u0042\cA\ca\é\-]`,
+		`[\D\S\w\W\f\n\r\t\v\0\x41\u0042\cA\ca\-]`,
 		`(a{2,}){2}`,
 		`\xAF`,
 	} {

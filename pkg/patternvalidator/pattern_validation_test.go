@@ -329,6 +329,8 @@ func TestParseEnforcesTranslatedRegexpBoundary(t *testing.T) {
 	// and the first overflow without reaching the AST-node limit.
 	atLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_661) + strings.Repeat(".", 492)
 	overLimit := strings.Repeat(`\S`, 5_835) + strings.Repeat("a", 3_665) + strings.Repeat(".", 491)
+	cumulativeOverLimit := "^(?=" + strings.Repeat(`\S`, 2_942) + ")(?=" +
+		strings.Repeat(`\S`, 2_943) + strings.Repeat("a", 4_081) + strings.Repeat(".", 3) + ")a"
 
 	validation, err := Parse(atLimit)
 	require.NoError(t, err)
@@ -344,6 +346,14 @@ func TestParseEnforcesTranslatedRegexpBoundary(t *testing.T) {
 	require.Equal(t, "generated Go regexp bytes", complexity.Limit)
 	require.Equal(t, uint64(maximumGeneratedRegexpBytes), complexity.Maximum)
 	require.Equal(t, uint64(maximumGeneratedRegexpBytes+1), complexity.Observed)
+
+	validation, err = Parse(cumulativeOverLimit)
+	require.ErrorIs(t, err, ErrTooComplex)
+	require.Nil(t, validation)
+
+	validation, err = Parse(cumulativeOverLimit, RejectNonASCII)
+	require.NoError(t, err)
+	require.NotNil(t, validation)
 }
 
 func TestParseAndValidateNamedRobustnessMatrix(t *testing.T) {
@@ -443,7 +453,7 @@ func TestTranslationBranchesAndMalformedTrees(t *testing.T) {
 	require.Error(t, err)
 
 	malformedPrefix := leadingLookaheadTree(lookahead.Nodes, []patternsyntax.NodeID{0})
-	_, err = translateLeadingLookaheads(&malformedPrefix, malformedPrefix.Nodes[1])
+	_, err = translateLeadingLookaheads(&malformedPrefix, malformedPrefix.Nodes[1], true)
 	require.Error(t, err)
 
 	malformedRemainder := leadingLookaheadTree(
@@ -453,7 +463,7 @@ func TestTranslationBranchesAndMalformedTrees(t *testing.T) {
 		},
 		[]patternsyntax.NodeID{0, 1},
 	)
-	_, err = translateLeadingLookaheads(&malformedRemainder, malformedRemainder.Nodes[1])
+	_, err = translateLeadingLookaheads(&malformedRemainder, malformedRemainder.Nodes[1], true)
 	require.Error(t, err)
 
 	normalized := normalizeRuneSet([]runeRange{{low: 2, high: 3}, {low: 2, high: 4}})

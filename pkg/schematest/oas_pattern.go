@@ -132,8 +132,8 @@ func parseECMAPattern(source string) (*patternAST, error) {
 			return nil, err
 		}
 
-		if len(expression.alternatives) != 1 {
-			return nil, errors.New("leading assertions require one top-level alternative")
+		if err := validateLeadingPatternRemainder(expression); err != nil {
+			return nil, err
 		}
 
 		expression.alternatives[0].terms = append(
@@ -162,27 +162,35 @@ func parseECMAPattern(source string) (*patternAST, error) {
 		}
 	} else {
 		for _, assertion := range ast.leadingAssertions {
-			matcherBytes := 6 + patternExpressionBytes(assertion.expression)
-			if matcherBytes > patternMatcherByteLimit {
+			ast.matcherBytes += 6 + patternExpressionBytes(assertion.expression)
+			if ast.matcherBytes > patternMatcherByteLimit {
 				return nil, fmt.Errorf("translated matcher source exceeds %d bytes", patternMatcherByteLimit)
 			}
-
-			ast.matcherBytes = max(ast.matcherBytes, matcherBytes)
 		}
 
-		remainderBytes := 6
+		ast.matcherBytes += 6
 		for _, term := range ast.expression.alternatives[0].terms[1:] {
-			remainderBytes += patternTermBytes(term)
+			ast.matcherBytes += patternTermBytes(term)
 		}
 
-		if remainderBytes > patternMatcherByteLimit {
+		if ast.matcherBytes > patternMatcherByteLimit {
 			return nil, fmt.Errorf("translated matcher source exceeds %d bytes", patternMatcherByteLimit)
 		}
-
-		ast.matcherBytes = max(ast.matcherBytes, remainderBytes)
 	}
 
 	return ast, nil
+}
+
+func validateLeadingPatternRemainder(expression *patternExpression) error {
+	if len(expression.alternatives) != 1 {
+		return errors.New("leading assertions require one top-level alternative")
+	}
+
+	if patternSequenceNullable(expression.alternatives[0]) {
+		return errors.New("leading assertions require a consuming remainder")
+	}
+
+	return nil
 }
 
 func (parser *ecmaPatternParser) hasLeadingLookahead() bool {
@@ -954,6 +962,37 @@ func expressionRepeatProduct(expression *patternExpression) uint64 {
 	}
 
 	return maximum
+}
+
+func patternExpressionNullable(expression *patternExpression) bool {
+	for _, alternative := range expression.alternatives {
+		if patternSequenceNullable(alternative) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func patternSequenceNullable(sequence *patternSequence) bool {
+	for _, term := range sequence.terms {
+		if term.minimum > 0 && !patternAtomNullable(term.atom) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func patternAtomNullable(atom *patternAtom) bool {
+	switch atom.kind {
+	case patternStart, patternEnd, patternWordBoundary, patternNotWordBoundary:
+		return true
+	case patternGroup:
+		return patternExpressionNullable(atom.expression)
+	default:
+		return false
+	}
 }
 
 func patternExpressionBytes(expression *patternExpression) int {
