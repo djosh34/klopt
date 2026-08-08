@@ -1015,10 +1015,14 @@ func reachableOwnerTypes(
 	return owned
 }
 
-// authorizedOwnerTypes identifies only parsed model, plan, current value, and bounded search state graphs.
+// authorizedOwnerTypes identifies parsed model, plan, current-value traversal, and bounded search state graphs.
 func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
 	authorized := make(map[*types.TypeName]bool)
-	for _, root := range []string{"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext"} {
+	for _, root := range []string{
+		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext",
+		"jsonActivePath", "jsonValuePair", "jsonValidationFrame", "jsonCloneFrame", "jsonMarshalFrame",
+		"strictJSONContainerFrame",
+	} {
 		collectNamedOwnerTypes(packageObjectType(guardPackage, root), authorized)
 	}
 

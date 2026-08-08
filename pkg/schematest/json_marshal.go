@@ -2,7 +2,6 @@ package schematest
 
 import (
 	"fmt"
-	"sort"
 	"unicode/utf8"
 )
 
@@ -13,43 +12,96 @@ const (
 	jsonControlLimit = 0x20
 )
 
+// jsonMarshalFrame holds the progress through one value being serialized.
+type jsonMarshalFrame struct {
+	value   *jsonValue
+	index   int
+	names   []string
+	entered bool
+}
+
 // marshalStrict serializes one complete JSON value with deterministic bytes.
+//
+//nolint:cyclop // The explicit traversal handles each of JSON's six kinds in one state machine.
 func marshalStrict(value *jsonValue) ([]byte, error) {
-	if err := validateJSONValue(value, make(map[*jsonValue]bool)); err != nil {
+	if err := validateJSONValue(value); err != nil {
 		return nil, err
 	}
 
-	encoded, err := appendStrictJSON(nil, value)
-	if err != nil {
-		return nil, err
+	encoded := make([]byte, 0)
+
+	stack := []jsonMarshalFrame{{value: value}}
+	for len(stack) > 0 {
+		frame := &stack[len(stack)-1]
+
+		switch frame.value.kind {
+		case jsonNull:
+			encoded = append(encoded, "null"...)
+			stack = stack[:len(stack)-1]
+		case jsonBoolean:
+			encoded = appendJSONBoolean(encoded, frame.value.boolean)
+			stack = stack[:len(stack)-1]
+		case jsonNumber:
+			decimal, err := frame.value.number.canonicalDecimal()
+			if err != nil {
+				return nil, err
+			}
+
+			encoded = append(encoded, decimal...)
+			stack = stack[:len(stack)-1]
+		case jsonString:
+			encoded = appendJSONString(encoded, frame.value.text)
+			stack = stack[:len(stack)-1]
+		case jsonArray:
+			if !frame.entered {
+				encoded = append(encoded, '[')
+				frame.entered = true
+			}
+
+			if frame.index == len(frame.value.array) {
+				encoded = append(encoded, ']')
+				stack = stack[:len(stack)-1]
+
+				continue
+			}
+
+			if frame.index > 0 {
+				encoded = append(encoded, ',')
+			}
+
+			child := frame.value.array[frame.index]
+			frame.index++
+
+			stack = append(stack, jsonMarshalFrame{value: child})
+		case jsonObject:
+			if !frame.entered {
+				encoded = append(encoded, '{')
+				frame.names = sortedObjectNames(frame.value.object)
+				frame.entered = true
+			}
+
+			if frame.index == len(frame.names) {
+				encoded = append(encoded, '}')
+				stack = stack[:len(stack)-1]
+
+				continue
+			}
+
+			if frame.index > 0 {
+				encoded = append(encoded, ',')
+			}
+
+			name := frame.names[frame.index]
+			encoded = appendJSONString(encoded, name)
+			encoded = append(encoded, ':')
+			frame.index++
+			stack = append(stack, jsonMarshalFrame{value: frame.value.object[name]})
+		default:
+			return nil, fmt.Errorf("unknown JSON kind %d", frame.value.kind)
+		}
 	}
 
 	return encoded, nil
-}
-
-// appendStrictJSON appends one already-validated complete JSON value.
-func appendStrictJSON(encoded []byte, value *jsonValue) ([]byte, error) {
-	switch value.kind {
-	case jsonNull:
-		return append(encoded, "null"...), nil
-	case jsonBoolean:
-		return appendJSONBoolean(encoded, value.boolean), nil
-	case jsonNumber:
-		decimal, err := value.number.canonicalDecimal()
-		if err != nil {
-			return nil, err
-		}
-
-		return append(encoded, decimal...), nil
-	case jsonString:
-		return appendJSONString(encoded, value.text), nil
-	case jsonArray:
-		return appendJSONArray(encoded, value.array)
-	case jsonObject:
-		return appendJSONObject(encoded, value.object)
-	default:
-		return nil, fmt.Errorf("unknown JSON kind %d", value.kind)
-	}
 }
 
 // appendJSONBoolean appends one JSON boolean.
@@ -59,56 +111,6 @@ func appendJSONBoolean(encoded []byte, value bool) []byte {
 	}
 
 	return append(encoded, "false"...)
-}
-
-// appendJSONArray appends one already-validated JSON array.
-func appendJSONArray(encoded []byte, elements []*jsonValue) ([]byte, error) {
-	encoded = append(encoded, '[')
-
-	for index, element := range elements {
-		if index > 0 {
-			encoded = append(encoded, ',')
-		}
-
-		var err error
-
-		encoded, err = appendStrictJSON(encoded, element)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return append(encoded, ']'), nil
-}
-
-// appendJSONObject appends one already-validated JSON object in UTF-8 key order.
-func appendJSONObject(encoded []byte, members map[string]*jsonValue) ([]byte, error) {
-	names := make([]string, 0, len(members))
-	for name := range members {
-		names = append(names, name)
-	}
-
-	sort.Strings(names)
-
-	encoded = append(encoded, '{')
-
-	for index, name := range names {
-		if index > 0 {
-			encoded = append(encoded, ',')
-		}
-
-		encoded = appendJSONString(encoded, name)
-		encoded = append(encoded, ':')
-
-		var err error
-
-		encoded, err = appendStrictJSON(encoded, members[name])
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return append(encoded, '}'), nil
 }
 
 // appendJSONString appends one valid UTF-8 string with fixed JSON escaping.

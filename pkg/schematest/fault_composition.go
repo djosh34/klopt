@@ -146,7 +146,7 @@ func tryCompositionEdits(
 		return nil, false, assignErr
 	}
 
-	candidate, copyErr := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
+	candidate, copyErr := cloneJSONValue(parent)
 	if copyErr != nil {
 		return nil, false, fmt.Errorf("copy composition fault parent: %w", copyErr)
 	}
@@ -298,7 +298,7 @@ func applyCompositionEdit(root *jsonValue, edit compositionEdit) error {
 			return errors.New("schematest: cannot remove composition root")
 		}
 
-		replacement, err := copyJSONValue(edit.replacement, make(map[*jsonValue]*jsonValue))
+		replacement, err := cloneJSONValue(edit.replacement)
 		if err != nil {
 			return err
 		}
@@ -332,7 +332,7 @@ func applyCompositionEdit(root *jsonValue, edit compositionEdit) error {
 		return nil
 	}
 
-	replacement, err := copyJSONValue(edit.replacement, make(map[*jsonValue]*jsonValue))
+	replacement, err := cloneJSONValue(edit.replacement)
 	if err != nil {
 		return err
 	}
