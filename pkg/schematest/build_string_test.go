@@ -27,12 +27,6 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 
 	require.Equal(t, []Case{
 		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`"bb"`), Valid: false},
 		{JSON: []byte(`"c"`), Valid: false},
@@ -40,7 +34,7 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 	}, firstCases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 143,
+		Steps: 113,
 		Covered: []string{
 			schemaPointer + "|#|type|level:string",
 			schemaPointer + "|#|type|fault:type",
@@ -81,9 +75,6 @@ func TestBuildStreamsValidFormatTargets(t *testing.T) {
 	schemaPointer := "#/paths/~1/post/requestBody/content/application~1json/schema"
 
 	require.Equal(t, []Case{
-		{JSON: []byte(`"0.0.0.0"`), Valid: true},
-		{JSON: []byte(`"0.0.0.0"`), Valid: true},
-		{JSON: []byte(`"0.0.0.0"`), Valid: true},
 		{JSON: []byte(`"0.0.0.0"`), Valid: true},
 	}, validCasesOnly(cases))
 	require.Equal(t, Report{

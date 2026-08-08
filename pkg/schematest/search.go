@@ -21,7 +21,7 @@ type search struct {
 
 // rowSearchContext explicitly carries private directed and valid-target search inputs.
 type rowSearchContext struct {
-	validIntent *validIntent
+	validRequest *validRequest
 }
 
 // assign charges one structural, kind, composition, enum, or scalar choice.
@@ -42,7 +42,7 @@ func (s *search) assign() error {
 // findTargetRow searches one target without retaining generated rows.
 //
 //nolint:cyclop // Structural impossibility and row search share one target boundary.
-func findTargetRow(plan *searchPlan, target validIntent, s *search) (*jsonValue, bool, error) {
+func findTargetRow(plan *searchPlan, request validRequest, s *search) (*jsonValue, bool, error) {
 	if plan == nil {
 		return nil, false, errors.New("schematest: nil search plan")
 	}
@@ -51,7 +51,7 @@ func findTargetRow(plan *searchPlan, target validIntent, s *search) (*jsonValue,
 		return nil, false, errors.New("schematest: search has no model")
 	}
 
-	forbidden, err := targetPresenceForbiddenByActiveSchema(s.model.root, target)
+	forbidden, err := requestPresenceForbiddenByActiveSchema(s.model.root, request)
 	if err != nil || forbidden {
 		return nil, false, err
 	}
@@ -64,7 +64,7 @@ func findTargetRow(plan *searchPlan, target validIntent, s *search) (*jsonValue,
 			return false, fmt.Errorf("evaluate generated row: %w", result.err)
 		}
 
-		if !result.valid || !targetRowMatches(result, target, value) {
+		if !result.valid || !targetRowMatches(result, request, value) {
 			return false, nil
 		}
 
@@ -76,8 +76,8 @@ func findTargetRow(plan *searchPlan, target validIntent, s *search) (*jsonValue,
 	complete, err := s.walkNode(
 		s.model.root,
 		s.model.root.occurrence,
-		target.requirements,
-		rowSearchContext{validIntent: &target},
+		request.requirements,
+		rowSearchContext{validRequest: &request},
 		visit,
 	)
 	if err != nil {
@@ -87,7 +87,24 @@ func findTargetRow(plan *searchPlan, target validIntent, s *search) (*jsonValue,
 	return found, complete, nil
 }
 
-// targetPresenceForbiddenByActiveSchema rejects impossible active member targets.
+// requestPresenceForbiddenByActiveSchema rejects impossible active member targets.
+func requestPresenceForbiddenByActiveSchema(root *schemaNode, request validRequest) (bool, error) {
+	objective := 0
+	if request.focus >= 0 {
+		objective = request.focus
+	}
+
+	if objective >= len(request.targets) {
+		return false, nil
+	}
+
+	target := request.targets[objective]
+	target.requirements = request.requirements
+
+	return targetPresenceForbiddenByActiveSchema(root, target)
+}
+
+// targetPresenceForbiddenByActiveSchema checks one vector component.
 //
 //nolint:cyclop // Root-kind and concrete-member contradictions share one preflight.
 func targetPresenceForbiddenByActiveSchema(root *schemaNode, target validIntent) (bool, error) {
@@ -273,13 +290,24 @@ func activeSchemaForbidsMember(
 // targetRowMatches requires a complete valid value and the target's exact pins.
 //
 //nolint:cyclop // Validity, levels, and the three pin dimensions are one acceptance pass.
-func targetRowMatches(result evaluation, target validIntent, value *jsonValue) bool {
-	if !result.valid || (!levelWasObserved(result.observedRecords(), target.expected) &&
-		!compositionLevelWasObserved(result, target.expected)) {
+func targetRowMatches(result evaluation, request validRequest, value *jsonValue) bool {
+	if !result.valid {
 		return false
 	}
 
-	for _, pin := range target.requirements {
+	if request.focus >= 0 {
+		if request.focus >= len(request.targets) {
+			return false
+		}
+
+		target := request.targets[request.focus]
+		if !levelWasObserved(result.observedRecords(), target.expected) &&
+			!compositionLevelWasObserved(result, target.expected) {
+			return false
+		}
+	}
+
+	for _, pin := range request.requirements {
 		switch {
 		case pin.presence != requirementNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
 			return false

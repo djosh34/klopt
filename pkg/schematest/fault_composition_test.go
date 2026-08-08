@@ -203,16 +203,9 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 
 	cases, report := collect(1_000_000)
 	require.Equal(t, []Case{
-		{JSON: []byte(`{"b":""}`), Valid: true},
 		{JSON: []byte(`{"a":""}`), Valid: true},
 		{JSON: []byte(`{"b":""}`), Valid: true},
 		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"b":""}`), Valid: true},
-		{JSON: []byte(`{"b":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"b":""}`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`{}`), Valid: false},
 		{JSON: []byte(`{}`), Valid: false},
@@ -241,13 +234,13 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 		prefix + "/anyOf/1|#|type|level:string", prefix + "/anyOf/1|#|type|level:array",
 	}
 	require.Equal(t, Report{
-		Stop: SpaceExhausted, Steps: 486, Covered: expectedCovered, Uncovered: expectedUncovered,
+		Stop: SpaceExhausted, Steps: 411, Covered: expectedCovered, Uncovered: expectedUncovered,
 	}, report)
 
 	cutoffCases, cutoffReport := collect(report.Steps - 1)
 	require.Equal(t, cases[:len(cases)-1], cutoffCases)
 	require.Equal(t, Report{
-		Stop: MaxStepsReached, Steps: 485,
+		Stop: MaxStepsReached, Steps: 410,
 		Covered:   expectedCovered[:len(expectedCovered)-1],
 		Uncovered: append(append([]string(nil), expectedUncovered...), expectedCovered[len(expectedCovered)-1]),
 	}, cutoffReport)
@@ -281,13 +274,6 @@ func TestBuildAllOfCompositionFaultGoldenStream(t *testing.T) {
 	cases, report := collect(1_000_000)
 	require.Equal(t, []Case{
 		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`{"b":""}`), Valid: false},
 		{JSON: []byte(`{"a":null,"b":""}`), Valid: false},
@@ -315,13 +301,13 @@ func TestBuildAllOfCompositionFaultGoldenStream(t *testing.T) {
 		prefix + "/allOf/1|#|type|level:string", prefix + "/allOf/1|#|type|level:array",
 	}
 	require.Equal(t, Report{
-		Stop: SpaceExhausted, Steps: 429, Covered: expectedCovered, Uncovered: expectedUncovered,
+		Stop: SpaceExhausted, Steps: 373, Covered: expectedCovered, Uncovered: expectedUncovered,
 	}, report)
 
 	cutoffCases, cutoffReport := collect(report.Steps - 1)
 	require.Equal(t, cases[:len(cases)-1], cutoffCases)
 	require.Equal(t, Report{
-		Stop: MaxStepsReached, Steps: 428,
+		Stop: MaxStepsReached, Steps: 372,
 		Covered:   expectedCovered[:len(expectedCovered)-1],
 		Uncovered: append(append([]string(nil), expectedUncovered...), expectedCovered[len(expectedCovered)-1]),
 	}, cutoffReport)

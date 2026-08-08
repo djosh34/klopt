@@ -18,7 +18,7 @@ func (s *search) walkActiveNumberRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []requirement,
-	target *validIntent,
+	request *validRequest,
 	visit rowVisit,
 ) (bool, error) {
 	rules := make([]activeNumberRule, 0)
@@ -51,7 +51,7 @@ func (s *search) walkActiveNumberRules(
 	rule := oracleRuleType
 	level := jsonKindName(jsonNumber)
 
-	if target != nil {
+	if target := validScalarObjective(request, node, occurrence); target != nil {
 		if found, ok := scalarTargetNode(node, occurrence, target.expected.occurrence); ok {
 			seedNode = found
 			seedPointer = target.expected.occurrence.usePointer

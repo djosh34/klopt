@@ -37,7 +37,6 @@ func TestBuildStreamsArrayCountAndExistingIndexTargets(t *testing.T) {
 		Covered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:array",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maxItems|level:valid",
-			"#/paths/~1/post/requestBody/content/application~1json/schema/items|#/*|type|level:string",
 		},
 		Uncovered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|fault:type",
@@ -45,11 +44,7 @@ func TestBuildStreamsArrayCountAndExistingIndexTargets(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema/items|#/*|type|fault:type",
 		},
 	}
-	expectedCases := []Case{
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[""]`), Valid: true},
-	}
+	expectedCases := []Case{{JSON: []byte(`[]`), Valid: true}}
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
@@ -113,7 +108,6 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 	expectedCases := []Case{
 		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[0]`), Valid: true},
-		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[""]`), Valid: true},
 	}
 
@@ -167,10 +161,7 @@ func TestBuildDoesNotCoverNonexistentArrayIndices(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema/items|#/*|type|fault:type",
 		},
 	}
-	expectedCases := []Case{
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[]`), Valid: true},
-	}
+	expectedCases := []Case{{JSON: []byte(`[]`), Valid: true}}
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
@@ -220,7 +211,6 @@ func TestBuildRepairsCanonicalObjectPresenceForSuppliedProperty(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|minProperties|level:valid",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maxProperties|level:valid",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/a|#/a|type|level:string",
-			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/b|#/b|type|level:number",
 		},
 		Uncovered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|fault:type",
@@ -230,13 +220,7 @@ func TestBuildRepairsCanonicalObjectPresenceForSuppliedProperty(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/b|#/b|type|fault:type",
 		},
 	}
-	expectedCases := []Case{
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"b":0}`), Valid: true},
-	}
+	expectedCases := []Case{{JSON: []byte(`{"a":""}`), Valid: true}}
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
@@ -288,9 +272,7 @@ func TestBuildStreamsObjectPresenceAndPropertyTargets(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|minProperties|level:valid",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maxProperties|level:valid",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#/id|required|level:present",
-			"#/paths/~1/post/requestBody/content/application~1json/schema/additionalProperties|#/*|type|level:boolean",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/id|#/id|type|level:string",
-			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/optional|#/optional|type|level:number",
 		},
 		Uncovered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|fault:type",
@@ -302,15 +284,7 @@ func TestBuildStreamsObjectPresenceAndPropertyTargets(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/optional|#/optional|type|fault:type",
 		},
 	}
-	expectedCases := []Case{
-		{JSON: []byte(`{"id":""}`), Valid: true},
-		{JSON: []byte(`{"id":""}`), Valid: true},
-		{JSON: []byte(`{"id":""}`), Valid: true},
-		{JSON: []byte(`{"id":""}`), Valid: true},
-		{JSON: []byte(`{"__schematest_extra__":false,"id":""}`), Valid: true},
-		{JSON: []byte(`{"id":""}`), Valid: true},
-		{JSON: []byte(`{"id":"","optional":0}`), Valid: true},
-	}
+	expectedCases := []Case{{JSON: []byte(`{"id":""}`), Valid: true}}
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)

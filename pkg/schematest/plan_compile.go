@@ -10,7 +10,7 @@ import (
 // makePlan compiles every stable valid and isolated-fault obligation without
 // constructing a JSON row or retaining a scalar witness.
 //
-//nolint:cyclop // Canonical compilation, validation, and sorting are separate required phases.
+//nolint:cyclop // Canonical compilation, keying, schedules, and catalog assembly are one boundary.
 func makePlan(model *schemaModel) (*searchPlan, error) {
 	if model == nil || model.root == nil || model.root.schemaShape == nil {
 		return nil, errors.New("schema model has no root")
@@ -33,16 +33,29 @@ func makePlan(model *schemaModel) (*searchPlan, error) {
 		return nil, err
 	}
 
-	if err := stablePlanSort(compiled.valid, func(left, right validIntent) (int, error) {
-		return comparePlanObligations(left.obligation, right.obligation)
-	}); err != nil {
-		return nil, fmt.Errorf("sort valid obligations: %w", err)
+	if err := cachePlanOrderKeys(compiled.valid, compiled.faults); err != nil {
+		return nil, err
 	}
 
-	if err := stablePlanSort(compiled.faults, func(left, right faultProgram) (int, error) {
-		return comparePlanObligations(left.obligation, right.obligation)
-	}); err != nil {
-		return nil, fmt.Errorf("sort fault obligations: %w", err)
+	sort.SliceStable(compiled.valid, func(left, right int) bool {
+		return comparePlanOrderKeys(
+			compiled.valid[left].obligation.orderKey,
+			compiled.valid[right].obligation.orderKey,
+		) < 0
+	})
+	sort.SliceStable(compiled.faults, func(left, right int) bool {
+		return comparePlanOrderKeys(
+			compiled.faults[left].obligation.orderKey,
+			compiled.faults[right].obligation.orderKey,
+		) < 0
+	})
+
+	validSchedule := compileValidSchedule(compiled.valid)
+	stringObjectives := compileStringObjectiveOrder(compiled.valid)
+
+	faultExecution := make([]int, len(compiled.faults))
+	for index := range compiled.faults {
+		faultExecution[index] = index
 	}
 
 	obligations := make([]obligation, 0, len(compiled.valid)+len(compiled.faults))
@@ -54,19 +67,157 @@ func makePlan(model *schemaModel) (*searchPlan, error) {
 		obligations = append(obligations, target.obligation)
 	}
 
-	if err := stablePlanSort(obligations, comparePlanObligations); err != nil {
-		return nil, fmt.Errorf("sort obligations: %w", err)
-	}
+	sort.SliceStable(obligations, func(left, right int) bool {
+		return comparePlanOrderKeys(obligations[left].orderKey, obligations[right].orderKey) < 0
+	})
 
 	if err := rejectDuplicateObligations(obligations); err != nil {
 		return nil, err
 	}
 
 	return &searchPlan{
-		validSchedule: compiled.valid,
-		faultSchedule: compiled.faults,
-		obligations:   obligations,
+		validCatalog:     compiled.valid,
+		validSchedule:    validSchedule,
+		stringObjectives: stringObjectives,
+		faultSchedule:    compiled.faults,
+		faultExecution:   faultExecution,
+		obligations:      obligations,
 	}, nil
+}
+
+// compileStringObjectiveOrder keeps scalar search objectives independent of report order.
+func compileStringObjectiveOrder(catalog []validIntent) []levelIdentity {
+	objectives := make([]levelIdentity, 0)
+
+	for _, target := range catalog {
+		switch target.expected.rule {
+		case oracleRuleMinLength, oracleRuleMaxLength, oracleRulePattern:
+			objectives = append(objectives, target.expected)
+		case oracleRuleFormat:
+			for _, requirement := range target.requirements {
+				if requirement.hasKind && requirement.kind == jsonString {
+					objectives = append(objectives, target.expected)
+
+					break
+				}
+			}
+		}
+	}
+
+	return objectives
+}
+
+// cachePlanOrderKeys parses ordering metadata once before any sort comparison.
+func cachePlanOrderKeys(valid []validIntent, faults []faultProgram) error {
+	for index := range valid {
+		key, err := makePlanOrderKey(valid[index].obligation)
+		if err != nil {
+			return fmt.Errorf("cache valid obligation order: %w", err)
+		}
+
+		valid[index].obligation.orderKey = key
+	}
+
+	for index := range faults {
+		key, err := makePlanOrderKey(faults[index].obligation)
+		if err != nil {
+			return fmt.Errorf("cache fault obligation order: %w", err)
+		}
+
+		faults[index].obligation.orderKey = key
+	}
+
+	return nil
+}
+
+// compileValidSchedule emits one baseline and one request per noncanonical level.
+//
+//nolint:cyclop // Grouping, baseline construction, and replacements define the additive schedule.
+func compileValidSchedule(catalog []validIntent) []validRequest {
+	if len(catalog) == 0 {
+		return nil
+	}
+
+	groups := make([][]validIntent, 0)
+	for _, target := range catalog {
+		if len(groups) == 0 || !samePlanRule(groups[len(groups)-1][0], target) {
+			groups = append(groups, []validIntent{target})
+
+			continue
+		}
+
+		groups[len(groups)-1] = append(groups[len(groups)-1], target)
+	}
+
+	baselineTargets := make([]validIntent, len(groups))
+	for index, group := range groups {
+		baselineTargets[index] = group[0]
+	}
+
+	baseline := makeValidRequest(baselineTargets, -1)
+
+	baselineUsePointer := baselineTargets[0].expected.occurrence.usePointer
+	for _, group := range groups {
+		if len(group) == 1 || group[0].expected.occurrence.usePointer != baselineUsePointer ||
+			validRequirementsConflict(baseline.requirements, group[0].requirements) {
+			continue
+		}
+
+		baseline.requirements = appendPlanPins(baseline.requirements, group[0].requirements...)
+	}
+
+	schedule := []validRequest{baseline}
+
+	for groupIndex, group := range groups {
+		for _, alternative := range group[1:] {
+			targets := append([]validIntent(nil), baselineTargets...)
+			targets[groupIndex] = alternative
+			request := makeValidRequest(targets, groupIndex)
+			request.requirements = appendPlanPins(baseline.requirements, alternative.requirements...)
+			schedule = append(schedule, request)
+		}
+	}
+
+	return schedule
+}
+
+// validRequirementsConflict detects contradictory composition assignments.
+func validRequirementsConflict(left, right []requirement) bool {
+	for _, existing := range left {
+		for _, candidate := range right {
+			if existing.hasBranch && candidate.hasBranch && samePlanPinOccurrence(existing, candidate) &&
+				existing.truth != candidate.truth {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// samePlanRule identifies one radix in the valid catalog.
+func samePlanRule(left, right validIntent) bool {
+	return left.expected.rule == right.expected.rule &&
+		left.expected.occurrence.usePointer == right.expected.occurrence.usePointer &&
+		left.expected.occurrence.targetPointer == right.expected.occurrence.targetPointer &&
+		left.expected.occurrence.instanceTemplate == right.expected.occurrence.instanceTemplate &&
+		left.expected.occurrence.reference == right.expected.occurrence.reference
+}
+
+// makeValidRequest owns its vector and the selected complete requirements.
+func makeValidRequest(targets []validIntent, focus int) validRequest {
+	request := validRequest{targets: append([]validIntent(nil), targets...), focus: focus}
+
+	objective := 0
+	if focus >= 0 {
+		objective = focus
+	}
+
+	if objective < len(targets) {
+		request.requirements = copyPlanPins(targets[objective].requirements)
+	}
+
+	return request
 }
 
 // planBuilder owns deterministic insertion order while compiling one model.
@@ -1419,7 +1570,7 @@ func firstSiblingCompatibleKind(node *schemaNode, allowed map[jsonKind]bool) (js
 	}
 
 	for _, kind := range canonicalJSONKinds() {
-		if allowed[kind] {
+		if kind != jsonNull && allowed[kind] {
 			return kind, true
 		}
 	}

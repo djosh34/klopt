@@ -90,7 +90,7 @@ func findValidIntent(
 ) validIntent {
 	t.Helper()
 
-	for _, intent := range plan.validSchedule {
+	for _, intent := range plan.validCatalog {
 		if intent.expected.occurrence == occurrence && intent.expected.rule == rule && intent.expected.level == level {
 			return intent
 		}
@@ -105,7 +105,7 @@ func findValidIntent(
 func anyOfLevelComponents(plan *searchPlan) []string {
 	levels := make([]string, 0)
 
-	for _, intent := range plan.validSchedule {
+	for _, intent := range plan.validCatalog {
 		if intent.obligation.rule == oracleRuleAnyOf {
 			levels = append(levels, intent.obligation.component)
 		}

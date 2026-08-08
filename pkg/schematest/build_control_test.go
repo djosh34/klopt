@@ -170,6 +170,6 @@ func TestBuildUsesOneCounterAcrossTargets(t *testing.T) {
 	require.Equal(t, uint64(6), report.Steps)
 	require.Equal(t, []Case{
 		{JSON: []byte(`"a"`), Valid: true},
-		{JSON: []byte(`"a"`), Valid: true},
+		{JSON: []byte(`"b"`), Valid: true},
 	}, cases)
 }

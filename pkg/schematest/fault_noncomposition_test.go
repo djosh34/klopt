@@ -119,7 +119,7 @@ func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {
 			schema: `{"type":"object","minProperties":2,"properties":{"a":{},"b":{}},` +
 				`"allOf":[{"required":["a"]}]}`,
 			faultID:    "|minProperties|fault:minProperties",
-			derivative: `{"a":null}`,
+			derivative: `{"a":false}`,
 		},
 	}
 
@@ -154,13 +154,13 @@ func TestBuildTypeFaultUsesActiveSiblingEnumWitness(t *testing.T) {
 			name:       "number enum witness",
 			schema:     `{"allOf":[{"type":"string"},{"enum":["ok",7]}]}`,
 			derivative: `7`,
-			steps:      3926,
+			steps:      630,
 		},
 		{
 			name:       "large integer enum witness",
 			schema:     `{"allOf":[{"type":"boolean"},{"enum":[true,123456789]}]}`,
 			derivative: `123456789`,
-			steps:      3871,
+			steps:      606,
 		},
 	}
 

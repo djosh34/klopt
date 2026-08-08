@@ -172,7 +172,7 @@ func TestMakePlanKeepsTypelessSiblingCompatibleKindFirst(t *testing.T) {
 
 	ids := make([]string, 0)
 
-	for _, target := range plan.validSchedule {
+	for _, target := range plan.validCatalog {
 		if target.obligation.rule == oracleRuleType {
 			ids = append(ids, target.obligation.String())
 		}
@@ -201,7 +201,7 @@ func TestMakePlanTypelessNullEnumKeepsNonNullKindFirst(t *testing.T) {
 
 	ids := make([]string, 0)
 
-	for _, target := range plan.validSchedule {
+	for _, target := range plan.validCatalog {
 		if target.obligation.rule == oracleRuleType {
 			ids = append(ids, target.obligation.String())
 		}
@@ -246,7 +246,7 @@ func TestMakePlanEnumeratesEveryDistinctStringAnyOfMask(t *testing.T) {
 
 	masks := make([]string, 0)
 
-	for _, target := range plan.validSchedule {
+	for _, target := range plan.validCatalog {
 		if target.obligation.rule == oracleRuleAnyOf {
 			masks = append(masks, target.obligation.component)
 		}
@@ -328,7 +328,7 @@ func TestMakePlanSemanticEnumDedupeKeepsFirstAuthoredMembers(t *testing.T) {
 
 	ids := make([]string, 0)
 
-	for _, target := range plan.validSchedule {
+	for _, target := range plan.validCatalog {
 		if target.obligation.rule == oracleRuleEnum {
 			ids = append(ids, target.obligation.String())
 		}
@@ -430,7 +430,7 @@ func TestMakePlanTypelessRequiredPresenceOnlyAppliesToObjects(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	for _, target := range plan.validSchedule {
+	for _, target := range plan.validCatalog {
 		if target.obligation.rule != oracleRuleType {
 			continue
 		}
@@ -579,7 +579,7 @@ func TestMakePlanPositiveMinPropertiesPinsDeclaredMemberPresent(t *testing.T) {
 func findValidTarget(t *testing.T, plan *searchPlan, suffix string) validIntent {
 	t.Helper()
 
-	for _, target := range plan.validSchedule {
+	for _, target := range plan.validCatalog {
 		if strings.HasSuffix(target.obligation.String(), suffix) {
 			return target
 		}

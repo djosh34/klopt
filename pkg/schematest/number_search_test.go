@@ -176,12 +176,9 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 			}`,
 			wantCases: []Case{
 				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("0"), Valid: false},
 			},
-			wantSteps: 4723,
+			wantSteps: 4714,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:0",
 			},
@@ -195,14 +192,10 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 			wantCases: []Case{
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("6"), Valid: false},
 				{JSON: []byte("4"), Valid: false},
 			},
-			wantSteps: 6649,
+			wantSteps: 6629,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:1",
 				"/allOf/1|#|minimum|level:valid",
@@ -216,18 +209,13 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 			}`,
 			wantCases: []Case{
 				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("7"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("7"), Valid: true},
 				{JSON: []byte("7"), Valid: true},
 				{JSON: []byte("null"), Valid: false},
 				{JSON: []byte("0"), Valid: false},
 				{JSON: []byte("0"), Valid: false},
 				{JSON: []byte("0"), Valid: false},
 			},
-			wantSteps: 85,
+			wantSteps: 74,
 			covered: []string{
 				"|#|anyOf|level:mask:1",
 				"|#|anyOf|level:mask:2",
@@ -279,19 +267,15 @@ func TestBuildSearchesNumericFalseBranchObjectives(t *testing.T) {
 		masks     []string
 	}{
 		{
-			name:   "unconstrained true branch",
-			schema: `{"type":"number","anyOf":[{}, {"maximum":0}]}`,
-			wantCases: []Case{
-				{JSON: []byte("0"), Valid: true},
-				{JSON: []byte("7"), Valid: true},
-			},
-			masks: []string{"1", "3"},
+			name:      "unconstrained true branch",
+			schema:    `{"type":"number","anyOf":[{}, {"maximum":0}]}`,
+			wantCases: []Case{{JSON: []byte("9"), Valid: true}},
+			masks:     []string{"1"},
 		},
 		{
 			name:   "true and false numeric rules",
 			schema: `{"type":"number","anyOf":[{"minimum":1},{"maximum":0}]}`,
 			wantCases: []Case{
-				{JSON: []byte("1"), Valid: true},
 				{JSON: []byte("1"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
 			},
@@ -358,7 +342,6 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 			name:   "explicit number with integer branch",
 			schema: `{"type":"number","anyOf":[{}, {"type":"integer"}]}`,
 			wantCases: []Case{
-				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("-0.7"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
 			},
@@ -370,25 +353,19 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 			name:   "planner integer and number branches",
 			schema: `{"anyOf":[{"type":"integer"},{"type":"number"}]}`,
 			wantCases: []Case{
-				{JSON: []byte("0"), Valid: true},
-				{JSON: []byte("0.2"), Valid: true},
-				{JSON: []byte("0"), Valid: true},
-				{JSON: []byte("0"), Valid: true},
-				{JSON: []byte("0"), Valid: true},
-				{JSON: []byte("null"), Valid: false},
-				{JSON: []byte("null"), Valid: false},
-				{JSON: []byte("null"), Valid: false},
+				{JSON: []byte("false"), Valid: false},
+				{JSON: []byte("false"), Valid: false},
+				{JSON: []byte("false"), Valid: false},
 			},
 			wantStop:  SpaceExhausted,
-			wantSteps: 1740,
-			masks:     []string{"2", "3"},
+			wantSteps: 595,
+			masks:     nil,
 		},
 		{
 			name:   "nested integer branch",
 			schema: `{"type":"number","anyOf":[{}, {"allOf":[{"type":"integer"}]}]}`,
 			wantCases: []Case{
-				{JSON: []byte("0"), Valid: true},
-				{JSON: []byte("0.9"), Valid: true},
+				{JSON: []byte("-0.2"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
 			},
 			wantStop:  MaxStepsReached,

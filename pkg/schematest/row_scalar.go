@@ -21,7 +21,7 @@ func (s *search) walkScalar(
 			append([]requirement(nil), pins...),
 			func(activePins []requirement) (bool, error) {
 				return s.walkActiveNumberRules(
-					node, occurrence, activePins, context.validIntent, visit,
+					node, occurrence, activePins, context.validRequest, visit,
 				)
 			},
 		)
@@ -55,7 +55,7 @@ func (s *search) walkScalar(
 			append([]requirement(nil), pins...),
 			func(activePins []requirement) (bool, error) {
 				return s.walkActiveStringRules(
-					node, occurrence, activePins, context.validIntent, visit,
+					node, occurrence, activePins, context.validRequest, visit,
 				)
 			},
 		)
@@ -71,7 +71,7 @@ func (s *search) walkActiveStringRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	pins []requirement,
-	target *validIntent,
+	request *validRequest,
 	visit rowVisit,
 ) (bool, error) {
 	rules, err := activeStringRulesFor(node, occurrence, pins, nil)
@@ -102,8 +102,9 @@ func (s *search) walkActiveStringRules(
 	level := oracleStringValidLevel
 
 	seedPointer := occurrence.usePointer
-	if target != nil {
-		if targetNode, found := scalarTargetNode(node, occurrence, target.expected.occurrence); found {
+	if target := validScalarObjective(request, node, occurrence); target != nil {
+		targetNode, found := scalarTargetNode(node, occurrence, target.expected.occurrence)
+		if found {
 			seedNode = targetNode
 			rule = target.expected.rule
 			level = target.expected.level
@@ -132,6 +133,29 @@ func (s *search) walkActiveStringRules(
 		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
 		visit,
 	)
+}
+
+// validScalarObjective selects the focused target, then canonical objective order.
+func validScalarObjective(request *validRequest, node *schemaNode, occurrence schemaOccurrence) *validIntent {
+	if request == nil {
+		return nil
+	}
+
+	if request.focus >= 0 && request.focus < len(request.targets) {
+		target := &request.targets[request.focus]
+		if _, found := scalarTargetNode(node, occurrence, target.expected.occurrence); found {
+			return target
+		}
+	}
+
+	for index := range request.targets {
+		target := &request.targets[index]
+		if _, found := scalarTargetNode(node, occurrence, target.expected.occurrence); found {
+			return target
+		}
+	}
+
+	return nil
 }
 
 // scalarTargetNode resolves the valid target occurrence used to lock a scalar seed.

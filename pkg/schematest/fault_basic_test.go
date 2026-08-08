@@ -142,15 +142,12 @@ func TestBuildVisitsMaximumFaultInsideAnyOfContext(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []Case{
 		{JSON: []byte(`100`), Valid: true},
-		{JSON: []byte(`100`), Valid: true},
-		{JSON: []byte(`100`), Valid: true},
-		{JSON: []byte(`100`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`101`), Valid: false},
 	}, cases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 25,
+		Steps: 16,
 		Covered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:number",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|fault:type",

@@ -24,6 +24,7 @@ type obligation struct {
 	component string
 	ruleRank  uint8
 	order     uint64
+	orderKey  *planOrderKey
 }
 
 // String renders schema use site, instance template, rule, and level or fault.
@@ -70,11 +71,19 @@ type requirement struct {
 // requirementPresence identifies whether a structural child must be supplied.
 type requirementPresence uint8
 
-// validIntent is one focused valid obligation and its complete requirements.
+// validIntent is one cataloged valid obligation and its complete requirements.
 type validIntent struct {
 	obligation   obligation
 	expected     levelIdentity
 	requirements []requirement
+}
+
+// validRequest is one additive row request. The baseline has no focus; every
+// later request replaces exactly targets[focus] in that baseline vector.
+type validRequest struct {
+	targets      []validIntent
+	requirements []requirement
+	focus        int
 }
 
 // failureSet is one immutable expected failure identity set.
@@ -107,9 +116,12 @@ type faultProgram struct {
 // searchPlan keeps report, valid execution, and fault execution order separate.
 // It retains no rows or scalar candidates.
 type searchPlan struct {
-	validSchedule []validIntent
-	faultSchedule []faultProgram
-	obligations   []obligation
+	validCatalog     []validIntent
+	validSchedule    []validRequest
+	stringObjectives []levelIdentity
+	faultSchedule    []faultProgram
+	faultExecution   []int
+	obligations      []obligation
 }
 
 // obligationIDs returns report order without exposing planner types publicly.
@@ -128,12 +140,12 @@ func (plan *searchPlan) obligationIDs() []string {
 
 // validObligationIDs returns the focused-valid portion of report order.
 func (plan *searchPlan) validObligationIDs() []string {
-	if plan == nil || len(plan.validSchedule) == 0 {
+	if plan == nil || len(plan.validCatalog) == 0 {
 		return nil
 	}
 
-	result := make([]string, 0, len(plan.validSchedule))
-	for _, target := range plan.validSchedule {
+	result := make([]string, 0, len(plan.validCatalog))
+	for _, target := range plan.validCatalog {
 		result = append(result, target.obligation.String())
 	}
 

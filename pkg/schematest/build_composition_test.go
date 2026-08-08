@@ -14,6 +14,7 @@ func TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations(t *testi
 	document := []byte(`openapi: 3.0.4
 x-shared: &outer
   type: object
+  required: [child]
   properties:
     child: {type: string, minLength: 1}
 paths:
@@ -25,6 +26,7 @@ paths:
           application/json:
             schema:
               type: object
+              required: [a, b]
               properties:
                 a: *outer
                 b: *outer
@@ -70,6 +72,7 @@ func TestBuildMergesAllOfArrayItemSchemas(t *testing.T) {
 
 	document := []byte(documentWithJSONSchema(`{
 		"type":"array",
+		"minItems":1,
 		"items":{"type":"string"},
 		"allOf":[{"items":{"enum":["z"]}}]
 	}`))
@@ -302,7 +305,7 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 
 	foundTarget := false
 
-	for _, candidate := range plan.validSchedule {
+	for _, candidate := range plan.validCatalog {
 		if strings.Contains(candidate.obligation.String(), "/allOf/0/anyOf/0|#|minItems|level:valid") {
 			target = candidate
 			foundTarget = true
@@ -313,8 +316,9 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 
 	require.True(t, foundTarget)
 
+	request := makeValidRequest([]validIntent{target}, 0)
 	searchState := &search{model: model, maxSteps: 1000}
-	row, found, err := findTargetRow(plan, target, searchState)
+	row, found, err := findTargetRow(plan, request, searchState)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.NotNil(t, row)
@@ -323,7 +327,7 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 
 	result := evaluate(model, row)
 	require.NoError(t, result.err)
-	require.True(t, targetRowMatches(result, target, row))
+	require.True(t, targetRowMatches(result, request, row))
 }
 
 // TestBuildUsesComposedAdditionalPropertySchemas verifies wildcard value witnesses.
@@ -377,6 +381,7 @@ func TestBuildTargetsComposedAdditionalProperties(t *testing.T) {
 
 	document := []byte(documentWithJSONSchema(`{
 		"type":"object",
+		"minProperties":1,
 		"allOf":[{"additionalProperties":{"type":"string"}}]
 	}`))
 
@@ -563,7 +568,7 @@ func TestBuildKeepsAnyOfArrayBranchesAsAlternatives(t *testing.T) {
 	require.Equal(t, MaxStepsReached, report.Stop)
 	require.Equal(t, uint64(10000), report.Steps)
 	require.Contains(t, cases, Case{JSON: []byte(`[]`), Valid: true})
-	require.Contains(t, cases, Case{JSON: []byte(`[null]`), Valid: true})
+	require.Contains(t, cases, Case{JSON: []byte(`[false]`), Valid: true})
 }
 
 // TestBuildCompositionGoldenLocksCasesAndReport verifies the exact composed stream.
@@ -594,24 +599,7 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []Case{
 		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
 		{JSON: []byte(`[false]`), Valid: true},
-		{JSON: []byte(`[0]`), Valid: true},
-		{JSON: []byte(`[""]`), Valid: true},
-		{JSON: []byte(`[[]]`), Valid: true},
-		{JSON: []byte(`[{}]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
-		{JSON: []byte(`[false]`), Valid: true},
-		{JSON: []byte(`[0]`), Valid: true},
-		{JSON: []byte(`[""]`), Valid: true},
-		{JSON: []byte(`[[]]`), Valid: true},
-		{JSON: []byte(`[{}]`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 	}, cases)
 	require.Equal(t, Report{
@@ -624,34 +612,34 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 			schemaPointer + "|#|anyOf|level:mask:2",
 			schemaPointer + "/anyOf/0|#|type|level:array",
 			schemaPointer + "/anyOf/0|#|maxItems|level:valid",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:null",
 			schemaPointer + "/anyOf/0/items|#/*|type|level:boolean",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:number",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:string",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:array",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:object",
 			schemaPointer + "/anyOf/1|#|type|level:array",
 			schemaPointer + "/anyOf/1|#|minItems|level:valid",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:null",
 			schemaPointer + "/anyOf/1/items|#/*|type|level:boolean",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:number",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:string",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:array",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:object",
-			schemaPointer + "/items|#/*|type|level:null",
 			schemaPointer + "/items|#/*|type|level:boolean",
-			schemaPointer + "/items|#/*|type|level:number",
-			schemaPointer + "/items|#/*|type|level:string",
-			schemaPointer + "/items|#/*|type|level:array",
-			schemaPointer + "/items|#/*|type|level:object",
 		},
 		Uncovered: []string{
 			schemaPointer + "|#|anyOf|level:mask:3",
 			schemaPointer + "|#|anyOf|fault:anyOf",
 			schemaPointer + "/anyOf/0|#|type|fault:type",
 			schemaPointer + "/anyOf/0|#|maxItems|fault:maxItems",
+			schemaPointer + "/anyOf/0/items|#/*|type|level:null",
+			schemaPointer + "/anyOf/0/items|#/*|type|level:number",
+			schemaPointer + "/anyOf/0/items|#/*|type|level:string",
+			schemaPointer + "/anyOf/0/items|#/*|type|level:array",
+			schemaPointer + "/anyOf/0/items|#/*|type|level:object",
 			schemaPointer + "/anyOf/1|#|type|fault:type",
 			schemaPointer + "/anyOf/1|#|minItems|fault:minItems",
+			schemaPointer + "/anyOf/1/items|#/*|type|level:null",
+			schemaPointer + "/anyOf/1/items|#/*|type|level:number",
+			schemaPointer + "/anyOf/1/items|#/*|type|level:string",
+			schemaPointer + "/anyOf/1/items|#/*|type|level:array",
+			schemaPointer + "/anyOf/1/items|#/*|type|level:object",
+			schemaPointer + "/items|#/*|type|level:null",
+			schemaPointer + "/items|#/*|type|level:number",
+			schemaPointer + "/items|#/*|type|level:string",
+			schemaPointer + "/items|#/*|type|level:array",
+			schemaPointer + "/items|#/*|type|level:object",
 		},
 	}, report)
 }

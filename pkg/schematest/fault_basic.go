@@ -16,8 +16,12 @@ func streamBasicFaults(
 	covered map[string]bool,
 	yield func(Case) error,
 ) (StopReason, error) {
-	for _, fault := range plan.faultSchedule {
-		if err := streamBasicFault(plan, fault, s, covered, yield); err != nil {
+	for _, index := range plan.faultExecution {
+		if index < 0 || index >= len(plan.faultSchedule) {
+			return "", errors.New("schematest: invalid fault execution order")
+		}
+
+		if err := streamBasicFault(plan, plan.faultSchedule[index], s, covered, yield); err != nil {
 			if errors.Is(err, errMaxSteps) {
 				return MaxStepsReached, nil
 			}
