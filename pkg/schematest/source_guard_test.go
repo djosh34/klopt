@@ -162,6 +162,59 @@ func TestLockedPublicAPIGuardRejectsGrowth(t *testing.T) {
 	}
 }
 
+// TestOracleEvaluationHasNoParallelSemanticStores keeps records as the sole fact payload.
+func TestOracleEvaluationHasNoParallelSemanticStores(t *testing.T) {
+	t.Parallel()
+
+	require.Empty(t, parallelOracleStoreViolations(productionGuardPackage(t)))
+}
+
+// TestOracleStoreGuardRejectsCompatibilityFields proves renamed projections cannot return.
+func TestOracleStoreGuardRejectsCompatibilityFields(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := parseGuardPackage(t, map[string]string{
+		"oracle.go": `package schematest
+			type evaluationRecords struct{}
+			type ruleIdentity struct{}
+			type evaluation struct {
+				valid bool
+				failed bool
+				records *evaluationRecords
+				err error
+				shadow []ruleIdentity
+			}`,
+	})
+
+	require.Equal(t, []string{"evaluation.shadow"}, parallelOracleStoreViolations(guardPackage))
+}
+
+// parallelOracleStoreViolations reports semantic payloads outside the authoritative records.
+func parallelOracleStoreViolations(guardPackage *sourceGuardPackage) []string {
+	declaration := guardPackage.pkg.Scope().Lookup("evaluation")
+	if declaration == nil {
+		return []string{"missing evaluation"}
+	}
+
+	structure, ok := declaration.Type().Underlying().(*types.Struct)
+	if !ok {
+		return []string{"evaluation is not a struct"}
+	}
+
+	allowed := map[string]bool{"valid": true, "failed": true, "records": true, "err": true}
+
+	var violations []string
+
+	for index := range structure.NumFields() {
+		field := structure.Field(index)
+		if !allowed[field.Name()] {
+			violations = append(violations, "evaluation."+field.Name())
+		}
+	}
+
+	return violations
+}
+
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
 func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	t.Parallel()

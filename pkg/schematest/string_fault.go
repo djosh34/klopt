@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"strings"
 )
 
@@ -182,7 +183,7 @@ func findStringFaultRow(target faultTarget, searchState *search) (*jsonValue, bo
 				return false, fmt.Errorf("evaluate directed string fault: %w", result.err)
 			}
 
-			matches, matchErr := exactFailureClosure(result.failures, target.closure)
+			matches, matchErr := exactFailureClosure(result.failureRecords(), target.closure)
 			if matchErr != nil || !matches {
 				return false, matchErr
 			}
@@ -311,13 +312,13 @@ func stringFaultObjectiveKind(rule string) (stringSearchObjectiveKind, bool) {
 	}
 }
 
-func exactFailureClosure(actual evaluationQuery[failureIdentity], expected []failureIdentity) (bool, error) {
+func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIdentity) (bool, error) {
 	canonicalExpected, err := canonicalFailureClosure(expected)
 	if err != nil {
 		return false, err
 	}
 
-	if evaluationQueryCount(actual) != len(canonicalExpected) {
+	if evaluationRecordSequenceCount(actual) != len(canonicalExpected) {
 		return false, nil
 	}
 

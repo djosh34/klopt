@@ -166,7 +166,7 @@ func tryCompositionEdits(
 		return nil, false, fmt.Errorf("evaluate composition fault derivative: %w", result.err)
 	}
 
-	matches, matchErr := exactFailureClosure(result.failures, fault.closure)
+	matches, matchErr := exactFailureClosure(result.failureRecords(), fault.closure)
 	if matchErr != nil {
 		return nil, false, fmt.Errorf("compare composition fault closure: %w", matchErr)
 	}

@@ -133,7 +133,7 @@ func evaluateDeclaredProperties(
 			appendInstanceToken(occurrence.instanceTemplate, name),
 		)
 		propertyResult := context.evaluateNode(property, members[name], propertyOccurrence)
-		mergeEvaluation(result, propertyResult)
+		appendEvaluation(result, propertyResult)
 
 		if result.err != nil {
 			return
@@ -164,7 +164,7 @@ func evaluateAdditionalProperties(
 			additionalResult := context.evaluateNode(
 				node.additionalProperties, members[name], additionalOccurrence,
 			)
-			mergeEvaluation(result, additionalResult)
+			appendEvaluation(result, additionalResult)
 
 			if result.err != nil {
 				return

@@ -29,7 +29,7 @@ func TestFindStringFaultRowDirectsEachPatternInAuthoredOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "b", row.text)
-	require.Equal(t, identityStrings(second.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(second.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowTriesLeadingAssertionFailureAlternatives(t *testing.T) {
@@ -47,7 +47,7 @@ func TestFindStringFaultRowTriesLeadingAssertionFailureAlternatives(t *testing.T
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "a", row.text)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowDirectsLengthBoundsAndPreservesPatterns(t *testing.T) {
@@ -78,7 +78,7 @@ func TestFindStringFaultRowDirectsLengthBoundsAndPreservesPatterns(t *testing.T)
 			require.NoError(t, err)
 			require.True(t, found)
 			require.Equal(t, test.want, row.text)
-			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 		})
 	}
 }
@@ -168,7 +168,7 @@ func TestFindStringFaultRowResolvesNestedScalarTargets(t *testing.T) {
 			require.True(t, resolved)
 
 			result := evaluateNode(node, row, occurrence)
-			matches, err := exactFailureClosure(result.failures, target.closure)
+			matches, err := exactFailureClosure(result.failureRecords(), target.closure)
 			require.NoError(t, err)
 			require.True(t, matches)
 		})
@@ -189,7 +189,7 @@ func TestFindStringFaultRowDirectsLengthWithoutAnAuthoredPattern(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Empty(t, row.text)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowLeavesContradictoryObjectiveUncovered(t *testing.T) {
@@ -258,7 +258,7 @@ func TestFindStringFaultRowSearchesFormatsIncrementally(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, found)
 			test.checkValue(t, row.text)
-			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 		})
 	}
 }
@@ -285,7 +285,7 @@ func TestFindStringFaultRowFindsNonLowercaseValidEmail(t *testing.T) {
 	patternMatches, err := cleanPatternMatches(model.root.pattern, row.text)
 	require.NoError(t, err)
 	require.False(t, patternMatches)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowDirectedFalseExpandsSurrogates(t *testing.T) {

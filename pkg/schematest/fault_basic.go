@@ -56,7 +56,7 @@ func streamBasicFault(
 		return fmt.Errorf("evaluate fault derivative: %w", result.err)
 	}
 
-	matches, err := exactFailureClosure(result.failures, fault.closure)
+	matches, err := exactFailureClosure(result.failureRecords(), fault.closure)
 	if err != nil {
 		return fmt.Errorf("compare fault closure: %w", err)
 	}
@@ -164,7 +164,7 @@ func faultPinsMatch(result evaluation, value *jsonValue, pins []applicabilityPin
 		switch {
 		case pin.presence != planPinNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
 			return false
-		case pin.hasKind && !kindWasObserved(result.observed, pin.occurrence, pin.kind):
+		case pin.hasKind && !kindWasObserved(result.observedRecords(), pin.occurrence, pin.kind):
 			return false
 		case pin.hasBranch && !branchTruthWasObserved(result, pin):
 			return false

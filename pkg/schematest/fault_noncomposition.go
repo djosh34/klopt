@@ -938,7 +938,7 @@ func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure []f
 		return false, nil
 	}
 
-	return exactFailureClosure(result.failures, closure)
+	return exactFailureClosure(result.failureRecords(), closure)
 }
 
 // resolveExactFaultTarget follows canonical schema children to one authored rule occurrence.

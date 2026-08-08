@@ -3,6 +3,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"math/big"
 	"sort"
 	"strings"
@@ -1423,7 +1424,7 @@ func anyOfMaskForTypeFault(node *schemaNode, occurrence schemaOccurrence) (*big.
 				return nil, false, fmt.Errorf("evaluate type-fault candidate: %w", actual.err)
 			}
 
-			if !containsFailureIdentity(actual.failures, identity) {
+			if !containsFailureIdentity(actual.failureRecords(), identity) {
 				continue
 			}
 
@@ -1481,7 +1482,7 @@ func anyOfMaskForFaultRule(
 			return nil, false, fmt.Errorf("evaluate %s-fault candidate: %w", rule, actual.err)
 		}
 
-		if !containsFailureIdentity(actual.failures, identity) {
+		if !containsFailureIdentity(actual.failureRecords(), identity) {
 			continue
 		}
 
@@ -1527,7 +1528,7 @@ func anyOfMaskForAdditionalFault(node *schemaNode, occurrence schemaOccurrence) 
 			return nil, false, fmt.Errorf("evaluate additional-property fault candidate: %w", actual.err)
 		}
 
-		if !containsFailureRuleAtUse(actual.failures, identity) {
+		if !containsFailureRuleAtUse(actual.failureRecords(), identity) {
 			continue
 		}
 
@@ -1578,7 +1579,7 @@ func copyObjectWithMember(witness *jsonValue, name string, value *jsonValue) *js
 }
 
 // containsFailureRuleAtUse matches a wildcard planner identity to one concrete member.
-func containsFailureRuleAtUse(failures evaluationQuery[failureIdentity], wanted failureIdentity) bool {
+func containsFailureRuleAtUse(failures iter.Seq[failureIdentity], wanted failureIdentity) bool {
 	for failure := range failures {
 		if failure.rule == wanted.rule && failure.occurrence.usePointer == wanted.occurrence.usePointer {
 			return true
@@ -1619,7 +1620,7 @@ func anyOfMaskForRequiredFault(node *schemaNode, occurrence schemaOccurrence, na
 			return nil, false, fmt.Errorf("evaluate required-fault candidate: %w", actual.err)
 		}
 
-		if !containsFailureIdentity(actual.failures, identity) {
+		if !containsFailureIdentity(actual.failureRecords(), identity) {
 			continue
 		}
 
@@ -1731,7 +1732,7 @@ func schemaNodeWithoutLocalRule(node *schemaNode, rule string) *schemaNode {
 }
 
 // containsFailureIdentity reports whether one evaluation contains a failure identity.
-func containsFailureIdentity(failures evaluationQuery[failureIdentity], wanted failureIdentity) bool {
+func containsFailureIdentity(failures iter.Seq[failureIdentity], wanted failureIdentity) bool {
 	for failure := range failures {
 		if failure == wanted {
 			return true
@@ -2342,7 +2343,7 @@ func enumFaultKind(node *schemaNode) (jsonKind, bool, error) {
 				return jsonNull, false, fmt.Errorf("evaluate enum-fault candidate: %w", actual.err)
 			}
 
-			if containsFailureIdentity(actual.failures, identity) {
+			if containsFailureIdentity(actual.failureRecords(), identity) {
 				return kind, true, nil
 			}
 		}
@@ -2507,7 +2508,7 @@ func realizableAnyOfMasksForKind(node *schemaNode, kind jsonKind) ([]*big.Int, e
 // anyOfEvaluationMask extracts one parent anyOf truth vector as a low-bit mask.
 func anyOfEvaluationMask(result evaluation, occurrence schemaOccurrence) (*big.Int, bool) {
 	identity := makeRuleIdentity(occurrence, oracleRuleAnyOf)
-	for truth := range result.anyOf {
+	for truth := range result.compositionRecords(oracleRuleAnyOf) {
 		if truth.ruleIdentity != identity {
 			continue
 		}

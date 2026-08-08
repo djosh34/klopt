@@ -59,8 +59,8 @@ func TestEvaluateStringLengthsCountRunesAndIgnoreWrongKinds(t *testing.T) {
 			result := evaluateSchemaValue(t, test.schema, test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -76,13 +76,13 @@ func TestEvaluateEveryStringRuleKeepsItsOwnVerdictAndIdentity(t *testing.T) {
 	require.NoError(t, second.err)
 	require.Equal(t, evaluationRecordStrings(first.records), evaluationRecordStrings(second.records))
 	require.False(t, first.valid)
-	require.Equal(t, []string{"type", "minLength", "maxLength", "pattern", "format"}, applicableRules(first.applicable))
-	require.Equal(t, []string{"string", "valid"}, observedLevels(first.observed))
-	require.Equal(t, []string{"minLength", "pattern", "format"}, failureRules(first.failures))
+	require.Equal(t, []string{"type", "minLength", "maxLength", "pattern", "format"}, applicableRules(first.applicableRecords()))
+	require.Equal(t, []string{"string", "valid"}, observedLevels(first.observedRecords()))
+	require.Equal(t, []string{"minLength", "pattern", "format"}, failureRules(first.failureRecords()))
 
 	for _, pair := range [][2]int{{1, 0}, {3, 1}, {4, 2}} {
-		applicable, applicableFound := evaluationQueryAt(first.applicable, pair[0])
-		failure, failureFound := evaluationQueryAt(first.failures, pair[1])
+		applicable, applicableFound := evaluationRecordSequenceAt(first.applicableRecords(), pair[0])
+		failure, failureFound := evaluationRecordSequenceAt(first.failureRecords(), pair[1])
 
 		require.True(t, applicableFound)
 		require.True(t, failureFound)
@@ -113,8 +113,8 @@ func TestEvaluatePatternsRemainIndependentWhenOneFails(t *testing.T) {
 			result := evaluateSchemaValue(t, fmt.Sprintf(`{"type":"string","pattern":%q}`, test.pattern), test.value)
 			require.NoError(t, result.err)
 			require.Equal(t, test.valid, result.valid)
-			require.Equal(t, test.observed, observedLevels(result.observed))
-			require.Equal(t, test.failures, failureRules(result.failures))
+			require.Equal(t, test.observed, observedLevels(result.observedRecords()))
+			require.Equal(t, test.failures, failureRules(result.failureRecords()))
 		})
 	}
 }
@@ -158,14 +158,14 @@ func TestEvaluateStringFormatsUseNativeApplicabilityAndBoundaries(t *testing.T) 
 					result := evaluateSchemaValue(t, fmt.Sprintf(`{"type":"string","format":%q}`, test.format), valueTest.value)
 					require.NoError(t, result.err)
 					require.Equal(t, valueTest.valid, result.valid)
-					require.Equal(t, []string{"type", "format"}, applicableRules(result.applicable))
+					require.Equal(t, []string{"type", "format"}, applicableRules(result.applicableRecords()))
 
 					if valueTest.valid {
-						require.Equal(t, []string{"string", "valid"}, observedLevels(result.observed))
-						require.True(t, evaluationQueryEmpty(result.failures))
+						require.Equal(t, []string{"string", "valid"}, observedLevels(result.observedRecords()))
+						require.True(t, evaluationRecordSequenceEmpty(result.failureRecords()))
 					} else {
-						require.Equal(t, []string{"string"}, observedLevels(result.observed))
-						require.Equal(t, []string{"format"}, failureRules(result.failures))
+						require.Equal(t, []string{"string"}, observedLevels(result.observedRecords()))
+						require.Equal(t, []string{"format"}, failureRules(result.failureRecords()))
 					}
 				})
 			}
@@ -281,10 +281,10 @@ func TestEvaluateTypelessStringFormatDoesNotInferType(t *testing.T) {
 	require.NoError(t, numberValue.err)
 	require.True(t, stringValue.valid)
 	require.True(t, numberValue.valid)
-	require.Equal(t, []string{"type", "format"}, applicableRules(stringValue.applicable))
-	require.Equal(t, []string{"type"}, applicableRules(numberValue.applicable))
-	require.Equal(t, []string{"string", "valid"}, observedLevels(stringValue.observed))
-	require.Equal(t, []string{"number"}, observedLevels(numberValue.observed))
+	require.Equal(t, []string{"type", "format"}, applicableRules(stringValue.applicableRecords()))
+	require.Equal(t, []string{"type"}, applicableRules(numberValue.applicableRecords()))
+	require.Equal(t, []string{"string", "valid"}, observedLevels(stringValue.observedRecords()))
+	require.Equal(t, []string{"number"}, observedLevels(numberValue.observedRecords()))
 }
 
 func TestEvaluatePasswordFormatIsInert(t *testing.T) {
@@ -294,9 +294,9 @@ func TestEvaluatePasswordFormatIsInert(t *testing.T) {
 		result := evaluateSchemaValue(t, `{"type":"string","format":"password"}`, value)
 		require.NoError(t, result.err)
 		require.True(t, result.valid)
-		require.Equal(t, []string{"type"}, applicableRules(result.applicable))
-		require.Equal(t, []string{"string"}, observedLevels(result.observed))
-		require.True(t, evaluationQueryEmpty(result.failures))
+		require.Equal(t, []string{"type"}, applicableRules(result.applicableRecords()))
+		require.Equal(t, []string{"string"}, observedLevels(result.observedRecords()))
+		require.True(t, evaluationRecordSequenceEmpty(result.failureRecords()))
 	}
 }
 
@@ -317,5 +317,5 @@ func TestEvaluateStringRuleTablesAreDeterministic(t *testing.T) {
 		require.Equal(t, evaluationRecordStrings(first[index].records), evaluationRecordStrings(second[index].records))
 	}
 
-	require.Equal(t, "minLength,format", strings.Join(failureRules(first[0].failures), ","))
+	require.Equal(t, "minLength,format", strings.Join(failureRules(first[0].failureRecords()), ","))
 }

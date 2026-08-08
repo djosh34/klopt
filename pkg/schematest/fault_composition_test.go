@@ -31,8 +31,8 @@ func TestAllOfFaultKeepsSiblingBranchesTrue(t *testing.T) {
 	require.Equal(t, `{"a":"","b":""}`, string(marshalFaultTestValue(t, parent)))
 
 	result := evaluate(model, derivative)
-	require.Equal(t, identityStrings(fault.closure), identityStrings(result.failures))
-	require.Equal(t, [][]bool{{false, true}}, compositionTruthVectorsForTest(result.allOf))
+	require.Equal(t, identityStrings(fault.closure), identityStrings(result.failureRecords()))
+	require.Equal(t, [][]bool{{false, true}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf)))
 }
 
 func TestAnyOfAggregateFaultAtomicallyMakesEveryBranchFalse(t *testing.T) {
@@ -59,10 +59,10 @@ func TestAnyOfAggregateFaultAtomicallyMakesEveryBranchFalse(t *testing.T) {
 	require.Equal(t, `{"a":"","b":""}`, string(marshalFaultTestValue(t, parent)))
 
 	result := evaluate(model, derivative)
-	matches, err := exactFailureClosure(result.failures, fault.closure)
+	matches, err := exactFailureClosure(result.failureRecords(), fault.closure)
 	require.NoError(t, err)
 	require.True(t, matches)
-	require.Equal(t, [][]bool{{false, false}}, compositionTruthVectorsForTest(result.anyOf))
+	require.Equal(t, [][]bool{{false, false}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAnyOf)))
 }
 
 func TestAnyOfAggregateFaultPreservesUnrelatedParentPaths(t *testing.T) {
@@ -131,7 +131,7 @@ func TestItemAnyOfAggregateFaultPreservesUnrelatedArrayElements(t *testing.T) {
 	require.Equal(t, parentJSON, marshalFaultTestValue(t, parent))
 
 	result := evaluate(model, derivative)
-	matches, err := exactFailureClosure(result.failures, fault.closure)
+	matches, err := exactFailureClosure(result.failureRecords(), fault.closure)
 	require.NoError(t, err)
 	require.True(t, matches)
 

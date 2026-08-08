@@ -3,6 +3,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"math/big"
 	"strconv"
 	"strings"
@@ -264,7 +265,7 @@ func activeSchemaForbidsMember(
 //
 //nolint:cyclop // Validity, levels, and the three pin dimensions are one acceptance pass.
 func targetRowMatches(result evaluation, target validTarget, value *jsonValue) bool {
-	if !result.valid || (!levelWasObserved(result.observed, target.expected) &&
+	if !result.valid || (!levelWasObserved(result.observedRecords(), target.expected) &&
 		!compositionLevelWasObserved(result, target.expected)) {
 		return false
 	}
@@ -273,7 +274,7 @@ func targetRowMatches(result evaluation, target validTarget, value *jsonValue) b
 		switch {
 		case pin.presence != planPinNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
 			return false
-		case pin.hasKind && !kindWasObserved(result.observed, pin.occurrence, pin.kind):
+		case pin.hasKind && !kindWasObserved(result.observedRecords(), pin.occurrence, pin.kind):
 			return false
 		case pin.hasBranch && !branchTruthWasObserved(result, pin):
 			return false
@@ -284,7 +285,7 @@ func targetRowMatches(result evaluation, target validTarget, value *jsonValue) b
 }
 
 // levelWasObserved matches wildcard instance templates to concrete array members.
-func levelWasObserved(observed evaluationQuery[levelIdentity], expected levelIdentity) bool {
+func levelWasObserved(observed iter.Seq[levelIdentity], expected levelIdentity) bool {
 	for candidate := range observed {
 		if candidate.level != expected.level || !ruleOccurrenceMatches(candidate.occurrence, expected.occurrence) {
 			continue
@@ -304,13 +305,13 @@ func levelWasObserved(observed evaluationQuery[levelIdentity], expected levelIde
 //
 //nolint:cyclop // allOf and anyOf truth vectors have deliberately separate locked levels.
 func compositionLevelWasObserved(result evaluation, expected levelIdentity) bool {
-	var truths evaluationQuery[compositionTruth]
+	var truths iter.Seq[compositionTruth]
 
 	switch expected.rule {
 	case oracleRuleAllOf:
-		truths = result.allOf
+		truths = result.compositionRecords(oracleRuleAllOf)
 	case oracleRuleAnyOf:
-		truths = result.anyOf
+		truths = result.compositionRecords(oracleRuleAnyOf)
 	default:
 		return false
 	}
@@ -432,7 +433,7 @@ func rowValuePathPresentTokens(value *jsonValue, tokens []string) bool {
 }
 
 // kindWasObserved checks the clean type observation for one pinned occurrence.
-func kindWasObserved(observed evaluationQuery[levelIdentity], occurrence schemaOccurrence, kind jsonKind) bool {
+func kindWasObserved(observed iter.Seq[levelIdentity], occurrence schemaOccurrence, kind jsonKind) bool {
 	return levelWasObserved(observed, levelIdentity{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleType),
 		level:        jsonKindName(kind),
@@ -441,12 +442,7 @@ func kindWasObserved(observed evaluationQuery[levelIdentity], occurrence schemaO
 
 // branchTruthWasObserved checks one exact allOf or anyOf truth bit.
 func branchTruthWasObserved(result evaluation, pin applicabilityPin) bool {
-	var truths evaluationQuery[compositionTruth]
-	if pin.composition == "allOf" {
-		truths = result.allOf
-	} else {
-		truths = result.anyOf
-	}
+	truths := result.compositionRecords(pin.composition)
 
 	parentUsePointer := strings.TrimSuffix(
 		strings.TrimSuffix(pin.occurrence.usePointer, "/"+itoa(pin.branch)),

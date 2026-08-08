@@ -151,7 +151,7 @@ func TestFindStringFaultRowDirectsFormatAndPreservesSiblingPattern(t *testing.T)
 	require.True(t, found)
 	require.Equal(t, "YQ=", row.text)
 	require.Equal(t, uint64(10), searchState.steps)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowDirectsRemainingFormatsAndPreservesSiblings(t *testing.T) {
@@ -205,7 +205,7 @@ func TestFindStringFaultRowDirectsRemainingFormatsAndPreservesSiblings(t *testin
 			require.True(t, found)
 			require.Equal(t, test.witness, row.text)
 			require.Equal(t, test.steps, searchState.steps)
-			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failures))
+			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
 		})
 	}
 }
@@ -270,5 +270,5 @@ func TestPasswordAddsNoFormatObjective(t *testing.T) {
 
 	result := evaluate(model, &jsonValue{kind: jsonString, text: "anything"})
 	require.True(t, result.valid)
-	require.NotContains(t, applicableRules(result.applicable), oracleRuleFormat)
+	require.NotContains(t, applicableRules(result.applicableRecords()), oracleRuleFormat)
 }

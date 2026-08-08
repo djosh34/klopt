@@ -638,8 +638,6 @@ func TestCompositionCoverageScansAllWildcardTruthVectors(t *testing.T) {
 		),
 		branches: []bool{false, true},
 	})
-	attachEvaluationQueries(&result)
-
 	require.True(t, compositionLevelWasObserved(result, expected))
 }
 

@@ -58,7 +58,7 @@ func evaluateArrayRules(
 		)
 
 		itemResult := context.evaluateNode(node.items, item, itemOccurrence)
-		mergeEvaluation(result, itemResult)
+		appendEvaluation(result, itemResult)
 
 		if result.err != nil {
 			return
@@ -103,19 +103,4 @@ func evaluateArrayCountRule(
 	}
 
 	return nil
-}
-
-// mergeEvaluationRecords appends non-failure child records in traversal order.
-func mergeEvaluationRecords(result *evaluation, child evaluation) {
-	result.records.appendNonFailures(child.records)
-}
-
-// mergeEvaluation appends a child evaluation in traversal order.
-func mergeEvaluation(result *evaluation, child evaluation) {
-	result.records.appendRecords(child.records)
-	result.failed = result.failed || child.failed
-
-	if child.err != nil {
-		result.err = child.err
-	}
 }

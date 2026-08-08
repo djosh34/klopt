@@ -50,7 +50,7 @@ func evaluateAllOfRules(
 		}
 
 		truth.branches[index] = childResult.valid
-		mergeEvaluation(result, childResult)
+		appendEvaluation(result, childResult)
 	}
 }
 
@@ -91,9 +91,9 @@ func evaluateAnyOfRules(
 
 	for _, childResult := range children {
 		if anyBranchValid {
-			mergeEvaluationRecords(result, childResult)
+			appendEvaluationNonFailures(result, childResult)
 		} else {
-			mergeEvaluation(result, childResult)
+			appendEvaluation(result, childResult)
 		}
 	}
 

@@ -221,13 +221,11 @@ func (records *evaluationRecords) countMatching(filter evaluationRecordFilter) i
 	return count
 }
 
-// evaluationQuery is the temporary read-only migration façade over the record sequence.
-type evaluationQuery[T any] iter.Seq[T]
-
-func queryEvaluationRecords[T any](
+// select returns a lazy typed view over the authoritative record sequence.
+func selectEvaluationRecords[T any](
 	records *evaluationRecords,
 	project func(evaluationRecord) (T, bool),
-) evaluationQuery[T] {
+) iter.Seq[T] {
 	return func(yield func(T) bool) {
 		records.forEach(func(record evaluationRecord) bool {
 			value, ok := project(record)
@@ -240,51 +238,54 @@ func queryEvaluationRecords[T any](
 	}
 }
 
-func attachEvaluationQueries(result *evaluation) {
-	result.applicable = queryEvaluationRecords(result.records, func(record evaluationRecord) (ruleIdentity, bool) {
+func (result evaluation) applicableRecords() iter.Seq[ruleIdentity] {
+	return selectEvaluationRecords(result.records, func(record evaluationRecord) (ruleIdentity, bool) {
 		return record.identity, record.kind == evaluationRecordApplicable
 	})
-	result.observed = queryEvaluationRecords(result.records, func(record evaluationRecord) (levelIdentity, bool) {
+}
+
+func (result evaluation) observedRecords() iter.Seq[levelIdentity] {
+	return selectEvaluationRecords(result.records, func(record evaluationRecord) (levelIdentity, bool) {
 		return levelIdentity{ruleIdentity: record.identity, level: record.level}, record.kind == evaluationRecordObserved
 	})
-	result.allOf = queryEvaluationRecords(result.records, func(record evaluationRecord) (compositionTruth, bool) {
+}
+
+func (result evaluation) compositionRecords(rule string) iter.Seq[compositionTruth] {
+	return selectEvaluationRecords(result.records, func(record evaluationRecord) (compositionTruth, bool) {
 		return compositionTruth{
 			ruleIdentity: record.identity,
-			branches:     append([]bool(nil), record.branches...),
-		}, record.kind == evaluationRecordComposition && record.identity.rule == oracleRuleAllOf
+			branches:     record.branches,
+		}, record.kind == evaluationRecordComposition && record.identity.rule == rule
 	})
-	result.anyOf = queryEvaluationRecords(result.records, func(record evaluationRecord) (compositionTruth, bool) {
-		return compositionTruth{
-			ruleIdentity: record.identity,
-			branches:     append([]bool(nil), record.branches...),
-		}, record.kind == evaluationRecordComposition && record.identity.rule == oracleRuleAnyOf
-	})
-	result.failures = queryEvaluationRecords(result.records, func(record evaluationRecord) (failureIdentity, bool) {
+}
+
+func (result evaluation) failureRecords() iter.Seq[failureIdentity] {
+	return selectEvaluationRecords(result.records, func(record evaluationRecord) (failureIdentity, bool) {
 		return record.identity, record.kind == evaluationRecordFailure
 	})
 }
 
-func evaluationQueryCount[T any](query evaluationQuery[T]) int {
-	if query == nil {
+func evaluationRecordSequenceCount[T any](sequence iter.Seq[T]) int {
+	if sequence == nil {
 		return 0
 	}
 
 	count := 0
-	for range query {
+	for range sequence {
 		count = addEvaluationRecordCount(count, 1)
 	}
 
 	return count
 }
 
-func evaluationQueryAt[T any](query evaluationQuery[T], index int) (T, bool) {
+func evaluationRecordSequenceAt[T any](sequence iter.Seq[T], index int) (T, bool) {
 	var found T
-	if query == nil || index < 0 {
+	if sequence == nil || index < 0 {
 		return found, false
 	}
 
 	current := 0
-	for value := range query {
+	for value := range sequence {
 		if current == index {
 			return value, true
 		}
@@ -295,16 +296,31 @@ func evaluationQueryAt[T any](query evaluationQuery[T], index int) (T, bool) {
 	return found, false
 }
 
-func evaluationQueryEmpty[T any](query evaluationQuery[T]) bool {
-	if query == nil {
+func evaluationRecordSequenceEmpty[T any](sequence iter.Seq[T]) bool {
+	if sequence == nil {
 		return true
 	}
 
-	for range query {
+	for range sequence {
 		return false
 	}
 
 	return true
+}
+
+// appendEvaluation appends a child evaluation in traversal order.
+func appendEvaluation(result *evaluation, child evaluation) {
+	result.records.appendRecords(child.records)
+	result.failed = result.failed || child.failed
+
+	if child.err != nil {
+		result.err = child.err
+	}
+}
+
+// appendEvaluationNonFailures appends only non-failure child records in traversal order.
+func appendEvaluationNonFailures(result *evaluation, child evaluation) {
+	result.records.appendNonFailures(child.records)
 }
 
 // appendApplicable records one applicable rule.

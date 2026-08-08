@@ -55,12 +55,12 @@ func TestNonCompositionFaultFamiliesHaveExactClosures(t *testing.T) {
 				result := evaluate(model, derivative)
 				require.NoError(t, result.err, fault.obligation.String())
 				require.False(t, result.valid, fault.obligation.String())
-				matches, matchErr := exactFailureClosure(result.failures, fault.closure)
+				matches, matchErr := exactFailureClosure(result.failureRecords(), fault.closure)
 				require.NoError(t, matchErr)
 				require.True(
 					t, matches, "%s: actual=%v expected=%v",
 					fault.obligation.String(),
-					identityStrings(result.failures),
+					identityStrings(result.failureRecords()),
 					identityStrings(fault.closure),
 				)
 			}
@@ -431,5 +431,5 @@ func TestNestedFaultsDoNotStackAndUseConcreteInstanceIdentities(t *testing.T) {
 	result := evaluate(model, derivative)
 	require.Equal(t, []string{
 		fault.obligation.occurrence.usePointer + "|#/items/0|minLength",
-	}, identityStrings(result.failures))
+	}, identityStrings(result.failureRecords()))
 }
