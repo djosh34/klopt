@@ -1534,7 +1534,7 @@ paths:
 	}
 }
 
-func TestParseInputIgnoresMediaTypeExampleReferenceSiblingsAndTarget(t *testing.T) {
+func TestParseInputResolvesMediaTypeExampleReferencesAndIgnoresSiblings(t *testing.T) {
 	t.Parallel()
 
 	for encoding, document := range map[string]string{
@@ -1556,7 +1556,12 @@ paths:
 			t.Parallel()
 
 			_, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
-			require.NoError(t, err)
+			require.EqualError(
+				t,
+				err,
+				"#/paths/~1/post/requestBody/content/application~1json/examples/kept-inert/$ref: "+
+					"local reference target #/components does not exist",
+			)
 		})
 	}
 }

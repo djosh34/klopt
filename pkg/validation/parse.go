@@ -352,15 +352,15 @@ func schemaMembers(schema oas.LocatedSchema) (map[string]json.RawMessage, error)
 
 // rejectUnsupportedKeywords rejects behavior outside the runtime validator contract.
 func rejectUnsupportedKeywords(pointer string, members map[string]json.RawMessage) error {
-	for _, keyword := range []string{"oneOf", "not"} {
-		if _, ok := members[keyword]; ok {
-			return fmt.Errorf(
-				"compile schema at %s/%s: authored %s is outside the Klopt profile",
-				pointer,
-				keyword,
-				keyword,
-			)
-		}
+	if _, ok := members["oneOf"]; ok {
+		return unsupportedOneOf(pointer)
+	}
+
+	if _, ok := members["not"]; ok {
+		return fmt.Errorf(
+			"compile schema at %s/not: authored not is outside the Klopt profile",
+			pointer,
+		)
 	}
 
 	if _, ok := members["discriminator"]; ok {

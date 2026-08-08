@@ -65,6 +65,9 @@ func (validator *documentProfileValidator) components(value *jsonValue, pointer 
 		{name: "responses", walk: validator.response},
 		{name: "headers", walk: validator.header},
 		{name: "callbacks", walk: validator.callback},
+		{name: "examples", walk: validator.example},
+		{name: "securitySchemes", walk: validator.securityScheme},
+		{name: "links", walk: validator.link},
 	}
 
 	for _, entry := range entries {
@@ -159,11 +162,22 @@ func (validator *documentProfileValidator) parameters(value *jsonValue, pointer 
 }
 
 func (validator *documentProfileValidator) parameter(value *jsonValue, pointer string) error {
-	return validator.resolvedObject(value, pointer, "parameter", validator.schemaOrContent)
+	return validator.resolvedObject(value, pointer, "parameter", validator.schemaExamplesOrContent)
 }
 
 func (validator *documentProfileValidator) header(value *jsonValue, pointer string) error {
-	return validator.resolvedObject(value, pointer, "header", validator.schemaOrContent)
+	return validator.resolvedObject(value, pointer, "header", validator.schemaExamplesOrContent)
+}
+
+func (validator *documentProfileValidator) schemaExamplesOrContent(
+	object map[string]*jsonValue,
+	pointer string,
+) error {
+	if err := validator.examples(object["examples"], pointer+"/examples"); err != nil {
+		return err
+	}
+
+	return validator.schemaOrContent(object, pointer)
 }
 
 func (validator *documentProfileValidator) schemaOrContent(object map[string]*jsonValue, pointer string) error {
@@ -174,6 +188,41 @@ func (validator *documentProfileValidator) schemaOrContent(object map[string]*js
 	}
 
 	return validator.content(object["content"], pointer+"/content")
+}
+
+func (validator *documentProfileValidator) examples(value *jsonValue, pointer string) error {
+	if value == nil || value.kind != jsonObject {
+		return nil
+	}
+
+	for _, name := range sortedObjectNames(value.object) {
+		if err := validator.example(value.object[name], pointer+"/"+escapePointerToken(name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (validator *documentProfileValidator) example(value *jsonValue, pointer string) error {
+	return validator.referenceLeaf(value, pointer, "example")
+}
+
+func (validator *documentProfileValidator) securityScheme(value *jsonValue, pointer string) error {
+	return validator.referenceLeaf(value, pointer, "security scheme")
+}
+
+func (validator *documentProfileValidator) link(value *jsonValue, pointer string) error {
+	return validator.referenceLeaf(value, pointer, "link")
+}
+
+func (validator *documentProfileValidator) referenceLeaf(value *jsonValue, pointer, kind string) error {
+	return validator.resolvedObject(
+		value,
+		pointer,
+		kind,
+		func(map[string]*jsonValue, string) error { return nil },
+	)
 }
 
 func (validator *documentProfileValidator) requestBody(value *jsonValue, pointer string) error {
@@ -223,7 +272,23 @@ func (validator *documentProfileValidator) response(value *jsonValue, pointer st
 				}
 			}
 
-			return validator.content(object["content"], resolvedPointer+"/content")
+			if err := validator.content(object["content"], resolvedPointer+"/content"); err != nil {
+				return err
+			}
+
+			links := object["links"]
+			if links != nil && links.kind == jsonObject {
+				for _, name := range sortedObjectNames(links.object) {
+					if err := validator.link(
+						links.object[name],
+						resolvedPointer+"/links/"+escapePointerToken(name),
+					); err != nil {
+						return err
+					}
+				}
+			}
+
+			return nil
 		},
 	)
 }
@@ -245,6 +310,10 @@ func (validator *documentProfileValidator) content(value *jsonValue, pointer str
 			if err := validator.schema(schema, mediaPointer+"/schema"); err != nil {
 				return err
 			}
+		}
+
+		if err := validator.examples(media.object["examples"], mediaPointer+"/examples"); err != nil {
+			return err
 		}
 
 		encodings := media.object["encoding"]
@@ -322,8 +391,8 @@ func (validator *documentProfileValidator) schema(value *jsonValue, pointer stri
 	validator.schemaActive[resolved] = true
 	defer delete(validator.schemaActive, resolved)
 
-	object, err := requireJSONObject(resolved, resolvedPointer)
-	if err != nil {
+	object, isObject := asJSONObject(resolved)
+	if !isObject {
 		return nil
 	}
 
@@ -422,8 +491,8 @@ func (validator *documentProfileValidator) resolvedObject(
 	validator.active[key] = true
 	defer delete(validator.active, key)
 
-	object, err := requireJSONObject(resolved, resolvedPointer)
-	if err != nil {
+	object, isObject := asJSONObject(resolved)
+	if !isObject {
 		return nil
 	}
 
@@ -434,4 +503,12 @@ func (validator *documentProfileValidator) resolvedObject(
 	validator.inspected[key] = true
 
 	return nil
+}
+
+func asJSONObject(value *jsonValue) (map[string]*jsonValue, bool) {
+	if value == nil || value.kind != jsonObject {
+		return nil, false
+	}
+
+	return value.object, true
 }

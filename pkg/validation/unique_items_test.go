@@ -11,7 +11,10 @@ import (
 func TestUniqueItemsTraversalPropagatesSchemaDecodeErrors(t *testing.T) {
 	t.Parallel()
 
-	walker := authoredSchemaWalker{visited: make(map[string]struct{})}
+	walker := authoredSchemaWalker{
+		inspected: make(map[string]struct{}),
+		active:    make(map[string]struct{}),
+	}
 	err := walker.schema(json.RawMessage(`{"items":]}`), "#/components/schemas/Broken")
 
 	require.ErrorContains(t, err, "decode schema at #/components/schemas/Broken")

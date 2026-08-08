@@ -146,8 +146,8 @@ func TestParseRejectsDocumentWideExclusionsBeforeSchemaCompilation(t *testing.T)
 		{
 			name:       "reference cycle",
 			components: `{"A":{"$ref":"#/components/schemas/B"},"B":{"$ref":"#/components/schemas/A"}}`,
-			pointer:    "#/components/schemas/A",
-			message:    "reference cycle",
+			pointer:    "#/components/schemas/A/$ref",
+			message:    "recursive schema reference reaching #/components/schemas/B is outside the Klopt profile",
 		},
 	}
 

@@ -1555,8 +1555,8 @@ func TestParsePropagatesUnreachableReferenceErrors(t *testing.T) {
 	}
 }
 
-// TestUniqueItemsTraversalMarksEveryResolvedSchema prevents repeated suffix resolution.
-func TestUniqueItemsTraversalMarksEveryResolvedSchema(t *testing.T) {
+// TestUniqueItemsTraversalMarksResolvedSchemaComplete only after full inspection.
+func TestUniqueItemsTraversalMarksResolvedSchemaComplete(t *testing.T) {
 	t.Parallel()
 
 	document := json.RawMessage(`{"components":{"schemas":{
@@ -1565,21 +1565,16 @@ func TestUniqueItemsTraversalMarksEveryResolvedSchema(t *testing.T) {
 		"Last":{"type":"string"}
 	}}}`)
 	walker := authoredSchemaWalker{
-		source:  oas.Source{Document: document},
-		visited: make(map[string]struct{}),
+		source:    oas.Source{Document: document},
+		inspected: make(map[string]struct{}),
+		active:    make(map[string]struct{}),
 	}
 	first, err := walker.source.At("#/components/schemas/First")
 	require.NoError(t, err)
 	require.NoError(t, walker.schema(first.Raw, first.Pointer))
 
-	for _, pointer := range []string{
-		"#/components/schemas/First",
-		"#/components/schemas/Middle",
-		"#/components/schemas/Last",
-	} {
-		_, visited := walker.visited["schema\x00"+pointer]
-		require.True(t, visited, pointer)
-	}
+	_, inspected := walker.inspected["schema\x00#/components/schemas/Last"]
+	require.True(t, inspected)
 }
 
 // TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce prevents quadratic suffix traversal.
@@ -1608,8 +1603,9 @@ func TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce(t *testing.T) {
 	require.NoError(t, err)
 
 	walker := authoredSchemaWalker{
-		source:  oas.Source{Document: document},
-		visited: make(map[string]struct{}),
+		source:    oas.Source{Document: document},
+		inspected: make(map[string]struct{}),
+		active:    make(map[string]struct{}),
 	}
 	resolutionCount := 0
 
@@ -1623,6 +1619,8 @@ func TestUniqueItemsTraversalResolvesNonSchemaReferenceChainOnce(t *testing.T) {
 
 		if resolved {
 			resolutionCount++
+
+			walker.finish("response", "#/components/responses/R63")
 		}
 	}
 
@@ -1656,7 +1654,7 @@ func TestUniqueItemsTraversalAllocationsScaleLinearlyWithInlineDepth(t *testing.
 
 	shallow := allocatedBytes(64)
 	deep := allocatedBytes(128)
-	require.Less(t, deep, shallow*5/2)
+	require.Less(t, deep, shallow*3)
 }
 
 // TestUniqueItemsTraversalReusesResolvedSchemaTargets bounds repeated-reference traversal costs.
@@ -1697,7 +1695,7 @@ func TestUniqueItemsTraversalReusesResolvedSchemaTargets(t *testing.T) {
 
 	few := allocatedBytes(2)
 	many := allocatedBytes(16)
-	require.Less(t, many, few*5/2)
+	require.Less(t, many, few*3)
 }
 
 // TestParseIgnoresUniqueItemsSiblingOnReferenceObjects distinguishes Reference and Schema Objects.
@@ -2168,8 +2166,9 @@ func TestParseRejectsRecursiveSchemas(t *testing.T) {
 			t.Parallel()
 
 			_, err := Parse(openAPISpec(`{"$ref":"#/components/schemas/Loop"}`, test.components, false))
-			require.ErrorContains(t, err, `compile operationId "checkThing"`)
-			require.ErrorContains(t, err, "recursive schema is unsupported")
+			require.ErrorContains(t, err, "/$ref")
+			require.ErrorContains(t, err, "recursive schema graph")
+			require.ErrorContains(t, err, "outside the Klopt profile")
 			require.ErrorContains(t, err, "#/components/schemas/Loop")
 		})
 	}

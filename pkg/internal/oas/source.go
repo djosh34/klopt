@@ -47,11 +47,18 @@ type ParameterValidator func(Source, LocatedSchema) error
 
 // ReferenceError describes a failed local reference chain.
 type ReferenceError struct {
-	Referrer  string
-	Reference string
-	Chain     []string
-	Cause     error
+	Referrer        string
+	AuthoredKeyword string
+	Reference       string
+	Chain           []string
+	Cause           error
 }
+
+// Reference exclusion causes distinguish profile exclusions from malformed references.
+var (
+	ErrExternalReference = errors.New("external reference")
+	ErrReferenceCycle    = errors.New("reference cycle")
+)
 
 // Error formats reference location and chain context.
 func (referenceError *ReferenceError) Error() string {
@@ -385,7 +392,7 @@ func (source Source) resolve(
 				current.Pointer,
 				reference,
 				append(chain, reference),
-				errors.New("reference cycle"),
+				ErrReferenceCycle,
 			)
 		}
 
@@ -897,7 +904,7 @@ type operationChild struct {
 
 // operationChildren returns operation members in deterministic method order.
 func operationChildren(members map[string]json.RawMessage, pointer string) []operationChild {
-	methods := []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+	methods := []string{"delete", "get", "head", "options", "patch", "post", "put", "trace"}
 
 	operations := make([]operationChild, 0, len(methods))
 	for _, method := range methods {
@@ -977,7 +984,7 @@ func pointerTokens(reference string) ([]string, error) {
 // validateLocalReference rejects external and non-pointer references.
 func validateLocalReference(reference string, parsed *url.URL) error {
 	if parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "" || parsed.RawQuery != "" {
-		return fmt.Errorf("external reference %q is unsupported", reference)
+		return fmt.Errorf("%w %q is unsupported", ErrExternalReference, reference)
 	}
 
 	if reference != "#" && (parsed.Fragment == "" || !strings.HasPrefix(parsed.Fragment, "/")) {
@@ -1086,9 +1093,10 @@ func appendPointer(pointer string, tokens ...string) string {
 // newReferenceError copies mutable chain data into a ReferenceError.
 func newReferenceError(referrer string, reference string, chain []string, cause error) *ReferenceError {
 	return &ReferenceError{
-		Referrer:  referrer,
-		Reference: reference,
-		Chain:     append([]string(nil), chain...),
-		Cause:     cause,
+		Referrer:        referrer,
+		AuthoredKeyword: appendPointer(referrer, "$ref"),
+		Reference:       reference,
+		Chain:           append([]string(nil), chain...),
+		Cause:           cause,
 	}
 }
