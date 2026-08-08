@@ -32,6 +32,19 @@ func TestAdmissionCanonicalizesEnumMembersAndRequiredNamesOnce(t *testing.T) {
 	require.Equal(t, "member:2", records[3].level)
 }
 
+func TestValidatedEnumObjectEqualityIgnoresOrderAndRejectsMiss(t *testing.T) {
+	t.Parallel()
+
+	equal := evaluateSchemaValue(t, `{"enum":[{"a":1,"b":2}]}`, `{"b":2.0,"a":1}`)
+	require.NoError(t, equal.err)
+	require.True(t, equal.valid)
+
+	miss := evaluateSchemaValue(t, `{"enum":[{"a":1},{"a":2}]}`, `{"a":3}`)
+	require.NoError(t, miss.err)
+	require.False(t, miss.valid)
+	require.Equal(t, []string{oracleRuleEnum}, applicableRules(miss.failureRecords()))
+}
+
 func TestOracleRecordsCoverExactNumericEdges(t *testing.T) {
 	t.Parallel()
 
@@ -137,7 +150,47 @@ func TestReferencedArrayItemFailureKeepsCompleteIdentity(t *testing.T) {
 			reference:        true,
 		},
 		rule: oracleRuleType,
-	}, failures[0].identity)
+	}, failures[0].identity.project())
+}
+
+func TestNestedReferencedArrayItemFailureKeepsOrderedDescendantIdentity(t *testing.T) {
+	t.Parallel()
+
+	document := `{
+		"openapi":"3.0.4",
+		"components":{"schemas":{
+			"Leaf":{"type":"string"},
+			"Item":{"type":"object","properties":{"field":{"$ref":"#/components/schemas/Leaf"}}}
+		}},
+		"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
+			"type":"array","items":{"$ref":"#/components/schemas/Item"}
+		}}}}}}}
+	}`
+	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
+	require.NoError(t, err)
+	value, err := parseStrictJSON([]byte(`[{"field":1}]`))
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.NoError(t, result.err)
+	records := evaluationRecordSlice(result.records)
+	rootUse := model.root.occurrence.usePointer
+	require.Equal(t, []string{
+		"applicable|" + rootUse + "|#|type",
+		"observed|" + rootUse + "|#|type|array",
+		"applicable|" + rootUse + "/items|#/0|type",
+		"observed|" + rootUse + "/items|#/0|type|object",
+		"applicable|" + rootUse + "/items/properties/field|#/0/field|type",
+		"failure|" + rootUse + "/items/properties/field|#/0/field|type",
+	}, evaluationRecordStrings(result.records))
+	failure := records[len(records)-1].identity.project()
+	require.Equal(t, schemaOccurrence{
+		usePointer:       rootUse + "/items/properties/field",
+		targetPointer:    "#/components/schemas/Leaf",
+		instanceTemplate: "#/0/field",
+		reference:        true,
+	}, failure.occurrence)
+	require.Equal(t, oracleRuleType, failure.rule)
 }
 
 func evaluationRecordsOfKind(records *evaluationRecords, kind evaluationRecordKind) []evaluationRecord {

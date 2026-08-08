@@ -173,46 +173,129 @@ func TestOracleEvaluationHasNoParallelSemanticStores(t *testing.T) {
 func TestOracleStoreGuardRejectsCompatibilityFields(t *testing.T) {
 	t.Parallel()
 
-	guardPackage := parseGuardPackage(t, map[string]string{
-		"oracle.go": `package schematest
-			type evaluationRecords struct{}
-			type ruleIdentity struct{}
-			type evaluation struct {
-				valid bool
-				failed bool
-				records *evaluationRecords
-				err error
-				shadow []ruleIdentity
+	tests := []string{
+		`package schematest
+			type evaluationRecordPart struct{}; type evaluationRecords struct { parts []evaluationRecordPart }
+			type ruleIdentity struct{}; type evaluation struct {
+				valid bool; failed bool; records *evaluationRecords; err error; shadow []ruleIdentity
 			}`,
-	})
-
-	require.Equal(t, []string{"evaluation.shadow"}, parallelOracleStoreViolations(guardPackage))
-}
-
-// parallelOracleStoreViolations reports semantic payloads outside the authoritative records.
-func parallelOracleStoreViolations(guardPackage *sourceGuardPackage) []string {
-	declaration := guardPackage.pkg.Scope().Lookup("evaluation")
-	if declaration == nil {
-		return []string{"missing evaluation"}
+		`package schematest
+			type evaluationRecordPart struct{}; type evaluationRecords struct { parts []evaluationRecordPart }
+			type evaluation struct { valid bool; failed bool; records []evaluationRecords; err error }`,
+		`package schematest
+			type evaluationRecordPart struct{}; type ruleIdentity struct{}
+			type evaluationRecords struct { parts []evaluationRecordPart; failures []ruleIdentity }
+			type evaluation struct { valid bool; failed bool; records *evaluationRecords; err error }`,
+		`package schematest
+			type evaluationRecordPart struct{}; type evaluationRecords struct { parts []evaluationRecordPart }
+			type ruleIdentity struct{}; type evaluation struct { valid bool; failed bool; records *evaluationRecords; err error }
+			type evaluationCacheEntry struct { result evaluation; oracle []ruleIdentity }`,
 	}
 
-	structure, ok := declaration.Type().Underlying().(*types.Struct)
+	for _, source := range tests {
+		guardPackage := parseGuardPackage(t, map[string]string{"oracle.go": source})
+		require.NotEmpty(t, parallelOracleStoreViolations(guardPackage), source)
+	}
+}
+
+// parallelOracleStoreViolations proves evaluation.records is the sole heterogeneous semantic store.
+//
+//nolint:cyclop // Each independent representation invariant has one explicit check.
+func parallelOracleStoreViolations(guardPackage *sourceGuardPackage) []string {
+	var violations []string
+
+	evaluationType := packageObjectType(guardPackage, "evaluation")
+	recordsType := packageObjectType(guardPackage, "evaluationRecords")
+
+	partType := packageObjectType(guardPackage, "evaluationRecordPart")
+	if evaluationType == nil || recordsType == nil || partType == nil {
+		return []string{"missing oracle record types"}
+	}
+
+	evaluationStruct, ok := types.Unalias(evaluationType).Underlying().(*types.Struct)
 	if !ok {
 		return []string{"evaluation is not a struct"}
 	}
 
 	allowed := map[string]bool{"valid": true, "failed": true, "records": true, "err": true}
 
-	var violations []string
-
-	for index := range structure.NumFields() {
-		field := structure.Field(index)
+	for index := range evaluationStruct.NumFields() {
+		field := evaluationStruct.Field(index)
 		if !allowed[field.Name()] {
 			violations = append(violations, "evaluation."+field.Name())
+
+			continue
+		}
+
+		if field.Name() == "records" && !types.Identical(field.Type(), types.NewPointer(recordsType)) {
+			violations = append(violations, "evaluation.records")
+		}
+	}
+
+	recordsStruct, ok := types.Unalias(recordsType).Underlying().(*types.Struct)
+	if !ok {
+		return append(violations, "evaluationRecords is not a struct")
+	}
+
+	partsFound := false
+
+	for index := range recordsStruct.NumFields() {
+		field := recordsStruct.Field(index)
+
+		slice, sliceOK := types.Unalias(field.Type()).Underlying().(*types.Slice)
+		if field.Name() == "parts" && sliceOK && types.Identical(slice.Elem(), partType) {
+			partsFound = true
+
+			continue
+		}
+
+		if sliceOK {
+			violations = append(violations, "evaluationRecords."+field.Name())
+		}
+	}
+
+	if !partsFound {
+		violations = append(violations, "evaluationRecords.parts")
+	}
+
+	for _, name := range guardPackage.pkg.Scope().Names() {
+		object := guardPackage.pkg.Scope().Lookup(name)
+
+		structure, structureOK := types.Unalias(object.Type()).Underlying().(*types.Struct)
+		if !structureOK || name == "evaluation" || name == "evaluationRecords" || name == "evaluationRecordPart" {
+			continue
+		}
+
+		if !strings.Contains(strings.ToLower(name), "cache") && !strings.Contains(strings.ToLower(name), "result") {
+			continue
+		}
+
+		for index := range structure.NumFields() {
+			field := structure.Field(index)
+			if oracleSemanticCollection(field.Type(), guardPackage) {
+				violations = append(violations, name+"."+field.Name())
+			}
 		}
 	}
 
 	return violations
+}
+
+// oracleSemanticCollection reports whether a type is a parallel typed oracle list.
+func oracleSemanticCollection(owned types.Type, guardPackage *sourceGuardPackage) bool {
+	slice, ok := types.Unalias(owned).Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+
+	for _, name := range []string{"evaluationRecord", "ruleIdentity", "levelIdentity", "compositionTruth"} {
+		candidate := packageObjectType(guardPackage, name)
+		if candidate != nil && types.Identical(slice.Elem(), candidate) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // TestCanonicalMetadataHasNoParallelOrHotPathRepresentations locks admission-owned metadata.
@@ -221,73 +304,253 @@ func TestCanonicalMetadataHasNoParallelOrHotPathRepresentations(t *testing.T) {
 
 	require.Empty(t, canonicalMetadataViolations(productionGuardPackage(t)))
 
-	legacy := parseGuardPackage(t, map[string]string{
-		"model.go": `package schematest
-			type jsonValue struct{}
-			type schemaShape struct { enum []*jsonValue; enumIndices []int; required []string }
-			func canonicalPlanEnum([]*jsonValue) {}`,
-	})
-	require.NotEmpty(t, canonicalMetadataViolations(legacy))
+	tests := []string{
+		`package schematest; type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }; ` +
+			`type schemaShape struct { enum []enumMember; required []string; sourcePositions []int }`,
+		`package schematest; type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }; ` +
+			`type schemaShape struct { enum []enumMember; required []string; orderedRequired []string }`,
+		`package schematest
+			type jsonValue struct{}; type enumMember struct { value *jsonValue; authoredIndex int }
+			type schemaShape struct { enum []enumMember; required []string }
+			func appendUniqueJSONWitness([]*jsonValue, *jsonValue) ([]*jsonValue, error) { return nil, nil }
+			func collectAnyOfWitnesses(node *schemaShape) {
+				for _, member := range node.enum { _, _ = appendUniqueJSONWitness(nil, member.value) }
+			}
+			func jsonValidatedSemanticEqual(*jsonValue, *jsonValue) (bool, error) { return false, nil }
+			func evaluateEnumRule(node *schemaShape, value *jsonValue) {
+				for _, member := range node.enum {
+					_, _ = jsonValidatedSemanticEqual(value, member.value)
+					_, _ = jsonValidatedSemanticEqual(value, member.value)
+				}
+			}
+			func compileObjectRules(node *schemaShape) {
+				ordered := append([]string(nil), node.required...); _ = ordered
+			}`,
+	}
+	for _, source := range tests {
+		guardPackage := parseGuardPackage(t, map[string]string{"model.go": source})
+		require.NotEmpty(t, canonicalMetadataViolations(guardPackage), source)
+	}
 }
 
-// canonicalMetadataViolations rejects split enum identity and planner recanonicalization.
+// canonicalMetadataViolations proves canonical metadata shape and direct hot-path consumption.
 //
-//nolint:cyclop // Exact type-shape failures are independently reported.
+//nolint:cyclop,gocognit,gocyclo // Type and AST evidence intentionally cover independent bypass forms.
 func canonicalMetadataViolations(guardPackage *sourceGuardPackage) []string {
 	var violations []string
 
-	shapeObject := guardPackage.pkg.Scope().Lookup("schemaShape")
+	shapeType := packageObjectType(guardPackage, "schemaShape")
+	memberType := packageObjectType(guardPackage, "enumMember")
 
-	memberObject := guardPackage.pkg.Scope().Lookup("enumMember")
-	if shapeObject == nil || memberObject == nil {
+	jsonType := packageObjectType(guardPackage, "jsonValue")
+	if shapeType == nil || memberType == nil || jsonType == nil {
 		return []string{"missing canonical metadata types"}
 	}
 
-	shape, ok := shapeObject.Type().Underlying().(*types.Struct)
+	shape, ok := types.Unalias(shapeType).Underlying().(*types.Struct)
 	if !ok {
 		return []string{"schemaShape is not a struct"}
 	}
 
-	enumFound := false
+	enumFound, requiredFound := false, false
 
 	for index := range shape.NumFields() {
 		field := shape.Field(index)
-		if field.Name() == "enumIndices" {
-			violations = append(violations, "schemaShape.enumIndices")
+
+		slice, sliceOK := types.Unalias(field.Type()).Underlying().(*types.Slice)
+		if !sliceOK {
+			continue
 		}
 
-		if field.Name() == "enum" {
-			enumFound = true
-
-			slice, sliceOK := field.Type().(*types.Slice)
-			if !sliceOK {
+		switch field.Name() {
+		case "enum":
+			enumFound = types.Identical(slice.Elem(), memberType)
+			if !enumFound {
 				violations = append(violations, "schemaShape.enum")
-
-				continue
 			}
-
-			named, namedOK := slice.Elem().(*types.Named)
-			if !namedOK || named.Obj().Name() != "enumMember" {
-				violations = append(violations, "schemaShape.enum")
+		case "required":
+			requiredFound = basicTypeKind(slice.Elem()) == types.String
+			if !requiredFound {
+				violations = append(violations, "schemaShape.required")
+			}
+		default:
+			if types.Identical(slice.Elem(), memberType) || basicTypeKind(slice.Elem()) == types.Int ||
+				basicTypeKind(slice.Elem()) == types.String {
+				violations = append(violations, "parallel canonical metadata: schemaShape."+field.Name())
 			}
 		}
 	}
 
-	if !enumFound {
-		violations = append(violations, "missing schemaShape.enum")
+	if !enumFound || !requiredFound {
+		violations = append(violations, "missing canonical schemaShape metadata")
 	}
 
-	member, ok := memberObject.Type().Underlying().(*types.Struct)
+	member, ok := types.Unalias(memberType).Underlying().(*types.Struct)
 	if !ok || member.NumFields() != 2 || member.Field(0).Name() != "value" ||
-		member.Field(1).Name() != "authoredIndex" {
+		!types.Identical(member.Field(0).Type(), types.NewPointer(jsonType)) ||
+		member.Field(1).Name() != "authoredIndex" || basicTypeKind(member.Field(1).Type()) != types.Int {
 		violations = append(violations, "enumMember")
 	}
 
-	if guardPackage.pkg.Scope().Lookup("canonicalPlanEnum") != nil {
-		violations = append(violations, "canonicalPlanEnum")
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, functionOK := declaration.(*ast.FuncDecl)
+			if !functionOK || function.Body == nil {
+				continue
+			}
+
+			switch function.Name.Name {
+			case "collectAnyOfWitnesses":
+				if enumRangeRecanonicalizes(function) {
+					violations = append(violations, "planner re-deduplicates admitted enum")
+				}
+			case "evaluateEnumRule":
+				if countFunctionCalls(function, "jsonValidatedSemanticEqual") != 1 ||
+					functionCallsAny(function, "jsonSemanticEqual", "sort", "Sort", "SortFunc") {
+					violations = append(violations, "evaluator enum equality path")
+				}
+			case "compileEnumRules":
+				if functionCallsAny(function, "jsonSemanticEqual", "jsonValidatedSemanticEqual", "sort", "Sort", "SortFunc") {
+					violations = append(violations, "planner enum recanonicalization")
+				}
+			case "compileObjectRules", "evaluateObjectRules":
+				if functionCallsAny(function, "sort", "Sort", "SortFunc") ||
+					functionPassesSelectorToCall(function, "required") {
+					violations = append(violations, "required-name resort")
+				}
+			}
+		}
 	}
 
 	return violations
+}
+
+// basicTypeKind returns a type's basic kind or types.Invalid.
+func basicTypeKind(owned types.Type) types.BasicKind {
+	basic, ok := types.Unalias(owned).Underlying().(*types.Basic)
+	if !ok {
+		return types.Invalid
+	}
+
+	return basic.Kind()
+}
+
+// enumRangeRecanonicalizes detects calls other than direct append in the admitted enum loop.
+func enumRangeRecanonicalizes(function *ast.FuncDecl) bool {
+	violates := false
+
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		rangeStatement, ok := node.(*ast.RangeStmt)
+		if !ok {
+			return true
+		}
+
+		selector, ok := rangeStatement.X.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "enum" {
+			return true
+		}
+
+		ast.Inspect(rangeStatement.Body, func(child ast.Node) bool {
+			call, callOK := child.(*ast.CallExpr)
+			if callOK && identName(call.Fun) != "append" {
+				violates = true
+
+				return false
+			}
+
+			return true
+		})
+
+		return !violates
+	})
+
+	return violates
+}
+
+// functionPassesSelectorToCall detects metadata handed to a recanonicalization helper.
+func functionPassesSelectorToCall(function *ast.FuncDecl, selectorName string) bool {
+	found := false
+
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		for _, argument := range call.Args {
+			ast.Inspect(argument, func(child ast.Node) bool {
+				selector, selectorOK := child.(*ast.SelectorExpr)
+				if selectorOK && selector.Sel.Name == selectorName {
+					found = true
+
+					return false
+				}
+
+				return true
+			})
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+// functionCallsAny reports whether a function calls any selected name.
+func functionCallsAny(function *ast.FuncDecl, names ...string) bool {
+	for _, name := range names {
+		if countFunctionCalls(function, name) > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// countFunctionCalls counts calls with one identifier or selector name.
+func countFunctionCalls(function *ast.FuncDecl, name string) int {
+	count := 0
+
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		called := identName(call.Fun)
+		if selector, selectorOK := call.Fun.(*ast.SelectorExpr); selectorOK {
+			called = selector.Sel.Name
+		}
+
+		if called == name {
+			count++
+		}
+
+		return true
+	})
+
+	return count
+}
+
+// TestValidatedJSONEqualityDoesNotSortObjects locks the allocation-free object comparison path.
+func TestValidatedJSONEqualityDoesNotSortObjects(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != "jsonValidatedSemanticEqual" {
+				continue
+			}
+
+			require.False(t, functionCallsAny(function, "sortedObjectNames", "sort", "Sort", "SortFunc"))
+
+			return
+		}
+	}
+
+	require.Fail(t, "jsonValidatedSemanticEqual is missing")
 }
 
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.

@@ -13,11 +13,38 @@ type evaluationPointer struct {
 	tokens []string
 }
 
-// evaluationOccurrencePaths is the structured path identity parsed when a record is created.
+// evaluationOccurrencePaths is the sole structured occurrence identity retained by a record.
 type evaluationOccurrencePaths struct {
-	use      evaluationPointer
-	target   evaluationPointer
-	instance evaluationPointer
+	use        evaluationPointer
+	target     evaluationPointer
+	instance   evaluationPointer
+	targetRoot evaluationPointer
+	reference  bool
+}
+
+// evaluationRecordIdentity is the authoritative structured rule identity.
+type evaluationRecordIdentity struct {
+	occurrence evaluationOccurrencePaths
+	rule       string
+}
+
+func newEvaluationRecordIdentity(identity ruleIdentity) evaluationRecordIdentity {
+	return evaluationRecordIdentity{
+		occurrence: mustParseEvaluationOccurrence(identity.occurrence, identity.targetRoot),
+		rule:       identity.rule,
+	}
+}
+
+func (identity evaluationRecordIdentity) project() ruleIdentity {
+	return ruleIdentity{
+		occurrence: schemaOccurrence{
+			usePointer:       identity.occurrence.use.String(),
+			targetPointer:    identity.occurrence.target.String(),
+			instanceTemplate: identity.occurrence.instance.String(),
+			reference:        identity.occurrence.reference,
+		},
+		rule: identity.rule,
+	}
 }
 
 // occurrenceTransform carries the complete source and destination provenance for one shared view.
@@ -38,13 +65,16 @@ const (
 	evaluationRecordFailure
 )
 
-// evaluationRecord carries one fact and its complete rule occurrence identity.
+// evaluationRecord carries one fact and its complete structured rule occurrence identity.
 type evaluationRecord struct {
 	kind     evaluationRecordKind
-	identity ruleIdentity
-	paths    evaluationOccurrencePaths
+	identity evaluationRecordIdentity
 	level    string
 	branches []bool
+}
+
+func makeEvaluationRecord(kind evaluationRecordKind, identity ruleIdentity) evaluationRecord {
+	return evaluationRecord{kind: kind, identity: newEvaluationRecordIdentity(identity)}
 }
 
 // evaluationRecordFilter selects a structural view without copying its records.
@@ -66,56 +96,56 @@ type evaluationRecordPart struct {
 
 // evaluationRecords is one heterogeneous persistent logical record sequence.
 type evaluationRecords struct {
-	parts []evaluationRecordPart
-	count int
+	parts           []evaluationRecordPart
+	count           int
+	nonFailureCount int
 }
 
-// newEvaluationRecords creates an empty logical record sequence.
 func newEvaluationRecords() *evaluationRecords {
 	return &evaluationRecords{}
 }
 
-// append adds one local fact and returns its construction-time record.
-func (records *evaluationRecords) append(record evaluationRecord) *evaluationRecord {
-	record.paths = mustParseEvaluationOccurrence(record.identity.occurrence)
-	records.parts = append(records.parts, evaluationRecordPart{
-		records: []evaluationRecord{record},
-		count:   1,
-	})
-	records.count = addEvaluationRecordCount(records.count, 1)
+func (records *evaluationRecords) append(record evaluationRecord) {
+	if record.kind == evaluationRecordComposition {
+		record.branches = slices.Clone(record.branches)
+	}
 
-	return &records.parts[len(records.parts)-1].records[0]
+	records.parts = append(records.parts, evaluationRecordPart{records: []evaluationRecord{record}, count: 1})
+
+	records.count = addEvaluationRecordCount(records.count, 1)
+	if record.kind != evaluationRecordFailure {
+		records.nonFailureCount = addEvaluationRecordCount(records.nonFailureCount, 1)
+	}
 }
 
-// appendRecords shares one complete child sequence.
 func (records *evaluationRecords) appendRecords(child *evaluationRecords) {
 	records.appendFiltered(child, evaluationRecordsAll)
 }
 
-// appendNonFailures shares every child fact except failures.
 func (records *evaluationRecords) appendNonFailures(child *evaluationRecords) {
 	records.appendFiltered(child, evaluationRecordsWithoutFailures)
 }
 
+// appendFiltered composes count metadata in O(1); records are visited only by consumers.
 func (records *evaluationRecords) appendFiltered(child *evaluationRecords, filter evaluationRecordFilter) {
-	if child == nil || child.count == 0 {
+	if child == nil {
 		return
 	}
 
-	count := child.countMatching(filter)
+	count := child.count
+	if filter == evaluationRecordsWithoutFailures {
+		count = child.nonFailureCount
+	}
+
 	if count == 0 {
 		return
 	}
 
-	records.parts = append(records.parts, evaluationRecordPart{
-		nested: child,
-		filter: filter,
-		count:  count,
-	})
+	records.parts = append(records.parts, evaluationRecordPart{nested: child, filter: filter, count: count})
 	records.count = addEvaluationRecordCount(records.count, count)
+	records.nonFailureCount = addEvaluationRecordCount(records.nonFailureCount, child.nonFailureCount)
 }
 
-// addEvaluationRecordCount saturates logical record counts without affecting record storage.
 func addEvaluationRecordCount(current, added int) int {
 	maximum := int(^uint(0) >> 1)
 	if current == maximum || added > maximum-current {
@@ -125,17 +155,19 @@ func addEvaluationRecordCount(current, added int) int {
 	return current + added
 }
 
-// rebased returns the same logical sequence viewed from another occurrence.
 func (records *evaluationRecords) rebased(from, to schemaOccurrence) *evaluationRecords {
 	if records == nil {
 		return nil
 	}
 
+	from = withEvaluationTargetRoot(from)
+	to = withEvaluationTargetRoot(to)
+
 	transform := occurrenceTransform{
 		from:      from,
 		to:        to,
-		fromPaths: mustParseEvaluationOccurrence(from),
-		toPaths:   mustParseEvaluationOccurrence(to),
+		fromPaths: mustParseEvaluationOccurrence(from, from.targetRoot),
+		toPaths:   mustParseEvaluationOccurrence(to, to.targetRoot),
 	}
 	if transform.empty() || records.count == 0 {
 		return records
@@ -143,22 +175,16 @@ func (records *evaluationRecords) rebased(from, to schemaOccurrence) *evaluation
 
 	return &evaluationRecords{
 		parts: []evaluationRecordPart{{
-			nested:    records,
-			transform: transform,
-			filter:    evaluationRecordsAll,
-			count:     records.count,
+			nested: records, transform: transform, filter: evaluationRecordsAll, count: records.count,
 		}},
-		count: records.count,
+		count: records.count, nonFailureCount: records.nonFailureCount,
 	}
 }
 
-// forEach visits logical records in canonical sequence order.
 func (records *evaluationRecords) forEach(visit func(evaluationRecord) bool) {
-	if records == nil {
-		return
+	if records != nil {
+		records.forEachWithTransforms(nil, evaluationRecordsAll, visit)
 	}
-
-	records.forEachWithTransforms(nil, evaluationRecordsAll, visit)
 }
 
 func (records *evaluationRecords) forEachWithTransforms(
@@ -176,6 +202,10 @@ func (records *evaluationRecords) forEachWithTransforms(
 
 				for _, transform := range outer {
 					record = rebaseEvaluationRecord(record, transform)
+				}
+
+				if record.kind == evaluationRecordComposition {
+					record.branches = slices.Clone(record.branches)
 				}
 
 				if !visit(record) {
@@ -200,10 +230,7 @@ func (records *evaluationRecords) forEachWithTransforms(
 	return true
 }
 
-func combineEvaluationRecordFilters(
-	outer evaluationRecordFilter,
-	inner evaluationRecordFilter,
-) evaluationRecordFilter {
+func combineEvaluationRecordFilters(outer, inner evaluationRecordFilter) evaluationRecordFilter {
 	if outer == evaluationRecordsWithoutFailures || inner == evaluationRecordsWithoutFailures {
 		return evaluationRecordsWithoutFailures
 	}
@@ -215,69 +242,40 @@ func evaluationRecordMatches(record evaluationRecord, filter evaluationRecordFil
 	return filter == evaluationRecordsAll || record.kind != evaluationRecordFailure
 }
 
-func (records *evaluationRecords) countMatching(filter evaluationRecordFilter) int {
-	if records == nil {
-		return 0
-	}
-
-	if filter == evaluationRecordsAll {
-		return records.count
-	}
-
-	count := 0
-
-	records.forEach(func(record evaluationRecord) bool {
-		if evaluationRecordMatches(record, filter) {
-			count = addEvaluationRecordCount(count, 1)
-		}
-
-		return true
-	})
-
-	return count
-}
-
-// select returns a lazy typed view over the authoritative record sequence.
-func selectEvaluationRecords[T any](
-	records *evaluationRecords,
-	project func(evaluationRecord) (T, bool),
-) iter.Seq[T] {
+func selectEvaluationRecords[T any](records *evaluationRecords, project func(evaluationRecord) (T, bool)) iter.Seq[T] {
 	return func(yield func(T) bool) {
 		records.forEach(func(record evaluationRecord) bool {
 			value, ok := project(record)
-			if !ok {
-				return true
-			}
 
-			return yield(value)
+			return !ok || yield(value)
 		})
 	}
 }
 
 func (result evaluation) applicableRecords() iter.Seq[ruleIdentity] {
 	return selectEvaluationRecords(result.records, func(record evaluationRecord) (ruleIdentity, bool) {
-		return record.identity, record.kind == evaluationRecordApplicable
+		return record.identity.project(), record.kind == evaluationRecordApplicable
 	})
 }
 
 func (result evaluation) observedRecords() iter.Seq[levelIdentity] {
 	return selectEvaluationRecords(result.records, func(record evaluationRecord) (levelIdentity, bool) {
-		return levelIdentity{ruleIdentity: record.identity, level: record.level}, record.kind == evaluationRecordObserved
+		identity := levelIdentity{ruleIdentity: record.identity.project(), level: record.level}
+
+		return identity, record.kind == evaluationRecordObserved
 	})
 }
 
 func (result evaluation) compositionRecords(rule string) iter.Seq[compositionTruth] {
 	return selectEvaluationRecords(result.records, func(record evaluationRecord) (compositionTruth, bool) {
-		return compositionTruth{
-			ruleIdentity: record.identity,
-			branches:     record.branches,
-		}, record.kind == evaluationRecordComposition && record.identity.rule == rule
+		return compositionTruth{ruleIdentity: record.identity.project(), branches: record.branches},
+			record.kind == evaluationRecordComposition && record.identity.rule == rule
 	})
 }
 
 func (result evaluation) failureRecords() iter.Seq[failureIdentity] {
 	return selectEvaluationRecords(result.records, func(record evaluationRecord) (failureIdentity, bool) {
-		return record.identity, record.kind == evaluationRecordFailure
+		return record.identity.project(), record.kind == evaluationRecordFailure
 	})
 }
 
@@ -313,112 +311,109 @@ func evaluationRecordSequenceAt[T any](sequence iter.Seq[T], index int) (T, bool
 }
 
 func evaluationRecordSequenceEmpty[T any](sequence iter.Seq[T]) bool {
-	if sequence == nil {
-		return true
-	}
-
-	for range sequence {
-		return false
+	if sequence != nil {
+		for range sequence {
+			return false
+		}
 	}
 
 	return true
 }
 
-// appendEvaluation appends a child evaluation in traversal order.
 func appendEvaluation(result *evaluation, child evaluation) {
 	result.records.appendRecords(child.records)
-	result.failed = result.failed || child.failed
 
+	result.failed = result.failed || child.failed
 	if child.err != nil {
 		result.err = child.err
 	}
 }
 
-// appendEvaluationNonFailures appends only non-failure child records in traversal order.
 func appendEvaluationNonFailures(result *evaluation, child evaluation) {
 	result.records.appendNonFailures(child.records)
 }
 
-// appendApplicable records one applicable rule.
 func appendApplicable(result *evaluation, identity ruleIdentity) {
-	result.records.append(evaluationRecord{kind: evaluationRecordApplicable, identity: identity})
+	result.records.append(makeEvaluationRecord(evaluationRecordApplicable, identity))
 }
 
-// appendObserved records one observed level.
 func appendObserved(result *evaluation, identity levelIdentity) {
-	result.records.append(evaluationRecord{
-		kind:     evaluationRecordObserved,
-		identity: identity.ruleIdentity,
-		level:    identity.level,
-	})
+	record := makeEvaluationRecord(evaluationRecordObserved, identity.ruleIdentity)
+	record.level = identity.level
+	result.records.append(record)
 }
 
-// appendAllOfTruth records one allOf truth vector.
-func appendAllOfTruth(result *evaluation, truth compositionTruth) *evaluationRecord {
-	return result.records.append(evaluationRecord{
-		kind:     evaluationRecordComposition,
-		identity: truth.ruleIdentity,
-		branches: truth.branches,
-	})
+func appendCompositionTruth(result *evaluation, truth compositionTruth) {
+	record := makeEvaluationRecord(evaluationRecordComposition, truth.ruleIdentity)
+	record.branches = truth.branches
+	result.records.append(record)
 }
 
-// appendAnyOfTruth records one anyOf truth vector.
-func appendAnyOfTruth(result *evaluation, truth compositionTruth) *evaluationRecord {
-	return result.records.append(evaluationRecord{
-		kind:     evaluationRecordComposition,
-		identity: truth.ruleIdentity,
-		branches: truth.branches,
-	})
+func appendAllOfTruth(result *evaluation, truth compositionTruth) {
+	appendCompositionTruth(result, truth)
 }
 
-// empty reports whether a transform leaves every path unchanged.
+func appendAnyOfTruth(result *evaluation, truth compositionTruth) {
+	appendCompositionTruth(result, truth)
+}
+
 func (transform occurrenceTransform) empty() bool {
 	return transform.from == transform.to
 }
 
-// rebaseEvaluationRecord changes every occurrence path from complete source/destination provenance.
+// rebaseEvaluationRecord rebases only targets owned by this transform's provenance root.
 func rebaseEvaluationRecord(record evaluationRecord, transform occurrenceTransform) evaluationRecord {
 	if transform.empty() {
 		return record
 	}
 
-	localRule := record.paths.use.equal(transform.fromPaths.use) &&
-		record.paths.target.equal(transform.fromPaths.target)
-	record.paths.use = record.paths.use.rebased(transform.fromPaths.use, transform.toPaths.use)
-	record.paths.target = record.paths.target.rebased(transform.fromPaths.target, transform.toPaths.target)
-	record.paths.instance = record.paths.instance.rebased(
-		transform.fromPaths.instance,
-		transform.toPaths.instance,
-	)
+	occurrence := record.identity.occurrence
+	localRoot := occurrence.targetRoot.equal(transform.fromPaths.targetRoot)
+	localRule := localRoot && occurrence.use.equal(transform.fromPaths.use)
+	occurrence.use = occurrence.use.rebased(transform.fromPaths.use, transform.toPaths.use)
 
-	record.identity.occurrence.usePointer = record.paths.use.String()
-	record.identity.occurrence.targetPointer = record.paths.target.String()
-
-	record.identity.occurrence.instanceTemplate = record.paths.instance.String()
-	if localRule {
-		record.identity.occurrence.reference = transform.to.reference
+	occurrence.instance = occurrence.instance.rebased(transform.fromPaths.instance, transform.toPaths.instance)
+	if localRoot {
+		occurrence.target = occurrence.target.rebased(transform.fromPaths.target, transform.toPaths.target)
+		occurrence.targetRoot = transform.toPaths.targetRoot
 	}
+
+	if localRule {
+		occurrence.reference = transform.to.reference
+	}
+
+	record.identity.occurrence = occurrence
 
 	return record
 }
 
-func mustParseEvaluationOccurrence(occurrence schemaOccurrence) evaluationOccurrencePaths {
-	use, err := parseEvaluationPointer(occurrence.usePointer)
-	if err != nil {
-		panic(fmt.Sprintf("invalid oracle use pointer %q: %v", occurrence.usePointer, err))
+func withEvaluationTargetRoot(occurrence schemaOccurrence) schemaOccurrence {
+	if occurrence.targetRoot == "" {
+		occurrence.targetRoot = occurrence.targetPointer
 	}
 
-	target, err := parseEvaluationPointer(occurrence.targetPointer)
-	if err != nil {
-		panic(fmt.Sprintf("invalid oracle target pointer %q: %v", occurrence.targetPointer, err))
+	return occurrence
+}
+
+func mustParseEvaluationOccurrence(occurrence schemaOccurrence, targetRoot string) evaluationOccurrencePaths {
+	parse := func(name, pointer string) evaluationPointer {
+		parsed, err := parseEvaluationPointer(pointer)
+		if err != nil {
+			panic(fmt.Sprintf("invalid oracle %s pointer %q: %v", name, pointer, err))
+		}
+
+		return parsed
 	}
 
-	instance, err := parseEvaluationPointer(occurrence.instanceTemplate)
-	if err != nil {
-		panic(fmt.Sprintf("invalid oracle instance template %q: %v", occurrence.instanceTemplate, err))
+	if targetRoot == "" {
+		targetRoot = occurrence.targetPointer
 	}
 
-	return evaluationOccurrencePaths{use: use, target: target, instance: instance}
+	return evaluationOccurrencePaths{
+		use: parse("use", occurrence.usePointer), target: parse("target", occurrence.targetPointer),
+		instance: parse("instance template", occurrence.instanceTemplate), targetRoot: parse("target root", targetRoot),
+		reference: occurrence.reference,
+	}
 }
 
 func parseEvaluationPointer(pointer string) (evaluationPointer, error) {

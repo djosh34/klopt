@@ -221,6 +221,7 @@ func (builder *planBuilder) compileAnyOfChildren(
 			child,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
+			occurrence,
 		)
 
 		childPlan, err := builder.compileNode(
@@ -332,6 +333,7 @@ func (builder *planBuilder) compileChildren(
 			shape.items,
 			occurrence.usePointer+"/items",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
+			occurrence,
 		)
 		if err := builder.compileDirectChild(
 			result, node, occurrence, shape.items, itemOccurrence, jsonArray,
@@ -348,6 +350,7 @@ func (builder *planBuilder) compileChildren(
 			property,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
+			occurrence,
 		)
 		if err := builder.compileDirectChild(
 			result, node, occurrence, property, propertyOccurrence, jsonObject,
@@ -362,6 +365,7 @@ func (builder *planBuilder) compileChildren(
 			shape.additionalProperties,
 			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
+			occurrence,
 		)
 		if err := builder.compileDirectChild(
 			result, node, occurrence, shape.additionalProperties, additionalOccurrence, jsonObject,
@@ -376,6 +380,7 @@ func (builder *planBuilder) compileChildren(
 			child,
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
+			occurrence,
 		)
 		if err := builder.compileAllOfChild(
 			result, node, occurrence, child, childOccurrence, index,
@@ -967,6 +972,7 @@ func requiredPresenceOccurrence(node *schemaNode, occurrence schemaOccurrence, n
 			property,
 			occurrence.usePointer+"/properties/"+escapePointerToken(name),
 			appendInstanceToken(occurrence.instanceTemplate, name),
+			occurrence,
 		)
 	}
 
@@ -1047,6 +1053,7 @@ func defaultArrayPresencePins(node *schemaNode, occurrence schemaOccurrence) ([]
 		node.items,
 		occurrence.usePointer+"/items",
 		appendInstanceToken(occurrence.instanceTemplate, "*"),
+		occurrence,
 	)
 
 	return []applicabilityPin{canonicalPresencePin(itemOccurrence, presence)}, nil
@@ -1116,6 +1123,7 @@ func defaultObjectPresencePins(node *schemaNode, occurrence schemaOccurrence) ([
 			shape.additionalProperties,
 			occurrence.usePointer+"/additionalProperties",
 			appendInstanceToken(occurrence.instanceTemplate, "*"),
+			occurrence,
 		)
 		pins = append(pins, canonicalPresencePin(additionalOccurrence, presence))
 	}
@@ -2569,17 +2577,8 @@ func collectAnyOfWitnesses(
 	defer delete(visiting, node)
 
 	for _, member := range node.enum {
-		if member.value == nil {
-			return errors.New("JSON enum member is nil")
-		}
-
 		if member.value.kind == kind {
-			var err error
-
-			*witnesses, err = appendUniqueJSONWitness(*witnesses, member.value)
-			if err != nil {
-				return err
-			}
+			*witnesses = append(*witnesses, member.value)
 		}
 	}
 
@@ -3066,7 +3065,18 @@ func anyOfMaskPins(occurrence schemaOccurrence, count int, mask *big.Int) []appl
 }
 
 // rebasePlanOccurrence carries a child shape to its use site and instance template.
-func rebasePlanOccurrence(child *schemaNode, usePointer, instanceTemplate string) schemaOccurrence {
+func rebasePlanOccurrence(
+	child *schemaNode,
+	usePointer, instanceTemplate string,
+	parent ...schemaOccurrence,
+) schemaOccurrence {
+	if len(parent) == 1 {
+		occurrence := rebaseChildOccurrence(child, parent[0], usePointer, instanceTemplate)
+		occurrence.targetRoot = ""
+
+		return occurrence
+	}
+
 	occurrence := child.occurrence
 	occurrence.usePointer = usePointer
 	occurrence.instanceTemplate = instanceTemplate

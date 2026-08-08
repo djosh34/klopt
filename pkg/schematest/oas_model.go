@@ -22,7 +22,8 @@ type schemaOccurrence struct {
 	usePointer       string
 	targetPointer    string
 	instanceTemplate string
-	reference        bool // This occurrence is a Reference Object use site.
+	reference        bool   // This occurrence is a Reference Object use site.
+	targetRoot       string // Private provenance root; projections never expose it.
 }
 
 type exactCount struct {

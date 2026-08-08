@@ -7,6 +7,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations pins plan/oracle identity agreement.
+func TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(`openapi: 3.0.4
+components:
+  schemas:
+    Inner: {type: string, minLength: 1}
+    Outer:
+      type: object
+      properties:
+        child: {$ref: '#/components/schemas/Inner'}
+paths:
+  /:
+    post:
+      operationId: selected
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                a: {$ref: '#/components/schemas/Outer'}
+                b: {$ref: '#/components/schemas/Outer'}
+`)
+	report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 10000}, func(Case) error {
+		return nil
+	})
+	require.NoError(t, err)
+
+	rootUse := "#/paths/~1/post/requestBody/content/application~1json/schema"
+	for _, branch := range []struct{ use, instance string }{
+		{use: "/properties/a/properties/child", instance: "#/a/child"},
+		{use: "/properties/b/properties/child", instance: "#/b/child"},
+	} {
+		require.Contains(t, report.Covered, rootUse+branch.use+"|"+branch.instance+"|type|level:string")
+		require.Contains(t, report.Covered, rootUse+branch.use+"|"+branch.instance+"|minLength|level:valid")
+		require.Contains(t, report.Covered, rootUse+branch.use+"|"+branch.instance+"|minLength|fault:minLength")
+	}
+}
+
 // TestBuildMergesAllOfArrayItemSchemas verifies composed item witnesses.
 func TestBuildMergesAllOfArrayItemSchemas(t *testing.T) {
 	t.Parallel()

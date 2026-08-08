@@ -15,14 +15,12 @@ func evaluateCompositionRules(
 ) {
 	evaluateAllOfRules(context, result, node, occurrence, value)
 
-	if result.err != nil {
-		return
+	if result.err == nil {
+		evaluateAnyOfRules(context, result, node, occurrence, value)
 	}
-
-	evaluateAnyOfRules(context, result, node, occurrence, value)
 }
 
-// evaluateAllOfRules evaluates every allOf branch against the same complete value.
+// evaluateAllOfRules constructs the complete truth and children before publishing either.
 func evaluateAllOfRules(
 	context *evaluationContext,
 	result *evaluation,
@@ -34,15 +32,16 @@ func evaluateAllOfRules(
 		return
 	}
 
-	truth := appendAllOfTruth(result, compositionTruth{
+	truth := compositionTruth{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleAllOf),
 		branches:     make([]bool, len(node.allOf)),
-	})
+	}
 
+	children := make([]evaluation, len(node.allOf))
 	for index, child := range node.allOf {
 		childOccurrence := rebaseCompositionOccurrence(child, occurrence, "allOf", index)
-		childResult := context.evaluateNode(child, value, childOccurrence)
 
+		childResult := context.evaluateNode(child, value, childOccurrence)
 		if childResult.err != nil {
 			result.err = fmt.Errorf("%s branch %d: %w", occurrence.usePointer+"/allOf", index, childResult.err)
 
@@ -50,11 +49,17 @@ func evaluateAllOfRules(
 		}
 
 		truth.branches[index] = childResult.valid
-		appendEvaluation(result, childResult)
+		children[index] = childResult
+	}
+
+	appendCompositionTruth(result, truth)
+
+	for _, child := range children {
+		appendEvaluation(result, child)
 	}
 }
 
-// evaluateAnyOfRules evaluates every anyOf branch and applies the aggregate failure closure.
+// evaluateAnyOfRules constructs the complete truth and children before publishing either.
 func evaluateAnyOfRules(
 	context *evaluationContext,
 	result *evaluation,
@@ -66,18 +71,17 @@ func evaluateAnyOfRules(
 		return
 	}
 
-	truth := appendAnyOfTruth(result, compositionTruth{
+	truth := compositionTruth{
 		ruleIdentity: makeRuleIdentity(occurrence, oracleRuleAnyOf),
 		branches:     make([]bool, len(node.anyOf)),
-	})
-
+	}
 	children := make([]evaluation, len(node.anyOf))
 	anyBranchValid := false
 
 	for index, child := range node.anyOf {
 		childOccurrence := rebaseCompositionOccurrence(child, occurrence, "anyOf", index)
-		childResult := context.evaluateNode(child, value, childOccurrence)
 
+		childResult := context.evaluateNode(child, value, childOccurrence)
 		if childResult.err != nil {
 			result.err = fmt.Errorf("%s branch %d: %w", occurrence.usePointer+"/anyOf", index, childResult.err)
 
@@ -88,6 +92,8 @@ func evaluateAnyOfRules(
 		truth.branches[index] = childResult.valid
 		anyBranchValid = anyBranchValid || childResult.valid
 	}
+
+	appendCompositionTruth(result, truth)
 
 	for _, childResult := range children {
 		if anyBranchValid {
@@ -102,7 +108,7 @@ func evaluateAnyOfRules(
 	}
 }
 
-// rebaseCompositionOccurrence assigns a composition branch's use site and current instance.
+// rebaseCompositionOccurrence applies the shared child provenance policy to a composition branch.
 func rebaseCompositionOccurrence(
 	child *schemaNode,
 	occurrence schemaOccurrence,

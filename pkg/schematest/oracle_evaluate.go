@@ -44,6 +44,7 @@ const (
 type ruleIdentity struct {
 	occurrence schemaOccurrence
 	rule       string
+	targetRoot string
 }
 
 // failureIdentity is the rule identity used by an exact failure closure.
@@ -77,10 +78,9 @@ type evaluationCacheKey struct {
 	value *jsonValue
 }
 
-// evaluationCacheEntry retains a result and the occurrence that authored its paths.
+// evaluationCacheEntry retains one canonical target-relative immutable result.
 type evaluationCacheEntry struct {
-	occurrence schemaOccurrence
-	result     evaluation
+	result evaluation
 }
 
 // evaluationContext carries one complete evaluation's shared-shape cache.
@@ -153,9 +153,17 @@ func (context *evaluationContext) evaluateNode(
 		shape: node.schemaShape,
 		value: value,
 	}
+	cacheBase := schemaOccurrence{
+		usePointer:       "#",
+		targetPointer:    "#",
+		instanceTemplate: "#",
+		targetRoot:       "#",
+	}
+	occurrence = withEvaluationTargetRoot(occurrence)
+
 	if cached, exists := context.cache[key]; exists {
 		result = cached.result
-		result.records = result.records.rebased(cached.occurrence, occurrence)
+		result.records = result.records.rebased(cacheBase, occurrence)
 
 		return result
 	}
@@ -193,10 +201,9 @@ func (context *evaluationContext) evaluateNode(
 	result.valid = result.err == nil && !result.failed
 
 	if result.err == nil {
-		context.cache[key] = evaluationCacheEntry{
-			occurrence: occurrence,
-			result:     result,
-		}
+		cached := result
+		cached.records = result.records.rebased(occurrence, cacheBase)
+		context.cache[key] = evaluationCacheEntry{result: cached}
 	}
 
 	return result
@@ -209,11 +216,19 @@ func rebaseChildOccurrence(
 	usePointer string,
 	instanceTemplate string,
 ) schemaOccurrence {
+	parent = withEvaluationTargetRoot(parent)
 	childOccurrence := child.occurrence
 	childOccurrence.usePointer = usePointer
 	childOccurrence.instanceTemplate = instanceTemplate
 
-	if !childOccurrence.reference && strings.HasPrefix(usePointer, parent.usePointer+"/") {
+	if childOccurrence.reference {
+		childOccurrence.targetRoot = childOccurrence.targetPointer
+
+		return childOccurrence
+	}
+
+	childOccurrence.targetRoot = parent.targetRoot
+	if strings.HasPrefix(usePointer, parent.usePointer+"/") {
 		childOccurrence.targetPointer = parent.targetPointer + strings.TrimPrefix(usePointer, parent.usePointer)
 	}
 
@@ -319,13 +334,16 @@ func evaluateEnumRule(result *evaluation, node *schemaNode, occurrence schemaOcc
 
 // appendFailure records one exact failure and its validity contribution.
 func appendFailure(result *evaluation, identity failureIdentity) {
-	result.records.append(evaluationRecord{kind: evaluationRecordFailure, identity: identity})
+	result.records.append(makeEvaluationRecord(evaluationRecordFailure, identity))
 	result.failed = true
 }
 
 // makeRuleIdentity creates a stable clean occurrence/rule identity.
 func makeRuleIdentity(occurrence schemaOccurrence, rule string) ruleIdentity {
-	return ruleIdentity{occurrence: occurrence, rule: rule}
+	targetRoot := occurrence.targetRoot
+	occurrence.targetRoot = ""
+
+	return ruleIdentity{occurrence: occurrence, rule: rule, targetRoot: targetRoot}
 }
 
 // jsonKindName returns the deterministic JSON spelling used by kind levels.

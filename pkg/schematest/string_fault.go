@@ -322,6 +322,8 @@ func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIde
 		return false, nil
 	}
 
+	consumed := make([]bool, len(canonicalExpected))
+
 	for actualFailure := range actual {
 		if _, compareErr := compareRuleIdentities(actualFailure, actualFailure); compareErr != nil {
 			return false, compareErr
@@ -329,13 +331,16 @@ func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIde
 
 		found := false
 
-		for _, expectedFailure := range canonicalExpected {
-			if actualFailure.rule == expectedFailure.rule &&
-				ruleOccurrenceMatches(actualFailure.occurrence, expectedFailure.occurrence) {
-				found = true
-
-				break
+		for index, expectedFailure := range canonicalExpected {
+			if consumed[index] || actualFailure.rule != expectedFailure.rule ||
+				!ruleOccurrenceMatches(actualFailure.occurrence, expectedFailure.occurrence) {
+				continue
 			}
+
+			consumed[index] = true
+			found = true
+
+			break
 		}
 
 		if !found {

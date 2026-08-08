@@ -174,6 +174,84 @@ func TestEvaluateExpandedYAMLCompositionDeterministically(t *testing.T) {
 	)
 }
 
+func TestCompositionTruthQueriesAreMutationIsolatedAcrossCachedViews(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(sharedYAMLCompositionDocument(3)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	value, err := parseStrictJSON([]byte(`"text"`))
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.NoError(t, result.err)
+	before := compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf))
+	truth, ok := evaluationRecordSequenceAt(result.compositionRecords(oracleRuleAllOf), 0)
+	require.True(t, ok)
+
+	truth.branches[0] = false
+
+	result.records.forEach(func(record evaluationRecord) bool {
+		if record.kind == evaluationRecordComposition {
+			record.branches[0] = false
+		}
+
+		return true
+	})
+
+	require.Equal(t, before, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf)))
+
+	again := evaluate(model, value)
+	require.NoError(t, again.err)
+	require.Equal(t, before, compositionTruthVectorsForTest(again.compositionRecords(oracleRuleAllOf)))
+	require.Equal(t, evaluationRecordStrings(result.records), evaluationRecordStrings(again.records))
+}
+
+func TestFilteredPersistentCompositionRetainsConstantTimeCounts(t *testing.T) {
+	t.Parallel()
+
+	child := newEvaluationRecords()
+	child.append(makeEvaluationRecord(evaluationRecordApplicable, makeRuleIdentity(
+		schemaOccurrence{usePointer: "#/leaf", targetPointer: "#/leaf", instanceTemplate: "#"},
+		oracleRuleType,
+	)))
+	child.append(makeEvaluationRecord(evaluationRecordFailure, makeRuleIdentity(
+		schemaOccurrence{usePointer: "#/leaf", targetPointer: "#/leaf", instanceTemplate: "#"},
+		oracleRuleType,
+	)))
+
+	const depth = 20
+	for range depth {
+		parent := newEvaluationRecords()
+		parent.appendNonFailures(child)
+		parent.appendNonFailures(child)
+		child = parent
+	}
+
+	require.Equal(t, 1<<depth, child.count)
+	require.Equal(t, child.count, child.nonFailureCount)
+	require.Len(t, child.parts, 2)
+	require.Same(t, child.parts[0].nested, child.parts[1].nested)
+	require.Equal(t, depth+1, physicalEvaluationRecordNodeCount(child, make(map[*evaluationRecords]bool)))
+}
+
+func physicalEvaluationRecordNodeCount(records *evaluationRecords, seen map[*evaluationRecords]bool) int {
+	if records == nil || seen[records] {
+		return 0
+	}
+
+	seen[records] = true
+
+	count := 1
+	for _, part := range records.parts {
+		count += physicalEvaluationRecordNodeCount(part.nested, seen)
+	}
+
+	return count
+}
+
 func TestEvaluateExpandedYAMLCompositionRejectingLeafRemainsInvalid(t *testing.T) {
 	t.Parallel()
 

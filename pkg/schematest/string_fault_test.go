@@ -2,10 +2,47 @@
 package schematest
 
 import (
+	"iter"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestExactFailureClosureConsumesExpectedIdentitiesOnce(t *testing.T) {
+	t.Parallel()
+
+	first := makeRuleIdentity(
+		schemaOccurrence{usePointer: "#/a", targetPointer: "#/a", instanceTemplate: "#"},
+		oracleRuleType,
+	)
+	second := makeRuleIdentity(
+		schemaOccurrence{usePointer: "#/b", targetPointer: "#/b", instanceTemplate: "#"},
+		oracleRuleType,
+	)
+	sequence := func(values ...failureIdentity) iter.Seq[failureIdentity] {
+		return func(yield func(failureIdentity) bool) {
+			for _, value := range values {
+				if !yield(value) {
+					return
+				}
+			}
+		}
+	}
+
+	matches, err := exactFailureClosure(sequence(first, first), []failureIdentity{first, second})
+	require.NoError(t, err)
+	require.False(t, matches)
+	matches, err = exactFailureClosure(sequence(second, first), []failureIdentity{first, second})
+	require.NoError(t, err)
+	require.True(t, matches)
+
+	malformed := makeRuleIdentity(schemaOccurrence{
+		usePointer: "not-a-pointer", targetPointer: "#", instanceTemplate: "#",
+	}, oracleRuleType)
+	matches, err = exactFailureClosure(sequence(malformed), []failureIdentity{first})
+	require.Error(t, err)
+	require.False(t, matches)
+}
 
 func TestFindStringFaultRowDirectsEachPatternInAuthoredOrder(t *testing.T) {
 	t.Parallel()
