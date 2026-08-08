@@ -164,37 +164,6 @@ func parseLocalReferenceFragment(reference, authoredPointer string) (string, err
 	return fragment, nil
 }
 
-func validateURIFragment(fragment string) error {
-	for index := 0; index < len(fragment); index++ {
-		character := fragment[index]
-		if character == '%' {
-			if index+2 >= len(fragment) || !isHexDigit(fragment[index+1]) || !isHexDigit(fragment[index+2]) {
-				return errors.New("invalid percent encoding")
-			}
-
-			index += 2
-
-			continue
-		}
-
-		if !isURIFragmentCharacter(character) {
-			return fmt.Errorf("character %q must be percent-encoded", character)
-		}
-	}
-
-	return nil
-}
-
-func isURIFragmentCharacter(character byte) bool {
-	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
-		character >= '0' && character <= '9' || strings.ContainsRune("-._~!$&'()*+,;=:@/?", rune(character))
-}
-
-func isHexDigit(character byte) bool {
-	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f' ||
-		character >= 'A' && character <= 'F'
-}
-
 func unescapePointerToken(token string) (string, error) {
 	decoded := make([]byte, 0, len(token))
 
