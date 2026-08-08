@@ -27,6 +27,10 @@ func parseInput(input Input) (*schemaModel, error) {
 		return nil, versionErr
 	}
 
+	if profileErr := validateDocumentProfile(document, root); profileErr != nil {
+		return nil, profileErr
+	}
+
 	schema, pointer, err := selectRequestSchema(document, root, input.OperationID)
 	if err != nil {
 		return nil, err

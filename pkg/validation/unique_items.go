@@ -12,8 +12,8 @@ import (
 	"github.com/djosh34/klopt/pkg/internal/oas"
 )
 
-// rejectAuthoredSchemaExclusions walks every OpenAPI 3.0 Schema Object slot after
-// ordinary request acquisition and compilation have succeeded.
+// rejectAuthoredSchemaExclusions walks every OpenAPI 3.0 Schema Object slot before
+// ordinary request acquisition and compilation begin.
 func rejectAuthoredSchemaExclusions(document json.RawMessage) error {
 	root, ok := rawObject(document)
 	if !ok {
@@ -415,6 +415,10 @@ func (walker *authoredSchemaWalker) schemaValue(value any, pointer *authoredSche
 	}
 
 	if _, present := members["discriminator"]; present {
+		if _, adjacentOneOf := members["oneOf"]; adjacentOneOf {
+			return unsupportedOneOf(pointer.String())
+		}
+
 		return unsupportedAuthoredDiscriminator(pointer.String())
 	}
 
@@ -449,7 +453,7 @@ func (walker *authoredSchemaWalker) referencedSchema(
 		},
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve schema at %s: %w", pointerString, err)
 	}
 
 	if walker.seen("resolved schema", resolved.Pointer) {
@@ -660,6 +664,10 @@ func rejectAuthoredSchemaKeywords(schema oas.LocatedSchema) error {
 	}
 
 	if _, present := members["discriminator"]; present {
+		if _, adjacentOneOf := members["oneOf"]; adjacentOneOf {
+			return unsupportedOneOf(schema.Pointer)
+		}
+
 		return unsupportedAuthoredDiscriminator(schema.Pointer)
 	}
 
@@ -669,6 +677,11 @@ func rejectAuthoredSchemaKeywords(schema oas.LocatedSchema) error {
 // unsupportedUniqueItems reports the exact authored keyword pointer.
 func unsupportedUniqueItems(pointer string) error {
 	return fmt.Errorf("compile schema at %s/uniqueItems: unsupported keyword", pointer)
+}
+
+// unsupportedOneOf preserves oneOf's distinct attribution ahead of an adjacent discriminator.
+func unsupportedOneOf(pointer string) error {
+	return fmt.Errorf("compile schema at %s/oneOf: unsupported keyword", pointer)
 }
 
 // unsupportedAuthoredDiscriminator reports the deliberate profile exclusion at its authored pointer.

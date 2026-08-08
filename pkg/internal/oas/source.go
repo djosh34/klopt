@@ -39,6 +39,9 @@ type LocatedSchema struct {
 	Pointer string
 }
 
+// DocumentValidator validates the normalized document before semantic compilation.
+type DocumentValidator func(json.RawMessage) error
+
 // ParameterValidator validates one independently resolved raw Parameter Object.
 type ParameterValidator func(Source, LocatedSchema) error
 
@@ -82,8 +85,25 @@ func Parse(spec []byte) (map[string]Source, error) {
 	return sources, err
 }
 
+// ParseWithProfileValidation completes structural request acquisition, validates the
+// normalized document profile, then validates every raw Parameter Object.
+func ParseWithProfileValidation(
+	spec []byte,
+	validateDocument DocumentValidator,
+	validateParameter ParameterValidator,
+) (map[string]Source, json.RawMessage, error) {
+	if validateDocument == nil {
+		return nil, nil, errors.New("document validator must not be nil")
+	}
+
+	if validateParameter == nil {
+		return nil, nil, errors.New("parameter validator must not be nil")
+	}
+
+	return parseWithSemanticVersionPattern(spec, validateDocument, validateParameter, semanticVersionPattern)
+}
+
 // ParseWithParameterValidation validates every raw Parameter Object before merge or filtering.
-// It also returns the normalized document for validation that must run after request compilation.
 func ParseWithParameterValidation(
 	spec []byte,
 	validateParameter ParameterValidator,
@@ -97,7 +117,7 @@ func ParseWithParameterValidation(
 
 // parse ingests and acquires one OpenAPI document with optional raw Parameter Object validation.
 func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source, json.RawMessage, error) {
-	return parseWithSemanticVersionPattern(spec, validateParameter, semanticVersionPattern)
+	return parseWithSemanticVersionPattern(spec, nil, validateParameter, semanticVersionPattern)
 }
 
 // parseWithSemanticVersionPattern parses using the supplied version grammar.
@@ -105,6 +125,7 @@ func parse(spec []byte, validateParameter ParameterValidator) (map[string]Source
 //nolint:cyclop // Document decoding, version admission, and request collection form one ordered parse.
 func parseWithSemanticVersionPattern(
 	spec []byte,
+	validateDocument DocumentValidator,
 	validateParameter ParameterValidator,
 	versionPattern string,
 ) (map[string]Source, json.RawMessage, error) {
@@ -162,9 +183,37 @@ func parseWithSemanticVersionPattern(
 	normalized := append(json.RawMessage(nil), document...)
 	source := Source{Document: normalized}
 
-	sources, err := source.collectRequests(root["paths"], validateParameter)
+	type pendingParameter struct {
+		source Source
+		schema LocatedSchema
+	}
+
+	pending := make([]pendingParameter, 0)
+
+	queueParameter := validateParameter
+	if validateParameter != nil {
+		queueParameter = func(source Source, schema LocatedSchema) error {
+			pending = append(pending, pendingParameter{source: source, schema: schema})
+
+			return nil
+		}
+	}
+
+	sources, err := source.collectRequests(root["paths"], queueParameter)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if validateDocument != nil {
+		if err := validateDocument(normalized); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	for _, parameter := range pending {
+		if err := validateParameter(parameter.source, parameter.schema); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	return sources, normalized, nil

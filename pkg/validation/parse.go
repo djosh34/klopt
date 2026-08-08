@@ -19,8 +19,6 @@ import (
 )
 
 // Parse compiles every request validation in one OpenAPI document.
-//
-//nolint:cyclop // Request body, query, path, and final graph checks are explicit construction stages.
 func Parse(
 	spec []byte,
 	patternOptions ...patternvalidator.Option,
@@ -31,8 +29,9 @@ func Parse(
 		patternOptions: patternOptions,
 	}
 
-	sources, document, err := oas.ParseWithParameterValidation(
+	sources, _, err := oas.ParseWithProfileValidation(
 		spec,
+		rejectAuthoredSchemaExclusions,
 		func(source oas.Source, parameter oas.LocatedSchema) error {
 			rawCompiler.source = source
 
@@ -87,10 +86,6 @@ func Parse(
 		}
 
 		requestValidations[operationID] = requestValidation
-	}
-
-	if err := rejectAuthoredSchemaExclusions(document); err != nil {
-		return nil, err
 	}
 
 	return requestValidations, nil

@@ -1062,8 +1062,8 @@ paths:
 	}
 }
 
-// TestParseCompilesRawOperationParametersBeforeOperationID preserves full acquisition precedence.
-func TestParseCompilesRawOperationParametersBeforeOperationID(t *testing.T) {
+// TestParseChecksOperationStructureBeforeOrdinaryParameterSchemaProfile preserves admission phases.
+func TestParseChecksOperationStructureBeforeOrdinaryParameterSchemaProfile(t *testing.T) {
 	t.Parallel()
 
 	requests, err := Parse([]byte(`openapi: 3.0.3
@@ -1075,9 +1075,8 @@ paths:
         - {name: q, in: query, schema: {oneOf: [{type: string}]}}
 `))
 	require.Nil(t, requests)
-	require.ErrorContains(t, err, "/parameters/0/schema/oneOf")
-	require.ErrorContains(t, err, "unsupported keyword")
-	require.NotErrorIs(t, err, oas.ErrInvalidOperationID)
+	require.ErrorIs(t, err, oas.ErrInvalidOperationID)
+	require.NotContains(t, err.Error(), "/parameters/0/schema/oneOf")
 }
 
 // TestParseCompilesOperationsInSortedIDOrder verifies deterministic atomic failure selection.

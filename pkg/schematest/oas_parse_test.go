@@ -993,7 +993,7 @@ func TestParseInputAcceptsAndDiscardsWellFormedInertMetadata(t *testing.T) {
 
 	document := `{
 		"openapi":"3.0.4",
-		"components":{"schemas":{"Unused":{"discriminator":{"propertyName":"kind"}}}},
+		"components":{"schemas":{"Unused":{"description":"inert"}}},
 		"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{
 			"title":"Title",
 			"description":"Description",
@@ -1009,6 +1009,80 @@ func TestParseInputAcceptsAndDiscardsWellFormedInertMetadata(t *testing.T) {
 	model, err := parseInput(Input{OpenAPI: []byte(document), OperationID: "selected"})
 	require.NoError(t, err)
 	require.Equal(t, schemaAny, model.root.kind)
+}
+
+func TestBuildRejectsDocumentWideDiscriminatorBeforeSelectedSchemaCompilation(t *testing.T) {
+	t.Parallel()
+
+	document := `{
+		"openapi":"3.0.4",
+		"components":{"schemas":{"Unused":{"discriminator":{"propertyName":"kind"}}}},
+		"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":{"schema":{"type":1}}}}}}}
+	}`
+
+	report, err := Build(Input{OpenAPI: []byte(document), OperationID: "selected", MaxSteps: 0}, func(Case) error {
+		return nil
+	})
+	require.Equal(t, Report{}, report)
+	require.EqualError(
+		t,
+		err,
+		"#/components/schemas/Unused/discriminator: authored discriminator is outside the schematest profile",
+	)
+}
+
+func TestBuildRejectsDocumentWideReferenceExclusionsBeforeSelectedSchemaCompilation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		components string
+		pointer    string
+	}{
+		{
+			name:       "external",
+			components: `{"Unused":{"$ref":"other.yaml#/Thing"}}`,
+			pointer:    "#/components/schemas/Unused/$ref",
+		},
+		{
+			name:       "cycle",
+			components: `{"A":{"$ref":"#/components/schemas/B"},"B":{"$ref":"#/components/schemas/A"}}`,
+			pointer:    "#/components/schemas/A/$ref",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			document := `{"openapi":"3.0.4","components":{"schemas":` + test.components +
+				`},"paths":{"/":{"post":{"operationId":"selected","requestBody":{"content":{"application/json":` +
+				`{"schema":{"type":1}}}}}}}}`
+
+			_, err := Build(Input{OpenAPI: []byte(document), OperationID: "selected", MaxSteps: 0}, func(Case) error {
+				return nil
+			})
+			require.ErrorContains(t, err, test.pointer)
+		})
+	}
+}
+
+func TestBuildKeepsOneOfAttributionAheadOfAdjacentDiscriminator(t *testing.T) {
+	t.Parallel()
+
+	_, err := Build(Input{
+		OpenAPI: []byte(documentWithJSONSchema(
+			`{"oneOf":[{}],"discriminator":{"propertyName":"kind"}}`,
+		)),
+		OperationID: "selected",
+		MaxSteps:    0,
+	}, func(Case) error { return nil })
+	require.EqualError(
+		t,
+		err,
+		"#/paths/~1/post/requestBody/content/application~1json/schema/oneOf: "+
+			"authored oneOf is outside the schematest profile",
+	)
 }
 
 func TestParseInputRejectsMalformedSchemaShapes(t *testing.T) {
