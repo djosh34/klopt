@@ -145,6 +145,36 @@ func TestRowProjectionCursorBuildsOnlyPinnedMasks(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestStructuralFrontiersChargeBeforeScanningNoWitnessMasks proves projection scans are not free.
+func TestStructuralFrontiersChargeBeforeScanningNoWitnessMasks(t *testing.T) {
+	t.Parallel()
+
+	branches := make([]*schemaNode, 65)
+	for index := range branches {
+		branches[index] = &schemaNode{schemaShape: &schemaShape{}}
+	}
+
+	occurrence := schemaOccurrence{usePointer: "#/schema", targetPointer: "#/schema", instanceTemplate: "#"}
+	for _, kind := range []jsonKind{jsonArray, jsonObject} {
+		root := &schemaNode{schemaShape: &schemaShape{anyOf: branches}, occurrence: occurrence}
+		searchState := &search{model: &schemaModel{root: root}, maxSteps: 1}
+
+		var err error
+		if kind == jsonArray {
+			_, err = searchState.walkArray(root, occurrence, nil, rowSearchContext{}, func(*jsonValue) (bool, error) {
+				return false, nil
+			})
+		} else {
+			_, err = searchState.walkObject(root, occurrence, nil, rowSearchContext{}, func(*jsonValue) (bool, error) {
+				return false, nil
+			})
+		}
+
+		require.ErrorIs(t, err, errMaxSteps)
+		require.Equal(t, uint64(1), searchState.steps)
+	}
+}
+
 // TestScalarSearchConsumesEveryProjectionMask proves the migration seam is live.
 func TestScalarSearchConsumesEveryProjectionMask(t *testing.T) {
 	t.Parallel()

@@ -190,10 +190,20 @@ func TestWalkProjectedDirectArraysCarriesComposedDefaultsIntoMasks(t *testing.T)
 
 	var row *jsonValue
 
-	found, err := searchState.walkProjectedDirectArrays(
-		model.root,
-		model.root.occurrence,
-		request.requirements,
+	cursor := newRowProjectionCursor(model.root, model.root.occurrence, request.requirements)
+	defer cursor.Close()
+
+	view, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	_, err = view.appendBranchRequirements(
+		append([]requirement(nil), request.requirements...), searchState.assign,
+	)
+	require.NoError(t, err)
+
+	found, err := searchState.walkProjectedDirectValues(
+		view, jsonArray,
 		func(candidate *jsonValue) (bool, error) {
 			if !targetRowMatches(evaluate(model, candidate), request, candidate) {
 				return false, nil

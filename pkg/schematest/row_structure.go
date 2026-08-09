@@ -388,84 +388,42 @@ func rowDirectArrayLengthAt(view rowProjectionView, wanted uint64) (rowArrayCoun
 	return rowArrayCount{}, false, nil
 }
 
-// walkProjectedDirectArrays offers complete composed array witnesses before repair search.
-//
-//nolint:cyclop // Projection discovery, charging, cloning, and visiting are one lazy source operation.
-func (s *search) walkProjectedDirectArrays(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
+// walkProjectedDirectValues visits complete authored witnesses from one charged projection.
+func (s *search) walkProjectedDirectValues(
+	view rowProjectionView,
+	kind jsonKind,
 	visit rowVisit,
 ) (bool, error) {
-	cursor := newRowProjectionCursor(node, occurrence, requirements)
-	defer cursor.Close()
+	var (
+		complete bool
+		visitErr error
+	)
 
-	for {
-		view, ok, err := cursor.Next()
-		if err != nil {
-			return false, err
+	err := view.eachDirectValue(func(_ rowSchemaSource, candidate *jsonValue) bool {
+		if candidate.kind != kind {
+			return true
 		}
 
-		if !ok {
-			return false, nil
+		if visitErr = s.assign(); visitErr != nil {
+			return false
 		}
 
-		var candidates bool
+		owned, cloneErr := cloneJSONValue(candidate)
+		if cloneErr != nil {
+			visitErr = cloneErr
 
-		err = view.eachDirectValue(func(_ rowSchemaSource, candidate *jsonValue) bool {
-			if candidate.kind == jsonArray {
-				candidates = true
-			}
-
-			return !candidates
-		})
-		if err != nil {
-			return false, err
+			return false
 		}
 
-		if !candidates {
-			continue
-		}
+		complete, visitErr = visit(owned)
 
-		if _, activeErr := view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), s.assign,
-		); activeErr != nil {
-			return false, activeErr
-		}
-
-		var (
-			complete bool
-			visitErr error
-		)
-
-		err = view.eachDirectValue(func(_ rowSchemaSource, candidate *jsonValue) bool {
-			if candidate.kind != jsonArray {
-				return true
-			}
-
-			if visitErr = s.assign(); visitErr != nil {
-				return false
-			}
-
-			owned, cloneErr := cloneJSONValue(candidate)
-			if cloneErr != nil {
-				visitErr = cloneErr
-
-				return false
-			}
-
-			complete, visitErr = visit(owned)
-
-			return visitErr == nil && !complete
-		})
-		if err != nil {
-			return false, err
-		}
-
-		if visitErr != nil || complete {
-			return complete, visitErr
-		}
+		return visitErr == nil && !complete
+	})
+	if err != nil {
+		return false, err
 	}
+
+	return complete, visitErr
 }
 
 // walkArray fairly advances every active projection across the open count frontier.
@@ -478,11 +436,6 @@ func (s *search) walkArray(
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	complete, err := s.walkProjectedDirectArrays(node, occurrence, requirements, visit)
-	if err != nil || complete {
-		return complete, err
-	}
-
 	rounds, err := newRankProductCursor(1)
 	if err != nil {
 		return false, err
@@ -546,6 +499,19 @@ func (s *search) walkProjectedArray(
 	}
 
 	items := rowProjectedArrayItems(view, requirements)
+
+	if round == 0 {
+		if _, activeErr := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...), s.assign,
+		); activeErr != nil {
+			return false, false, activeErr
+		}
+
+		complete, directErr := s.walkProjectedDirectValues(view, jsonArray, visit)
+		if directErr != nil || complete {
+			return complete, true, directErr
+		}
+	}
 
 	walkLength := func(length rowArrayCount) (bool, error) {
 		activeRequirements, activeErr := view.appendBranchRequirements(
@@ -828,11 +794,6 @@ func (s *search) walkObject(
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	complete, err := s.walkProjectedDirectObjects(node, occurrence, requirements, visit)
-	if err != nil || complete {
-		return complete, err
-	}
-
 	cursor := newRowProjectionCursor(node, occurrence, requirements)
 	defer cursor.Close()
 
@@ -853,6 +814,11 @@ func (s *search) walkObject(
 			return false, activeErr
 		}
 
+		directComplete, directErr := s.walkProjectedDirectValues(view, jsonObject, visit)
+		if directErr != nil || directComplete {
+			return directComplete, directErr
+		}
+
 		shape, shapeErr := newRowProjectedObject(view, active, occurrence)
 		if shapeErr != nil {
 			return false, shapeErr
@@ -864,74 +830,11 @@ func (s *search) walkObject(
 
 		values := make(map[string]*jsonValue)
 
-		complete, err = s.walkProjectedObjectMembers(
+		complete, err := s.walkProjectedObjectMembers(
 			shape, active, context, values, 0, 0, 0, shape.requiredFrom(0), visit,
 		)
 		if err != nil || complete {
 			return complete, err
-		}
-	}
-}
-
-// walkProjectedDirectObjects offers authored object enum/default values without retaining them.
-//
-//nolint:cyclop // Cursor, source, assignment, clone, and visit errors remain explicit.
-func (s *search) walkProjectedDirectObjects(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	visit rowVisit,
-) (bool, error) {
-	cursor := newRowProjectionCursor(node, occurrence, requirements)
-	defer cursor.Close()
-
-	for {
-		view, ok, err := cursor.Next()
-		if err != nil {
-			return false, err
-		}
-
-		if !ok {
-			return false, nil
-		}
-
-		var (
-			complete bool
-			visitErr error
-		)
-
-		err = view.eachDirectValue(func(_ rowSchemaSource, candidate *jsonValue) bool {
-			if candidate.kind != jsonObject {
-				return true
-			}
-
-			if _, visitErr = view.appendBranchRequirements(
-				append([]requirement(nil), requirements...), s.assign,
-			); visitErr != nil {
-				return false
-			}
-
-			if visitErr = s.assign(); visitErr != nil {
-				return false
-			}
-
-			owned, cloneErr := cloneJSONValue(candidate)
-			if cloneErr != nil {
-				visitErr = cloneErr
-
-				return false
-			}
-
-			complete, visitErr = visit(owned)
-
-			return visitErr == nil && !complete
-		})
-		if err != nil {
-			return false, err
-		}
-
-		if visitErr != nil || complete {
-			return complete, visitErr
 		}
 	}
 }
