@@ -264,7 +264,18 @@ func (s *search) walkArray(
 		return complete, err
 	}
 
-	for round := uint64(0); ; round++ {
+	rounds, err := newRankProductCursor(1)
+	if err != nil {
+		return false, err
+	}
+
+	for {
+		ranks, ok := rounds.Next()
+		if !ok {
+			return false, nil
+		}
+
+		round := ranks[0]
 		cursor := newRowProjectionCursor(node, occurrence, requirements)
 		attempted := false
 
@@ -295,10 +306,6 @@ func (s *search) walkArray(
 		cursor.Close()
 
 		if round > 0 && !attempted {
-			return false, nil
-		}
-
-		if round == ^uint64(0) {
 			return false, nil
 		}
 	}
