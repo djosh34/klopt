@@ -144,6 +144,7 @@ func findTypeDerivative(
 	return nil, false, nil
 }
 
+//nolint:cyclop // Active-kind pruning and projected witness fallback share one fault search.
 func findEnumDerivative(
 	parent *jsonValue,
 	fault faultProgram,
@@ -152,6 +153,12 @@ func findEnumDerivative(
 	s *search,
 ) (*jsonValue, bool, error) {
 	for _, kind := range enumFaultKinds(node) {
+		if !activeSchemaAllowsKind(
+			model.root, model.root.occurrence, fault.requirements, kind, make(map[*schemaNode]bool),
+		) {
+			continue
+		}
+
 		seeded := canonicalEnumFaultWitnesses(node, kind)
 
 		derivative, found, seedErr := firstReplacementDerivative(parent, fault, seeded, model, s)
@@ -165,6 +172,37 @@ func findEnumDerivative(
 		if !found {
 			continue
 		}
+
+		cursor := newRowProjectionCursor(container, occurrence, fault.requirements)
+		for {
+			view, ok, projectionErr := cursor.Next()
+			if projectionErr != nil {
+				cursor.Close()
+
+				return nil, false, projectionErr
+			}
+
+			if !ok {
+				break
+			}
+
+			projected := func(yield func(*jsonValue) bool) error {
+				return view.eachDirectValue(func(_ rowSchemaSource, value *jsonValue) bool {
+					return value.kind != kind || yield(value)
+				})
+			}
+
+			projectedDerivative, found, projectedErr := firstReplacementDerivative(
+				parent, fault, projected, model, s,
+			)
+			if projectedErr != nil || found {
+				cursor.Close()
+
+				return projectedDerivative, found, projectedErr
+			}
+		}
+
+		cursor.Close()
 
 		withoutEnum := cloneWithoutFaultRule(container, occurrence, fault.obligation.occurrence, oracleRuleEnum)
 		derivative = nil

@@ -426,9 +426,7 @@ func (s *search) walkProjectedDirectValues(
 	return complete, visitErr
 }
 
-// walkArray fairly advances every active projection across the open count frontier.
-//
-//nolint:cyclop // Projection rounds and the sole global cutoff share one lazy traversal boundary.
+// walkArray advances projection, emitted length, and child ranks through one fair frontier.
 func (s *search) walkArray(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -436,51 +434,7 @@ func (s *search) walkArray(
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	rounds, err := newRankProductCursor(1)
-	if err != nil {
-		return false, err
-	}
-
-	for {
-		ranks, ok := rounds.Next()
-		if !ok {
-			return false, nil
-		}
-
-		round := ranks[0]
-		cursor := newRowProjectionCursor(node, occurrence, requirements)
-		attempted := false
-
-		for {
-			view, ok, err := cursor.Next()
-			if err != nil {
-				cursor.Close()
-
-				return false, err
-			}
-
-			if !ok {
-				break
-			}
-
-			complete, viewAttempted, err := s.walkProjectedArray(
-				view, requirements, context, round, visit,
-			)
-			attempted = attempted || viewAttempted
-
-			if err != nil || complete {
-				cursor.Close()
-
-				return complete, err
-			}
-		}
-
-		cursor.Close()
-
-		if round > 0 && !attempted {
-			return false, nil
-		}
-	}
+	return s.walkArrayFrontier(node, occurrence, requirements, context, visit)
 }
 
 // walkProjectedArray constructs the named boundaries or one fair remaining count.
@@ -578,6 +532,17 @@ func (s *search) walkProjectedArray(
 // rowProjectionAcceptsKind reports whether every active source admits one structural kind.
 func rowProjectionAcceptsKind(view rowProjectionView, kind jsonKind) bool {
 	for _, source := range view.sources {
+		if source.node.enum != nil {
+			accepted := false
+			for _, member := range source.node.enum {
+				accepted = accepted || member.value != nil && member.value.kind == kind
+			}
+
+			if !accepted {
+				return false
+			}
+		}
+
 		accepted := false
 		for _, candidate := range orderedTypeKinds(source.node) {
 			accepted = accepted || candidate == kind
@@ -784,9 +749,7 @@ type rowProjectedObject struct {
 	infeasible     bool
 }
 
-// walkObject offers complete projected witnesses, then constructs each active shape lazily.
-//
-//nolint:cyclop // Cursor advancement, shape compilation, and DFS handoff are one lazy boundary.
+// walkObject advances projection, presence, wildcard, and child ranks through one fair frontier.
 func (s *search) walkObject(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -794,49 +757,7 @@ func (s *search) walkObject(
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	cursor := newRowProjectionCursor(node, occurrence, requirements)
-	defer cursor.Close()
-
-	for {
-		view, ok, cursorErr := cursor.Next()
-		if cursorErr != nil {
-			return false, cursorErr
-		}
-
-		if !ok {
-			return false, nil
-		}
-
-		active, activeErr := view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), s.assign,
-		)
-		if activeErr != nil {
-			return false, activeErr
-		}
-
-		directComplete, directErr := s.walkProjectedDirectValues(view, jsonObject, visit)
-		if directErr != nil || directComplete {
-			return directComplete, directErr
-		}
-
-		shape, shapeErr := newRowProjectedObject(view, active, occurrence)
-		if shapeErr != nil {
-			return false, shapeErr
-		}
-
-		if !shape.feasible() {
-			continue
-		}
-
-		values := make(map[string]*jsonValue)
-
-		complete, err := s.walkProjectedObjectMembers(
-			shape, active, context, values, 0, 0, 0, shape.requiredFrom(0), visit,
-		)
-		if err != nil || complete {
-			return complete, err
-		}
-	}
+	return s.walkObjectFrontier(node, occurrence, requirements, context, visit)
 }
 
 // newRowProjectedObject derives bounds, names, requiredness, and wildcard schemas from one view.
@@ -1206,8 +1127,6 @@ func (s *search) walkProjectedObjectMembers(
 }
 
 // projectedPresenceFeasible prunes impossible prefixes before charging their presence choice.
-//
-//nolint:cyclop // Count and capacity intersections are one forward feasibility predicate.
 func projectedPresenceFeasible(
 	shape *rowProjectedObject,
 	index int,
@@ -1221,10 +1140,6 @@ func projectedPresenceFeasible(
 	}
 
 	if shape.hasMaximum && (nextPresent > shape.maximum || nextPresent+remainingRequired > shape.maximum) {
-		return false
-	}
-
-	if shape.hasExact && !shape.exactBeyond && nextPresent > shape.exact {
 		return false
 	}
 

@@ -1,6 +1,9 @@
 package schematest
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // rankProductCursor enumerates rank tuples by increasing sum and canonical
 // lexicographic projection. It retains only the current tuple and finite domain
@@ -34,7 +37,10 @@ func (cursor *rankProductCursor) SetFinite(dimension int, size uint64) error {
 	}
 
 	if cursor.finite[dimension] && cursor.finiteSizes[dimension] != size {
-		return errors.New("schematest: rank product domain size changed")
+		return fmt.Errorf(
+			"schematest: rank product domain %d size changed from %d to %d",
+			dimension, cursor.finiteSizes[dimension], size,
+		)
 	}
 
 	cursor.finite[dimension] = true
