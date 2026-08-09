@@ -371,6 +371,110 @@ func TestObjectFrontierStreamsEveryDirectWitness(t *testing.T) {
 	require.Equal(t, []bool{false, true}, witnesses)
 }
 
+// TestExactArrayCountKeepsEveryDirectWitnessRank proves constructed guidance cannot retire direct values.
+func TestExactArrayCountKeepsEveryDirectWitnessRank(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","enum":[[1],[2],[3]],"items":{},"minItems":1,"maxItems":1
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+	found := false
+	complete, err := searchState.walkArray(
+		model.root,
+		model.root.occurrence,
+		[]requirement{{
+			tag: requirementExactCount, occurrence: model.root.occurrence, count: model.root.minItems,
+		}},
+		rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			found = string(encoded) == `[3]`
+
+			return found, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, found)
+}
+
+// TestArrayProjectionResumesAfterLaterMask proves later masks do not retire an earlier source.
+func TestArrayProjectionResumesAfterLaterMask(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{},"minItems":1,"maxItems":1,
+		"anyOf":[
+			{"items":{"enum":[false,true]}},
+			{"items":{"enum":[2]}}
+		]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+	laterMaskSeen := false
+	found := false
+	complete, err := searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			laterMaskSeen = laterMaskSeen || string(encoded) == `[2]`
+			found = laterMaskSeen && string(encoded) == `[true]`
+
+			return found, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, found)
+}
+
+// TestObjectProjectionResumesDirectRanksAfterLaterMask proves object sources remain independent.
+func TestObjectProjectionResumesDirectRanksAfterLaterMask(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object","additionalProperties":false,
+		"anyOf":[
+			{"enum":[{"x":1},{"x":2},{"x":3}]},
+			{"enum":[{"y":1}]}
+		]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+	laterMaskSeen := false
+	found := false
+	complete, err := searchState.walkObject(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			laterMaskSeen = laterMaskSeen || string(encoded) == `{"y":1}`
+			found = laterMaskSeen && string(encoded) == `{"x":3}`
+
+			return found, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, found)
+}
+
 // TestObjectMemberSelectionAndPresenceChargeSeparately locks the two mutation boundaries.
 func TestObjectMemberSelectionAndPresenceChargeSeparately(t *testing.T) {
 	t.Parallel()
