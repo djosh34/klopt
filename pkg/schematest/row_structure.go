@@ -1,6 +1,7 @@
 package schematest
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -8,17 +9,10 @@ import (
 
 // rowMember describes one object member choice and its best clean schema occurrence.
 type rowMember struct {
-	name         string
-	node         *schemaNode
-	occurrence   schemaOccurrence
-	required     bool
-	alternatives []rowMember
-}
-
-// rowAdditionalPropertySource identifies a wildcard schema and its declaring object.
-type rowAdditionalPropertySource struct {
-	source rowSchemaSource
-	owner  *schemaNode
+	name       string
+	node       *schemaNode
+	occurrence schemaOccurrence
+	required   bool
 }
 
 const (
@@ -468,7 +462,27 @@ func (s *search) walkArrayElements(
 	})
 }
 
-// walkObject assigns members in canonical UTF-8 name order.
+// rowProjectedObject is the incrementally constructed shape of one active projection.
+type rowProjectedObject struct {
+	members        []rowMember
+	owners         []rowSchemaSource
+	declared       map[string]bool
+	rootOccurrence schemaOccurrence
+	minimum        uint64
+	maximum        uint64
+	exact          uint64
+	minimumBeyond  bool
+	exactBeyond    bool
+	countConflict  bool
+	hasMaximum     bool
+	hasExact       bool
+	allowsExtra    bool
+	requiresExtra  bool
+}
+
+// walkObject offers complete projected witnesses, then constructs each active shape lazily.
+//
+//nolint:cyclop // Cursor advancement, shape compilation, and DFS handoff are one lazy boundary.
 func (s *search) walkObject(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -476,51 +490,428 @@ func (s *search) walkObject(
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	members, err := rowObjectMembers(node, occurrence, requirements)
-	if err != nil {
-		return false, err
+	complete, err := s.walkProjectedDirectObjects(node, occurrence, requirements, visit)
+	if err != nil || complete {
+		return complete, err
 	}
 
-	values := make(map[string]*jsonValue, len(members))
+	cursor := newRowProjectionCursor(node, occurrence, requirements)
+	defer cursor.Close()
 
-	return s.walkObjectMembers(node, occurrence, requirements, context, members, values, 0, visit)
+	for {
+		view, ok, cursorErr := cursor.Next()
+		if cursorErr != nil {
+			return false, cursorErr
+		}
+
+		if !ok {
+			return false, nil
+		}
+
+		active, activeErr := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...), s.assign,
+		)
+		if activeErr != nil {
+			return false, activeErr
+		}
+
+		shape, shapeErr := newRowProjectedObject(view, active, occurrence)
+		if shapeErr != nil {
+			return false, shapeErr
+		}
+
+		if !shape.feasible() {
+			continue
+		}
+
+		values := make(map[string]*jsonValue)
+
+		complete, err = s.walkProjectedObjectMembers(
+			shape, active, context, values, 0, 0, 0, shape.requiredFrom(0), visit,
+		)
+		if err != nil || complete {
+			return complete, err
+		}
+	}
 }
 
-// walkObjectMembers performs deterministic presence and value backtracking.
-func (s *search) walkObjectMembers(
+// walkProjectedDirectObjects offers authored object enum/default values without retaining them.
+//
+//nolint:cyclop // Cursor, source, assignment, clone, and visit errors remain explicit.
+func (s *search) walkProjectedDirectObjects(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	requirements []requirement,
-	context rowSearchContext,
-	members []rowMember,
-	values map[string]*jsonValue,
-	index int,
 	visit rowVisit,
 ) (bool, error) {
-	if index == len(members) {
-		return visit(&jsonValue{kind: jsonObject, object: values})
+	cursor := newRowProjectionCursor(node, occurrence, requirements)
+	defer cursor.Close()
+
+	for {
+		view, ok, err := cursor.Next()
+		if err != nil {
+			return false, err
+		}
+
+		if !ok {
+			return false, nil
+		}
+
+		var (
+			complete bool
+			visitErr error
+		)
+
+		err = view.eachDirectValue(func(_ rowSchemaSource, candidate *jsonValue) bool {
+			if candidate.kind != jsonObject {
+				return true
+			}
+
+			if _, visitErr = view.appendBranchRequirements(
+				append([]requirement(nil), requirements...), s.assign,
+			); visitErr != nil {
+				return false
+			}
+
+			if visitErr = s.assign(); visitErr != nil {
+				return false
+			}
+
+			owned, cloneErr := cloneJSONValue(candidate)
+			if cloneErr != nil {
+				visitErr = cloneErr
+
+				return false
+			}
+
+			complete, visitErr = visit(owned)
+
+			return visitErr == nil && !complete
+		})
+		if err != nil {
+			return false, err
+		}
+
+		if visitErr != nil || complete {
+			return complete, visitErr
+		}
+	}
+}
+
+// newRowProjectedObject derives bounds, names, requiredness, and wildcard schemas from one view.
+//
+//nolint:cyclop,gocognit,gocyclo // The active object conjunction is intentionally compiled at one seam.
+func newRowProjectedObject(
+	view rowProjectionView,
+	requirements []requirement,
+	rootOccurrence schemaOccurrence,
+) (*rowProjectedObject, error) {
+	shape := &rowProjectedObject{
+		declared: make(map[string]bool), rootOccurrence: rootOccurrence, allowsExtra: true,
+	}
+	required := make(map[string]schemaOccurrence)
+	owners := make([]rowSchemaSource, 0, len(view.sources))
+
+	for _, source := range view.sources {
+		if source.node == nil || source.node.schemaShape == nil {
+			return nil, errors.New("schematest: projected object source has no shape")
+		}
+
+		owners = append(owners, source)
+
+		minimum, fits, err := exactCountUint64(source.node.minProperties)
+		if err != nil {
+			return nil, err
+		}
+
+		if source.node.minProperties != nil && !fits {
+			shape.minimumBeyond = true
+		} else if fits && minimum > shape.minimum {
+			shape.minimum = minimum
+		}
+
+		maximum, fits, err := exactCountUint64(source.node.maxProperties)
+		if err != nil {
+			return nil, err
+		}
+
+		if fits && (!shape.hasMaximum || maximum < shape.maximum) {
+			shape.maximum = maximum
+			shape.hasMaximum = true
+		}
+
+		for _, requirement := range requirements {
+			if requirement.tag != requirementExactCount || requirement.count == nil ||
+				!rowOccurrenceMatches(requirement.occurrence, source.occurrence) {
+				continue
+			}
+
+			exact, exactFits, exactErr := exactCountUint64(requirement.count)
+			if exactErr != nil {
+				return nil, exactErr
+			}
+
+			if !exactFits {
+				if shape.hasExact && !shape.exactBeyond {
+					shape.countConflict = true
+				}
+
+				shape.exactBeyond = true
+				shape.hasExact = true
+			} else if shape.hasExact && (shape.exactBeyond || shape.exact != exact) {
+				shape.countConflict = true
+			} else {
+				shape.exact = exact
+				shape.hasExact = true
+			}
+		}
+
+		for _, name := range sortedSchemaPropertyNames(source.node.properties) {
+			shape.declared[name] = true
+		}
+
+		for _, name := range source.node.required {
+			if _, exists := required[name]; !exists {
+				required[name] = requiredPresenceOccurrence(source.node, source.occurrence, name)
+			}
+
+			shape.declared[name] = true
+		}
 	}
 
-	member := members[index]
-	presence, presenceConstrained := rowPresenceRequirementDetails(requirements, member.occurrence)
+	for _, requirement := range requirements {
+		name, child := rowChildName(rootOccurrence.instanceTemplate, requirement.occurrence.instanceTemplate)
+		if !child || name == "*" || !projectedRequirementActive(requirement, owners, rootOccurrence) {
+			continue
+		}
 
-	choices, err := rowMemberPresenceChoices(
-		node, occurrence, requirements, members, index, member, presence, presenceConstrained,
+		if requirement.presence != requirementNoPresence || requirement.hasKind {
+			shape.declared[name] = true
+		}
+	}
+
+	names := make([]string, 0, len(shape.declared))
+	for name := range shape.declared {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names {
+		allowed := true
+
+		var sources []rowSchemaSource
+
+		for _, owner := range owners {
+			if property, exists := rowChildSchemaSource(owner.node, owner.occurrence, rowChildProperty, name); exists {
+				sources = append(sources, property)
+
+				continue
+			}
+
+			if owner.node.additionalProperties != nil {
+				additionalOccurrence := rebasePlanOccurrence(
+					owner.node.additionalProperties,
+					owner.occurrence,
+					owner.occurrence.usePointer+"/additionalProperties",
+					appendInstanceToken(rootOccurrence.instanceTemplate, name),
+				)
+				sources = append(sources, rowSchemaSource{
+					node: owner.node.additionalProperties, occurrence: additionalOccurrence,
+				})
+
+				continue
+			}
+
+			if !owner.node.allowAdditionalProperties {
+				allowed = false
+
+				break
+			}
+		}
+
+		if !allowed {
+			if _, mustExist := required[name]; mustExist {
+				return shape, nil
+			}
+
+			continue
+		}
+
+		ordered := rowPreferredSchemaSources(sources, requirements)
+
+		choice, exists, err := mergeRowSchemaSources(ordered)
+		if err != nil {
+			return nil, err
+		}
+
+		member := rowMember{name: name}
+		if exists {
+			member.node = choice.node
+			member.occurrence = choice.occurrence
+		} else if requiredOccurrence, mustExist := required[name]; mustExist {
+			member.occurrence = requiredOccurrence
+		} else {
+			member.occurrence = schemaOccurrence{
+				usePointer:       rootOccurrence.usePointer + "/properties/" + escapePointerToken(name),
+				targetPointer:    rootOccurrence.targetPointer,
+				instanceTemplate: appendInstanceToken(rootOccurrence.instanceTemplate, name),
+			}
+		}
+
+		_, member.required = required[name]
+		shape.members = append(shape.members, member)
+	}
+
+	shape.owners = owners
+	shape.allowsExtra = projectedObjectAllowsExtra(owners)
+	shape.requiresExtra = projectedAdditionalRequired(requirements, owners)
+
+	return shape, nil
+}
+
+// projectedRequirementActive excludes child guidance authored only below inactive branches.
+func projectedRequirementActive(
+	requirement requirement,
+	owners []rowSchemaSource,
+	root schemaOccurrence,
+) bool {
+	localPrefix := root.usePointer + "/properties/"
+	if strings.HasPrefix(requirement.occurrence.usePointer, localPrefix) ||
+		strings.HasPrefix(requirement.occurrence.usePointer, root.usePointer+"/additionalProperties") {
+		return true
+	}
+
+	for _, owner := range owners {
+		if owner.occurrence.usePointer != root.usePointer &&
+			strings.HasPrefix(requirement.occurrence.usePointer, owner.occurrence.usePointer+"/") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// projectedAdditionalRequired identifies active wildcard value or presence guidance.
+func projectedAdditionalRequired(requirements []requirement, owners []rowSchemaSource) bool {
+	for _, requirement := range requirements {
+		if requirement.presence != requirementPresent && !requirement.hasKind {
+			continue
+		}
+
+		for _, owner := range owners {
+			if owner.node.additionalProperties != nil &&
+				requirement.occurrence.usePointer == owner.occurrence.usePointer+"/additionalProperties" &&
+				instanceTemplateMatches(requirement.occurrence.instanceTemplate,
+					appendInstanceToken(owner.occurrence.instanceTemplate, "*")) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// projectedObjectAllowsExtra requires every active occurrence to admit an undeclared name.
+func projectedObjectAllowsExtra(owners []rowSchemaSource) bool {
+	for _, owner := range owners {
+		if owner.node.additionalProperties == nil && !owner.node.allowAdditionalProperties {
+			return false
+		}
+	}
+
+	return true
+}
+
+// feasible rejects intersected count contradictions without constructing a partial object.
+//
+//nolint:cyclop // Bounded, unbounded, exact, and intersected count states are explicit.
+func (shape *rowProjectedObject) feasible() bool {
+	if shape.countConflict {
+		return false
+	}
+
+	if shape.minimumBeyond {
+		return !shape.hasMaximum && (!shape.hasExact || shape.exactBeyond)
+	}
+
+	if shape.exactBeyond {
+		return !shape.hasMaximum
+	}
+
+	if shape.hasExact && (shape.exact < shape.minimum || shape.hasMaximum && shape.exact > shape.maximum) {
+		return false
+	}
+
+	return !shape.hasMaximum || shape.minimum <= shape.maximum
+}
+
+// requiredFrom counts mandatory declared members without recursive prefix recomputation.
+func (shape *rowProjectedObject) requiredFrom(index int) uint64 {
+	var count uint64
+
+	for _, member := range shape.members[index:] {
+		if member.required {
+			count++
+		}
+	}
+
+	return count
+}
+
+// targetCount returns the exact objective or effective active lower bound.
+func (shape *rowProjectedObject) targetCount() (uint64, bool) {
+	if shape.hasExact {
+		return shape.exact, shape.exactBeyond
+	}
+
+	return shape.minimum, shape.minimumBeyond
+}
+
+// walkProjectedObjectMembers advances presence with incremental present/required state.
+//
+//nolint:cyclop // Pruning, presence assignment, and child DFS form one backtracking operation.
+func (s *search) walkProjectedObjectMembers(
+	shape *rowProjectedObject,
+	requirements []requirement,
+	context rowSearchContext,
+	values map[string]*jsonValue,
+	index int,
+	present uint64,
+	extras uint64,
+	remainingRequired uint64,
+	visit rowVisit,
+) (bool, error) {
+	if shape.hasMaximum && present > shape.maximum {
+		return false, nil
+	}
+
+	if index == len(shape.members) {
+		return s.walkProjectedObjectExtras(shape, requirements, context, values, present, extras, visit)
+	}
+
+	member := shape.members[index]
+
+	nextRequired := remainingRequired
+	if member.required {
+		nextRequired--
+	}
+
+	constrained, constrainedPresence := rowPresenceRequirementDetails(requirements, member.occurrence)
+
+	choices := projectedMemberPresenceChoices(
+		shape, member, constrained, constrainedPresence, present, nextRequired,
 	)
-	if err != nil {
-		return false, err
-	}
-
-	for _, present := range choices {
+	for _, choice := range choices {
 		if err := s.assign(); err != nil {
 			return false, err
 		}
 
-		if !present {
+		if !choice {
 			delete(values, member.name)
 
-			complete, err := s.walkObjectMembers(
-				node, occurrence, requirements, context, members, values, index+1, visit,
+			complete, err := s.walkProjectedObjectMembers(
+				shape, requirements, context, values, index+1, present, extras, nextRequired, visit,
 			)
 			if err != nil || complete {
 				return complete, err
@@ -532,7 +923,14 @@ func (s *search) walkObjectMembers(
 		walkValue := func(value *jsonValue) (bool, error) {
 			values[member.name] = value
 
-			return s.walkObjectMembers(node, occurrence, requirements, context, members, values, index+1, visit)
+			complete, err := s.walkProjectedObjectMembers(
+				shape, requirements, context, values, index+1, present+1, extras, nextRequired, visit,
+			)
+			if !complete {
+				delete(values, member.name)
+			}
+
+			return complete, err
 		}
 
 		complete, err := s.walkRowMemberValues(member, requirements, context, walkValue)
@@ -544,685 +942,253 @@ func (s *search) walkObjectMembers(
 	return false, nil
 }
 
-// walkRowMemberValues tries the merged property schema and any inactive-branch alternatives.
+// projectedMemberPresenceChoices puts the incremental canonical state first.
+func projectedMemberPresenceChoices(
+	shape *rowProjectedObject,
+	member rowMember,
+	constrained requirement,
+	presenceConstrained bool,
+	present uint64,
+	remainingRequired uint64,
+) []bool {
+	if presenceConstrained && !constrained.canonical {
+		return []bool{constrained.presence == requirementPresent}
+	}
+
+	if member.required {
+		return []bool{true}
+	}
+
+	if presenceConstrained {
+		preferred := constrained.presence == requirementPresent
+
+		return []bool{preferred, !preferred}
+	}
+
+	target, beyond := shape.targetCount()
+	preferred := beyond || present+remainingRequired < target
+
+	return []bool{preferred, !preferred}
+}
+
+// walkProjectedObjectExtras generates and assigns only the next needed synthetic member.
 //
-//nolint:cyclop // Schema alternatives and child recursion are one DFS phase.
+//nolint:cyclop // Bound checks, name assignment, wildcard merge, and child DFS stay atomic.
+func (s *search) walkProjectedObjectExtras(
+	shape *rowProjectedObject,
+	requirements []requirement,
+	context rowSearchContext,
+	values map[string]*jsonValue,
+	present uint64,
+	extras uint64,
+	visit rowVisit,
+) (bool, error) {
+	target, beyond := shape.targetCount()
+	if !beyond && present >= target && (!shape.requiresExtra || extras > 0) {
+		return visit(&jsonValue{kind: jsonObject, object: values})
+	}
+
+	if !shape.allowsExtra || shape.hasMaximum && present >= shape.maximum {
+		return false, nil
+	}
+
+	if err := s.assign(); err != nil {
+		return false, err
+	}
+
+	name := projectedAdditionalMemberName(shape.declared, values)
+
+	member, allowed, err := projectedAdditionalMember(shape, name, requirements)
+	if err != nil || !allowed {
+		return false, err
+	}
+
+	walkValue := func(value *jsonValue) (bool, error) {
+		values[name] = value
+
+		complete, err := s.walkProjectedObjectExtras(
+			shape, requirements, context, values, present+1, extras+1, visit,
+		)
+		if !complete {
+			delete(values, name)
+		}
+
+		return complete, err
+	}
+
+	return s.walkRowMemberValues(member, requirements, context, walkValue)
+}
+
+// projectedAdditionalMemberName returns one collision-free key without building a name list.
+func projectedAdditionalMemberName(declared map[string]bool, values map[string]*jsonValue) string {
+	const base = "__schematest_extra__"
+	if !declared[base] {
+		if _, used := values[base]; !used {
+			return base
+		}
+	}
+
+	for suffix := 0; ; suffix++ {
+		candidate := fmt.Sprintf("%s_%d", base, suffix)
+		if declared[candidate] {
+			continue
+		}
+
+		if _, used := values[candidate]; !used {
+			return candidate
+		}
+	}
+}
+
+// projectedAdditionalMember merges wildcard schemas at their exact active occurrences.
+func projectedAdditionalMember(
+	shape *rowProjectedObject,
+	name string,
+	requirements []requirement,
+) (rowMember, bool, error) {
+	sources := make([]rowSchemaSource, 0, len(shape.owners))
+	for _, owner := range shape.owners {
+		if _, declared := owner.node.properties[name]; declared {
+			return rowMember{}, false, nil
+		}
+
+		if owner.node.additionalProperties != nil {
+			sources = append(sources, rowSchemaSource{
+				node: owner.node.additionalProperties,
+				occurrence: rebasePlanOccurrence(
+					owner.node.additionalProperties,
+					owner.occurrence,
+					owner.occurrence.usePointer+"/additionalProperties",
+					appendInstanceToken(shape.rootOccurrence.instanceTemplate, name),
+				),
+			})
+
+			continue
+		}
+
+		if !owner.node.allowAdditionalProperties {
+			return rowMember{}, false, nil
+		}
+	}
+
+	ordered := rowPreferredSchemaSources(sources, requirements)
+
+	choice, exists, err := mergeRowSchemaSources(ordered)
+	if err != nil {
+		return rowMember{}, false, err
+	}
+
+	member := rowMember{
+		name: name,
+		occurrence: schemaOccurrence{
+			usePointer:       shape.rootOccurrence.usePointer + "/additionalProperties",
+			targetPointer:    shape.rootOccurrence.targetPointer,
+			instanceTemplate: appendInstanceToken(shape.rootOccurrence.instanceTemplate, name),
+		},
+	}
+	if exists {
+		member.node = choice.node
+		member.occurrence = choice.occurrence
+	}
+
+	return member, true, nil
+}
+
+// walkRowMemberValues walks the one schema conjunction selected by the active projection.
 func (s *search) walkRowMemberValues(
 	member rowMember,
 	requirements []requirement,
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	candidates := make([]rowMember, 0, 1+len(member.alternatives))
-	candidates = append(candidates, member)
-	candidates = append(candidates, member.alternatives...)
+	if member.node == nil {
+		return s.walkGenericValue(requirements, visit)
+	}
 
-	for _, candidate := range candidates {
-		if len(candidates) > 1 {
-			if err := s.assign(); err != nil {
+	return s.walkNode(
+		member.node, member.occurrence, requirements, context,
+		func(value *jsonValue) (bool, error) {
+			usable, err := s.rowChildValueUsable(member.node, member.occurrence, requirements, value)
+			if err != nil || !usable {
 				return false, err
 			}
-		}
 
-		if candidate.node == nil {
-			complete, err := s.walkGenericValue(requirements, visit)
-			if err != nil || complete {
-				return complete, err
-			}
-
-			continue
-		}
-
-		complete, err := s.walkNode(
-			candidate.node, candidate.occurrence, requirements, context,
-			func(value *jsonValue) (bool, error) {
-				usable, err := s.rowChildValueUsable(candidate.node, candidate.occurrence, requirements, value)
-				if err != nil {
-					return false, err
-				}
-
-				if !usable {
-					return false, nil
-				}
-
-				return visit(value)
-			},
-		)
-		if err != nil || complete {
-			return complete, err
-		}
-	}
-
-	return false, nil
+			return visit(value)
+		},
+	)
 }
 
-// rowMemberPresenceChoices puts the canonical assignment first and repairs second.
-func rowMemberPresenceChoices(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	members []rowMember,
-	index int,
-	member rowMember,
-	constrained requirement,
-	presenceConstrained bool,
-) ([]bool, error) {
-	if presenceConstrained && !constrained.canonical {
-		if constrained.presence == requirementPresent {
-			return []bool{true}, nil
-		}
-
-		return []bool{false}, nil
-	}
-
-	if member.required {
-		return []bool{true}, nil
-	}
-
-	if presenceConstrained {
-		if constrained.presence == requirementPresent {
-			return []bool{true, false}, nil
-		}
-
-		return []bool{false, true}, nil
-	}
-
-	present, err := rowCanonicalMemberPresence(node, occurrence, requirements, members, index)
-	if err != nil {
-		return nil, err
-	}
-
-	if present {
-		return []bool{true, false}, nil
-	}
-
-	return []bool{false, true}, nil
-}
-
-// rowObjectMinimumProperties returns the active local and composition lower bound.
-func rowObjectMinimumProperties(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-) (uint64, bool, error) {
-	return rowNestedObjectMinimumProperties(node, occurrence, requirements, make(map[*schemaNode]bool))
-}
-
-// rowNestedObjectMinimumProperties carries object lower bounds through active composition.
+// rowObjectMembers exposes the first requested active view for fault regeneration.
+// Composition-constrained fault requests have exactly one such view.
 //
-//nolint:cyclop,gocognit // Local, allOf, and constrained anyOf bounds are one recursive calculation.
-func rowNestedObjectMinimumProperties(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	visiting map[*schemaNode]bool,
-) (uint64, bool, error) {
-	if node == nil || node.schemaShape == nil || !nodeCanHaveKind(node, jsonObject) {
-		return 0, false, nil
-	}
-
-	if visiting[node] {
-		return 0, false, fmt.Errorf("schematest: recursive row object bounds at %s", occurrence.usePointer)
-	}
-
-	visiting[node] = true
-	defer delete(visiting, node)
-
-	minimum := uint64(0)
-	fits := false
-	consider := func(candidate *exactCount) error {
-		count, candidateFits, err := exactCountUint64(candidate)
-		if err != nil {
-			return err
-		}
-
-		if candidateFits && (!fits || count > minimum) {
-			minimum = count
-			fits = true
-		}
-
-		return nil
-	}
-
-	if err := consider(node.minProperties); err != nil {
-		return 0, false, err
-	}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-
-		childMinimum, childFits, err := rowNestedObjectMinimumProperties(
-			child, childOccurrence, requirements, visiting,
-		)
-		if err != nil {
-			return 0, false, err
-		}
-
-		if childFits && (!fits || childMinimum > minimum) {
-			minimum = childMinimum
-			fits = true
-		}
-	}
-
-	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
-	if constrained {
-		for index, child := range node.anyOf {
-			if !states[index] {
-				continue
-			}
-
-			childOccurrence := rebasePlanOccurrence(
-				child,
-				occurrence,
-				occurrence.usePointer+"/anyOf/"+itoa(index),
-				occurrence.instanceTemplate,
-			)
-
-			childMinimum, childFits, err := rowNestedObjectMinimumProperties(
-				child, childOccurrence, requirements, visiting,
-			)
-			if err != nil {
-				return 0, false, err
-			}
-
-			if childFits && (!fits || childMinimum > minimum) {
-				minimum = childMinimum
-				fits = true
-			}
-		}
-	}
-
-	return minimum, fits, nil
-}
-
-// rowCanonicalMemberPresence supplies required members and lower-bound members first.
-func rowCanonicalMemberPresence(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	members []rowMember,
-	index int,
-) (bool, error) {
-	member := members[index]
-	if member.required {
-		return true, nil
-	}
-
-	minimum, fits, err := rowObjectMinimumProperties(node, occurrence, requirements)
-	if err != nil {
-		return false, err
-	}
-
-	if !fits {
-		return false, nil
-	}
-
-	present := 0
-
-	for prior := 0; prior < index; prior++ {
-		priorPresent, err := rowCanonicalMemberPresence(node, occurrence, requirements, members, prior)
-		if err != nil {
-			return false, err
-		}
-
-		if members[prior].required || priorPresent {
-			present++
-		}
-	}
-
-	return uint64(present) < minimum, nil
-}
-
-// rowObjectMembers collects direct, composed, required, and constrained member names.
-//
-//nolint:cyclop,gocognit // Direct, composed, additional, and requirement selection share one canonical pass.
+//nolint:cyclop // Active declared members and explicit forbidden fault names share one projection.
 func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, requirements []requirement) ([]rowMember, error) {
-	specs := make(map[string][]rowMember)
+	cursor := newRowProjectionCursor(node, occurrence, requirements)
+	defer cursor.Close()
 
-	required := make(map[string]bool)
-	if err := collectRowObjectMembers(
-		node, occurrence, specs, required, requirements, true, make(map[*schemaNode]bool),
-	); err != nil {
+	view, ok, err := cursor.Next()
+	if err != nil || !ok {
 		return nil, err
+	}
+
+	shape, err := newRowProjectedObject(view, requirements, occurrence)
+	if err != nil {
+		return nil, err
+	}
+
+	members := append([]rowMember(nil), shape.members...)
+
+	known := make(map[string]bool, len(members))
+	for _, member := range members {
+		known[member.name] = true
 	}
 
 	for _, requirement := range requirements {
-		if name, ok := rowChildName(occurrence.instanceTemplate, requirement.occurrence.instanceTemplate); ok {
-			if name == "*" && strings.HasSuffix(requirement.occurrence.usePointer, "/additionalProperties") {
-				continue
-			}
-
-			if requirement.presence != requirementNoPresence || requirement.hasKind {
-				if _, exists := specs[name]; !exists {
-					specs[name] = nil
-				}
-			}
+		name, child := rowChildName(occurrence.instanceTemplate, requirement.occurrence.instanceTemplate)
+		if !child || name == "*" || known[name] || requirement.presence == requirementNoPresence {
+			continue
 		}
-	}
 
-	additionalSourceSets, err := rowAdditionalPropertySources(node, occurrence, requirements)
-	if err != nil {
-		return nil, err
-	}
+		var sources []rowSchemaSource
 
-	additionalMembersForName := func(name string) [][]rowMember {
-		result := make([][]rowMember, 0, len(additionalSourceSets))
-
-		for _, sourceSet := range additionalSourceSets {
-			members := make([]rowMember, 0, len(sourceSet))
-			for _, additional := range sourceSet {
-				if additional.owner != nil {
-					if _, declared := additional.owner.properties[name]; declared {
-						continue
-					}
-				}
-
-				source := additional.source
-				members = append(members, rowMember{
-					name: name,
-					node: source.node,
+		view.eachSource(func(owner rowSchemaSource) bool {
+			if property, exists := rowChildSchemaSource(
+				owner.node, owner.occurrence, rowChildProperty, name,
+			); exists {
+				sources = append(sources, property)
+			} else if owner.node.additionalProperties != nil {
+				sources = append(sources, rowSchemaSource{
+					node: owner.node.additionalProperties,
 					occurrence: rebasePlanOccurrence(
-						source.node,
-						source.occurrence,
-						source.occurrence.usePointer,
+						owner.node.additionalProperties,
+						owner.occurrence,
+						owner.occurrence.usePointer+"/additionalProperties",
 						appendInstanceToken(occurrence.instanceTemplate, name),
 					),
 				})
 			}
 
-			result = append(result, members)
+			return true
+		})
+
+		choice, exists, mergeErr := mergeRowSchemaSources(rowPreferredSchemaSources(sources, requirements))
+		if mergeErr != nil {
+			return nil, mergeErr
 		}
 
-		return result
-	}
-
-	extraNames, err := rowAdditionalMemberNames(node, specs, requirements, occurrence)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, name := range extraNames {
-		if _, exists := specs[name]; !exists {
-			specs[name] = nil
-		}
-	}
-
-	names := make([]string, 0, len(specs))
-	for name := range specs {
-		if _, declared := node.properties[name]; !declared &&
-			!node.allowAdditionalProperties && len(specs[name]) == 0 {
-			continue
-		}
-
-		names = append(names, name)
-	}
-
-	sort.Strings(names)
-
-	members := make([]rowMember, 0, len(names))
-	for _, name := range names {
-		member, err := composeRowMemberAlternatives(
-			name,
-			specs[name],
-			additionalMembersForName(name),
-			required[name],
-			requirements,
-		)
-		if err != nil {
-			return nil, err
+		member := rowMember{name: name, occurrence: requirement.occurrence}
+		if exists {
+			member.node = choice.node
+			member.occurrence = choice.occurrence
 		}
 
 		members = append(members, member)
+		known[name] = true
 	}
+
+	sort.Slice(members, func(left, right int) bool { return members[left].name < members[right].name })
 
 	return members, nil
-}
-
-// composeRowMemberAlternatives keeps mutually exclusive wildcard schemas separate.
-func composeRowMemberAlternatives(
-	name string,
-	base []rowMember,
-	sourceSets [][]rowMember,
-	required bool,
-	requirements []requirement,
-) (rowMember, error) {
-	if len(sourceSets) == 0 {
-		sourceSets = [][]rowMember{{}}
-	} else {
-		hasSource := false
-
-		for _, sources := range sourceSets {
-			if len(sources) > 0 {
-				hasSource = true
-
-				break
-			}
-		}
-
-		if !hasSource {
-			sourceSets = [][]rowMember{{}}
-		}
-	}
-
-	composed := make([]rowMember, 0, len(sourceSets))
-	for _, sources := range sourceSets {
-		candidates := make([]rowMember, 0, len(base)+len(sources))
-		candidates = append(candidates, base...)
-		candidates = append(candidates, sources...)
-
-		if len(candidates) == 0 {
-			candidates = append(candidates, rowMember{name: name, required: required})
-		}
-
-		member, err := composeRowMember(name, candidates, required, requirements)
-		if err != nil {
-			return rowMember{}, err
-		}
-
-		composed = append(composed, member)
-	}
-
-	member := composed[0]
-	member.alternatives = append(member.alternatives, composed[1:]...)
-
-	return member, nil
-}
-
-// rowAdditionalPropertySources returns active direct and composed wildcard alternatives.
-//
-//nolint:cyclop,gocognit // Direct, allOf, and anyOf wildcard sources share one recursive pass.
-func rowAdditionalPropertySources(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-) ([][]rowAdditionalPropertySource, error) {
-	visiting := make(map[*schemaNode]bool)
-
-	var collect func(*schemaNode, schemaOccurrence) ([][]rowAdditionalPropertySource, error)
-
-	collect = func(current *schemaNode, currentOccurrence schemaOccurrence) ([][]rowAdditionalPropertySource, error) {
-		if current == nil || current.schemaShape == nil {
-			return [][]rowAdditionalPropertySource{{}}, nil
-		}
-
-		if visiting[current] {
-			return nil, fmt.Errorf("schematest: recursive row additional-properties shape at %s", currentOccurrence.usePointer)
-		}
-
-		visiting[current] = true
-		defer delete(visiting, current)
-
-		common := [][]rowAdditionalPropertySource{{}}
-
-		if current.additionalProperties != nil {
-			additionalOccurrence := rebasePlanOccurrence(
-				current.additionalProperties,
-				currentOccurrence,
-				currentOccurrence.usePointer+"/additionalProperties",
-				appendInstanceToken(currentOccurrence.instanceTemplate, "*"),
-			)
-			common[0] = append(common[0], rowAdditionalPropertySource{
-				source: rowSchemaSource{
-					node:       current.additionalProperties,
-					occurrence: additionalOccurrence,
-				},
-				owner: current,
-			})
-		}
-
-		for index, child := range current.allOf {
-			childOccurrence := rebasePlanOccurrence(
-				child,
-				currentOccurrence,
-				currentOccurrence.usePointer+"/allOf/"+itoa(index),
-				currentOccurrence.instanceTemplate,
-			)
-
-			childSets, err := collect(child, childOccurrence)
-			if err != nil {
-				return nil, err
-			}
-
-			common = combineRowAdditionalPropertySourceSets(common, childSets)
-		}
-
-		if len(current.anyOf) == 0 {
-			return common, nil
-		}
-
-		states, constrained := rowCompositionTruthStates(requirements, currentOccurrence, "anyOf", len(current.anyOf))
-		if constrained {
-			selected := common
-
-			for index, child := range current.anyOf {
-				if !states[index] {
-					continue
-				}
-
-				childOccurrence := rebasePlanOccurrence(
-					child,
-					currentOccurrence,
-					currentOccurrence.usePointer+"/anyOf/"+itoa(index),
-					currentOccurrence.instanceTemplate,
-				)
-
-				childSets, err := collect(child, childOccurrence)
-				if err != nil {
-					return nil, err
-				}
-
-				selected = combineRowAdditionalPropertySourceSets(selected, childSets)
-			}
-
-			return selected, nil
-		}
-
-		alternatives := make([][]rowAdditionalPropertySource, 0, len(current.anyOf))
-		for index, child := range current.anyOf {
-			childOccurrence := rebasePlanOccurrence(
-				child,
-				currentOccurrence,
-				currentOccurrence.usePointer+"/anyOf/"+itoa(index),
-				currentOccurrence.instanceTemplate,
-			)
-
-			childSets, err := collect(child, childOccurrence)
-			if err != nil {
-				return nil, err
-			}
-
-			alternatives = append(
-				alternatives,
-				combineRowAdditionalPropertySourceSets(common, childSets)...,
-			)
-		}
-
-		return alternatives, nil
-	}
-
-	return collect(node, occurrence)
-}
-
-// combineRowAdditionalPropertySourceSets computes the allOf product of wildcard alternatives.
-func combineRowAdditionalPropertySourceSets(
-	left [][]rowAdditionalPropertySource,
-	right [][]rowAdditionalPropertySource,
-) [][]rowAdditionalPropertySource {
-	result := make([][]rowAdditionalPropertySource, 0, len(left)*len(right))
-
-	for _, leftSources := range left {
-		for _, rightSources := range right {
-			sources := make([]rowAdditionalPropertySource, 0, len(leftSources)+len(rightSources))
-			sources = append(sources, leftSources...)
-			sources = append(sources, rightSources...)
-			result = append(result, sources)
-		}
-	}
-
-	return result
-}
-
-// rowAdditionalMemberNames adds wildcard members needed by lower bounds or target requirements.
-func rowAdditionalMemberNames(
-	node *schemaNode,
-	specified map[string][]rowMember,
-	requirements []requirement,
-	occurrence schemaOccurrence,
-) ([]string, error) {
-	if !node.allowAdditionalProperties {
-		return nil, nil
-	}
-
-	minimum, fits, err := rowObjectMinimumProperties(node, occurrence, requirements)
-	if err != nil {
-		return nil, err
-	}
-
-	needed := 0
-
-	if fits && minimum > uint64(len(specified)) {
-		if minimum-uint64(len(specified)) > uint64(^uint(0)>>1) {
-			return nil, nil
-		}
-
-		needed = int(minimum) - len(specified)
-	}
-
-	if rowAdditionalPresenceConstrained(occurrence, requirements) && needed == 0 {
-		needed = 1
-	}
-
-	if needed == 0 {
-		return nil, nil
-	}
-
-	result := make([]string, 0, needed)
-	for index := 0; index < needed; index++ {
-		result = append(result, rowAdditionalMemberName(node, specified, result, index))
-	}
-
-	return result, nil
-}
-
-// rowAdditionalMemberName picks an extra key that cannot collide with authored keys.
-func rowAdditionalMemberName(
-	node *schemaNode,
-	specified map[string][]rowMember,
-	chosen []string,
-	index int,
-) string {
-	base := additionalPropertyWitnessName(node)
-	if index == 0 && !containsString(chosen, base) {
-		if _, exists := specified[base]; !exists {
-			return base
-		}
-	}
-
-	for suffix := index; ; suffix++ {
-		candidate := fmt.Sprintf("%s_%d", base, suffix)
-		if !containsString(chosen, candidate) {
-			if _, exists := specified[candidate]; !exists {
-				return candidate
-			}
-		}
-	}
-}
-
-// collectRowObjectMembers recursively collects property schemas from compositions.
-//
-//nolint:cyclop // Direct, allOf, and anyOf requiredness share one recursive pass.
-func collectRowObjectMembers(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	specs map[string][]rowMember,
-	required map[string]bool,
-	requirements []requirement,
-	requiredAllowed bool,
-	visiting map[*schemaNode]bool,
-) error {
-	if node == nil || node.schemaShape == nil {
-		return nil
-	}
-
-	if visiting[node] {
-		return fmt.Errorf("schematest: recursive row object shape at %s", occurrence.usePointer)
-	}
-
-	visiting[node] = true
-	defer delete(visiting, node)
-
-	for _, name := range sortedSchemaPropertyNames(node.properties) {
-		property := node.properties[name]
-		propertyOccurrence := rebasePlanOccurrence(
-			property,
-			occurrence,
-			occurrence.usePointer+"/properties/"+escapePointerToken(name),
-			appendInstanceToken(occurrence.instanceTemplate, name),
-		)
-		specs[name] = append(specs[name], rowMember{
-			name: name, node: property, occurrence: propertyOccurrence,
-		})
-	}
-
-	if requiredAllowed {
-		for _, name := range node.required {
-			required[name] = true
-		}
-	}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		if err := collectRowObjectMembers(
-			child, childOccurrence, specs, required, requirements, requiredAllowed, visiting,
-		); err != nil {
-			return err
-		}
-	}
-
-	for index, child := range node.anyOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/anyOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-
-		branchRequired := requiredAllowed && rowCompositionRequirementTruth(requirements, childOccurrence, "anyOf", index)
-		if err := collectRowObjectMembers(
-			child, childOccurrence, specs, required, requirements, branchRequired, visiting,
-		); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// rowCompositionRequirementTruth returns one constrained branch truth, defaulting to false.
-func rowCompositionRequirementTruth(
-	requirements []requirement,
-	occurrence schemaOccurrence,
-	composition string,
-	branch int,
-) bool {
-	for _, requirement := range requirements {
-		if requirement.hasBranch && requirement.composition == composition && requirement.branch == branch &&
-			rowOccurrenceMatches(requirement.occurrence, occurrence) {
-			return requirement.truth
-		}
-	}
-
-	return false
 }
 
 // rowChildName extracts one data member token below an instance template.
@@ -1265,24 +1231,6 @@ func rowPresenceRequirementDetails(requirements []requirement, occurrence schema
 	}
 
 	return canonical, canonicalFound
-}
-
-// rowAdditionalPresenceConstrained reports whether the target explicitly asks for an extra member.
-func rowAdditionalPresenceConstrained(occurrence schemaOccurrence, requirements []requirement) bool {
-	wantedTemplate := appendInstanceToken(occurrence.instanceTemplate, "*")
-
-	for _, requirement := range requirements {
-		if requirement.canonical || requirement.presence != requirementPresent ||
-			!strings.HasSuffix(requirement.occurrence.usePointer, "/additionalProperties") {
-			continue
-		}
-
-		if requirement.occurrence.instanceTemplate == wantedTemplate {
-			return true
-		}
-	}
-
-	return false
 }
 
 // walkGenericValue assigns a small complete value where no child schema is available.

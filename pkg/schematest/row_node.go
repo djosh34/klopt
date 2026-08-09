@@ -47,7 +47,7 @@ func (s *search) walkNode(
 		}
 
 		var complete bool
-		if kind != jsonArray {
+		if kind != jsonArray && kind != jsonObject {
 			complete, err = s.walkDirectNodeValues(node, kind, visit)
 			if err != nil || complete {
 				return complete, err
