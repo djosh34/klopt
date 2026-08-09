@@ -389,14 +389,14 @@ func firstReplacementDerivative(
 				return false
 			}
 
-			derivative, copyErr := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
+			derivative, copyErr := cloneJSONValue(parent)
 			if copyErr != nil {
 				candidateErr = copyErr
 
 				return false
 			}
 
-			copyCandidate, copyErr := copyJSONValue(candidate, make(map[*jsonValue]*jsonValue))
+			copyCandidate, copyErr := cloneJSONValue(candidate)
 			if copyErr != nil {
 				candidateErr = copyErr
 
@@ -533,7 +533,7 @@ func buildArrayCountDerivative(
 		return nil, false, assignErr
 	}
 
-	candidate, copyErr := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
+	candidate, copyErr := cloneJSONValue(parent)
 	if copyErr != nil {
 		return nil, false, copyErr
 	}
@@ -552,7 +552,7 @@ func buildArrayCountDerivative(
 			return nil, false, assignErr
 		}
 
-		item, itemErr := copyJSONValue(witness, make(map[*jsonValue]*jsonValue))
+		item, itemErr := cloneJSONValue(witness)
 		if itemErr != nil {
 			return nil, false, itemErr
 		}
@@ -745,7 +745,7 @@ func findObjectShrinkDerivative(
 				return false, assignErr
 			}
 
-			candidate, copyErr := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
+			candidate, copyErr := cloneJSONValue(parent)
 			if copyErr != nil {
 				return false, copyErr
 			}
@@ -862,12 +862,12 @@ func findObjectGrowthDerivative(
 						return false, assignErr
 					}
 
-					next, copyErr := copyJSONValue(candidate, make(map[*jsonValue]*jsonValue))
+					next, copyErr := cloneJSONValue(candidate)
 					if copyErr != nil {
 						return false, copyErr
 					}
 
-					copiedValue, copyErr := copyJSONValue(value, make(map[*jsonValue]*jsonValue))
+					copiedValue, copyErr := cloneJSONValue(value)
 					if copyErr != nil {
 						return false, copyErr
 					}
@@ -904,7 +904,7 @@ func findRequiredDerivative(parent *jsonValue, fault faultProgram, s *search) (*
 			return nil, false, err
 		}
 
-		candidate, err := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
+		candidate, err := cloneJSONValue(parent)
 		if err != nil {
 			return nil, false, err
 		}
@@ -963,12 +963,12 @@ func findAdditionalPropertyDerivative(
 					return false, assignErr
 				}
 
-				candidate, copyErr := copyJSONValue(parent, make(map[*jsonValue]*jsonValue))
+				candidate, copyErr := cloneJSONValue(parent)
 				if copyErr != nil {
 					return false, copyErr
 				}
 
-				value, copyErr := copyJSONValue(witness, make(map[*jsonValue]*jsonValue))
+				value, copyErr := cloneJSONValue(witness)
 				if copyErr != nil {
 					return false, copyErr
 				}

@@ -851,6 +851,18 @@ func TestFaultRuntimeHasOneAccuratelyNamedContinuation(t *testing.T) {
 	require.True(t, exists)
 }
 
+// TestFaultRuntimeUsesTheSoleJSONClone rejects a second fault-local copy seam.
+func TestFaultRuntimeUsesTheSoleJSONClone(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	_, obsolete := guardPackage.pkg.Scope().Lookup("copyJSONValue").(*types.Func)
+	require.False(t, obsolete)
+
+	_, exists := guardPackage.pkg.Scope().Lookup("cloneJSONValue").(*types.Func)
+	require.True(t, exists)
+}
+
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
 func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	t.Parallel()
