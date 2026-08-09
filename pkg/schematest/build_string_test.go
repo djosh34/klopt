@@ -35,7 +35,7 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 	}, firstCases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 86,
+		Steps: 81,
 		Covered: []string{
 			schemaPointer + "|#|type|level:string",
 			schemaPointer + "|#|type|fault:type",
@@ -111,7 +111,7 @@ func TestBuildSearchesFormatsAtActiveLengths(t *testing.T) {
 			schema: `{"type":"string","format":"date-time","minLength":24,"maxLength":24}`,
 			want:   `"0000-01-01T00:00:00.000Z"`,
 		},
-		{name: "email 4", schema: `{"type":"string","format":"email","minLength":4,"maxLength":4}`, want: `"aa@b"`},
+		{name: "email 4", schema: `{"type":"string","format":"email","minLength":4,"maxLength":4}`, want: `"!!@0"`},
 		{name: "ipv4 8", schema: `{"type":"string","format":"ipv4","minLength":8,"maxLength":8}`, want: `"0.0.0.10"`},
 		{name: "ipv4 9", schema: `{"type":"string","format":"ipv4","minLength":9,"maxLength":9}`, want: `"0.0.0.100"`},
 		{name: "base64 minimum 5", schema: `{"type":"string","format":"byte","minLength":5}`, want: `"++++++++"`},
@@ -309,17 +309,83 @@ func TestBuildFormatProductCoversLockedLanguage(t *testing.T) {
 func TestBuildReachesSurrogatePairForDirectedBMPComplement(t *testing.T) {
 	t.Parallel()
 
-	cases, report := buildStringCases(t, []byte(documentWithJSONSchema(
-		`{"type":"string","minLength":1,"maxLength":1,"pattern":"^[\\u0000-\\uFFFF]$"}`,
-	)), 1_000)
+	for _, test := range []struct {
+		name   string
+		length int
+		want   []Case
+		steps  uint64
+	}{
+		{
+			name: "one rune", length: 1, steps: 52,
+			want: []Case{
+				{JSON: []byte(`"\u0000"`), Valid: true},
+				{JSON: []byte(`null`), Valid: false},
+				{JSON: []byte("\"𐀀\""), Valid: false},
+				{JSON: []byte(`"\u0000\u0000"`), Valid: false},
+			},
+		},
+		{
+			name: "two runes", length: 2, steps: 109,
+			want: []Case{
+				{JSON: []byte(`"\u0000\u0000"`), Valid: true},
+				{JSON: []byte(`null`), Valid: false},
+				{JSON: []byte("\"\\u0000𐀀\""), Valid: false},
+				{JSON: []byte(`"\u0000"`), Valid: false},
+				{JSON: []byte(`"\u0000\u0000\u0000"`), Valid: false},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	require.Equal(t, []Case{
-		{JSON: []byte(`"\u0000"`), Valid: true},
-		{JSON: []byte(`null`), Valid: false},
-		{JSON: []byte("\"𐀀\""), Valid: false},
-	}, cases)
-	require.Equal(t, SpaceExhausted, report.Stop)
-	require.Equal(t, uint64(250), report.Steps)
+			schema := `{"type":"string","minLength":` + itoa(test.length) +
+				`,"maxLength":` + itoa(test.length) +
+				`,"pattern":"^[\\u0000-\\uD7FF\\uE000-\\uFFFF]+$"}`
+			cases, report := buildStringCases(t, []byte(documentWithJSONSchema(schema)), 10_000)
+
+			require.Equal(t, test.want, cases)
+			require.Equal(t, SpaceExhausted, report.Stop)
+			require.Equal(t, test.steps, report.Steps)
+		})
+	}
+}
+
+func TestBuildPreservesNestedAuthoredStringEnumAlternatives(t *testing.T) {
+	t.Parallel()
+
+	cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(
+		`{"type":"object","required":["x"],"properties":{"x":{"type":"string","enum":["m"],"pattern":"^[a-z]$"}}}`,
+	)), 10_000)
+
+	require.Contains(t, cases, Case{JSON: []byte(`{"x":"m"}`), Valid: true})
+}
+
+func TestBuildUsesSoundRuneMinimumsForNestedPatterns(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{
+			name:   "unanchored ASCII",
+			schema: `{"type":"object","required":["x"],"properties":{"x":{"type":"string","pattern":"abc"}}}`,
+			want:   `{"x":"abc"}`,
+		},
+		{
+			name:   "astral one rune",
+			schema: `{"type":"object","required":["x"],"properties":{"x":{"type":"string","pattern":"^😀$"}}}`,
+			want:   `{"x":"😀"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(test.schema)), 10_000)
+			require.Contains(t, cases, Case{JSON: []byte(test.want), Valid: true})
+		})
+	}
 }
 
 func TestBuildChargesUnconstrainedAnyOfDFSBeforeRetainingSiblingPaths(t *testing.T) {
@@ -382,31 +448,51 @@ func TestBuildStreamsRegistryFormatBoundaries(t *testing.T) {
 	t.Parallel()
 
 	canonicalUUID := "00000000-0000-4000-8000-000000000000"
+	domainLimit := strings.Repeat("!", 64) + "@0" + strings.Repeat("-", 61) + "0.0" +
+		strings.Repeat("-", 61) + "0.0" + strings.Repeat("-", 59) + "0"
+
 	for _, test := range []struct {
-		name   string
-		format string
-		want   []string
-		steps  uint64
+		name        string
+		format      string
+		valid       []string
+		invalidJSON string
+		steps       uint64
 	}{
-		{name: "byte", format: "byte", want: []string{"", "YQ==", "YWI="}, steps: 23},
-		{name: "date", format: "date", want: []string{
-			"0000-01-01", "1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31",
-		}, steps: 117},
-		{name: "date-time", format: "date-time", want: []string{
-			"0000-01-01T00:00:00Z", "1970-01-01T00:00:00Z", "2000-02-29T23:59:59.0Z",
-			"1900-02-28T00:00:00+23:59", "9999-12-31T23:59:59-23:59",
-		}, steps: 229},
-		{name: "email", format: "email", want: []string{
-			"a@b", "a@b", strings.Repeat("a", emailLocalLimit) + "@b",
-			strings.Repeat("a", emailLocalLimit) + "@" + strings.Repeat("b", emailDomainLabelLimit) + "." +
-				strings.Repeat("c", emailDomainLabelLimit) + "." + strings.Repeat("d", emailFinalBoundaryLabelLimit),
-		}, steps: 356},
-		{name: "ipv4", format: "ipv4", want: []string{"0.0.0.0", "0.0.0.0", "255.255.255.255"}, steps: 77},
-		{name: "uuid", format: "uuid", want: []string{canonicalUUID, canonicalUUID}, steps: 263},
-		{name: "uuidv4 alias", format: "uuidv4", want: []string{canonicalUUID, canonicalUUID}, steps: 263},
-		{name: "uuid-v4 alias", format: "uuid-v4", want: []string{canonicalUUID, canonicalUUID}, steps: 263},
-		{name: "cidr", format: "cidr", want: []string{"0.0.0.0/0", "192.0.2.7/0", "192.0.2.7/32"}, steps: 90},
-		{name: "ipv4-cidr alias", format: "ipv4-cidr", want: []string{"0.0.0.0/0", "192.0.2.7/0", "192.0.2.7/32"}, steps: 90},
+		{name: "byte", format: "byte", valid: []string{"", "+A==", "++0="}, invalidJSON: `"\u0000"`, steps: 66_030},
+		{name: "date", format: "date", valid: []string{
+			"0000-01-01", "1970-01-01", "0000-02-29", "0100-02-28", "9999-12-31",
+		}, invalidJSON: `""`, steps: 1_688},
+		{name: "date-time", format: "date-time", valid: []string{
+			"0000-01-01T00:00:00Z", "1970-01-01T00:00:00Z", "0000-02-29T00:00:00Z",
+			"0100-02-28T00:00:00Z", "9999-12-31T00:00:00Z",
+		}, invalidJSON: `""`, steps: 5_794},
+		{name: "email", format: "email", valid: []string{
+			"!@0", "!@0", strings.Repeat("!", 64) + "@0", domainLimit,
+		}, invalidJSON: `""`, steps: 10_970},
+		{
+			name: "ipv4", format: "ipv4",
+			valid: []string{"0.0.0.0", "0.0.0.0", "255.255.255.255"}, invalidJSON: `""`, steps: 245,
+		},
+		{
+			name: "uuid", format: "uuid",
+			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 587,
+		},
+		{
+			name: "uuidv4 alias", format: "uuidv4",
+			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 587,
+		},
+		{
+			name: "uuid-v4 alias", format: "uuid-v4",
+			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 587,
+		},
+		{
+			name: "cidr", format: "cidr",
+			valid: []string{"0.0.0.0/0", "0.0.0.0/0", "0.0.0.0/32"}, invalidJSON: `""`, steps: 202,
+		},
+		{
+			name: "ipv4-cidr alias", format: "ipv4-cidr",
+			valid: []string{"0.0.0.0/0", "0.0.0.0/0", "0.0.0.0/32"}, invalidJSON: `""`, steps: 202,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -415,12 +501,18 @@ func TestBuildStreamsRegistryFormatBoundaries(t *testing.T) {
 				`{"type":"string","format":"`+test.format+`"}`,
 			)), 1_000_000)
 
-			want := make([]Case, len(test.want))
-			for index, value := range test.want {
-				want[index] = Case{JSON: []byte(strconv.Quote(value)), Valid: true}
+			want := make([]Case, 0, len(test.valid)+2)
+			for _, value := range test.valid {
+				want = append(want, Case{JSON: []byte(strconv.Quote(value)), Valid: true})
 			}
 
-			require.Equal(t, want, validCasesOnly(cases))
+			want = append(
+				want,
+				Case{JSON: []byte(`null`), Valid: false},
+				Case{JSON: []byte(test.invalidJSON), Valid: false},
+			)
+
+			require.Equal(t, want, cases)
 
 			schemaPointer := "#/paths/~1/post/requestBody/content/application~1json/schema"
 			require.Equal(t, Report{
@@ -433,6 +525,50 @@ func TestBuildStreamsRegistryFormatBoundaries(t *testing.T) {
 					schemaPointer + "|#|format|fault:format",
 				},
 			}, report)
+		})
+	}
+}
+
+func TestBuildExhaustsContradictoryFormatLengthIntersection(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(
+		`{"type":"string","allOf":[{"format":"date"},{"format":"uuid"}]}`,
+	))
+	firstCases, firstReport := buildStringCases(t, document, 100)
+	secondCases, secondReport := buildStringCases(t, document, 100)
+
+	require.Empty(t, firstCases)
+	require.Equal(t, SpaceExhausted, firstReport.Stop)
+	require.Equal(t, uint64(38), firstReport.Steps)
+	require.Equal(t, firstCases, secondCases)
+	require.Equal(t, firstReport, secondReport)
+}
+
+func TestBuildFindsSemanticFormatObjectivesWithSiblingPatterns(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{
+			name:   "base64 canonical padding",
+			schema: `{"type":"string","format":"byte","pattern":"^QUJDRA==$"}`,
+			want:   `"QUJDRA=="`,
+		},
+		{
+			name:   "email local limit",
+			schema: `{"type":"string","format":"email","pattern":"^b{64}@example\\.com$"}`,
+			want:   `"` + strings.Repeat("b", 64) + `@example.com"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(test.schema)), 100_000)
+			require.Contains(t, cases, Case{JSON: []byte(test.want), Valid: true})
 		})
 	}
 }

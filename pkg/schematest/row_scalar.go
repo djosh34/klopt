@@ -139,20 +139,14 @@ func (s *search) walkActiveStringRules(
 		return false, err
 	}
 
-	lengthObjective := basicStringLengthObjective{}
-
-	if boundary := matchingFormatBoundary(request, occurrence); boundary != nil {
-		product.guidance = &boundary.boundary
-		product.objective = &boundary.boundary
-		lengthObjective = basicStringLengthObjective{
-			length: uint64(len([]rune(boundary.boundary.witness))), constrained: true,
-		}
+	if err := product.setFormatObjective(matchingFormatBoundary(request, occurrence)); err != nil {
+		return false, err
 	}
 
 	return s.walkBasicStringProductForLengths(
 		product,
 		lengths,
-		lengthObjective,
+		basicStringLengthObjective{},
 		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
 		visit,
 	)

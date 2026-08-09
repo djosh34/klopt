@@ -92,12 +92,17 @@ type basicStringProduct struct {
 	formatPrograms   []*stringFormatProgram
 	maxUnits         uint64
 	unbounded        bool
+	minimumRunes     uint64
+	maximumRunes     uint64
+	lengthBounded    bool
+	lengthMultiple   uint64
+	lengthInfeasible bool
 	hasSurrogate     bool
 	surrogatePadding bool
 	needsPadding     bool
 	formats          []activeStringFormat
 	directedFormat   int
-	guidance         *stringFormatBoundary
+	objectiveFormat  int
 	objective        *stringFormatBoundary
 }
 
@@ -158,12 +163,16 @@ func (lengths basicStringLengths) allows(length uint64) bool {
 
 // each streams exact rune-length assignments without retaining the fair frontier.
 //
-//nolint:cyclop // Constrained, boundary, and fair phases share exact first-occurrence deduplication.
+//nolint:cyclop,gocognit // Constrained, boundary, and fair phases share exact first-occurrence deduplication.
 func (lengths basicStringLengths) each(
 	product *basicStringProduct,
 	objective basicStringLengthObjective,
 	visit func(uint64) bool,
 ) {
+	if product != nil && product.lengthInfeasible {
+		return
+	}
+
 	special := make([]uint64, 0, len(lengths.boundaries)+1)
 	if objective.constrained {
 		special = append(special, objective.length)
@@ -182,14 +191,14 @@ func (lengths basicStringLengths) each(
 			}
 		}
 
-		if !duplicate && visit(length) {
+		if !duplicate && (product == nil || product.allowsRuneLength(length)) && visit(length) {
 			return
 		}
 	}
 
 	maximum, bounded := uint64(0), false
-	if product != nil && !product.unbounded {
-		maximum, bounded = product.maxUnits, true
+	if product != nil && product.lengthBounded {
+		maximum, bounded = product.maximumRunes, true
 	}
 
 	if lengths.hasMaximum && (!bounded || lengths.maximum < maximum) {
@@ -211,7 +220,7 @@ func (lengths basicStringLengths) each(
 			}
 		}
 
-		if !duplicate && visit(length) {
+		if !duplicate && (product == nil || product.allowsRuneLength(length)) && visit(length) {
 			return
 		}
 
@@ -232,8 +241,9 @@ func newBasicStringProductForFailure(
 	failureAlternative int,
 ) (*basicStringProduct, error) {
 	product := &basicStringProduct{
-		machines:       make([]basicStringMachine, 0, len(patterns)),
-		directedFormat: -1,
+		machines:        make([]basicStringMachine, 0, len(patterns)),
+		directedFormat:  -1,
+		objectiveFormat: -1,
 	}
 	if len(patterns) == 0 {
 		product.unbounded = true
@@ -283,6 +293,11 @@ func (product *basicStringProduct) setBounds() error {
 	bounded := false
 	product.maxUnits = 0
 	product.unbounded = false
+	product.minimumRunes = 0
+	product.maximumRunes = 0
+	product.lengthBounded = false
+	product.lengthMultiple = 0
+	product.lengthInfeasible = false
 	product.hasSurrogate = false
 	product.surrogatePadding = false
 	product.needsPadding = len(product.machines) == 0
@@ -292,6 +307,15 @@ func (product *basicStringProduct) setBounds() error {
 		product.hasSurrogate = product.hasSurrogate || machine.required && machine.hasSurrogate
 		product.surrogatePadding = product.surrogatePadding || machine.required && !machine.expected
 		product.needsPadding = product.needsPadding || machine.required && (!machine.expected || !machine.wholeBound)
+
+		if machine.required && machine.expected {
+			minimumRunes := machine.minUnits
+			if machine.hasSurrogate {
+				minimumRunes = (minimumRunes + basicStringUnitsPerRune - 1) / basicStringUnitsPerRune
+			}
+
+			product.minimumRunes = max(product.minimumRunes, minimumRunes)
+		}
 
 		if !machine.required || !machine.expected || machine.unbounded || !machine.wholeBound {
 			continue
@@ -304,8 +328,62 @@ func (product *basicStringProduct) setBounds() error {
 	}
 
 	product.unbounded = !bounded
+	if bounded {
+		product.maximumRunes = product.maxUnits
+		product.lengthBounded = true
+	}
+
+	for index, program := range product.formatPrograms {
+		if program == nil || index == product.directedFormat {
+			continue
+		}
+
+		product.addRuneLengthBounds(program.bounds)
+	}
+
+	if product.objective != nil {
+		product.addRuneLengthBounds(product.objective.bounds)
+	}
+
+	product.lengthInfeasible = product.lengthBounded && product.minimumRunes > product.maximumRunes ||
+		product.lengthBounded && !basicStringLengthMultipleExists(
+			product.minimumRunes, product.maximumRunes, product.lengthMultiple,
+		)
 
 	return nil
+}
+
+func (product *basicStringProduct) addRuneLengthBounds(bounds stringFormatBounds) {
+	product.minimumRunes = max(product.minimumRunes, bounds.minimum)
+	if bounds.bounded && (!product.lengthBounded || bounds.maximum < product.maximumRunes) {
+		product.maximumRunes = bounds.maximum
+		product.lengthBounded = true
+	}
+
+	if bounds.multiple != 0 {
+		product.lengthMultiple = bounds.multiple
+	}
+}
+
+func basicStringLengthMultipleExists(minimum, maximum, multiple uint64) bool {
+	if multiple == 0 {
+		return minimum <= maximum
+	}
+
+	remainder := minimum % multiple
+	if remainder == 0 {
+		return minimum <= maximum
+	}
+
+	delta := multiple - remainder
+
+	return delta <= maximum && minimum <= maximum-delta
+}
+
+func (product *basicStringProduct) allowsRuneLength(length uint64) bool {
+	return !product.lengthInfeasible && length >= product.minimumRunes &&
+		(!product.lengthBounded || length <= product.maximumRunes) &&
+		(product.lengthMultiple == 0 || length%product.lengthMultiple == 0)
 }
 
 func compileBasicStringPatternMachines(pattern *patternAST) ([]basicStringMachine, error) {
@@ -1204,55 +1282,14 @@ func eachBasicStringWordIntersection(edge basicStringEdge, word bool, visit func
 	}
 }
 
-//nolint:cyclop,gocognit,mnd // UTF-16 structural boundaries and deterministic padding are explicit.
+//nolint:mnd // UTF-16 structural boundaries and deterministic padding are explicit.
 func (product *basicStringProduct) eachTransition(
 	state basicStringProductState,
 	seed uint64,
 	includePadding bool,
 	visit func(uint16) bool,
 ) {
-	preferred := uint16(0)
-
-	hasPreferred := product.guidance != nil && state.position < len(product.guidance.witness)
-	if hasPreferred {
-		preferred = uint16(product.guidance.witness[state.position])
-	} else {
-		for _, program := range product.formatPrograms {
-			if program != nil && program.preferred != nil {
-				preferred = program.preferred(state.position, state.length)
-				hasPreferred = true
-
-				break
-			}
-		}
-	}
-
-	preferredVisited := false
 	visitWellFormed := func(unit uint16) bool {
-		if preferredVisited && unit == preferred {
-			return false
-		}
-
-		preferredVisited = preferredVisited || hasPreferred && unit == preferred
-		low := unit >= 0xdc00 && unit <= 0xdfff
-
-		high := unit >= 0xd800 && unit <= 0xdbff
-		if state.pendingHigh != low || high && state.position+1 >= state.length {
-			return false
-		}
-
-		return visit(unit)
-	}
-
-	if hasPreferred && visitWellFormed(preferred) {
-		return
-	}
-
-	visitWellFormed = func(unit uint16) bool {
-		if hasPreferred && unit == preferred {
-			return false
-		}
-
 		low := unit >= 0xdc00 && unit <= 0xdfff
 
 		high := unit >= 0xd800 && unit <= 0xdbff
@@ -1312,6 +1349,10 @@ func eachBasicStringIntervalCandidate(
 }
 
 func (product *basicStringProduct) viable(state basicStringProductState) bool {
+	if product.objective != nil && !product.objective.viable(state.formats[product.objectiveFormat]) {
+		return false
+	}
+
 	for index, formatState := range state.formats {
 		if index != product.directedFormat && product.formatPrograms[index] != nil && !formatState.alive {
 			return false
@@ -1426,7 +1467,65 @@ func (s *search) walkBasicStringProductForLengths(
 	return complete, walkErr
 }
 
-//nolint:cyclop // Rune/unit lengths and cutoff-safe traversal form one cursor boundary.
+const basicStringCursorDimensions = 2
+
+func (s *search) walkBasicStringProductAtRank(
+	product *basicStringProduct,
+	lengths basicStringLengths,
+	objective basicStringLengthObjective,
+	seed uint64,
+	wanted uint64,
+	visit rowVisit,
+) (bool, error) {
+	decoder, exists := newDirectRankTupleDecoder(basicStringCursorDimensions, wanted)
+	if !exists {
+		return false, nil
+	}
+
+	lengthRank, _ := decoder.Next()
+	candidateRank, _ := decoder.Next()
+
+	var (
+		runeLength uint64
+		ordinal    uint64
+		found      bool
+	)
+
+	lengths.each(product, objective, func(candidate uint64) bool {
+		if ordinal == lengthRank {
+			runeLength = candidate
+			found = true
+
+			return true
+		}
+
+		ordinal++
+
+		return false
+	})
+
+	if !found {
+		return false, nil
+	}
+
+	if err := s.assign(); err != nil {
+		return false, err
+	}
+
+	candidateOrdinal := uint64(0)
+
+	return s.walkBasicStringRuneLength(product, runeLength, seed, func(candidate *jsonValue) (bool, error) {
+		if candidateOrdinal != candidateRank {
+			candidateOrdinal++
+
+			return false, nil
+		}
+
+		return visit(candidate)
+	})
+}
+
+//nolint:cyclop // Rune and UTF-16 unit bounds share one overflow-safe traversal.
 func (s *search) walkBasicStringRuneLength(
 	product *basicStringProduct,
 	runeLength uint64,
@@ -1443,7 +1542,7 @@ func (s *search) walkBasicStringRuneLength(
 	}
 
 	maximumUnits := runeLength
-	if product.hasSurrogate || product.surrogatePadding && runeLength == 1 {
+	if product.hasSurrogate || product.surrogatePadding {
 		if runeLength > maxInt/basicStringUnitsPerRune {
 			maximumUnits = maxInt
 		} else {
@@ -1492,10 +1591,11 @@ func (s *search) walkBasicStringProduct(
 			return false, nil
 		}
 
-		candidate := string(utf16.Decode(units))
-		if product.objective != nil && !product.objective.matches(candidate) {
+		if product.objective != nil && !product.objective.matches(state.formats[product.objectiveFormat]) {
 			return false, nil
 		}
+
+		candidate := string(utf16.Decode(units))
 
 		return visit(&jsonValue{kind: jsonString, text: candidate})
 	}

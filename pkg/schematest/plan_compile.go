@@ -150,6 +150,7 @@ func appendFormatBoundaryRequests(
 		for index := 0; index < int(specification.objectiveCount); index++ {
 			boundary := &formatBoundaryObjective{
 				identity: target.expected,
+				format:   target.stringFormat,
 				boundary: specification.objectives[index],
 			}
 			request := baseline

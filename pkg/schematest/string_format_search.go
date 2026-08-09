@@ -1,7 +1,10 @@
 //nolint:godoclint // Closed format frontiers and constraint traversal are intentionally explicit.
 package schematest
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type activeStringFormat struct {
 	format     schemaFormat
@@ -15,32 +18,21 @@ const (
 	emailFinalBoundaryLabelLimit = 61
 )
 
-// simpleStringFormatWitnesses returns the finite canonical frontier for the
-// retained formats.
-func simpleStringFormatWitnesses(format schemaFormat, valid bool) []string {
+func stringFormatNegativeWitnesses(format schemaFormat) []string {
 	specification, exists := stringFormatSpecificationFor(format)
 	if !exists || specification.inert {
 		return nil
 	}
 
-	if !valid {
-		for index := 0; index < int(specification.registrationCount); index++ {
-			if specification.formats[index] == format {
-				count := specification.negativeCounts[index]
+	for index := 0; index < int(specification.registrationCount); index++ {
+		if specification.formats[index] == format {
+			count := specification.negativeCounts[index]
 
-				return append([]string(nil), specification.negativeObjectives[index][:count]...)
-			}
+			return append([]string(nil), specification.negativeObjectives[index][:count]...)
 		}
-
-		return nil
 	}
 
-	witnesses := make([]string, specification.objectiveCount)
-	for index := range witnesses {
-		witnesses[index] = specification.objectives[index].witness
-	}
-
-	return witnesses
+	return nil
 }
 
 func directedStringFormatIndex(formats []activeStringFormat, objective *stringSearchObjective) int {
@@ -89,6 +81,23 @@ func (product *basicStringProduct) addFormats(formats []activeStringFormat, dire
 	}
 
 	return product.setBounds()
+}
+
+func (product *basicStringProduct) setFormatObjective(objective *formatBoundaryObjective) error {
+	if objective == nil {
+		return nil
+	}
+
+	for index, active := range product.formats {
+		if rowOccurrenceMatches(active.occurrence, objective.identity.occurrence) {
+			product.objective = &objective.boundary
+			product.objectiveFormat = index
+
+			return product.setBounds()
+		}
+	}
+
+	return errors.New("schematest: format objective has no active format")
 }
 
 func (product *basicStringProduct) formatsAllowLength(length uint64) bool {

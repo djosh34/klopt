@@ -19,8 +19,9 @@ const (
 
 type stringFormatBoundary struct {
 	kind    stringFormatObjective
-	witness string
-	matches func(string) bool
+	bounds  stringFormatBounds
+	matches func(stringFormatProgramState) bool
+	viable  func(stringFormatProgramState) bool
 }
 
 type stringFormatBounds struct {
@@ -36,20 +37,22 @@ func (bounds stringFormatBounds) allows(length uint64) bool {
 }
 
 type stringFormatProgramState struct {
-	text   string
-	length int
-	alive  bool
+	length   int
+	position int
+	alive    bool
+	phase    uint8
+	flags    uint16
+	counts   [8]uint16
+	values   [8]uint16
 }
 
 type stringFormatProgram struct {
-	alphabet        string
-	alphabetLow     uint16
-	alphabetHigh    uint16
-	bounds          stringFormatBounds
-	match           func(string) bool
-	prefix          func(string, int) bool
-	transitionClass func(string, uint16) uint32
-	preferred       func(int, int) uint16
+	alphabet     string
+	alphabetLow  uint16
+	alphabetHigh uint16
+	bounds       stringFormatBounds
+	advanceState func(stringFormatProgramState, uint16) stringFormatProgramState
+	acceptState  func(stringFormatProgramState) bool
 }
 
 func (program *stringFormatProgram) start(length int) stringFormatProgramState {
@@ -60,17 +63,12 @@ func (program *stringFormatProgram) advance(
 	state stringFormatProgramState,
 	unit uint16,
 ) stringFormatProgramState {
-	if !state.alive || !program.hasUnit(unit) || len(state.text) == state.length ||
-		program.bounds.bounded && uint64(len(state.text)+1) > program.bounds.maximum {
+	if !state.alive || !program.hasUnit(unit) || state.position == state.length ||
+		program.bounds.bounded && uint64(state.position+1) > program.bounds.maximum {
 		return stringFormatProgramState{length: state.length}
 	}
 
-	text := state.text + string(rune(unit))
-	if program.prefix != nil && !program.prefix(text, state.length) {
-		return stringFormatProgramState{length: state.length}
-	}
-
-	return stringFormatProgramState{text: text, length: state.length, alive: true}
+	return program.advanceState(state, unit)
 }
 
 func (program *stringFormatProgram) accepts(candidate string) bool {
@@ -88,8 +86,8 @@ func (program *stringFormatProgram) accepts(candidate string) bool {
 }
 
 func (program *stringFormatProgram) accept(state stringFormatProgramState) bool {
-	return state.alive && len(state.text) == state.length &&
-		program.bounds.allows(uint64(len(state.text))) && program.match(state.text)
+	return state.alive && state.position == state.length &&
+		program.bounds.allows(uint64(state.position)) && program.acceptState(state)
 }
 
 func (program *stringFormatProgram) transition(state stringFormatProgramState, unit uint16) uint32 {
@@ -97,11 +95,7 @@ func (program *stringFormatProgram) transition(state stringFormatProgramState, u
 		return 0
 	}
 
-	if program.transitionClass == nil {
-		return 1
-	}
-
-	return program.transitionClass(state.text, unit)
+	return uint32(unit) + 1
 }
 
 func (program *stringFormatProgram) hasUnit(unit uint16) bool {
@@ -143,282 +137,88 @@ var (
 	base64FormatSpecification = newStringFormatSpecification(
 		[]schemaFormat{schemaFormatByte}, []string{"byte"},
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
-		stringFormatBounds{multiple: 4}, searchByteFormatMatches, searchByteFormatPrefixViable,
-		searchByteFormatTransitionClass,
+		stringFormatBounds{multiple: 4},
 		[][]string{{"YQ="}},
-		stringFormatBoundary{kind: stringFormatObjectiveCanonical, witness: "YQ=="},
-		stringFormatBoundary{kind: stringFormatObjectivePadding, witness: "YWI="},
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical},
+		stringFormatBoundary{kind: stringFormatObjectivePadding},
 	)
 	dateFormatSpecification = newStringFormatSpecification(
 		[]schemaFormat{schemaFormatDate}, []string{"date"},
-		"0123456789-", exactStringFormatBounds(10), searchDateFormatMatches, searchDateFormatPrefixViable,
-		searchDateFormatTransitionClass,
+		"0123456789-", exactStringFormatBounds(10),
 		[][]string{{"2001-02-29", "1900-02-29", "1970-13-01", "1970-01-32"}},
-		stringFormatBoundary{kind: stringFormatObjectiveCanonical, witness: "1970-01-01"},
-		stringFormatBoundary{kind: stringFormatObjectiveLeapBoundary, witness: "2000-02-29"},
-		stringFormatBoundary{kind: stringFormatObjectiveCenturyBoundary, witness: "1900-02-28"},
-		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary, witness: "9999-12-31"},
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical},
+		stringFormatBoundary{kind: stringFormatObjectiveLeapBoundary},
+		stringFormatBoundary{kind: stringFormatObjectiveCenturyBoundary},
+		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary},
 	)
 	dateTimeFormatSpecification = newStringFormatSpecification(
 		[]schemaFormat{schemaFormatDateTime}, []string{"date-time"},
-		"0123456789-T:.Z+", stringFormatBounds{minimum: 20}, searchDateTimeFormatMatches,
-		searchDateTimeFormatPrefixViable, searchDateFormatTransitionClass,
+		"0123456789-T:.Z+", stringFormatBounds{minimum: 20},
 		[][]string{{"1970-01-01t00:00:00Z", "1970-01-01T00:00:60Z", "1970-01-01T00:00:00.Z", "1970-01-01T00:00:00+24:00"}},
-		stringFormatBoundary{kind: stringFormatObjectiveCanonical, witness: "1970-01-01T00:00:00Z"},
-		stringFormatBoundary{kind: stringFormatObjectiveLeapBoundary, witness: "2000-02-29T23:59:59.0Z"},
-		stringFormatBoundary{kind: stringFormatObjectiveCenturyBoundary, witness: "1900-02-28T00:00:00+23:59"},
-		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary, witness: "9999-12-31T23:59:59-23:59"},
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical},
+		stringFormatBoundary{kind: stringFormatObjectiveLeapBoundary},
+		stringFormatBoundary{kind: stringFormatObjectiveCenturyBoundary},
+		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary},
 	)
 	emailFormatSpecification = newStringFormatSpecification(
 		[]schemaFormat{schemaFormatEmail}, []string{"email"},
-		"", stringFormatBounds{minimum: 3, maximum: 254, bounded: true}, searchEmailFormatMatches,
-		searchEmailFormatPrefixViable, searchEmailFormatTransitionClass,
+		"", stringFormatBounds{minimum: 3, maximum: 254, bounded: true},
 		[][]string{{
 			"a..b@example.com", strings.Repeat("a", 65) + "@b",
 			strings.Repeat("a", 64) + "@" + strings.Repeat("b", 63) + "." +
 				strings.Repeat("c", 63) + "." + strings.Repeat("d", 62),
 			"é@example.com",
 		}},
-		stringFormatBoundary{kind: stringFormatObjectiveCanonical, witness: "a@b"},
-		stringFormatBoundary{kind: stringFormatObjectiveLocalLimit, witness: strings.Repeat("a", 64) + "@b"},
-		stringFormatBoundary{
-			kind: stringFormatObjectiveDomainLimit,
-			witness: strings.Repeat("a", 64) + "@" + strings.Repeat("b", 63) + "." +
-				strings.Repeat("c", 63) + "." + strings.Repeat("d", 61),
-		},
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical},
+		stringFormatBoundary{kind: stringFormatObjectiveLocalLimit},
+		stringFormatBoundary{kind: stringFormatObjectiveDomainLimit},
 	)
 	ipv4FormatSpecification = newStringFormatSpecification(
 		[]schemaFormat{schemaFormatIPv4}, []string{"ipv4"},
-		"0123456789.", stringFormatBounds{minimum: 7, maximum: 15, bounded: true}, searchIPv4FormatMatches,
-		searchIPv4FormatPrefixViable, nil,
+		"0123456789.", stringFormatBounds{minimum: 7, maximum: 15, bounded: true},
 		[][]string{{"00.0.0.0", "256.255.255.255"}},
-		stringFormatBoundary{kind: stringFormatObjectiveLowerBoundary, witness: "0.0.0.0"},
-		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary, witness: "255.255.255.255"},
+		stringFormatBoundary{kind: stringFormatObjectiveLowerBoundary},
+		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary},
 	)
 	uuidFormatSpecification = newStringFormatSpecification(
 		[]schemaFormat{schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4},
 		[]string{"uuid", "uuidv4", "uuid-v4"},
-		"0123456789ABCDEFabcdef-", exactStringFormatBounds(36), searchUUIDFormatMatches,
-		searchUUIDFormatPrefixViable, nil,
+		"0123456789ABCDEFabcdef-", exactStringFormatBounds(36),
 		[][]string{
 			{"00000000-0000-1000-8000-000000000000"},
 			{"00000000-0000-4000-7000-000000000000"},
 			{"00000000-0000-4000-7000-000000000000"},
 		},
-		stringFormatBoundary{
-			kind:    stringFormatObjectiveCanonical,
-			witness: "00000000-0000-4000-8000-000000000000",
-		},
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical},
 	)
 	cidrFormatSpecification = newStringFormatSpecification(
 		[]schemaFormat{schemaFormatCIDR, schemaFormatIPv4CIDR}, []string{"cidr", "ipv4-cidr"},
-		"0123456789./", stringFormatBounds{minimum: 9, maximum: 18, bounded: true}, searchCIDRFormatMatches,
-		searchCIDRFormatPrefixViable, nil,
+		"0123456789./", stringFormatBounds{minimum: 9, maximum: 18, bounded: true},
 		[][]string{
 			{"192.0.2.7/33", "192.0.2.7/00"},
 			{"192.0.2.7/33", "192.0.2.7/00"},
 		},
-		stringFormatBoundary{kind: stringFormatObjectiveLowerBoundary, witness: "192.0.2.7/0"},
-		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary, witness: "192.0.2.7/32"},
+		stringFormatBoundary{kind: stringFormatObjectiveLowerBoundary},
+		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary},
 	)
 	passwordFormatSpecification = newInertStringFormatSpecification(schemaFormatPassword, "password")
 )
-
-func stringFormatPreferred(format schemaFormat) func(int, int) uint16 {
-	return func(position, length int) uint16 {
-		switch format {
-		case schemaFormatByte:
-			return '+'
-		case schemaFormatDate:
-			return uint16("0000-01-01"[position])
-		case schemaFormatDateTime:
-			if position < 19 {
-				return uint16("0000-01-01T00:00:00"[position])
-			}
-
-			if position == length-1 {
-				return 'Z'
-			}
-
-			if position == 19 {
-				return '.'
-			}
-
-			return '0'
-		case schemaFormatEmail:
-			localLength := min(emailLocalLimit, length-2)
-			if position < localLength {
-				return 'a'
-			}
-
-			if position == localLength {
-				return '@'
-			}
-
-			return 'b'
-		case schemaFormatIPv4:
-			return searchIPv4Preferred(position, length)
-		case schemaFormatUUID:
-			return uint16("00000000-0000-4000-8000-000000000000"[position])
-		case schemaFormatCIDR:
-			addressLength := min(15, length-2)
-			if position < addressLength {
-				return searchIPv4Preferred(position, addressLength)
-			}
-
-			if position == addressLength {
-				return '/'
-			}
-
-			if length-addressLength-1 == 1 {
-				return '0'
-			}
-
-			if position == addressLength+1 {
-				return '1'
-			}
-
-			return '0'
-		default:
-			return 0
-		}
-	}
-}
-
-func searchIPv4Preferred(position, length int) uint16 {
-	widths := [4]int{1, 1, 1, 1}
-
-	remaining := length - 7
-	for index := len(widths) - 1; index >= 0 && remaining > 0; index-- {
-		add := min(2, remaining)
-		widths[index] += add
-		remaining -= add
-	}
-
-	current := 0
-	for index, width := range widths {
-		if position < current+width {
-			if width == 1 {
-				return '0'
-			}
-
-			if position == current {
-				return '1'
-			}
-
-			return '0'
-		}
-
-		current += width
-		if index < len(widths)-1 {
-			if position == current {
-				return '.'
-			}
-
-			current++
-		}
-	}
-
-	return 0
-}
-
-//nolint:gocognit // Closed format objectives have one explicit semantic predicate each.
-func stringFormatObjectiveMatcher(format schemaFormat, objective stringFormatObjective) func(string) bool {
-	return func(candidate string) bool {
-		switch format {
-		case schemaFormatByte:
-			if objective == stringFormatObjectivePadding {
-				return strings.HasSuffix(candidate, "=") && !strings.HasSuffix(candidate, "==")
-			}
-
-			return strings.HasSuffix(candidate, "==")
-		case schemaFormatDate, schemaFormatDateTime:
-			if len(candidate) < 10 || !searchDateFormatMatches(candidate[:10]) {
-				return false
-			}
-
-			year := searchDecimalDigits(candidate[:4])
-			month := searchDecimalDigits(candidate[5:7])
-			day := searchDecimalDigits(candidate[8:10])
-
-			switch objective {
-			case stringFormatObjectiveCanonical:
-				return year == 1970
-			case stringFormatObjectiveLeapBoundary:
-				return month == 2 && day == 29
-			case stringFormatObjectiveCenturyBoundary:
-				return year%100 == 0 && year%400 != 0 && month == 2 && day == 28
-			case stringFormatObjectiveUpperBoundary:
-				return year == 9999 && month == 12 && day == 31
-			}
-		case schemaFormatEmail:
-			separator, ok := searchEmailLocalEnd(candidate)
-			if !ok {
-				return false
-			}
-
-			switch objective {
-			case stringFormatObjectiveCanonical:
-				return separator == 1 && len(candidate) == 3
-			case stringFormatObjectiveLocalLimit:
-				return separator == emailLocalLimit
-			case stringFormatObjectiveDomainLimit:
-				return len(candidate) == 254
-			}
-		case schemaFormatIPv4:
-			if objective == stringFormatObjectiveLowerBoundary {
-				return candidate == "0.0.0.0"
-			}
-
-			return candidate == "255.255.255.255"
-		case schemaFormatUUID:
-			return true
-		case schemaFormatCIDR:
-			_, prefix, found := strings.Cut(candidate, "/")
-			if !found {
-				return false
-			}
-
-			if objective == stringFormatObjectiveLowerBoundary {
-				return prefix == "0"
-			}
-
-			return prefix == "32"
-		}
-
-		return false
-	}
-}
 
 func newStringFormatSpecification(
 	formats []schemaFormat,
 	names []string,
 	alphabet string,
 	bounds stringFormatBounds,
-	match func(string) bool,
-	prefix func(string, int) bool,
-	transitionClass func(string, uint16) uint32,
 	negativeObjectives [][]string,
 	objectives ...stringFormatBoundary,
 ) *stringFormatSpecification {
-	if prefix == nil {
-		prefix = func(candidate string, length int) bool {
-			return len(candidate) < length || match(candidate)
-		}
-	}
-
 	for index := range objectives {
-		objectives[index].matches = stringFormatObjectiveMatcher(formats[0], objectives[index].kind)
+		objectives[index].bounds = stringFormatObjectiveBounds(formats[0], objectives[index].kind)
+		objectives[index].matches = stringFormatObjectiveStateMatcher(formats[0], objectives[index].kind)
+		objectives[index].viable = stringFormatObjectiveStateViable(formats[0], objectives[index].kind)
 	}
 
-	program := &stringFormatProgram{
-		alphabet: alphabet, bounds: bounds, match: match, prefix: prefix,
-		transitionClass: transitionClass, preferred: stringFormatPreferred(formats[0]),
-	}
-	if alphabet == "" {
-		program.alphabetLow = 0x20
-		program.alphabetHigh = 0x7e
-	}
+	program := newStringFormatProgram(formats[0], alphabet, bounds)
 
 	specification := &stringFormatSpecification{
 		registrationCount: uint8(len(formats)),
@@ -493,439 +293,6 @@ func stringFormatByName(name string) (schemaFormat, bool) {
 	})
 
 	return format, format != schemaFormatNone
-}
-
-func searchByteFormatTransitionClass(prefix string, unit uint16) uint32 {
-	value := searchBase64Value(byte(unit))
-	if value < 0 {
-		return uint32(unit) + 1
-	}
-
-	switch len(prefix) % 4 {
-	case 1:
-		return uint32(value&15) + 1
-	case 2:
-		return uint32(value&3) + 1
-	default:
-		return 1
-	}
-}
-
-func searchDateFormatTransitionClass(prefix string, unit uint16) uint32 {
-	if unit < '0' || unit > '9' || len(prefix) >= 10 {
-		return 1
-	}
-
-	digit := int(unit - '0')
-
-	switch len(prefix) {
-	case 0:
-		return uint32(digit%2) + 1
-	case 1:
-		century := int(prefix[0]-'0')*10 + digit
-
-		return uint32(century%4) + 1
-	case 2:
-		if digit == 0 {
-			return 1
-		}
-
-		return uint32(digit%2) + 2
-	case 3:
-		year := searchDecimalDigits(prefix)*10 + digit
-		if searchLeapYear(year) {
-			return 2
-		}
-
-		return 1
-	case 6:
-		month := searchDecimalDigits(prefix[5:])*10 + digit
-		switch month {
-		case 2:
-			return 1
-		case 4, 6, 9, 11:
-			return 2
-		default:
-			return 3
-		}
-	case 8:
-		return uint32(digit) + 1
-	default:
-		return 1
-	}
-}
-
-func searchEmailFormatTransitionClass(_ string, unit uint16) uint32 {
-	if unit >= '0' && unit <= '9' {
-		return uint32(unit-'0') + 1
-	}
-
-	switch unit {
-	case '.', '@', '[', ']', ':', '\\', '"', '-':
-		return uint32(unit) + 16
-	default:
-		return 11
-	}
-}
-
-func searchEmailFormatPrefixViable(prefix string, length int) bool {
-	if length < 3 || length > 254 || len(prefix) > length {
-		return false
-	}
-
-	if len(prefix) == length {
-		return searchEmailFormatMatches(prefix)
-	}
-
-	separator, viable := searchEmailLocalPrefix(prefix)
-	if !viable || separator < 0 {
-		return viable
-	}
-
-	domain := prefix[separator+1:]
-	if domain == "" {
-		return true
-	}
-
-	if domain[0] == '[' {
-		return searchEmailLiteralPrefixViable(domain[1:])
-	}
-
-	labels := strings.Split(domain, ".")
-	for index, label := range labels {
-		if len(label) > 63 || len(label) > 0 && label[0] == '-' ||
-			index < len(labels)-1 && (label == "" || label[len(label)-1] == '-') {
-			return false
-		}
-	}
-
-	return true
-}
-
-func searchEmailLocalPrefix(prefix string) (int, bool) {
-	if prefix[0] != '"' {
-		separator := strings.IndexByte(prefix, '@')
-		if separator < 0 {
-			return -1, len(prefix) <= 64 && prefix[0] != '.' && !strings.Contains(prefix, "..")
-		}
-
-		return separator, separator > 0 && separator <= 64 && prefix[separator-1] != '.'
-	}
-
-	localEnd, complete := searchEmailLocalEnd(prefix)
-	if !complete {
-		return -1, len(prefix) <= 64
-	}
-
-	if localEnd == len(prefix) {
-		return -1, true
-	}
-
-	return localEnd, prefix[localEnd] == '@'
-}
-
-func searchEmailLiteralPrefixViable(literal string) bool {
-	if strings.ContainsRune(literal, ']') {
-		return false
-	}
-
-	separator := strings.IndexByte(literal, ':')
-	if separator >= 0 && !strings.ContainsRune(literal[:separator], '.') {
-		return searchEmailTaggedLiteralPrefixViable(literal, separator)
-	}
-
-	return searchEmailIPv4LiteralPrefixViable(literal)
-}
-
-func searchEmailTaggedLiteralPrefixViable(literal string, separator int) bool {
-	tag := literal[:separator]
-	if !strings.EqualFold(tag, "ipv6") {
-		return tag != "" && searchASCIIAlphaNumeric(tag[len(tag)-1])
-	}
-
-	body := literal[separator+1:]
-	if strings.Count(body, "::") > 1 {
-		return false
-	}
-
-	explicit := 0
-
-	for _, group := range strings.Split(body, ":") {
-		if len(group) > 4 {
-			return false
-		}
-
-		if group != "" {
-			explicit++
-		}
-	}
-
-	return explicit <= 8
-}
-
-func searchEmailIPv4LiteralPrefixViable(literal string) bool {
-	for _, character := range literal {
-		if character != '.' && (character < '0' || character > '9') {
-			return true
-		}
-	}
-
-	for _, part := range strings.Split(literal, ".") {
-		if len(part) > 3 || len(part) == 3 && searchDecimalDigits(part) > 255 {
-			return false
-		}
-	}
-
-	return true
-}
-
-func searchByteFormatPrefixViable(prefix string, length int) bool {
-	if length < 0 || length%4 != 0 || len(prefix) > length {
-		return false
-	}
-
-	padding := strings.IndexByte(prefix, '=')
-	if padding < 0 {
-		return true
-	}
-
-	if padding != length-2 && padding != length-1 {
-		return false
-	}
-
-	if padding == length-2 {
-		if padding < 2 || searchBase64Value(prefix[padding-1])&15 != 0 {
-			return false
-		}
-
-		for position := padding; position < len(prefix); position++ {
-			if prefix[position] != '=' {
-				return false
-			}
-		}
-
-		return true
-	}
-
-	return padding >= 3 && searchBase64Value(prefix[padding-1])&3 == 0
-}
-
-func searchDateFormatPrefixViable(prefix string, length int) bool {
-	if length != 10 || len(prefix) > length {
-		return false
-	}
-
-	if len(prefix) >= 7 {
-		month := searchDecimalDigits(prefix[5:7])
-		if month < 1 || month > 12 {
-			return false
-		}
-	}
-
-	if len(prefix) < 9 {
-		return true
-	}
-
-	year := searchDecimalDigits(prefix[:4])
-	month := searchDecimalDigits(prefix[5:7])
-	days := [...]int{0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
-
-	maximum := days[month]
-	if month == 2 && searchLeapYear(year) {
-		maximum = 29
-	}
-
-	minimumDay := searchDecimalDigits(prefix[8:])
-	if len(prefix) == 9 {
-		minimumDay *= 10
-	}
-
-	maximumDay := minimumDay
-	if len(prefix) == 9 {
-		maximumDay += 9
-	}
-
-	return maximumDay >= 1 && minimumDay <= maximum
-}
-
-//nolint:gocognit,gocyclo // Date, time, fraction, and offset prefixes are one incremental grammar.
-func searchDateTimeFormatPrefixViable(prefix string, length int) bool {
-	if length < 20 || len(prefix) > length {
-		return false
-	}
-
-	if len(prefix) <= 10 {
-		return searchDateFormatPrefixViable(prefix, 10)
-	}
-
-	if !searchDateFormatMatches(prefix[:10]) || prefix[10] != 'T' {
-		return false
-	}
-
-	for position := 11; position < len(prefix) && position < 19; position++ {
-		if position == 13 || position == 16 {
-			if prefix[position] != ':' {
-				return false
-			}
-		} else if prefix[position] < '0' || prefix[position] > '9' {
-			return false
-		}
-	}
-
-	if len(prefix) >= 13 && searchDecimalDigits(prefix[11:13]) > 23 ||
-		len(prefix) >= 16 && searchDecimalDigits(prefix[14:16]) > 59 ||
-		len(prefix) >= 19 && searchDecimalDigits(prefix[17:19]) > 59 {
-		return false
-	}
-
-	if len(prefix) <= 19 {
-		return true
-	}
-
-	tail := prefix[19:]
-	if tail[0] == 'Z' {
-		return len(tail) == 1 && len(prefix) == length
-	}
-
-	if tail[0] == '+' || tail[0] == '-' {
-		return searchDateTimeOffsetPrefixViable(tail, len(prefix) == length)
-	}
-
-	if tail[0] != '.' {
-		return false
-	}
-
-	if len(tail) == 1 {
-		return len(prefix) < length
-	}
-
-	position := 1
-	for position < len(tail) && tail[position] >= '0' && tail[position] <= '9' {
-		position++
-	}
-
-	if position == 1 {
-		return false
-	}
-
-	if position == len(tail) {
-		return len(prefix) < length
-	}
-
-	if tail[position] == 'Z' {
-		return position+1 == len(tail) && len(prefix) == length
-	}
-
-	if tail[position] != '+' && tail[position] != '-' {
-		return false
-	}
-
-	return searchDateTimeOffsetPrefixViable(tail[position:], len(prefix) == length)
-}
-
-func searchDateTimeOffsetPrefixViable(offset string, complete bool) bool {
-	if len(offset) > 6 {
-		return false
-	}
-
-	for position := 1; position < len(offset); position++ {
-		if position == 3 {
-			if offset[position] != ':' {
-				return false
-			}
-		} else if offset[position] < '0' || offset[position] > '9' {
-			return false
-		}
-	}
-
-	return (!complete || len(offset) == 6) &&
-		(len(offset) < 3 || searchDecimalDigits(offset[1:3]) <= 23) &&
-		(len(offset) < 6 || searchDecimalDigits(offset[4:6]) <= 59)
-}
-
-func searchIPv4FormatPrefixViable(prefix string, length int) bool {
-	if length < 7 || length > 15 || len(prefix) > length {
-		return false
-	}
-
-	if len(prefix) == length {
-		return searchIPv4FormatMatches(prefix)
-	}
-
-	parts := strings.Split(prefix, ".")
-	if len(parts) > 4 {
-		return false
-	}
-
-	for index, part := range parts {
-		if index < len(parts)-1 {
-			if !searchIPv4Octet(part, false) {
-				return false
-			}
-		} else if len(part) > 3 || len(part) > 1 && part[0] == '0' ||
-			len(part) == 3 && searchDecimalDigits(part) > 255 {
-			return false
-		}
-	}
-
-	return true
-}
-
-func searchCIDRFormatPrefixViable(prefix string, length int) bool {
-	if length < 9 || length > 18 || len(prefix) > length {
-		return false
-	}
-
-	if len(prefix) == length {
-		return searchCIDRFormatMatches(prefix)
-	}
-
-	address, cidrPrefix, found := strings.Cut(prefix, "/")
-	if !found {
-		return searchIPv4FormatPrefixViable(address, max(7, min(15, len(address)+1)))
-	}
-
-	if !searchIPv4FormatMatches(address) || strings.ContainsRune(cidrPrefix, '/') || len(cidrPrefix) > 2 ||
-		len(cidrPrefix) > 1 && cidrPrefix[0] == '0' {
-		return false
-	}
-
-	for _, character := range cidrPrefix {
-		if character < '0' || character > '9' {
-			return false
-		}
-	}
-
-	return cidrPrefix == "" || searchDecimalDigits(cidrPrefix) <= 32
-}
-
-func searchUUIDFormatPrefixViable(prefix string, length int) bool {
-	if length != 36 || len(prefix) > length {
-		return false
-	}
-
-	for position, character := range []byte(prefix) {
-		switch position {
-		case 8, 13, 18, 23:
-			if character != '-' {
-				return false
-			}
-		case 14:
-			if character != '4' {
-				return false
-			}
-		case 19:
-			if !strings.ContainsRune("89ABab", rune(character)) {
-				return false
-			}
-		default:
-			if !searchHexCharacter(character) {
-				return false
-			}
-		}
-	}
-
-	return true
 }
 
 func searchByteFormatMatches(value string) bool {

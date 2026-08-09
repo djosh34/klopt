@@ -139,7 +139,7 @@ func TestBasicStringProductFindsGroupedAlternationIntersection(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "ac", witness)
-	require.Equal(t, uint64(7), searchState.steps)
+	require.Equal(t, uint64(3), searchState.steps)
 }
 
 func TestBasicStringProductPreservesLiteralUTF16Units(t *testing.T) {
@@ -152,7 +152,7 @@ func TestBasicStringProductPreservesLiteralUTF16Units(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "😀x", witness)
-	require.Equal(t, uint64(10), searchState.steps)
+	require.Equal(t, uint64(6), searchState.steps)
 }
 
 func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) {
@@ -165,7 +165,7 @@ func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "ab", witness)
-	require.Equal(t, uint64(55), searchState.steps)
+	require.Equal(t, uint64(54), searchState.steps)
 }
 
 func TestBasicStringProductPadsContextualPatterns(t *testing.T) {
@@ -356,7 +356,7 @@ func TestBasicStringProductExhaustsContradictoryFinitePatterns(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 	require.Empty(t, witness)
-	require.Equal(t, uint64(4), searchState.steps)
+	require.Equal(t, uint64(3), searchState.steps)
 }
 
 func TestBasicStringProductSearchesQuantifiersAnchorsAndBoundaries(t *testing.T) {
@@ -402,9 +402,9 @@ func TestBasicStringProductSearchesLeadingAssertionsInAuthoredOrder(t *testing.T
 		want    string
 		steps   uint64
 	}{
-		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 21},
-		{name: "negative", pattern: `^(?!a)[a-b]$`, want: "b", steps: 7},
-		{name: "mixed consecutive", pattern: `^(?=a)(?!b)[a-c]$`, want: "a", steps: 6},
+		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 9},
+		{name: "negative", pattern: `^(?!a)[a-b]$`, want: "b", steps: 6},
+		{name: "mixed consecutive", pattern: `^(?=a)(?!b)[a-c]$`, want: "a", steps: 5},
 	}
 
 	for _, test := range tests {
@@ -449,7 +449,7 @@ func TestBasicStringProductNegativeAssertionPreservesSiblingPattern(t *testing.T
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "b", witness)
-	require.Equal(t, uint64(7), searchState.steps)
+	require.Equal(t, uint64(6), searchState.steps)
 }
 
 func TestBasicStringProductPrunesFailedNegativeAssertionBeforeSuffix(t *testing.T) {
@@ -490,7 +490,7 @@ func TestBasicStringProductPrunesExactFormatFailureBeforeSuffix(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.False(t, complete)
-	require.Equal(t, uint64(6), searchState.steps)
+	require.Equal(t, uint64(3), searchState.steps)
 }
 
 func TestBasicStringProductLeadingAssertionContradictionStopsAtBudget(t *testing.T) {
@@ -560,7 +560,7 @@ func TestBasicStringLengthOrderRequirementsBoundariesThenFairLengths(t *testing.
 		maximum:    maximum,
 		hasMaximum: true,
 	}
-	product := &basicStringProduct{maxUnits: 3}
+	product := &basicStringProduct{maximumRunes: 3, lengthBounded: true}
 	got := make([]uint64, 0)
 
 	lengths.each(product, basicStringLengthObjective{length: 3, constrained: true}, func(length uint64) bool {
@@ -569,7 +569,7 @@ func TestBasicStringLengthOrderRequirementsBoundariesThenFairLengths(t *testing.
 		return false
 	})
 
-	require.Equal(t, []uint64{3, 2, 4, 0, 1}, got)
+	require.Equal(t, []uint64{3, 2, 0, 1}, got)
 }
 
 func TestBasicStringProductSearchesExactRuneLength(t *testing.T) {
@@ -686,13 +686,20 @@ func TestBasicStringProductChargesLengthAndCountedRepeatEdges(t *testing.T) {
 	t.Parallel()
 
 	patterns := parseBasicSearchPatterns(t, `^a{2}$`)
-	searchState := &search{maxSteps: 5}
 
-	witness, found, err := searchState.findBasicStringWitness(patterns)
+	cutoff := &search{maxSteps: 2}
+	witness, found, err := cutoff.findBasicStringWitness(patterns)
 	require.ErrorIs(t, err, errMaxSteps)
 	require.False(t, found)
 	require.Empty(t, witness)
-	require.Equal(t, uint64(5), searchState.steps)
+	require.Equal(t, uint64(2), cutoff.steps)
+
+	complete := &search{maxSteps: 3}
+	witness, found, err = complete.findBasicStringWitness(patterns)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "aa", witness)
+	require.Equal(t, uint64(3), complete.steps)
 }
 
 func TestBasicStringPatternProgramKeepsCountedRepeatsCompact(t *testing.T) {

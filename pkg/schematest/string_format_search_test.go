@@ -94,8 +94,7 @@ func TestSimpleStringFormatWitnessesAreCanonicalAndDeterministic(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			require.Equal(t, test.positive, simpleStringFormatWitnesses(test.format, true))
-			require.Equal(t, test.negative, simpleStringFormatWitnesses(test.format, false))
+			require.Equal(t, test.negative, stringFormatNegativeWitnesses(test.format))
 
 			for _, witness := range test.positive {
 				matches, err := cleanStringFormatMatches(witness, test.format)
@@ -233,6 +232,75 @@ func TestStringFormatTransitionPartitionsSeparateExactSemantics(t *testing.T) {
 	)
 }
 
+func TestStringFormatTransitionClassesHaveEqualSuccessors(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		format    schemaFormat
+		candidate string
+	}{
+		{schemaFormatByte, "YQ=="},
+		{schemaFormatDate, "2000-02-29"},
+		{schemaFormatDateTime, "2000-02-29T23:59:59Z"},
+		{schemaFormatEmail, "a@example.com"},
+		{schemaFormatIPv4, "255.0.0.0"},
+		{schemaFormatUUID, "00000000-0000-4000-8000-000000000000"},
+		{schemaFormatCIDR, "192.0.2.7/32"},
+	} {
+		specification, exists := stringFormatSpecificationFor(test.format)
+		require.True(t, exists)
+
+		state := specification.program.start(len(test.candidate))
+		for _, selected := range test.candidate {
+			classes := make(map[uint32]stringFormatProgramState)
+
+			specification.program.eachUnit(func(unit uint16) {
+				class := specification.program.transition(state, unit)
+				if class == 0 {
+					return
+				}
+
+				successor := specification.program.advance(state, unit)
+				if previous, found := classes[class]; found {
+					require.Equal(t, previous, successor)
+				} else {
+					classes[class] = successor
+				}
+			})
+
+			state = specification.program.advance(state, uint16(selected))
+		}
+	}
+}
+
+func TestBuildFindsContinuationDistinctDateAndIPv4Units(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{
+			name:   "date month tens",
+			schema: `{"type":"string","format":"date","pattern":"^[0-9]{4}-[0-9]0-01$"}`,
+			want:   `"0000-10-01"`,
+		},
+		{
+			name:   "ipv4 octet value",
+			schema: `{"type":"string","format":"ipv4","pattern":"^[0-9]55\\.0\\.0\\.0$"}`,
+			want:   `"155.0.0.0"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(test.schema)), 100_000)
+			require.Contains(t, cases, Case{JSON: []byte(test.want), Valid: true})
+		})
+	}
+}
+
 func TestBuildSearchesSimpleFormatAcrossActiveAllOfConstraints(t *testing.T) {
 	t.Parallel()
 
@@ -318,7 +386,7 @@ func TestFindStringFaultRowDirectsFormatAndPreservesSiblingPattern(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "YQ=", row.text)
-	require.Equal(t, uint64(16), searchState.steps)
+	require.Equal(t, uint64(4), searchState.steps)
 	require.Equal(t, identityStrings(target.expected), identityStrings(evaluate(model, row).failureRecords()))
 }
 
@@ -336,27 +404,27 @@ func TestFindStringFaultRowDirectsRemainingFormatsAndPreservesSiblings(t *testin
 			schema: `{"type":"string","format":"email","pattern":"^a\\.\\.b@example\\.com$",` +
 				`"minLength":16,"maxLength":16}`,
 			witness: "a..b@example.com",
-			steps:   31,
+			steps:   17,
 		},
 		{
 			name:    "ipv4",
 			schema:  `{"type":"string","format":"ipv4","pattern":"^00\\.0\\.0\\.0$","minLength":8,"maxLength":8}`,
 			witness: "00.0.0.0",
-			steps:   15,
+			steps:   9,
 		},
 		{
 			name: "cidr",
 			schema: `{"type":"string","format":"cidr","pattern":"^192\\.0\\.2\\.7/33$",` +
 				`"minLength":12,"maxLength":12}`,
 			witness: "192.0.2.7/33",
-			steps:   24,
+			steps:   13,
 		},
 		{
 			name: "ipv4-cidr",
 			schema: `{"type":"string","format":"ipv4-cidr","pattern":"^192\\.0\\.2\\.7/33$",` +
 				`"minLength":12,"maxLength":12}`,
 			witness: "192.0.2.7/33",
-			steps:   24,
+			steps:   13,
 		},
 	}
 
@@ -395,7 +463,7 @@ func TestBuildSearchesRemainingFormatsAcrossActiveSiblingConstraints(t *testing.
 		},
 		{
 			name: "ipv4", format: "ipv4", pattern: `^255\\.255\\.255\\.255$`, length: 15,
-			witness: "255.255.255.255", stop: SpaceExhausted,
+			witness: "255.255.255.255", stop: MaxStepsReached,
 		},
 		{
 			name: "cidr", format: "cidr", pattern: `^192\\.0\\.2\\.7/32$`, length: 12,

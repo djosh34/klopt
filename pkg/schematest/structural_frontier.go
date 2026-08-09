@@ -644,7 +644,7 @@ func (s *search) rowScalarValueForRank(
 	kind jsonKind,
 	wanted uint64,
 ) (*jsonValue, bool, uint64, error) {
-	if kind == jsonString && nodeHasStringSearchRules(source.node) {
+	if kind == jsonString && source.node.enum == nil && nodeHasStringSearchRules(source.node) {
 		candidate, exists, err := s.rowGeneratedStringValueAt(
 			source, requirements, context, wanted,
 		)
@@ -773,14 +773,10 @@ func (s *search) rowGeneratedStringValueAt(
 		return nil, false, addErr
 	}
 
-	lengthObjective := basicStringLengthObjective{}
-
-	if boundary := matchingFormatBoundary(context.validRequest, source.occurrence); boundary != nil {
-		product.guidance = &boundary.boundary
-		product.objective = &boundary.boundary
-		lengthObjective = basicStringLengthObjective{
-			length: uint64(len([]rune(boundary.boundary.witness))), constrained: true,
-		}
+	if objectiveErr := product.setFormatObjective(
+		matchingFormatBoundary(context.validRequest, source.occurrence),
+	); objectiveErr != nil {
+		return nil, false, objectiveErr
 	}
 
 	seedNode := source.node
@@ -800,30 +796,15 @@ func (s *search) rowGeneratedStringValueAt(
 		return nil, false, err
 	}
 
-	runeLength, candidateOrdinal, exists := structuralStringSelection(product, lengths, lengthObjective, wanted)
-	if !exists {
-		return nil, false, nil
-	}
-
-	if assignErr := s.assign(); assignErr != nil {
-		return nil, false, assignErr
-	}
-
-	ordinal := uint64(0)
-
 	var selected *jsonValue
 
-	complete, err := s.walkBasicStringRuneLength(
+	complete, err := s.walkBasicStringProductAtRank(
 		product,
-		runeLength,
+		lengths,
+		basicStringLengthObjective{},
 		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
+		wanted,
 		func(candidate *jsonValue) (bool, error) {
-			if ordinal != candidateOrdinal {
-				ordinal++
-
-				return false, nil
-			}
-
 			var cloneErr error
 
 			selected, cloneErr = cloneJSONValue(candidate)
@@ -836,47 +817,6 @@ func (s *search) rowGeneratedStringValueAt(
 	}
 
 	return selected, complete, nil
-}
-
-// structuralStringSelection decodes one fair length and within-length ordinal.
-//
-//nolint:cyclop // Fixed and fair length domains share one charged structural selection.
-func structuralStringSelection(
-	product *basicStringProduct,
-	lengths basicStringLengths,
-	objective basicStringLengthObjective,
-	wanted uint64,
-) (uint64, uint64, bool) {
-	if objective.constrained {
-		return objective.length, wanted, true
-	}
-
-	if lengths.hasMaximum && lengths.maximum == lengths.minimum {
-		return lengths.minimum, wanted, true
-	}
-
-	minimum := lengths.minimum
-
-	for index := range product.machines {
-		machine := &product.machines[index]
-		if machine.required && machine.expected && machine.wholeBound {
-			minimum = max(minimum, machine.minUnits)
-		}
-	}
-
-	for index, program := range product.formatPrograms {
-		if program != nil && index != product.directedFormat {
-			minimum = max(minimum, program.bounds.minimum)
-		}
-	}
-
-	if wanted > ^uint64(0)-minimum {
-		return 0, 0, false
-	}
-
-	candidate := minimum + wanted
-
-	return candidate, 0, lengths.allows(candidate) && product.formatsAllowLength(candidate)
 }
 
 // rowGeneratedNumberValueAt directly evaluates one deterministic edge or seeded primitive tuple.

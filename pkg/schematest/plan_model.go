@@ -93,6 +93,7 @@ type validRequest struct {
 // formatBoundaryObjective is one registry-owned valid witness request.
 type formatBoundaryObjective struct {
 	identity levelIdentity
+	format   schemaFormat
 	boundary stringFormatBoundary
 }
 
