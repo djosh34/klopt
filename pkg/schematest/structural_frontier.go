@@ -4,38 +4,65 @@ import "errors"
 
 // rankedArrayStructure is one transient projection/length choice.
 type rankedArrayStructure struct {
-	view           rowProjectionView
-	active         []requirement
-	length         rowArrayCount
-	projectionRank uint64
-	lengthRank     uint64
+	view   rowProjectionView
+	active []requirement
+	length rowArrayCount
 }
 
-// rowProjectionAt rebuilds one projection ordinal and reports its finite endpoint.
-func rowProjectionAt(
+// liveProjectionFrontier owns the one resumable projection traversal for a structural search.
+type liveProjectionFrontier struct {
+	cursor     *rowProjectionCursor
+	ordinal    uint64
+	finiteSize uint64
+	exhausted  bool
+}
+
+// finiteRankSource retains one independent source endpoint learned by exhaustion.
+type finiteRankSource struct {
+	finiteSize uint64
+	exhausted  bool
+}
+
+// newLiveProjectionFrontier starts one structural projection stream.
+func newLiveProjectionFrontier(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	requirements []requirement,
-	wanted uint64,
-) (rowProjectionView, bool, uint64, error) {
-	cursor := newRowProjectionCursor(node, occurrence, requirements)
-	defer cursor.Close()
+) *liveProjectionFrontier {
+	return &liveProjectionFrontier{cursor: newRowProjectionCursor(node, occurrence, requirements)}
+}
 
-	for ordinal := uint64(0); ; ordinal++ {
-		view, ok, err := cursor.Next()
-		if err != nil {
-			return rowProjectionView{}, false, 0, err
-		}
+// Next advances exactly once and records the endpoint only on natural exhaustion.
+func (frontier *liveProjectionFrontier) Next() (rowProjectionView, bool, error) {
+	if frontier == nil || frontier.cursor == nil {
+		return rowProjectionView{}, false, errors.New("schematest: live projection frontier is not initialized")
+	}
 
-		if !ok {
-			return rowProjectionView{}, false, ordinal, nil
-		}
+	if frontier.exhausted {
+		return rowProjectionView{}, false, nil
+	}
 
-		if ordinal == wanted {
-			view.sources = append([]rowSchemaSource(nil), view.sources...)
+	view, ok, err := frontier.cursor.Next()
+	if err != nil {
+		return rowProjectionView{}, false, err
+	}
 
-			return view, true, 0, nil
-		}
+	if !ok {
+		frontier.exhausted = true
+		frontier.finiteSize = frontier.ordinal
+
+		return rowProjectionView{}, false, nil
+	}
+
+	frontier.ordinal++
+
+	return view, true, nil
+}
+
+// Close releases the suspended traversal.
+func (frontier *liveProjectionFrontier) Close() {
+	if frontier != nil && frontier.cursor != nil {
+		frontier.cursor.Close()
 	}
 }
 
@@ -54,14 +81,6 @@ func rowArrayLengthAt(
 		return rowArrayCount{}, false, 0, nil
 	}
 
-	if cursor.hasExact {
-		if wanted == 0 {
-			return cursor.exact, true, 0, nil
-		}
-
-		return rowArrayCount{}, false, 1, nil
-	}
-
 	for ordinal := uint64(0); ; ordinal++ {
 		length, ok, nextErr := cursor.Next()
 		if nextErr != nil {
@@ -78,40 +97,29 @@ func rowArrayLengthAt(
 	}
 }
 
-// rowArrayLengthsFiniteAt proves a shared rank is beyond every finite projection length domain.
-func rowArrayLengthsFiniteAt(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	projectionSize uint64,
-	wanted uint64,
-) (bool, error) {
-	for projectionRank := uint64(0); projectionRank < projectionSize; projectionRank++ {
-		view, ok, _, err := rowProjectionAt(node, occurrence, requirements, projectionRank)
-		if err != nil {
-			return false, err
-		}
-
-		if !ok {
-			return false, errors.New("schematest: projection endpoint changed")
-		}
-
-		if !rowProjectionAcceptsKind(view, jsonArray) ||
-			!rowProjectionRequirementsAcceptKind(view, requirements, jsonArray) {
-			continue
-		}
-
-		_, ok, size, err := rowArrayLengthAt(view, requirements, wanted)
-		if err != nil {
-			return false, err
-		}
-
-		if ok || size > wanted {
-			return false, nil
+// rowProjectionHasAlternatives reports whether the current conjunction has later masks.
+func rowProjectionHasAlternatives(view rowProjectionView) bool {
+	for _, source := range view.sources {
+		if len(source.node.anyOf) > 0 {
+			return true
 		}
 	}
 
-	return true, nil
+	return false
+}
+
+// rowProjectionHasExactCount reports whether this view has directed array count guidance.
+func rowProjectionHasExactCount(view rowProjectionView, requirements []requirement) bool {
+	for _, source := range view.sources {
+		for _, requirement := range requirements {
+			if requirement.tag == requirementExactCount &&
+				rowOccurrenceMatches(requirement.occurrence, source.occurrence) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // rowProjectionRequirementsAcceptKind checks directed kinds on every active same-instance source.
@@ -130,108 +138,6 @@ func rowProjectionRequirementsAcceptKind(
 	}
 
 	return true
-}
-
-// rowArrayStructureAt enumerates projection/length tuples with the shared rank product.
-//
-//nolint:cyclop,gocognit,mnd,nestif // Dependent finite endpoints are proven at the shared product seam.
-func (s *search) rowArrayStructureAt(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	wanted uint64,
-) (rankedArrayStructure, bool, uint64, error) {
-	frontier, err := newRankProductCursor(2)
-	if err != nil {
-		return rankedArrayStructure{}, false, 0, err
-	}
-
-	var (
-		emitted        uint64
-		projectionSize uint64
-		projectionDone bool
-	)
-
-	for {
-		ranks, ok := frontier.Next()
-		if !ok {
-			return rankedArrayStructure{}, false, emitted, nil
-		}
-
-		view, exists, finiteSize, viewErr := rowProjectionAt(node, occurrence, requirements, ranks[1])
-		if viewErr != nil {
-			return rankedArrayStructure{}, false, 0, viewErr
-		}
-
-		if !exists {
-			projectionSize, projectionDone = finiteSize, true
-			if setErr := frontier.SetFinite(1, finiteSize); setErr != nil {
-				return rankedArrayStructure{}, false, 0, setErr
-			}
-
-			continue
-		}
-
-		active, activeErr := view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), s.assign,
-		)
-		if activeErr != nil {
-			return rankedArrayStructure{}, false, 0, activeErr
-		}
-
-		if !rowProjectionAcceptsKind(view, jsonArray) ||
-			!rowProjectionRequirementsAcceptKind(view, requirements, jsonArray) {
-			if projectionDone {
-				finite, finiteErr := rowArrayLengthsFiniteAt(
-					node, occurrence, requirements, projectionSize, ranks[0],
-				)
-				if finiteErr != nil {
-					return rankedArrayStructure{}, false, 0, finiteErr
-				}
-
-				if finite {
-					if setErr := frontier.SetFinite(0, ranks[0]); setErr != nil {
-						return rankedArrayStructure{}, false, 0, setErr
-					}
-				}
-			}
-
-			continue
-		}
-
-		length, exists, _, lengthErr := rowArrayLengthAt(view, active, ranks[0])
-		if lengthErr != nil {
-			return rankedArrayStructure{}, false, 0, lengthErr
-		}
-
-		if !exists {
-			if projectionDone {
-				finite, finiteErr := rowArrayLengthsFiniteAt(
-					node, occurrence, requirements, projectionSize, ranks[0],
-				)
-				if finiteErr != nil {
-					return rankedArrayStructure{}, false, 0, finiteErr
-				}
-
-				if finite {
-					if setErr := frontier.SetFinite(0, ranks[0]); setErr != nil {
-						return rankedArrayStructure{}, false, 0, setErr
-					}
-				}
-			}
-
-			continue
-		}
-
-		if emitted == wanted {
-			return rankedArrayStructure{
-				view: view, active: active, length: length,
-				projectionRank: ranks[1], lengthRank: ranks[0],
-			}, true, 0, nil
-		}
-
-		emitted++
-	}
 }
 
 // rowSourceValueAt returns one raw source candidate before conjunction validation.
@@ -614,39 +520,41 @@ func advanceArrayRankTuple(ranks []uint64, diagonal *uint64, finite bool, finite
 	}
 }
 
-// rowArrayChildrenFiniteAt proves one child-product rank is exhausted for every structure.
-func (s *search) rowArrayChildrenFiniteAt(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
+// rowArrayProjectionChildrenFiniteAt proves one child rank exhausted across finite lengths.
+func (s *search) rowArrayProjectionChildrenFiniteAt(
+	view rowProjectionView,
+	active []requirement,
 	context rowSearchContext,
-	structureSize uint64,
+	lengthSize uint64,
 	wanted uint64,
 ) (uint64, bool, error) {
 	var maximum uint64
 
-	for structureRank := uint64(0); structureRank < structureSize; structureRank++ {
-		structure, ok, _, err := s.rowArrayStructureAt(node, occurrence, requirements, structureRank)
+	for lengthRank := uint64(0); lengthRank < lengthSize; lengthRank++ {
+		length, ok, _, err := rowArrayLengthAt(view, active, lengthRank)
 		if err != nil {
 			return 0, false, err
 		}
 
 		if !ok {
-			return 0, false, errors.New("schematest: array structure endpoint changed")
+			return 0, false, errors.New("schematest: array length endpoint changed")
 		}
 
-		candidateValues, ok, candidateUsable, size, err := s.rowArrayChildrenAt(
-			structure, structure.active, context, wanted,
-		)
-		clear(candidateValues)
+		if assignErr := s.assign(); assignErr != nil {
+			return 0, false, assignErr
+		}
 
-		_ = candidateUsable
+		structure := rankedArrayStructure{view: view, active: active, length: length}
+		values, exists, usable, size, err := s.rowArrayChildrenAt(structure, active, context, wanted)
+		clear(values)
+
+		_ = usable
 
 		if err != nil {
 			return 0, false, err
 		}
 
-		if ok || size > wanted {
+		if exists || size > wanted {
 			return 0, false, nil
 		}
 
@@ -697,99 +605,75 @@ func rowDirectArrayValueAt(view rowProjectionView, wanted uint64) (*jsonValue, b
 	return nil, false, nil
 }
 
-// walkArrayFrontier makes projection, emitted length, and child tuples one fair product.
+// rowArrayProjectionCandidateAt ranks constructed candidates within one current projection.
 //
-//nolint:cyclop,gocognit,mnd,nestif // Selection, charging, finite proof, and mutation share one frontier.
-func (s *search) walkArrayFrontier(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
+//nolint:cyclop,gocognit,mnd,nestif // Length and child endpoints share one projection-local product.
+func (s *search) rowArrayProjectionCandidateAt(
+	view rowProjectionView,
+	active []requirement,
 	context rowSearchContext,
-	visit rowVisit,
-) (bool, error) {
+	wanted uint64,
+) (*jsonValue, bool, bool, uint64, error) {
 	frontier, err := newRankProductCursor(2)
 	if err != nil {
-		return false, err
+		return nil, false, false, 0, err
 	}
 
-	var structureSize uint64
+	var (
+		emitted    uint64
+		lengthSize uint64
+		lengthDone bool
+	)
 
 	for {
 		ranks, ok := frontier.Next()
 		if !ok {
-			return false, nil
+			return nil, false, false, emitted, nil
 		}
 
-		structure, exists, finiteSize, structureErr := s.rowArrayStructureAt(
-			node, occurrence, requirements, ranks[0],
-		)
-		if structureErr != nil {
-			return false, structureErr
+		length, exists, finiteSize, lengthErr := rowArrayLengthAt(view, active, ranks[1])
+		if lengthErr != nil {
+			return nil, false, false, 0, lengthErr
 		}
 
 		if !exists {
-			structureSize = finiteSize
-			if setErr := frontier.SetFinite(0, finiteSize); setErr != nil {
-				return false, setErr
+			lengthSize, lengthDone = finiteSize, true
+			if err := frontier.SetFinite(1, finiteSize); err != nil {
+				return nil, false, false, 0, err
 			}
 
 			continue
 		}
 
-		directExists := false
-
-		if structure.lengthRank == 0 {
-			direct, directOK, directErr := rowDirectArrayValueAt(structure.view, ranks[1])
-			if directErr != nil {
-				return false, directErr
-			}
-
-			if directOK {
-				directExists = true
-
-				if assignErr := s.assign(); assignErr != nil {
-					return false, assignErr
-				}
-
-				owned, cloneErr := cloneJSONValue(direct)
-				if cloneErr != nil {
-					return false, cloneErr
-				}
-
-				complete, visitErr := visit(owned)
-				if visitErr != nil || complete {
-					return complete, visitErr
-				}
-			}
+		if err := s.assign(); err != nil {
+			return nil, false, false, 0, err
 		}
 
-		if assignErr := s.assign(); assignErr != nil {
-			return false, assignErr
-		}
+		structure := rankedArrayStructure{view: view, active: active, length: length}
 
-		values, childOK, childUsable, _, childErr := s.rowArrayChildrenAt(
-			structure, structure.active, context, ranks[1],
+		values, childExists, usable, _, childErr := s.rowArrayChildrenAt(
+			structure, active, context, ranks[0],
 		)
 		if childErr != nil {
-			return false, childErr
+			return nil, false, false, 0, childErr
 		}
 
-		if !childOK {
-			if directExists {
-				continue
+		if !childExists {
+			if !lengthDone {
+				return nil, true, false, 1, nil
 			}
 
-			if structureSize > 0 {
-				finiteSize, finite, finiteErr := s.rowArrayChildrenFiniteAt(
-					node, occurrence, requirements, context, structureSize, ranks[1],
+			if lengthDone {
+				size, finite, finiteErr := s.rowArrayProjectionChildrenFiniteAt(
+					view, active, context, lengthSize, ranks[0],
 				)
 				if finiteErr != nil {
-					return false, finiteErr
+					return nil, false, false, 0, finiteErr
 				}
 
 				if finite {
-					if setErr := frontier.SetFinite(1, finiteSize); setErr != nil {
-						return false, setErr
+					if err := frontier.SetFinite(0, size); err != nil {
+						return nil, false, false, 0, err
 					}
 				}
 			}
@@ -797,36 +681,176 @@ func (s *search) walkArrayFrontier(
 			continue
 		}
 
-		if !childUsable {
+		if emitted != wanted {
+			emitted++
+
+			clear(values)
+
 			continue
+		}
+
+		if !usable {
+			clear(values)
+
+			return nil, true, false, 0, nil
 		}
 
 		array := &jsonValue{kind: jsonArray, array: make([]*jsonValue, 0)}
 
 		for _, value := range values {
-			if assignErr := s.assign(); assignErr != nil {
-				return false, assignErr
+			if err := s.assign(); err != nil {
+				return nil, false, false, 0, err
 			}
 
 			array.array = append(array.array, value)
 		}
 
-		complete, visitErr := visit(array)
-		if visitErr != nil || complete {
-			return complete, visitErr
+		return array, true, true, 0, nil
+	}
+}
+
+// walkArrayProjectionFrontier fairly interleaves direct and constructed sources.
+//
+//nolint:cyclop,gocognit,mnd // Independent source selection, charging, and visitation share one frontier.
+func (s *search) walkArrayProjectionFrontier(
+	view rowProjectionView,
+	active []requirement,
+	context rowSearchContext,
+	visit rowVisit,
+) (bool, error) {
+	frontier, err := newRankProductCursor(3)
+	if err != nil {
+		return false, err
+	}
+
+	if err := frontier.SetFinite(2, 2); err != nil {
+		return false, err
+	}
+
+	var direct, constructed finiteRankSource
+
+	constructedUsable := false
+
+	for !direct.exhausted || !constructed.exhausted {
+		ranks, ok := frontier.Next()
+		if !ok {
+			return false, errors.New("schematest: projection source frontier exhausted early")
+		}
+
+		switch ranks[2] {
+		case 0:
+			if direct.exhausted || ranks[1] != 0 {
+				continue
+			}
+
+			witness, exists, directErr := rowDirectArrayValueAt(view, ranks[0])
+			if directErr != nil {
+				return false, directErr
+			}
+
+			if !exists {
+				direct.exhausted, direct.finiteSize = true, ranks[0]
+
+				continue
+			}
+
+			if err := s.assign(); err != nil {
+				return false, err
+			}
+
+			owned, err := cloneJSONValue(witness)
+			if err != nil {
+				return false, err
+			}
+
+			complete, err := visit(owned)
+			if err != nil || complete {
+				return complete, err
+			}
+		case 1:
+			if constructed.exhausted || ranks[0] != 0 {
+				continue
+			}
+
+			candidate, exists, usable, pending, candidateErr := s.rowArrayProjectionCandidateAt(
+				view, active, context, ranks[1],
+			)
+			if candidateErr != nil {
+				return false, candidateErr
+			}
+
+			if !exists {
+				constructed.exhausted, constructed.finiteSize = true, ranks[1]
+
+				continue
+			}
+
+			if usable {
+				constructedUsable = true
+
+				complete, err := visit(candidate)
+				if err != nil || complete {
+					return complete, err
+				}
+
+				if rowProjectionHasExactCount(view, active) {
+					return false, nil
+				}
+			}
+
+			if !usable && direct.exhausted && !constructedUsable ||
+				(pending != 0 || direct.exhausted) && rowProjectionHasAlternatives(view) {
+				return false, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// walkArrayFrontier advances projections once through one live cursor.
+func (s *search) walkArrayFrontier(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	context rowSearchContext,
+	visit rowVisit,
+) (bool, error) {
+	projections := newLiveProjectionFrontier(node, occurrence, requirements)
+	defer projections.Close()
+
+	for {
+		view, ok, err := projections.Next()
+		if err != nil || !ok {
+			return false, err
+		}
+
+		active, err := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...), s.assign,
+		)
+		if err != nil {
+			return false, err
+		}
+
+		if !rowProjectionAcceptsKind(view, jsonArray) ||
+			!rowProjectionRequirementsAcceptKind(view, requirements, jsonArray) {
+			continue
+		}
+
+		complete, err := s.walkArrayProjectionFrontier(view, active, context, visit)
+		if err != nil || complete {
+			return complete, err
 		}
 	}
 }
 
 // rankedObjectStructure is one transient projection and complete presence state.
 type rankedObjectStructure struct {
-	view           rowProjectionView
-	shape          *rowProjectedObject
-	active         []requirement
-	present        []bool
-	extraCount     uint64
-	projectionRank uint64
-	presenceRank   uint64
+	view       rowProjectionView
+	shape      *rowProjectedObject
+	active     []requirement
+	present    []bool
+	extraCount uint64
 }
 
 // rowObjectPresenceAt enumerates one forward presence state without recursive prefixes.
@@ -932,186 +956,6 @@ func projectedObjectExtraCount(shape *rowProjectedObject, present uint64) (uint6
 	}
 
 	return extras, true
-}
-
-// rowObjectPresencesFiniteAt proves one rank is beyond every finite projection presence domain.
-//
-//nolint:cyclop // Kind, feasibility, and finite endpoint checks are one domain proof.
-func rowObjectPresencesFiniteAt(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	projectionSize uint64,
-	wanted uint64,
-) (bool, error) {
-	for projectionRank := uint64(0); projectionRank < projectionSize; projectionRank++ {
-		view, ok, _, err := rowProjectionAt(node, occurrence, requirements, projectionRank)
-		if err != nil {
-			return false, err
-		}
-
-		if !ok {
-			return false, errors.New("schematest: projection endpoint changed")
-		}
-
-		if !rowProjectionAcceptsKind(view, jsonObject) ||
-			!rowProjectionRequirementsAcceptKind(view, requirements, jsonObject) {
-			continue
-		}
-
-		active, err := view.appendBranchRequirements(append([]requirement(nil), requirements...), func() error {
-			return nil
-		})
-		if err != nil {
-			return false, err
-		}
-
-		shape, err := newRowProjectedObject(view, active, occurrence)
-		if err != nil {
-			return false, err
-		}
-
-		if !shape.feasible() {
-			continue
-		}
-
-		_, _, ok, size, err := rowObjectPresenceAt(shape, active, wanted)
-		if err != nil {
-			return false, err
-		}
-
-		if ok || size > wanted {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-// rowObjectStructureAt enumerates projection/presence tuples with the shared rank product.
-//
-//nolint:cyclop,gocognit,mnd,nestif // Dependent finite endpoints are proven at the shared product seam.
-func (s *search) rowObjectStructureAt(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	wanted uint64,
-) (rankedObjectStructure, bool, uint64, error) {
-	frontier, err := newRankProductCursor(2)
-	if err != nil {
-		return rankedObjectStructure{}, false, 0, err
-	}
-
-	var (
-		emitted        uint64
-		projectionSize uint64
-		projectionDone bool
-	)
-
-	for {
-		ranks, ok := frontier.Next()
-		if !ok {
-			return rankedObjectStructure{}, false, emitted, nil
-		}
-
-		view, exists, finiteSize, viewErr := rowProjectionAt(node, occurrence, requirements, ranks[1])
-		if viewErr != nil {
-			return rankedObjectStructure{}, false, 0, viewErr
-		}
-
-		if !exists {
-			projectionSize, projectionDone = finiteSize, true
-			if setErr := frontier.SetFinite(1, finiteSize); setErr != nil {
-				return rankedObjectStructure{}, false, 0, setErr
-			}
-
-			continue
-		}
-
-		active, activeErr := view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), s.assign,
-		)
-		if activeErr != nil {
-			return rankedObjectStructure{}, false, 0, activeErr
-		}
-
-		if !rowProjectionAcceptsKind(view, jsonObject) ||
-			!rowProjectionRequirementsAcceptKind(view, requirements, jsonObject) {
-			if projectionDone {
-				finite, finiteErr := rowObjectPresencesFiniteAt(
-					node, occurrence, requirements, projectionSize, ranks[0],
-				)
-				if finiteErr != nil {
-					return rankedObjectStructure{}, false, 0, finiteErr
-				}
-
-				if finite {
-					if setErr := frontier.SetFinite(0, ranks[0]); setErr != nil {
-						return rankedObjectStructure{}, false, 0, setErr
-					}
-				}
-			}
-
-			continue
-		}
-
-		shape, shapeErr := newRowProjectedObject(view, active, occurrence)
-		if shapeErr != nil {
-			return rankedObjectStructure{}, false, 0, shapeErr
-		}
-
-		if !shape.feasible() {
-			if projectionDone {
-				finite, finiteErr := rowObjectPresencesFiniteAt(
-					node, occurrence, requirements, projectionSize, ranks[0],
-				)
-				if finiteErr != nil {
-					return rankedObjectStructure{}, false, 0, finiteErr
-				}
-
-				if finite {
-					if setErr := frontier.SetFinite(0, ranks[0]); setErr != nil {
-						return rankedObjectStructure{}, false, 0, setErr
-					}
-				}
-			}
-
-			continue
-		}
-
-		present, extras, exists, _, presenceErr := rowObjectPresenceAt(shape, active, ranks[0])
-		if presenceErr != nil {
-			return rankedObjectStructure{}, false, 0, presenceErr
-		}
-
-		if !exists {
-			if projectionDone {
-				finite, finiteErr := rowObjectPresencesFiniteAt(
-					node, occurrence, requirements, projectionSize, ranks[0],
-				)
-				if finiteErr != nil {
-					return rankedObjectStructure{}, false, 0, finiteErr
-				}
-
-				if finite {
-					if setErr := frontier.SetFinite(0, ranks[0]); setErr != nil {
-						return rankedObjectStructure{}, false, 0, setErr
-					}
-				}
-			}
-
-			continue
-		}
-
-		if emitted == wanted {
-			return rankedObjectStructure{
-				view: view, shape: shape, active: active, present: present, extraCount: extras,
-				projectionRank: ranks[1], presenceRank: ranks[0],
-			}, true, 0, nil
-		}
-
-		emitted++
-	}
 }
 
 // rowObjectMembersForStructure creates only the selected and already charged transient members.
@@ -1235,25 +1079,29 @@ func (s *search) rowObjectChildrenAt(
 	}
 }
 
-// rowObjectChildrenFiniteAt proves one child-product rank is exhausted for every structure.
-func (s *search) rowObjectChildrenFiniteAt(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
+// rowObjectProjectionChildrenFiniteAt proves one child rank exhausted across finite presences.
+func (s *search) rowObjectProjectionChildrenFiniteAt(
+	view rowProjectionView,
+	shape *rowProjectedObject,
+	active []requirement,
 	context rowSearchContext,
-	structureSize uint64,
+	presenceSize uint64,
 	wanted uint64,
 ) (uint64, bool, error) {
 	var maximum uint64
 
-	for structureRank := uint64(0); structureRank < structureSize; structureRank++ {
-		structure, ok, _, err := s.rowObjectStructureAt(node, occurrence, requirements, structureRank)
+	for presenceRank := uint64(0); presenceRank < presenceSize; presenceRank++ {
+		present, extras, ok, _, err := rowObjectPresenceAt(shape, active, presenceRank)
 		if err != nil {
 			return 0, false, err
 		}
 
 		if !ok {
-			return 0, false, errors.New("schematest: object structure endpoint changed")
+			return 0, false, errors.New("schematest: object presence endpoint changed")
+		}
+
+		structure := rankedObjectStructure{
+			view: view, shape: shape, active: active, present: present, extraCount: extras,
 		}
 
 		members, err := s.rowObjectMembersForStructure(structure)
@@ -1261,18 +1109,16 @@ func (s *search) rowObjectChildrenFiniteAt(
 			return 0, false, err
 		}
 
-		candidateValues, ok, candidateUsable, size, err := s.rowObjectChildrenAt(
-			members, structure.active, context, wanted,
-		)
-		clear(candidateValues)
+		values, exists, usable, size, err := s.rowObjectChildrenAt(members, active, context, wanted)
+		clear(values)
 
-		_ = candidateUsable
+		_ = usable
 
 		if err != nil {
 			return 0, false, err
 		}
 
-		if ok || size > wanted {
+		if exists || size > wanted {
 			return 0, false, nil
 		}
 
@@ -1323,100 +1169,81 @@ func rowDirectObjectValueAt(view rowProjectionView, wanted uint64) (*jsonValue, 
 	return nil, false, nil
 }
 
-// walkObjectFrontier makes projection, presence, wildcard, and child ranks one fair frontier.
+// rowObjectProjectionCandidateAt ranks constructed candidates within one current projection.
 //
-//nolint:cyclop,gocognit,mnd,nestif // Selection, charging, finite proof, and mutation share one frontier.
-func (s *search) walkObjectFrontier(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
+//nolint:cyclop,gocognit,mnd,nestif // Presence and child endpoints share one projection-local product.
+func (s *search) rowObjectProjectionCandidateAt(
+	view rowProjectionView,
+	shape *rowProjectedObject,
+	active []requirement,
 	context rowSearchContext,
-	visit rowVisit,
-) (bool, error) {
+	wanted uint64,
+) (*jsonValue, bool, bool, uint64, error) {
 	frontier, err := newRankProductCursor(2)
 	if err != nil {
-		return false, err
+		return nil, false, false, 0, err
 	}
 
-	var structureSize uint64
+	var (
+		emitted      uint64
+		presenceSize uint64
+		presenceDone bool
+	)
 
 	for {
 		ranks, ok := frontier.Next()
 		if !ok {
-			return false, nil
+			return nil, false, false, emitted, nil
 		}
 
-		structure, exists, finiteSize, structureErr := s.rowObjectStructureAt(
-			node, occurrence, requirements, ranks[0],
+		present, extras, exists, finiteSize, presenceErr := rowObjectPresenceAt(
+			shape, active, ranks[1],
 		)
-		if structureErr != nil {
-			return false, structureErr
+		if presenceErr != nil {
+			return nil, false, false, 0, presenceErr
 		}
 
 		if !exists {
-			structureSize = finiteSize
-			if setErr := frontier.SetFinite(0, finiteSize); setErr != nil {
-				return false, setErr
+			presenceSize, presenceDone = finiteSize, true
+			if err := frontier.SetFinite(1, finiteSize); err != nil {
+				return nil, false, false, 0, err
 			}
 
 			continue
 		}
 
-		directExists := false
-
-		if structure.presenceRank == 0 {
-			direct, directOK, directErr := rowDirectObjectValueAt(structure.view, ranks[1])
-			if directErr != nil {
-				return false, directErr
-			}
-
-			if directOK {
-				directExists = true
-
-				if assignErr := s.assign(); assignErr != nil {
-					return false, assignErr
-				}
-
-				owned, cloneErr := cloneJSONValue(direct)
-				if cloneErr != nil {
-					return false, cloneErr
-				}
-
-				complete, visitErr := visit(owned)
-				if visitErr != nil || complete {
-					return complete, visitErr
-				}
-			}
+		structure := rankedObjectStructure{
+			view: view, shape: shape, active: active, present: present, extraCount: extras,
 		}
 
-		members, memberErr := s.rowObjectMembersForStructure(structure)
-		if memberErr != nil {
-			return false, memberErr
+		members, err := s.rowObjectMembersForStructure(structure)
+		if err != nil {
+			return nil, false, false, 0, err
 		}
 
-		values, childOK, childUsable, _, childErr := s.rowObjectChildrenAt(
-			members, structure.active, context, ranks[1],
+		values, childExists, usable, _, childErr := s.rowObjectChildrenAt(
+			members, active, context, ranks[0],
 		)
 		if childErr != nil {
-			return false, childErr
+			return nil, false, false, 0, childErr
 		}
 
-		if !childOK {
-			if directExists {
-				continue
+		if !childExists {
+			if !presenceDone {
+				return nil, true, false, 1, nil
 			}
 
-			if structureSize > 0 {
-				finiteSize, finite, finiteErr := s.rowObjectChildrenFiniteAt(
-					node, occurrence, requirements, context, structureSize, ranks[1],
+			if presenceDone {
+				size, finite, finiteErr := s.rowObjectProjectionChildrenFiniteAt(
+					view, shape, active, context, presenceSize, ranks[0],
 				)
 				if finiteErr != nil {
-					return false, finiteErr
+					return nil, false, false, 0, finiteErr
 				}
 
 				if finite {
-					if setErr := frontier.SetFinite(1, finiteSize); setErr != nil {
-						return false, setErr
+					if err := frontier.SetFinite(0, size); err != nil {
+						return nil, false, false, 0, err
 					}
 				}
 			}
@@ -1424,23 +1251,173 @@ func (s *search) walkObjectFrontier(
 			continue
 		}
 
-		if !childUsable {
+		if emitted != wanted {
+			emitted++
+
+			clear(values)
+
 			continue
+		}
+
+		if !usable {
+			clear(values)
+
+			return nil, true, false, 0, nil
 		}
 
 		object := &jsonValue{kind: jsonObject, object: make(map[string]*jsonValue)}
 
 		for index, member := range members {
-			if assignErr := s.assign(); assignErr != nil {
-				return false, assignErr
+			if err := s.assign(); err != nil {
+				return nil, false, false, 0, err
 			}
 
 			object.object[member.name] = values[index]
 		}
 
-		complete, visitErr := visit(object)
-		if visitErr != nil || complete {
-			return complete, visitErr
+		return object, true, true, 0, nil
+	}
+}
+
+// walkObjectProjectionFrontier fairly interleaves direct and constructed sources.
+//
+//nolint:cyclop,gocognit,mnd // Independent source selection, charging, and visitation share one frontier.
+func (s *search) walkObjectProjectionFrontier(
+	view rowProjectionView,
+	shape *rowProjectedObject,
+	active []requirement,
+	context rowSearchContext,
+	visit rowVisit,
+) (bool, error) {
+	frontier, err := newRankProductCursor(3)
+	if err != nil {
+		return false, err
+	}
+
+	if err := frontier.SetFinite(2, 2); err != nil {
+		return false, err
+	}
+
+	var direct, constructed finiteRankSource
+
+	constructedUsable := false
+
+	for !direct.exhausted || !constructed.exhausted {
+		ranks, ok := frontier.Next()
+		if !ok {
+			return false, errors.New("schematest: projection source frontier exhausted early")
+		}
+
+		switch ranks[2] {
+		case 0:
+			if direct.exhausted || ranks[1] != 0 {
+				continue
+			}
+
+			witness, exists, directErr := rowDirectObjectValueAt(view, ranks[0])
+			if directErr != nil {
+				return false, directErr
+			}
+
+			if !exists {
+				direct.exhausted, direct.finiteSize = true, ranks[0]
+
+				continue
+			}
+
+			if err := s.assign(); err != nil {
+				return false, err
+			}
+
+			owned, err := cloneJSONValue(witness)
+			if err != nil {
+				return false, err
+			}
+
+			complete, err := visit(owned)
+			if err != nil || complete {
+				return complete, err
+			}
+		case 1:
+			if constructed.exhausted || ranks[0] != 0 {
+				continue
+			}
+
+			candidate, exists, usable, pending, candidateErr := s.rowObjectProjectionCandidateAt(
+				view, shape, active, context, ranks[1],
+			)
+			if candidateErr != nil {
+				return false, candidateErr
+			}
+
+			if !exists {
+				constructed.exhausted, constructed.finiteSize = true, ranks[1]
+
+				continue
+			}
+
+			if usable {
+				constructedUsable = true
+
+				complete, err := visit(candidate)
+				if err != nil || complete {
+					return complete, err
+				}
+			}
+
+			if !usable && direct.exhausted && !constructedUsable ||
+				(pending != 0 || direct.exhausted) && rowProjectionHasAlternatives(view) {
+				return false, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// walkObjectFrontier advances projections once through one live cursor.
+//
+//nolint:cyclop // Projection charging, kind pruning, and shape construction share one live boundary.
+func (s *search) walkObjectFrontier(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	context rowSearchContext,
+	visit rowVisit,
+) (bool, error) {
+	projections := newLiveProjectionFrontier(node, occurrence, requirements)
+	defer projections.Close()
+
+	for {
+		view, ok, err := projections.Next()
+		if err != nil || !ok {
+			return false, err
+		}
+
+		active, err := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...), s.assign,
+		)
+		if err != nil {
+			return false, err
+		}
+
+		if !rowProjectionAcceptsKind(view, jsonObject) ||
+			!rowProjectionRequirementsAcceptKind(view, requirements, jsonObject) {
+			continue
+		}
+
+		shape, err := newRowProjectedObject(view, active, occurrence)
+		if err != nil {
+			return false, err
+		}
+
+		if !shape.feasible() {
+			continue
+		}
+
+		complete, err := s.walkObjectProjectionFrontier(view, shape, active, context, visit)
+		if err != nil || complete {
+			return complete, err
 		}
 	}
 }

@@ -85,13 +85,21 @@ func TestArrayStructureSkipsInfeasibleProjection(t *testing.T) {
 	require.NoError(t, err)
 
 	searchState := &search{model: model, maxSteps: 1000}
-	structure, ok, _, err := searchState.rowArrayStructureAt(
-		model.root, model.root.occurrence, nil, 0,
+
+	var selected *jsonValue
+
+	complete, err := searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			selected = value
+
+			return true, nil
+		},
 	)
 	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, uint64(1), structure.projectionRank)
-	require.Equal(t, uint64(0), structure.length.value)
+	require.True(t, complete)
+	require.NotNil(t, selected)
+	require.Empty(t, selected.array)
 }
 
 // TestArrayChildRanksAdvanceDiagonally locks fair position order.
@@ -184,6 +192,125 @@ func TestFiniteObjectFrontierExhausts(t *testing.T) {
 	require.False(t, complete)
 	require.Positive(t, rows)
 	require.Less(t, searchState.steps, searchState.maxSteps)
+}
+
+// TestRowArrayLengthAtKeepsDirectGuidanceAheadOfExact proves exact counts do not bypass authored lengths.
+func TestRowArrayLengthAtKeepsDirectGuidanceAheadOfExact(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","enum":[[false,false]],"items":{},"minItems":1,"maxItems":3
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view := rowProjectionView{sources: []rowSchemaSource{{node: model.root, occurrence: model.root.occurrence}}}
+	requirements := []requirement{{
+		tag: requirementExactCount, occurrence: model.root.occurrence, count: model.root.minItems,
+	}}
+
+	first, ok, _, err := rowArrayLengthAt(view, requirements, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, uint64(2), first.value)
+
+	second, ok, _, err := rowArrayLengthAt(view, requirements, 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, uint64(1), second.value)
+}
+
+// TestLiveProjectionFrontierRecordsOnlyNaturalExhaustion locks monotonic cursor ownership.
+func TestLiveProjectionFrontierRecordsOnlyNaturalExhaustion(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"type":"array","items":{}},{"type":"array","items":{}}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	frontier := newLiveProjectionFrontier(model.root, model.root.occurrence, nil)
+	defer frontier.Close()
+
+	var alternatives [][]string
+
+	for {
+		view, ok, nextErr := frontier.Next()
+		require.NoError(t, nextErr)
+
+		if !ok {
+			break
+		}
+
+		alternatives = append(alternatives, projectionBranchPointers(view))
+	}
+
+	require.Equal(t, [][]string{
+		{model.root.occurrence.usePointer + "/anyOf/0"},
+		{model.root.occurrence.usePointer + "/anyOf/1"},
+		{model.root.occurrence.usePointer + "/anyOf/0", model.root.occurrence.usePointer + "/anyOf/1"},
+	}, alternatives)
+	require.True(t, frontier.exhausted)
+	require.Equal(t, uint64(3), frontier.finiteSize)
+}
+
+// TestArrayFrontierReachesLaterProjectionWitnessRanks proves child exhaustion cannot close direct ranks.
+func TestArrayFrontierReachesLaterProjectionWitnessRanks(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{"enum":[false]},"minItems":1,"maxItems":1,
+		"anyOf":[{"enum":[[1]]},{"enum":[[2],[3],[4]]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+	found := false
+	complete, err := searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			found = string(encoded) == `[4]`
+
+			return found, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, found)
+}
+
+// TestObjectFrontierReachesLaterProjectionWitnessRanks proves object direct ranks are independent.
+func TestObjectFrontierReachesLaterProjectionWitnessRanks(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object","additionalProperties":false,
+		"anyOf":[{"enum":[{"x":1}]},{"enum":[{"x":2},{"x":3},{"x":4}]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+	found := false
+	complete, err := searchState.walkObject(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			found = string(encoded) == `{"x":4}`
+
+			return found, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, found)
 }
 
 // TestArrayFrontierStreamsSameLengthDirectWitnesses proves witness rank is independent of length.
