@@ -87,17 +87,100 @@ func findCompositionFaultDerivative(
 	return derivative, found, err
 }
 
-// applyCompositionRequirementEdits applies directly represented absent-presence requirements.
-//
-//nolint:cyclop // Requirement collection and deterministic subset search are one operation.
-func applyCompositionRequirementEdits(
+// compositionFaultAttemptAtRank performs at most one independently cloned
+// aggregate mutation. A mismatch is an attempted rank, not exhaustion.
+func compositionFaultAttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
+	rank uint64,
 	s *search,
-) (*jsonValue, bool, error) {
+) (*jsonValue, bool, bool, error) {
+	if parent == nil {
+		return nil, false, false, errors.New("schematest: nil composition fault parent")
+	}
+
+	var (
+		observed   uint64
+		derivative *jsonValue
+		attempted  bool
+	)
+
+	attempt := func(edits []compositionEdit) (bool, error) {
+		if observed != rank {
+			observed++
+
+			return false, nil
+		}
+
+		candidate, matched, err := tryCompositionEdits(parent, fault, edits, s)
+		if err != nil {
+			return false, err
+		}
+
+		attempted = true
+
+		if matched {
+			derivative = candidate
+		}
+
+		return true, nil
+	}
+
+	directEdits := compositionDirectEdits(parent, fault.requirements)
+
+	stopped, err := visitCompositionEditSizes(directEdits, attempt)
+	if err != nil || stopped {
+		return derivative, attempted, false, err
+	}
+
+	stopped, err = s.walkNode(
+		s.model.root,
+		s.model.root.occurrence,
+		fault.requirements,
+		rowSearchContext{},
+		compositionAssignmentEditVisitor(parent, attempt),
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if stopped {
+		return derivative, attempted, false, nil
+	}
+
+	return nil, false, true, nil
+}
+
+// visitCompositionEditSizes traverses edit subsets in increasing size and source order.
+func visitCompositionEditSizes(
+	edits []compositionEdit,
+	visit func([]compositionEdit) (bool, error),
+) (bool, error) {
+	for size := 1; size <= len(edits); size++ {
+		stopped, err := visitCompositionEditSubsets(edits, size, visit)
+		if err != nil || stopped {
+			return stopped, err
+		}
+	}
+
+	return false, nil
+}
+
+// compositionAssignmentEditVisitor converts each complete assignment to parent-relative edits.
+func compositionAssignmentEditVisitor(
+	parent *jsonValue,
+	visit func([]compositionEdit) (bool, error),
+) rowVisit {
+	return func(value *jsonValue) (bool, error) {
+		return visitCompositionEditSizes(compositionDifference(parent, value, nil), visit)
+	}
+}
+
+// compositionDirectEdits returns the current parent's directly represented removals.
+func compositionDirectEdits(parent *jsonValue, requirements []requirement) []compositionEdit {
 	var edits []compositionEdit
 
-	for _, requirement := range fault.requirements {
+	for _, requirement := range requirements {
 		if requirement.canonical || requirement.presence != requirementAbsent {
 			continue
 		}
@@ -114,6 +197,16 @@ func applyCompositionRequirementEdits(
 		}
 	}
 
+	return edits
+}
+
+// applyCompositionRequirementEdits applies directly represented absent-presence requirements.
+func applyCompositionRequirementEdits(
+	parent *jsonValue,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
+	edits := compositionDirectEdits(parent, fault.requirements)
 	for size := 1; size <= len(edits); size++ {
 		var derivative *jsonValue
 
@@ -166,7 +259,7 @@ func tryCompositionEdits(
 		return nil, false, fmt.Errorf("evaluate composition fault derivative: %w", result.err)
 	}
 
-	matches, matchErr := faultFailureClosureMatches(result.failureRecords(), fault)
+	matches, matchErr := faultFailureClosureMatches(result, fault)
 	if matchErr != nil {
 		return nil, false, fmt.Errorf("compare composition fault expected: %w", matchErr)
 	}

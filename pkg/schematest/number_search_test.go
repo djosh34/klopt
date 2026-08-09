@@ -165,6 +165,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 		name      string
 		schema    string
 		wantCases []Case
+		wantStop  StopReason
 		covered   []string
 	}{
 		{
@@ -178,6 +179,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("0"), Valid: false},
 			},
+			wantStop: SpaceExhausted,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:0",
 			},
@@ -193,6 +195,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("6"), Valid: false},
 				{JSON: []byte("4"), Valid: false},
 			},
+			wantStop: SpaceExhausted,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:1",
 				"/allOf/1|#|minimum|level:valid",
@@ -208,6 +211,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
 			},
+			wantStop: MaxStepsReached,
 			covered: []string{
 				"|#|anyOf|level:mask:1",
 				"/anyOf/0|#|enum|level:member:0",
@@ -235,7 +239,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				},
 			)
 			require.NoError(t, err)
-			require.Equal(t, SpaceExhausted, report.Stop)
+			require.Equal(t, test.wantStop, report.Stop)
 			require.Equal(t, test.wantCases, cases)
 			require.Positive(t, report.Steps)
 
@@ -354,6 +358,9 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("0.2"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
+				{JSON: []byte("false"), Valid: false},
+				{JSON: []byte("false"), Valid: false},
+				{JSON: []byte("false"), Valid: false},
 			},
 			wantStop:  SpaceExhausted,
 			wantSteps: 595,

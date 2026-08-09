@@ -73,6 +73,112 @@ func TestRegenerateParentAtRankPreservesAndAdvancesAnyOfPins(t *testing.T) {
 	require.JSONEq(t, `{"x":"b"}`, string(marshalFaultTestValue(t, second)))
 }
 
+func TestFaultClosureAtRankEnumeratesNestedAlternativesWithoutTuples(t *testing.T) {
+	t.Parallel()
+
+	identity := func(pointer, rule string) failureIdentity {
+		return makeRuleIdentity(schemaOccurrence{
+			usePointer: pointer, targetPointer: pointer, instanceTemplate: "#",
+		}, rule)
+	}
+	firstA := &faultClosureAlternative{expected: failureSet{identity("#/a", oracleRuleMinimum)}}
+	firstB := &faultClosureAlternative{expected: failureSet{identity("#/a", oracleRuleMaximum)}}
+	firstA.next = firstB
+	secondA := &faultClosureAlternative{expected: failureSet{identity("#/b", oracleRulePattern)}}
+	secondB := &faultClosureAlternative{expected: failureSet{identity("#/b", oracleRuleFormat)}}
+	secondA.next = secondB
+	program := &faultClosureProgram{alternatives: firstA, next: &faultClosureProgram{alternatives: secondA}}
+	fault := faultProgram{expected: failureSet{identity("#", oracleRuleAnyOf)}, alternatives: program}
+
+	var got [][]string
+
+	for rank := uint64(0); ; rank++ {
+		searchState := &search{maxSteps: 100}
+		selected, exists, exhausted, err := faultClosureAtRank(fault, rank, searchState)
+		require.NoError(t, err)
+
+		if exhausted {
+			break
+		}
+
+		require.True(t, exists)
+		require.Nil(t, selected.alternatives)
+		require.Equal(t, uint64(2), searchState.steps)
+
+		got = append(got, identityStrings(selected.expected))
+	}
+
+	require.Equal(t, [][]string{
+		{"#|#|anyOf", "#/a|#|minimum", "#/b|#|pattern"},
+		{"#|#|anyOf", "#/a|#|minimum", "#/b|#|format"},
+		{"#|#|anyOf", "#/a|#|maximum", "#/b|#|pattern"},
+		{"#|#|anyOf", "#/a|#|maximum", "#/b|#|format"},
+	}, got)
+}
+
+func TestStreamAggregateFaultAdvancesPastImpossibleFirstClosure(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"anyOf":[
+			{"minimum":0},
+			{"maximum":10,"multipleOf":2}
+		]
+	}`))
+
+	model, err := parseInput(Input{OpenAPI: document, OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	searchState := &search{model: model, maxSteps: 1_000_000}
+	covered := make(map[string]bool)
+
+	var aggregate Case
+
+	err = streamFault(plan, fault, searchState, covered, func(generated Case) error {
+		aggregate = generated
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.True(t, covered[fault.obligation.String()])
+	require.False(t, aggregate.Valid)
+
+	value, err := parseStrictJSON(aggregate.JSON)
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.Equal(t, []string{"minimum", "multipleOf", "anyOf"}, failureRules(result.failureRecords()))
+
+	fullSteps := searchState.steps
+	require.Positive(t, fullSteps)
+	cutoff := &search{model: model, maxSteps: fullSteps - 1}
+	cutoffEmitted := false
+	err = streamFault(plan, fault, cutoff, make(map[string]bool), func(Case) error {
+		cutoffEmitted = true
+
+		return nil
+	})
+	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, cutoffEmitted)
+	require.Equal(t, fullSteps-1, cutoff.steps)
+
+	repeated := &search{model: model, maxSteps: fullSteps}
+
+	var repeatedCase Case
+
+	err = streamFault(plan, fault, repeated, make(map[string]bool), func(generated Case) error {
+		repeatedCase = generated
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, fullSteps, repeated.steps)
+	require.Equal(t, aggregate, repeatedCase)
+}
+
 func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {
 	t.Parallel()
 

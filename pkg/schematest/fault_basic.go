@@ -65,11 +65,21 @@ func streamFault(
 		return err
 	}
 
-	for _, dimension := range []int{faultOccurrenceDimension, faultMutationDimension} {
-		if err := product.SetFinite(dimension, 1); err != nil {
+	if err := product.SetFinite(faultOccurrenceDimension, 1); err != nil {
+		return err
+	}
+
+	if fault.alternatives == nil && !faultNeedsCompositionSearch(fault) {
+		if err := product.SetFinite(faultMutationDimension, 1); err != nil {
 			return err
 		}
 	}
+
+	var (
+		diagonal        uint64
+		diagonalStarted bool
+		mutationLive    bool
+	)
 
 	for {
 		ranks, ok := product.Next()
@@ -77,9 +87,23 @@ func streamFault(
 			return nil
 		}
 
-		selectedFault, closureExists, closureExhausted := faultClosureAtRank(
-			fault, ranks[faultClosureDimension],
+		if !diagonalStarted || product.diagonal != diagonal {
+			if diagonalStarted && faultProductDiagonalExhausted(product, diagonal, mutationLive) {
+				return nil
+			}
+
+			diagonal = product.diagonal
+			diagonalStarted = true
+			mutationLive = false
+		}
+
+		selectedFault, closureExists, closureExhausted, closureErr := faultClosureAtRank(
+			fault, ranks[faultClosureDimension], s,
 		)
+		if closureErr != nil {
+			return closureErr
+		}
+
 		if closureExhausted {
 			if err := product.SetFinite(faultClosureDimension, ranks[faultClosureDimension]); err != nil {
 				return err
@@ -111,13 +135,21 @@ func streamFault(
 			continue
 		}
 
-		derivative, faultErr := applyFault(parent, selectedFault, s)
-		if errors.Is(faultErr, errFaultNotFound) {
+		derivative, attempted, mutationExhausted, faultErr := applyFaultAtRank(
+			parent, selectedFault, ranks[faultMutationDimension], s,
+		)
+		if mutationExhausted {
 			continue
 		}
 
+		mutationLive = true
+
 		if faultErr != nil {
 			return faultErr
+		}
+
+		if !attempted || derivative == nil {
+			continue
 		}
 
 		result := evaluate(s.model, derivative)
@@ -125,7 +157,7 @@ func streamFault(
 			return fmt.Errorf("evaluate fault derivative: %w", result.err)
 		}
 
-		matches, matchErr := faultFailureClosureMatches(result.failureRecords(), selectedFault)
+		matches, matchErr := faultFailureClosureMatches(result, selectedFault)
 		if matchErr != nil {
 			return fmt.Errorf("compare fault expected: %w", matchErr)
 		}
@@ -145,14 +177,133 @@ func streamFault(
 	}
 }
 
-// faultClosureAtRank adapts direct closures to the shared product. Declarative
-// aggregate programs have no executable closure cursor in this bounded stage.
-func faultClosureAtRank(fault faultProgram, rank uint64) (faultProgram, bool, bool) {
-	if fault.alternatives != nil || rank > 0 {
-		return faultProgram{}, false, true
+// faultProductDiagonalExhausted recognizes a diagonal beyond every finite parent and closure rank.
+func faultProductDiagonalExhausted(product *rankProductCursor, diagonal uint64, mutationLive bool) bool {
+	if mutationLive || product == nil ||
+		!product.finite[faultParentDimension] || !product.finite[faultClosureDimension] {
+		return false
 	}
 
-	return fault, true, false
+	parentSize := product.finiteSizes[faultParentDimension]
+
+	closureSize := product.finiteSizes[faultClosureDimension]
+	if parentSize == 0 || closureSize == 0 {
+		return true
+	}
+
+	parentMaximum := parentSize - 1
+
+	closureMaximum := closureSize - 1
+	if ^uint64(0)-parentMaximum < closureMaximum {
+		return false
+	}
+
+	return diagonal > parentMaximum+closureMaximum
+}
+
+// faultClosureAtRank selects one complete declarative closure without storing
+// the closure product. Each selected branch-local alternative is charged only
+// after the requested complete rank is known.
+func faultClosureAtRank(
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (faultProgram, bool, bool, error) {
+	if fault.alternatives == nil {
+		if rank > 0 {
+			return faultProgram{}, false, true, nil
+		}
+
+		return fault, true, false, nil
+	}
+
+	selected, choices, found := closureSelectionAtRank(fault, rank)
+	if !found {
+		return faultProgram{}, false, true, nil
+	}
+
+	for range choices {
+		if err := s.assign(); err != nil {
+			return faultProgram{}, false, false, err
+		}
+	}
+
+	return selected, true, false, nil
+}
+
+// closureSelectionAtRank resolves one canonical complete choice and its atomic assignment count.
+func closureSelectionAtRank(fault faultProgram, rank uint64) (faultProgram, int, bool) {
+	var observed uint64
+
+	selected := faultProgram{}
+	selectedChoices := 0
+	found := walkFaultClosurePrograms(
+		[]*faultClosureProgram{fault.alternatives},
+		fault.requirements,
+		fault.expected,
+		0,
+		func(requirements []requirement, expected failureSet, choices int) bool {
+			if observed != rank {
+				observed++
+
+				return false
+			}
+
+			selected = fault
+			selected.requirements = copyPlanRequirements(requirements)
+
+			selected.expected = append(failureSet(nil), expected...)
+			selected.alternatives = nil
+			selectedChoices = choices
+
+			return true
+		},
+	)
+
+	return selected, selectedChoices, found
+}
+
+// walkFaultClosurePrograms traverses only the current declarative product prefix.
+func walkFaultClosurePrograms(
+	programs []*faultClosureProgram,
+	requirements []requirement,
+	expected failureSet,
+	choices int,
+	visit func([]requirement, failureSet, int) bool,
+) bool {
+	if len(programs) == 0 {
+		return visit(requirements, expected, choices)
+	}
+
+	program := programs[0]
+	if program == nil {
+		return walkFaultClosurePrograms(programs[1:], requirements, expected, choices, visit)
+	}
+
+	for alternative := program.alternatives; alternative != nil; alternative = alternative.next {
+		nextPrograms := make([]*faultClosureProgram, 0, len(programs)+1)
+		if alternative.closure != nil {
+			nextPrograms = append(nextPrograms, alternative.closure)
+		}
+
+		if program.next != nil {
+			nextPrograms = append(nextPrograms, program.next)
+		}
+
+		nextPrograms = append(nextPrograms, programs[1:]...)
+
+		if walkFaultClosurePrograms(
+			nextPrograms,
+			appendPlanRequirements(requirements, alternative.requirements...),
+			append(append(failureSet(nil), expected...), alternative.expected...),
+			choices+1,
+			visit,
+		) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // parentReplayGroup identifies one authored anyOf truth vector.
@@ -416,4 +567,31 @@ func applyFault(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, e
 	}
 
 	return applyNonCompositionFault(parent, fault, s)
+}
+
+// applyFaultAtRank attempts one mutation rank without draining another closure's frontier.
+func applyFaultAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	if faultNeedsCompositionSearch(fault) {
+		return compositionFaultAttemptAtRank(parent, fault, rank, s)
+	}
+
+	if rank > 0 {
+		return nil, false, true, nil
+	}
+
+	derivative, err := applyNonCompositionFault(parent, fault, s)
+	if errors.Is(err, errFaultNotFound) {
+		return nil, true, false, nil
+	}
+
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	return derivative, true, false, nil
 }

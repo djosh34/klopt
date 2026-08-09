@@ -687,9 +687,7 @@ func (s *search) rowConjunctionValueUsable(
 			return false, result.err
 		}
 
-		matches, matchErr := exactFailureClosure(
-			result.failureRecords(), context.scalarFault.expected,
-		)
+		matches, matchErr := exactEvaluationFailureClosure(result, context.scalarFault.expected)
 		if matchErr != nil || !matches {
 			return false, matchErr
 		}

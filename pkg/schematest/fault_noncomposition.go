@@ -1728,7 +1728,7 @@ func derivativeMatchesFault(model *schemaModel, derivative *jsonValue, fault fau
 		return false, nil
 	}
 
-	return faultFailureClosureMatches(result.failureRecords(), fault)
+	return faultFailureClosureMatches(result, fault)
 }
 
 func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure []failureIdentity) (bool, error) {

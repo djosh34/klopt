@@ -189,7 +189,7 @@ func findStringFaultRow(target faultProgram, searchState *search) (*jsonValue, b
 				return false, fmt.Errorf("evaluate directed string fault: %w", result.err)
 			}
 
-			matches, matchErr := exactFailureClosure(result.failureRecords(), target.expected)
+			matches, matchErr := exactEvaluationFailureClosure(result, target.expected)
 			if matchErr != nil || !matches {
 				return false, matchErr
 			}
@@ -323,55 +323,114 @@ func stringFaultObjectiveKind(rule string) (stringSearchObjectiveKind, bool) {
 	}
 }
 
-//nolint:cyclop // Exact matching validates and consumes every identity explicitly.
 func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIdentity) (bool, error) {
-	for _, expectedFailure := range expected {
-		if _, err := compareRuleIdentities(expectedFailure, expectedFailure); err != nil {
-			return false, err
-		}
+	actualSet, err := canonicalProjectedFailureIdentities(actual)
+	if err != nil {
+		return false, err
 	}
 
-	if evaluationRecordSequenceCount(actual) != len(expected) {
-		return false, nil
+	expectedSet, err := canonicalProjectedFailureIdentities(func(yield func(failureIdentity) bool) {
+		for _, identity := range expected {
+			if !yield(identity) {
+				return
+			}
+		}
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return completeFailureIdentitySetsMatch(actualSet, expectedSet), nil
+}
+
+func exactEvaluationFailureClosure(result evaluation, expected []failureIdentity) (bool, error) {
+	expectedSet, err := canonicalProjectedFailureIdentities(func(yield func(failureIdentity) bool) {
+		for _, identity := range expected {
+			if !yield(identity) {
+				return
+			}
+		}
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return completeFailureIdentitySetsMatch(result.canonicalFailureIdentities(), expectedSet), nil
+}
+
+func canonicalProjectedFailureIdentities(sequence iter.Seq[failureIdentity]) ([]evaluationRecordIdentity, error) {
+	var identities []evaluationRecordIdentity
+
+	for identity := range sequence {
+		use, err := parseEvaluationPointer(identity.occurrence.usePointer)
+		if err != nil {
+			return nil, fmt.Errorf("failure use pointer: %w", err)
+		}
+
+		target, err := parseEvaluationPointer(identity.occurrence.targetPointer)
+		if err != nil {
+			return nil, fmt.Errorf("failure target pointer: %w", err)
+		}
+
+		instance, err := parseEvaluationPointer(identity.occurrence.instanceTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("failure instance template: %w", err)
+		}
+
+		identities = append(identities, evaluationRecordIdentity{
+			occurrence: evaluationOccurrencePaths{
+				use: use, target: target, instance: instance, reference: identity.occurrence.reference,
+			},
+			rule: identity.rule,
+		})
+	}
+
+	return canonicalizeEvaluationRecordIdentities(identities), nil
+}
+
+func completeFailureIdentitySetsMatch(actual, expected []evaluationRecordIdentity) bool {
+	if len(actual) != len(expected) {
+		return false
 	}
 
 	consumed := make([]bool, len(expected))
 
-	for actualFailure := range actual {
-		if _, err := compareRuleIdentities(actualFailure, actualFailure); err != nil {
-			return false, err
-		}
+	for _, actualIdentity := range actual {
+		matched := false
 
-		found := false
-
-		for index, expectedFailure := range expected {
-			if consumed[index] || actualFailure.rule != expectedFailure.rule ||
-				!ruleOccurrenceMatches(actualFailure.occurrence, expectedFailure.occurrence) {
+		for index, expectedIdentity := range expected {
+			if consumed[index] || !completeFailureIdentityMatches(actualIdentity, expectedIdentity) {
 				continue
 			}
 
 			consumed[index] = true
-			found = true
+			matched = true
 
 			break
 		}
 
-		if !found {
-			return false, nil
+		if !matched {
+			return false
 		}
 	}
 
-	return true, nil
+	return true
 }
 
-// faultFailureClosureMatches verifies direct faults only. Aggregate closure programs
-// remain compile-only until the later fault-search delivery owns their charged cursor.
-func faultFailureClosureMatches(actual iter.Seq[failureIdentity], fault faultProgram) (bool, error) {
+func completeFailureIdentityMatches(actual, expected evaluationRecordIdentity) bool {
+	return actual.rule == expected.rule &&
+		actual.occurrence.use.equal(expected.occurrence.use) &&
+		actual.occurrence.target.equal(expected.occurrence.target) &&
+		actual.occurrence.reference == expected.occurrence.reference &&
+		instanceTemplateMatches(expected.occurrence.instance.String(), actual.occurrence.instance.String())
+}
+
+func faultFailureClosureMatches(result evaluation, fault faultProgram) (bool, error) {
 	if fault.alternatives != nil {
-		return false, errors.New("schematest: aggregate fault closure execution is unavailable")
+		return false, errors.New("schematest: unresolved aggregate fault closure")
 	}
 
-	return exactFailureClosure(actual, fault.expected)
+	return exactEvaluationFailureClosure(result, fault.expected)
 }
 
 //nolint:cyclop // Pattern, length, seed, and failure-alternative phases share one objective seam.

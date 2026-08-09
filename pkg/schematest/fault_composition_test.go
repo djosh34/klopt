@@ -63,10 +63,16 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 	require.Equal(t, []Case{
 		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
 		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
+		{JSON: []byte(`null`), Valid: false},
+		{JSON: []byte(`{}`), Valid: false},
+		{JSON: []byte(`{}`), Valid: false},
+		{JSON: []byte(`{}`), Valid: false},
+		{JSON: []byte(`{"a":null}`), Valid: false},
+		{JSON: []byte(`{"a":"","b":null}`), Valid: false},
 	}, cases)
 	require.Equal(t, SpaceExhausted, report.Stop)
 	require.Equal(t, []string{"mask:3"}, anyOfReportMasks(report.Covered))
-	require.True(t, reportIdentityHasSuffix(report.Uncovered, "|anyOf|fault:anyOf"))
+	require.True(t, reportIdentityHasSuffix(report.Covered, "|anyOf|fault:anyOf"))
 }
 
 func TestBuildAllOfCompositionFaultGoldenStream(t *testing.T) {

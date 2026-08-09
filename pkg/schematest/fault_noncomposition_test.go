@@ -64,7 +64,7 @@ func TestNonCompositionFaultFamiliesHaveExactClosures(t *testing.T) {
 				result := evaluate(model, derivative)
 				require.NoError(t, result.err, fault.obligation.String())
 				require.False(t, result.valid, fault.obligation.String())
-				matches, matchErr := faultFailureClosureMatches(result.failureRecords(), fault)
+				matches, matchErr := faultFailureClosureMatches(result, fault)
 				require.NoError(t, matchErr)
 				require.True(
 					t, matches, "%s: actual=%v expected=%v",

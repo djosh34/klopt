@@ -176,6 +176,7 @@ func TestBuildEnumeratesUnconstrainedAnyOfStringRules(t *testing.T) {
 	require.Equal(t, []Case{
 		{JSON: []byte(`"a"`), Valid: true},
 		{JSON: []byte(`"a"`), Valid: true},
+		{JSON: []byte(`null`), Valid: false},
 	}, cases)
 }
 

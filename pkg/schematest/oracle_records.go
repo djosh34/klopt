@@ -283,6 +283,71 @@ func (result evaluation) failureRecords() iter.Seq[failureIdentity] {
 	})
 }
 
+// canonicalFailureIdentities returns the current evaluation's complete failure
+// identity set. It removes only repeated identical records and never projects
+// identity through a rendered name.
+func (result evaluation) canonicalFailureIdentities() []evaluationRecordIdentity {
+	var identities []evaluationRecordIdentity
+
+	if result.records == nil {
+		return nil
+	}
+
+	result.records.forEach(func(record evaluationRecord) bool {
+		if record.kind == evaluationRecordFailure {
+			identities = append(identities, cloneEvaluationRecordIdentity(record.identity))
+		}
+
+		return true
+	})
+
+	return canonicalizeEvaluationRecordIdentities(identities)
+}
+
+func canonicalizeEvaluationRecordIdentities(identities []evaluationRecordIdentity) []evaluationRecordIdentity {
+	slices.SortFunc(identities, compareEvaluationRecordIdentities)
+
+	return slices.CompactFunc(identities, func(left, right evaluationRecordIdentity) bool {
+		return compareEvaluationRecordIdentities(left, right) == 0
+	})
+}
+
+// compareEvaluationRecordIdentities applies the locked complete failure-set order.
+func compareEvaluationRecordIdentities(left, right evaluationRecordIdentity) int {
+	if comparison := compareEvaluationPointers(left.occurrence.use, right.occurrence.use); comparison != 0 {
+		return comparison
+	}
+
+	if comparison := compareEvaluationPointers(left.occurrence.target, right.occurrence.target); comparison != 0 {
+		return comparison
+	}
+
+	if left.occurrence.reference != right.occurrence.reference {
+		if left.occurrence.reference {
+			return 1
+		}
+
+		return -1
+	}
+
+	if comparison := compareEvaluationPointers(left.occurrence.instance, right.occurrence.instance); comparison != 0 {
+		return comparison
+	}
+
+	return strings.Compare(left.rule, right.rule)
+}
+
+func compareEvaluationPointers(left, right evaluationPointer) int {
+	limit := min(len(left.tokens), len(right.tokens))
+	for index := 0; index < limit; index++ {
+		if comparison := strings.Compare(left.tokens[index], right.tokens[index]); comparison != 0 {
+			return comparison
+		}
+	}
+
+	return compareInts(len(left.tokens), len(right.tokens))
+}
+
 func evaluationRecordSequenceCount[T any](sequence iter.Seq[T]) int {
 	if sequence == nil {
 		return 0
