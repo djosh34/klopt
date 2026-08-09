@@ -212,13 +212,12 @@ func cleanPatternMatches(pattern *patternAST, value string) (bool, error) {
 		return len(matcher.matchExpressionEnds(pattern.cleanProgram.expression, 0)) > 0, nil
 	}
 
-	for start := 0; start <= len(matcher.units); start++ {
-		if len(matcher.matchExpressionEnds(pattern.cleanProgram.expression, start)) > 0 {
-			return true, nil
-		}
+	starts := make([]int, len(matcher.units)+1)
+	for position := range starts {
+		starts[position] = position
 	}
 
-	return false, nil
+	return len(matcher.matchExpressionFromStarts(pattern.cleanProgram.expression, starts)) > 0, nil
 }
 
 type cleanExpressionMemoKey struct {
@@ -241,6 +240,33 @@ type cleanPatternMatcher struct {
 	expressionMemo map[cleanExpressionMemoKey][]int
 	sequenceMemo   map[cleanSequenceMemoKey][]int
 	atomMemo       map[cleanAtomMemoKey][]int
+}
+
+func (matcher *cleanPatternMatcher) matchExpressionFromStarts(
+	expression *cleanPatternExpression,
+	starts []int,
+) []int {
+	ends := make([]int, 0)
+	for _, alternative := range expression.alternatives {
+		ends = appendUniquePatternPositions(ends, matcher.matchSequenceFromStarts(alternative, starts)...)
+	}
+
+	return ends
+}
+
+func (matcher *cleanPatternMatcher) matchSequenceFromStarts(
+	sequence *cleanPatternSequence,
+	starts []int,
+) []int {
+	positions := uniquePatternPositions(starts)
+	for _, term := range sequence.terms {
+		positions = matcher.matchTerm(term, positions)
+		if len(positions) == 0 {
+			break
+		}
+	}
+
+	return positions
 }
 
 func (matcher *cleanPatternMatcher) matchExpressionEnds(expression *cleanPatternExpression, start int) []int {
@@ -290,8 +316,10 @@ func (matcher *cleanPatternMatcher) matchTerm(term *cleanPatternTerm, starts []i
 			break
 		}
 
+		stable := equalPatternPositions(next, levels[len(levels)-1])
 		levels = append(levels, next)
-		if term.unbounded && equalPatternPositions(next, levels[len(levels)-2]) {
+
+		if stable && count >= term.minimum {
 			break
 		}
 	}

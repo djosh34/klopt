@@ -88,14 +88,17 @@ type basicStringProductState struct {
 }
 
 type basicStringProduct struct {
-	machines       []basicStringMachine
-	formatPrograms []*stringFormatProgram
-	maxUnits       uint64
-	unbounded      bool
-	hasSurrogate   bool
-	needsPadding   bool
-	formats        []activeStringFormat
-	directedFormat int
+	machines         []basicStringMachine
+	formatPrograms   []*stringFormatProgram
+	maxUnits         uint64
+	unbounded        bool
+	hasSurrogate     bool
+	surrogatePadding bool
+	needsPadding     bool
+	formats          []activeStringFormat
+	directedFormat   int
+	guidance         *stringFormatBoundary
+	objective        *stringFormatBoundary
 }
 
 type basicStringLengthObjective struct {
@@ -281,11 +284,13 @@ func (product *basicStringProduct) setBounds() error {
 	product.maxUnits = 0
 	product.unbounded = false
 	product.hasSurrogate = false
+	product.surrogatePadding = false
 	product.needsPadding = len(product.machines) == 0
 
 	for index := range product.machines {
 		machine := &product.machines[index]
 		product.hasSurrogate = product.hasSurrogate || machine.required && machine.hasSurrogate
+		product.surrogatePadding = product.surrogatePadding || machine.required && !machine.expected
 		product.needsPadding = product.needsPadding || machine.required && (!machine.expected || !machine.wholeBound)
 
 		if !machine.required || !machine.expected || machine.unbounded || !machine.wholeBound {
@@ -442,10 +447,56 @@ func basicStringSequenceAnchorsWithMemo(
 		return false, false
 	}
 
-	start, _ := basicStringTermAnchors(sequence.terms[0], memo)
-	_, end := basicStringTermAnchors(sequence.terms[len(sequence.terms)-1], memo)
+	start := false
+
+	for _, term := range sequence.terms {
+		termStart, _ := basicStringTermAnchors(term, memo)
+		if termStart {
+			start = true
+
+			break
+		}
+
+		if !basicStringTermNullable(term) {
+			break
+		}
+	}
+
+	end := false
+
+	for index := len(sequence.terms) - 1; index >= 0; index-- {
+		term := sequence.terms[index]
+
+		_, termEnd := basicStringTermAnchors(term, memo)
+		if termEnd {
+			end = true
+
+			break
+		}
+
+		if !basicStringTermNullable(term) {
+			break
+		}
+	}
 
 	return start, end
+}
+
+func basicStringTermNullable(term *patternTerm) bool {
+	if term == nil || term.atom == nil || term.quantified && term.minimum == 0 {
+		return true
+	}
+
+	switch term.atom.kind {
+	case patternStart, patternEnd, patternWordBoundary, patternNotWordBoundary:
+		return true
+	case patternGroup:
+		bounds, ok := basicStringExpressionBounds(term.atom.expression)
+
+		return ok && bounds.minimum == 0
+	default:
+		return false
+	}
 }
 
 func basicStringTermAnchors(term *patternTerm, memo map[*patternAtom][2]bool) (bool, bool) {
@@ -943,7 +994,7 @@ func (machine *basicStringMachine) followZeroWidth(
 
 		state := configuration.repeats[edge.frame]
 		if !repeat.unbounded && state.count >= repeat.maximum ||
-			repeat.unbounded && state.count >= repeat.minimum && state.blockedAt == position {
+			state.count >= repeat.minimum && state.blockedAt == position {
 			return basicStringConfiguration{}, false
 		}
 
@@ -1153,14 +1204,55 @@ func eachBasicStringWordIntersection(edge basicStringEdge, word bool, visit func
 	}
 }
 
-//nolint:mnd // UTF-16 structural boundaries and deterministic padding are explicit.
+//nolint:cyclop,gocognit,mnd // UTF-16 structural boundaries and deterministic padding are explicit.
 func (product *basicStringProduct) eachTransition(
 	state basicStringProductState,
 	seed uint64,
 	includePadding bool,
 	visit func(uint16) bool,
 ) {
+	preferred := uint16(0)
+
+	hasPreferred := product.guidance != nil && state.position < len(product.guidance.witness)
+	if hasPreferred {
+		preferred = uint16(product.guidance.witness[state.position])
+	} else {
+		for _, program := range product.formatPrograms {
+			if program != nil && program.preferred != nil {
+				preferred = program.preferred(state.position, state.length)
+				hasPreferred = true
+
+				break
+			}
+		}
+	}
+
+	preferredVisited := false
 	visitWellFormed := func(unit uint16) bool {
+		if preferredVisited && unit == preferred {
+			return false
+		}
+
+		preferredVisited = preferredVisited || hasPreferred && unit == preferred
+		low := unit >= 0xdc00 && unit <= 0xdfff
+
+		high := unit >= 0xd800 && unit <= 0xdbff
+		if state.pendingHigh != low || high && state.position+1 >= state.length {
+			return false
+		}
+
+		return visit(unit)
+	}
+
+	if hasPreferred && visitWellFormed(preferred) {
+		return
+	}
+
+	visitWellFormed = func(unit uint16) bool {
+		if hasPreferred && unit == preferred {
+			return false
+		}
+
 		low := unit >= 0xdc00 && unit <= 0xdfff
 
 		high := unit >= 0xd800 && unit <= 0xdbff
@@ -1334,6 +1426,7 @@ func (s *search) walkBasicStringProductForLengths(
 	return complete, walkErr
 }
 
+//nolint:cyclop // Rune/unit lengths and cutoff-safe traversal form one cursor boundary.
 func (s *search) walkBasicStringRuneLength(
 	product *basicStringProduct,
 	runeLength uint64,
@@ -1350,10 +1443,11 @@ func (s *search) walkBasicStringRuneLength(
 	}
 
 	maximumUnits := runeLength
-	if product.hasSurrogate {
-		maximumUnits = runeLength * basicStringUnitsPerRune
+	if product.hasSurrogate || product.surrogatePadding && runeLength == 1 {
 		if runeLength > maxInt/basicStringUnitsPerRune {
 			maximumUnits = maxInt
+		} else {
+			maximumUnits = runeLength * basicStringUnitsPerRune
 		}
 	}
 
@@ -1399,6 +1493,9 @@ func (s *search) walkBasicStringProduct(
 		}
 
 		candidate := string(utf16.Decode(units))
+		if product.objective != nil && !product.objective.matches(candidate) {
+			return false, nil
+		}
 
 		return visit(&jsonValue{kind: jsonString, text: candidate})
 	}

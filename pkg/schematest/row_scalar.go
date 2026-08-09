@@ -6,8 +6,6 @@ import (
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
-//
-//nolint:cyclop // Number, boundary, canonical, and searched scalar phases share one dispatch.
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -27,10 +25,6 @@ func (s *search) walkScalar(
 				)
 			},
 		)
-	}
-
-	if handled, complete, err := s.walkFormatBoundary(kind, occurrence, context, visit); handled {
-		return complete, err
 	}
 
 	complete := false
@@ -75,29 +69,6 @@ func (s *search) walkScalar(
 	default:
 		return false, nil
 	}
-}
-
-// walkFormatBoundary assigns one exact registry witness when the request targets this scalar.
-func (s *search) walkFormatBoundary(
-	kind jsonKind,
-	occurrence schemaOccurrence,
-	context rowSearchContext,
-	visit rowVisit,
-) (bool, bool, error) {
-	boundary := validRequestFormatBoundary(context.validRequest)
-	if kind != jsonString || boundary == nil || !stringObjectiveWithin(
-		&stringSearchObjective{occurrence: boundary.identity.occurrence}, occurrence,
-	) {
-		return false, false, nil
-	}
-
-	if err := s.assign(); err != nil {
-		return true, false, err
-	}
-
-	complete, err := visit(&jsonValue{kind: jsonString, text: boundary.boundary.witness})
-
-	return true, complete, err
 }
 
 // walkActiveStringRules searches one canonical applicable rule view.
@@ -168,13 +139,38 @@ func (s *search) walkActiveStringRules(
 		return false, err
 	}
 
+	lengthObjective := basicStringLengthObjective{}
+
+	if boundary := matchingFormatBoundary(request, occurrence); boundary != nil {
+		product.guidance = &boundary.boundary
+		product.objective = &boundary.boundary
+		lengthObjective = basicStringLengthObjective{
+			length: uint64(len([]rune(boundary.boundary.witness))), constrained: true,
+		}
+	}
+
 	return s.walkBasicStringProductForLengths(
 		product,
 		lengths,
-		basicStringLengthObjective{},
+		lengthObjective,
 		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
 		visit,
 	)
+}
+
+// matchingFormatBoundary returns the semantic format objective targeting this scalar.
+func matchingFormatBoundary(
+	request *validRequest,
+	occurrence schemaOccurrence,
+) *formatBoundaryObjective {
+	boundary := validRequestFormatBoundary(request)
+	if boundary == nil || !stringObjectiveWithin(
+		&stringSearchObjective{occurrence: boundary.identity.occurrence}, occurrence,
+	) {
+		return nil
+	}
+
+	return boundary
 }
 
 // validFalseStringObjective returns the first selected false-branch pattern direction.
@@ -332,6 +328,10 @@ func rowScalarValueSource(node *schemaNode, kind jsonKind) jsonValueSource {
 				}
 			}
 
+			return nil
+		}
+
+		if kind == jsonString && nodeHasStringSearchRules(node) {
 			return nil
 		}
 

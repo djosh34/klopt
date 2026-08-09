@@ -104,7 +104,7 @@ func collectActiveStringRules(
 		}
 	}
 
-	if len(simpleStringFormatWitnesses(node.format, true)) > 0 {
+	if specification, exists := stringFormatSpecificationFor(node.format); exists && !specification.inert {
 		rules.formats = append(rules.formats, activeStringFormat{
 			format: node.format, node: node, occurrence: occurrence,
 		})

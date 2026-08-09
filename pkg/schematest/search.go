@@ -107,7 +107,7 @@ func targetRowMatches(result evaluation, request validRequest, value *jsonValue)
 	return true
 }
 
-// formatBoundaryWasSatisfied checks the exact requested value at its instance template.
+// formatBoundaryWasSatisfied checks the requested semantic objective at its instance template.
 func formatBoundaryWasSatisfied(value *jsonValue, objective *formatBoundaryObjective) bool {
 	if objective == nil {
 		return true
@@ -115,7 +115,7 @@ func formatBoundaryWasSatisfied(value *jsonValue, objective *formatBoundaryObjec
 
 	for _, path := range matchingValuePaths(value, objective.identity.occurrence.instanceTemplate) {
 		candidate := valueAtPath(value, path)
-		if candidate != nil && candidate.kind == jsonString && candidate.text == objective.boundary.witness {
+		if candidate != nil && candidate.kind == jsonString && objective.boundary.matches(candidate.text) {
 			return true
 		}
 	}

@@ -3,7 +3,6 @@ package schematest
 import (
 	"errors"
 	"math/big"
-	"unicode/utf16"
 )
 
 // rankedArrayStructure is one transient projection/length choice.
@@ -645,6 +644,14 @@ func (s *search) rowScalarValueForRank(
 	kind jsonKind,
 	wanted uint64,
 ) (*jsonValue, bool, uint64, error) {
+	if kind == jsonString && nodeHasStringSearchRules(source.node) {
+		candidate, exists, err := s.rowGeneratedStringValueAt(
+			source, requirements, context, wanted,
+		)
+
+		return candidate, exists, 0, err
+	}
+
 	candidate, exists, finiteSize, err := canonicalKindValueAt(kind, wanted)
 	if err != nil {
 		return nil, false, 0, err
@@ -729,33 +736,9 @@ func validRequestFormatBoundary(request *validRequest) *formatBoundaryObjective 
 	return request.formatBoundary
 }
 
-// rowFormatBoundaryValueAt selects one requested registry witness before the general frontier.
-func (s *search) rowFormatBoundaryValueAt(
-	request *validRequest,
-	occurrence schemaOccurrence,
-	wanted uint64,
-) (*jsonValue, bool, uint64, error) {
-	boundary := validRequestFormatBoundary(request)
-	if boundary == nil || !stringObjectiveWithin(
-		&stringSearchObjective{occurrence: boundary.identity.occurrence}, occurrence,
-	) {
-		return nil, false, wanted, nil
-	}
-
-	if wanted != 0 {
-		return nil, false, wanted - 1, nil
-	}
-
-	if err := s.assign(); err != nil {
-		return nil, false, 0, err
-	}
-
-	return &jsonValue{kind: jsonString, text: boundary.boundary.witness}, true, 0, nil
-}
-
-// rowGeneratedStringValueAt directly evaluates one length/unit/transition tuple.
+// rowGeneratedStringValueAt selects one result from the charged product cursor.
 //
-//nolint:cyclop,gocognit,gocyclo,maintidx,mnd // Compilation and exact primitive tuple evaluation share one adapter.
+//nolint:cyclop // Rule compilation and one charged cursor traversal form one adapter.
 func (s *search) rowGeneratedStringValueAt(
 	source *rowSchemaSource,
 	requirements []requirement,
@@ -781,15 +764,6 @@ func (s *search) rowGeneratedStringValueAt(
 		return nil, false, nil
 	}
 
-	boundaryValue, boundaryFound, remainingRank, err := s.rowFormatBoundaryValueAt(
-		context.validRequest, source.occurrence, wanted,
-	)
-	if err != nil || boundaryFound {
-		return boundaryValue, boundaryFound, err
-	}
-
-	wanted = remainingRank
-
 	product, err := newBasicStringProduct(patterns)
 	if err != nil {
 		return nil, false, err
@@ -799,31 +773,15 @@ func (s *search) rowGeneratedStringValueAt(
 		return nil, false, addErr
 	}
 
-	maximumSamples := uint64(0)
-	for _, format := range rules.formats {
-		maximumSamples = max(
-			maximumSamples, uint64(len(simpleStringFormatWitnesses(format.format, true))),
-		)
-	}
+	lengthObjective := basicStringLengthObjective{}
 
-	formatSampleSize := uint64(len(rules.formats)) * maximumSamples
-	if wanted < formatSampleSize {
-		formatRank := wanted % uint64(len(rules.formats))
-		sampleRank := wanted / uint64(len(rules.formats))
-
-		samples := simpleStringFormatWitnesses(rules.formats[formatRank].format, true)
-		if sampleRank >= uint64(len(samples)) {
-			return nil, false, nil
+	if boundary := matchingFormatBoundary(context.validRequest, source.occurrence); boundary != nil {
+		product.guidance = &boundary.boundary
+		product.objective = &boundary.boundary
+		lengthObjective = basicStringLengthObjective{
+			length: uint64(len([]rune(boundary.boundary.witness))), constrained: true,
 		}
-
-		if assignErr := s.assign(); assignErr != nil {
-			return nil, false, assignErr
-		}
-
-		return &jsonValue{kind: jsonString, text: samples[sampleRank]}, true, nil
 	}
-
-	wanted -= formatSampleSize
 
 	seedNode := source.node
 	seedPointer := source.occurrence.usePointer
@@ -842,17 +800,8 @@ func (s *search) rowGeneratedStringValueAt(
 		return nil, false, err
 	}
 
-	decoder, ok := newDirectRankTupleDecoder(3, wanted)
-	if !ok {
-		return nil, false, nil
-	}
-
-	lengthRank, _ := decoder.Next()
-	unitOffset, _ := decoder.Next()
-	transitionCode, _ := decoder.Next()
-
-	runeLength, exists := rowStringLengthAt(lengths, product, lengthRank)
-	if !exists || !lengths.allows(runeLength) || !product.formatsAllowLength(runeLength) {
+	runeLength, candidateOrdinal, exists := structuralStringSelection(product, lengths, lengthObjective, wanted)
+	if !exists {
 		return nil, false, nil
 	}
 
@@ -860,120 +809,74 @@ func (s *search) rowGeneratedStringValueAt(
 		return nil, false, assignErr
 	}
 
-	maximumUnits := runeLength
-	if product.hasSurrogate {
-		if runeLength > uint64(^uint(0)>>1)/basicStringUnitsPerRune {
-			return nil, false, nil
-		}
+	ordinal := uint64(0)
 
-		maximumUnits = runeLength * basicStringUnitsPerRune
-	}
+	var selected *jsonValue
 
-	unitLength := runeLength + unitOffset
-	if unitLength < runeLength || unitLength > maximumUnits || unitLength > uint64(^uint(0)>>1) {
-		return nil, false, nil
-	}
+	complete, err := s.walkBasicStringRuneLength(
+		product,
+		runeLength,
+		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
+		func(candidate *jsonValue) (bool, error) {
+			if ordinal != candidateOrdinal {
+				ordinal++
 
-	seed := searchSeed(seedPointer, canonicalSchemaJSON, rule, level)
-	state := product.start(int(unitLength))
-	units := make([]uint16, 0, int(unitLength))
-	includePadding := product.needsPadding || !product.unbounded && unitLength > product.maxUnits
-
-	for position := uint64(0); position < unitLength; position++ {
-		count := uint64(0)
-
-		product.eachTransition(state, seed, includePadding, func(uint16) bool {
-			count++
-
-			return false
-		})
-
-		if count == 0 {
-			return nil, false, nil
-		}
-
-		choice := transitionCode % count
-		transitionCode /= count
-
-		index := uint64(0)
-		selected := uint16(0)
-		found := false
-
-		product.eachTransition(state, seed, includePadding, func(unit uint16) bool {
-			if index == choice {
-				selected = unit
-				found = true
-
-				return true
+				return false, nil
 			}
 
-			index++
+			var cloneErr error
 
-			return false
-		})
+			selected, cloneErr = cloneJSONValue(candidate)
 
-		if !found {
-			return nil, false, nil
-		}
-
-		if assignErr := s.assign(); assignErr != nil {
-			return nil, false, assignErr
-		}
-
-		state = product.advance(state, selected, int(position), int(unitLength))
-		if !product.viable(state) {
-			return nil, false, nil
-		}
-
-		units = append(units, selected)
+			return cloneErr == nil, cloneErr
+		},
+	)
+	if err != nil {
+		return nil, false, err
 	}
 
-	if transitionCode != 0 || !product.accepting(state) || !validBasicStringUnits(units) ||
-		uint64(len(utf16.Decode(units))) != runeLength {
-		return nil, false, nil
-	}
-
-	candidate := string(utf16.Decode(units))
-
-	return &jsonValue{kind: jsonString, text: candidate}, true, nil
+	return selected, complete, nil
 }
 
-// rowStringLengthAt directly indexes a boundary occurrence or numeric length.
+// structuralStringSelection decodes one fair length and within-length ordinal.
 //
-//nolint:cyclop // Boundary and numeric phases share direct first-occurrence checks.
-func rowStringLengthAt(
-	lengths basicStringLengths,
+//nolint:cyclop // Fixed and fair length domains share one charged structural selection.
+func structuralStringSelection(
 	product *basicStringProduct,
+	lengths basicStringLengths,
+	objective basicStringLengthObjective,
 	wanted uint64,
-) (uint64, bool) {
-	if wanted < uint64(len(lengths.boundaries)) {
-		candidate := lengths.boundaries[wanted]
-		for _, earlier := range lengths.boundaries[:wanted] {
-			if earlier == candidate {
-				return 0, false
-			}
+) (uint64, uint64, bool) {
+	if objective.constrained {
+		return objective.length, wanted, true
+	}
+
+	if lengths.hasMaximum && lengths.maximum == lengths.minimum {
+		return lengths.minimum, wanted, true
+	}
+
+	minimum := lengths.minimum
+
+	for index := range product.machines {
+		machine := &product.machines[index]
+		if machine.required && machine.expected && machine.wholeBound {
+			minimum = max(minimum, machine.minUnits)
 		}
-
-		return candidate, true
 	}
 
-	candidate := wanted - uint64(len(lengths.boundaries))
-	for _, boundary := range lengths.boundaries {
-		if boundary == candidate {
-			return 0, false
+	for index, program := range product.formatPrograms {
+		if program != nil && index != product.directedFormat {
+			minimum = max(minimum, program.bounds.minimum)
 		}
 	}
 
-	maximum, bounded := uint64(0), false
-	if !product.unbounded {
-		maximum, bounded = product.maxUnits, true
+	if wanted > ^uint64(0)-minimum {
+		return 0, 0, false
 	}
 
-	if lengths.hasMaximum && (!bounded || lengths.maximum < maximum) {
-		maximum, bounded = lengths.maximum, true
-	}
+	candidate := minimum + wanted
 
-	return candidate, !bounded || candidate <= maximum
+	return candidate, 0, lengths.allows(candidate) && product.formatsAllowLength(candidate)
 }
 
 // rowGeneratedNumberValueAt directly evaluates one deterministic edge or seeded primitive tuple.

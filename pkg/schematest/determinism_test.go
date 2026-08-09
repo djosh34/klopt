@@ -176,19 +176,19 @@ func TestBuildStringProductEdgeCutoff(t *testing.T) {
 			`{"type":"string","minLength":1,"maxLength":1,"pattern":"^[q]$"}`,
 		)),
 		OperationID: "selected",
-		MaxSteps:    7,
+		MaxSteps:    2,
 	}
 
 	cutoffCases, cutoffReport, err := collectDeterministicRun(input, nil)
 	require.NoError(t, err)
 	require.Empty(t, cutoffCases, "a cutoff before the product edge emits no partial case")
-	require.Equal(t, Report{Stop: MaxStepsReached, Steps: 7, Uncovered: cutoffReport.Uncovered}, cutoffReport)
+	require.Equal(t, Report{Stop: MaxStepsReached, Steps: 2, Uncovered: cutoffReport.Uncovered}, cutoffReport)
 
 	input.MaxSteps++
 	adjacentCases, adjacentReport, err := collectDeterministicRun(input, nil)
 	require.NoError(t, err)
 	require.Equal(t, MaxStepsReached, adjacentReport.Stop)
-	require.Equal(t, uint64(8), adjacentReport.Steps)
+	require.Equal(t, uint64(3), adjacentReport.Steps)
 	require.Equal(t, []Case{{JSON: []byte(`"q"`), Valid: true}}, adjacentCases)
 }
 

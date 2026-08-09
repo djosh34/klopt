@@ -184,6 +184,25 @@ func TestStringFormatProgramsAcceptExactRetainedLanguages(t *testing.T) {
 	}
 }
 
+func TestEmailIPv6MixedSuffixRequiresAuthoredCompression(t *testing.T) {
+	t.Parallel()
+
+	for _, candidate := range []string{
+		"a@[IPv6:a:b:1.2.3.4]",
+		"a@[IPv6:a:b:c:d:e:f:1.2.3.4]",
+		"a@[IPv6:a:b::1.2.3.4]",
+	} {
+		searchMatches := searchEmailFormatMatches(candidate)
+		cleanMatches, err := cleanStringFormatMatches(candidate, schemaFormatEmail)
+		require.NoError(t, err)
+		require.Equal(t, searchMatches, cleanMatches, candidate)
+	}
+
+	require.False(t, searchEmailFormatMatches("a@[IPv6:a:b:1.2.3.4]"))
+	require.True(t, searchEmailFormatMatches("a@[IPv6:a:b:c:d:e:f:1.2.3.4]"))
+	require.True(t, searchEmailFormatMatches("a@[IPv6:a:b::1.2.3.4]"))
+}
+
 func TestStringFormatTransitionPartitionsSeparateExactSemantics(t *testing.T) {
 	t.Parallel()
 
@@ -299,7 +318,7 @@ func TestFindStringFaultRowDirectsFormatAndPreservesSiblingPattern(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "YQ=", row.text)
-	require.Equal(t, uint64(10), searchState.steps)
+	require.Equal(t, uint64(16), searchState.steps)
 	require.Equal(t, identityStrings(target.expected), identityStrings(evaluate(model, row).failureRecords()))
 }
 
@@ -317,27 +336,27 @@ func TestFindStringFaultRowDirectsRemainingFormatsAndPreservesSiblings(t *testin
 			schema: `{"type":"string","format":"email","pattern":"^a\\.\\.b@example\\.com$",` +
 				`"minLength":16,"maxLength":16}`,
 			witness: "a..b@example.com",
-			steps:   17,
+			steps:   31,
 		},
 		{
 			name:    "ipv4",
 			schema:  `{"type":"string","format":"ipv4","pattern":"^00\\.0\\.0\\.0$","minLength":8,"maxLength":8}`,
 			witness: "00.0.0.0",
-			steps:   9,
+			steps:   15,
 		},
 		{
 			name: "cidr",
 			schema: `{"type":"string","format":"cidr","pattern":"^192\\.0\\.2\\.7/33$",` +
 				`"minLength":12,"maxLength":12}`,
 			witness: "192.0.2.7/33",
-			steps:   13,
+			steps:   24,
 		},
 		{
 			name: "ipv4-cidr",
 			schema: `{"type":"string","format":"ipv4-cidr","pattern":"^192\\.0\\.2\\.7/33$",` +
 				`"minLength":12,"maxLength":12}`,
 			witness: "192.0.2.7/33",
-			steps:   13,
+			steps:   24,
 		},
 	}
 
@@ -376,7 +395,7 @@ func TestBuildSearchesRemainingFormatsAcrossActiveSiblingConstraints(t *testing.
 		},
 		{
 			name: "ipv4", format: "ipv4", pattern: `^255\\.255\\.255\\.255$`, length: 15,
-			witness: "255.255.255.255", stop: MaxStepsReached,
+			witness: "255.255.255.255", stop: SpaceExhausted,
 		},
 		{
 			name: "cidr", format: "cidr", pattern: `^192\\.0\\.2\\.7/32$`, length: 12,

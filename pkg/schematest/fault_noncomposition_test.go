@@ -302,7 +302,7 @@ func TestBuildFindsActiveConjunctionFaultWitnesses(t *testing.T) {
 			schema: `{"maxProperties":0,` +
 				`"allOf":[{"additionalProperties":{"type":"string","minLength":2}}]}`,
 			faultID:    "|maxProperties|fault:maxProperties",
-			derivative: `{"__schematest_extra__":"text"}`,
+			derivative: `{"__schematest_extra__":"\u0000\u0000"}`,
 		},
 		{
 			name: "named property backtracking",
