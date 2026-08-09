@@ -552,14 +552,29 @@ func walkActiveFaultChildValues(
 		return s.walkGenericValue(requirements, visit)
 	}
 
-	choices, err := rowChildSchemaChoices(node, occurrence, requirements, kind, name)
-	if err != nil {
-		return false, err
-	}
+	cursor := newRowProjectionCursor(node, occurrence, requirements)
+	defer cursor.Close()
 
-	for _, choice := range choices {
+	for {
+		view, ok, err := cursor.Next()
+		if err != nil || !ok {
+			return false, err
+		}
+
+		active, err := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...), s.assign,
+		)
+		if err != nil {
+			return false, err
+		}
+
+		choice, err := rowProjectedArrayItem(view, active)
+		if err != nil {
+			return false, err
+		}
+
 		if choice.node == nil {
-			complete, walkErr := s.walkGenericValue(requirements, visit)
+			complete, walkErr := s.walkGenericValue(active, visit)
 			if walkErr != nil || complete {
 				return complete, walkErr
 			}
@@ -568,8 +583,8 @@ func walkActiveFaultChildValues(
 		}
 
 		complete, walkErr := s.walkNode(
-			choice.node, choice.occurrence, requirements, rowSearchContext{}, func(value *jsonValue) (bool, error) {
-				usable, usableErr := s.rowChildValueUsable(choice.node, choice.occurrence, requirements, value)
+			choice.node, choice.occurrence, active, rowSearchContext{}, func(value *jsonValue) (bool, error) {
+				usable, usableErr := s.rowChildValueUsable(choice.node, choice.occurrence, active, value)
 				if usableErr != nil || !usable {
 					return false, usableErr
 				}
@@ -581,8 +596,6 @@ func walkActiveFaultChildValues(
 			return complete, walkErr
 		}
 	}
-
-	return false, nil
 }
 
 //nolint:cyclop,gocognit // Exact count conversion and active member search are one mutation.
