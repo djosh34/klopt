@@ -50,10 +50,11 @@ type rowArrayLengthDomain struct {
 type rowArrayLengthCursor struct {
 	rowArrayLengthDomain
 
-	directRank uint64
-	remaining  uint64
-	phase      uint8
-	finiteEnd  bool
+	directSource uint64
+	directMember uint64
+	remaining    uint64
+	phase        uint8
+	finiteEnd    bool
 }
 
 // newRowArrayLengthDomain intersects active counts without narrowing authored values.
@@ -255,9 +256,7 @@ func (cursor *rowArrayLengthCursor) Next() (rowArrayCount, bool, error) {
 			cursor.remaining++
 		}
 
-		seen, err := cursor.seenBefore(
-			candidate, arrayLengthRemaining, cursor.directRank,
-		)
+		seen, err := cursor.seenBefore(candidate, arrayLengthRemaining)
 		if err != nil {
 			return rowArrayCount{}, false, err
 		}
@@ -272,53 +271,65 @@ func (cursor *rowArrayLengthCursor) Next() (rowArrayCount, bool, error) {
 
 // nextNamed advances the direct and fixed named phases.
 //
-//nolint:cyclop // Direct and fixed named phases form one cursor transition.
+//nolint:cyclop,gocognit // Direct and fixed named phases form one cursor transition.
 func (cursor *rowArrayLengthCursor) nextNamed() (rowArrayCount, bool, error) {
 	for cursor.phase < arrayLengthRemaining {
 		phase := cursor.phase
 		switch phase {
 		case arrayLengthDirect:
-			candidate, ok, err := rowDirectArrayLengthAt(cursor.view, cursor.directRank)
-			if err != nil {
-				return rowArrayCount{}, false, err
-			}
+			for cursor.directSource < uint64(len(cursor.view.sources)) {
+				sourceIndex := cursor.directSource
+				source := &cursor.view.sources[sourceIndex]
 
-			if ok {
-				cursor.directRank++
+				memberCount := uint64(1)
+				if source.node != nil && source.node.enum != nil {
+					memberCount = uint64(len(source.node.enum))
+				}
 
-				seen, seenErr := cursor.seenBefore(
-					candidate, phase, cursor.directRank,
+				if cursor.directMember >= memberCount {
+					cursor.directSource++
+					cursor.directMember = 0
+
+					continue
+				}
+
+				memberIndex := cursor.directMember
+				cursor.directMember++
+
+				candidate, ok, err := rowDirectArrayLengthAt(cursor.view, sourceIndex, memberIndex)
+				if err != nil {
+					return rowArrayCount{}, false, err
+				}
+
+				if !ok {
+					continue
+				}
+
+				seen, seenErr := rowDirectArrayLengthSeenBefore(
+					cursor.view, candidate, sourceIndex, memberIndex,
 				)
 				if seenErr != nil || !seen {
 					return candidate, !seen, seenErr
 				}
-
-				continue
 			}
 
 			cursor.phase++
 		case arrayLengthExact:
 			cursor.phase++
 			if cursor.hasExact {
-				seen, err := cursor.seenBefore(
-					cursor.exact, phase, cursor.directRank,
-				)
+				seen, err := cursor.seenBefore(cursor.exact, phase)
 
 				return cursor.exact, !seen, err
 			}
 		case arrayLengthMinimum:
 			cursor.phase++
-			seen, err := cursor.seenBefore(
-				cursor.minimum, phase, cursor.directRank,
-			)
+			seen, err := cursor.seenBefore(cursor.minimum, phase)
 
 			return cursor.minimum, !seen, err
 		case arrayLengthMaximum:
 			cursor.phase++
 			if cursor.hasMaximum {
-				seen, err := cursor.seenBefore(
-					cursor.maximum, phase, cursor.directRank,
-				)
+				seen, err := cursor.seenBefore(cursor.maximum, phase)
 
 				return cursor.maximum, !seen, err
 			}
@@ -330,20 +341,12 @@ func (cursor *rowArrayLengthCursor) nextNamed() (rowArrayCount, bool, error) {
 
 // seenBefore reports whether an earlier named rank yielded the exact count.
 //
-//nolint:cyclop // Direct and fixed named ranks share exact deduplication.
-func (domain rowArrayLengthDomain) seenBefore(
-	candidate rowArrayCount,
-	phase uint8,
-	directRank uint64,
-) (bool, error) {
-	limit := directRank
-	if phase == arrayLengthDirect && limit > 0 {
-		limit--
-	} else if phase > arrayLengthDirect {
-		limit = ^uint64(0)
-	}
 
-	seen, err := rowDirectArrayLengthSeenBefore(domain.view, candidate, limit)
+//nolint:godoclint // The receiver supplies the private domain context.
+func (domain rowArrayLengthDomain) seenBefore(candidate rowArrayCount, phase uint8) (bool, error) {
+	seen, err := rowDirectArrayLengthSeenBefore(
+		domain.view, candidate, uint64(len(domain.view.sources)), 0,
+	)
 	if err != nil || seen {
 		return seen, err
 	}
@@ -377,38 +380,40 @@ func (domain rowArrayLengthDomain) seenBefore(
 func rowDirectArrayLengthSeenBefore(
 	view rowProjectionView,
 	candidate rowArrayCount,
-	limit uint64,
+	selectedSource uint64,
+	selectedMember uint64,
 ) (bool, error) {
-	var occurrence uint64
-
-	for _, source := range view.sources {
+	for sourceIndex, source := range view.sources {
 		if source.node == nil || source.node.schemaShape == nil {
 			return false, errors.New("schematest: projected array source has no shape")
 		}
 
-		check := func(value *jsonValue) (bool, error) {
+		check := func(value *jsonValue, memberIndex uint64) (bool, error) {
 			if value == nil {
 				return false, errors.New("schematest: nil projected enum value")
 			}
 
-			if value.kind != jsonArray || occurrence >= limit {
+			if uint64(sourceIndex) > selectedSource ||
+				uint64(sourceIndex) == selectedSource && memberIndex >= selectedMember {
 				return false, nil
 			}
 
-			occurrence++
+			if value.kind != jsonArray {
+				return false, nil
+			}
 
 			return rowArrayCountsEqual(candidate, rowArrayCount{value: uint64(len(value.array))})
 		}
 
 		if source.node.enum != nil {
-			for _, member := range source.node.enum {
-				seen, err := check(member.value)
+			for memberIndex, member := range source.node.enum {
+				seen, err := check(member.value, uint64(memberIndex))
 				if err != nil || seen {
 					return seen, err
 				}
 			}
 		} else if source.node.defaultValue != nil {
-			seen, err := check(source.node.defaultValue)
+			seen, err := check(source.node.defaultValue, 0)
 			if err != nil || seen {
 				return seen, err
 			}
@@ -418,43 +423,45 @@ func rowDirectArrayLengthSeenBefore(
 	return false, nil
 }
 
-// rowDirectArrayLengthAt returns one authored witness length by model ordinal.
-//
-//nolint:cyclop,nestif // Enum/default traversal preserves model order without a candidate slice.
-func rowDirectArrayLengthAt(view rowProjectionView, wanted uint64) (rowArrayCount, bool, error) {
-	var ordinal uint64
-
-	for _, source := range view.sources {
-		if source.node == nil || source.node.schemaShape == nil {
-			return rowArrayCount{}, false, errors.New("schematest: projected array source has no shape")
-		}
-
-		if source.node.enum != nil {
-			for _, member := range source.node.enum {
-				if member.value == nil {
-					return rowArrayCount{}, false, errors.New("schematest: nil projected enum value")
-				}
-
-				if member.value.kind != jsonArray {
-					continue
-				}
-
-				if ordinal == wanted {
-					return rowArrayCount{value: uint64(len(member.value.array))}, true, nil
-				}
-
-				ordinal++
-			}
-		} else if source.node.defaultValue != nil && source.node.defaultValue.kind == jsonArray {
-			if ordinal == wanted {
-				return rowArrayCount{value: uint64(len(source.node.defaultValue.array))}, true, nil
-			}
-
-			ordinal++
-		}
+// rowDirectArrayLengthAt directly indexes one authored source and enum/default member.
+func rowDirectArrayLengthAt(
+	view rowProjectionView,
+	sourceIndex uint64,
+	memberIndex uint64,
+) (rowArrayCount, bool, error) {
+	if sourceIndex >= uint64(len(view.sources)) {
+		return rowArrayCount{}, false, nil
 	}
 
-	return rowArrayCount{}, false, nil
+	source := &view.sources[sourceIndex]
+	if source.node == nil || source.node.schemaShape == nil {
+		return rowArrayCount{}, false, errors.New("schematest: projected array source has no shape")
+	}
+
+	var value *jsonValue
+
+	if source.node.enum != nil {
+		if memberIndex >= uint64(len(source.node.enum)) {
+			return rowArrayCount{}, false, nil
+		}
+
+		value = source.node.enum[memberIndex].value
+		if value == nil {
+			return rowArrayCount{}, false, errors.New("schematest: nil projected enum value")
+		}
+	} else {
+		if memberIndex != 0 {
+			return rowArrayCount{}, false, nil
+		}
+
+		value = source.node.defaultValue
+	}
+
+	if value == nil || value.kind != jsonArray {
+		return rowArrayCount{}, false, nil
+	}
+
+	return rowArrayCount{value: uint64(len(value.array))}, true, nil
 }
 
 // walkProjectedDirectValues visits complete authored witnesses from one charged projection.
@@ -859,7 +866,7 @@ func newRowProjectedObject(
 
 	shape.owners = owners
 	shape.allowsExtra = projectedObjectAllowsExtra(owners)
-	shape.requiresExtra = projectedAdditionalRequired(requirements, owners)
+	shape.requiresExtra = projectedAdditionalRequired(requirements, owners, shape.declared)
 
 	return shape, nil
 }
@@ -887,19 +894,41 @@ func projectedRequirementActive(
 }
 
 // projectedAdditionalRequired identifies active wildcard value or presence guidance.
-func projectedAdditionalRequired(requirements []requirement, owners []rowSchemaSource) bool {
+//
+//nolint:cyclop // Matching wildcard ownership and declared coverage share one decision.
+func projectedAdditionalRequired(
+	requirements []requirement,
+	owners []rowSchemaSource,
+	declared map[string]bool,
+) bool {
 	for _, requirement := range requirements {
 		if requirement.presence != requirementPresent && !requirement.hasKind {
 			continue
 		}
 
 		for _, owner := range owners {
-			if owner.node.additionalProperties != nil &&
-				requirement.occurrence.usePointer == owner.occurrence.usePointer+"/additionalProperties" &&
-				instanceTemplateMatches(requirement.occurrence.instanceTemplate,
+			if owner.node.additionalProperties == nil ||
+				requirement.occurrence.usePointer != owner.occurrence.usePointer+"/additionalProperties" ||
+				!instanceTemplateMatches(requirement.occurrence.instanceTemplate,
 					appendInstanceToken(owner.occurrence.instanceTemplate, "*")) {
-				return true
+				continue
 			}
+
+			coveredByDeclared := false
+
+			for name := range declared {
+				if _, explicitlyDeclared := owner.node.properties[name]; !explicitlyDeclared {
+					coveredByDeclared = true
+
+					break
+				}
+			}
+
+			if coveredByDeclared {
+				continue
+			}
+
+			return true
 		}
 	}
 

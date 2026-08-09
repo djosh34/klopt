@@ -316,12 +316,16 @@ func TestRowArrayLengthAtKeepsDirectGuidanceAheadOfExact(t *testing.T) {
 		tag: requirementExactCount, occurrence: model.root.occurrence, count: model.root.minItems,
 	}}
 
-	first, ok, _, err := rowArrayLengthForOrdinal(view, requirements, 0)
+	first, ok, _, err := rowArrayLengthForAddress(
+		view, requirements, uint64(arrayLengthDirect), 0, 0,
+	)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, uint64(2), first.value)
 
-	second, ok, _, err := rowArrayLengthForOrdinal(view, requirements, 1)
+	second, ok, _, err := rowArrayLengthForAddress(
+		view, requirements, uint64(arrayLengthExact), 0, 0,
+	)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, uint64(1), second.value)
@@ -675,4 +679,177 @@ func TestBuildRequiredMembersMayExceedDirectedObjectTarget(t *testing.T) {
 	)
 	require.ErrorIs(t, err, stop)
 	require.True(t, found)
+}
+
+// TestArrayLengthAddressDirectlyIndexesLaterSourceMember locks authored tuple selection.
+func TestArrayLengthAddressDirectlyIndexesLaterSourceMember(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","enum":[[]],"items":{},
+		"allOf":[{"enum":[[false],[false,false],[false,false,false]]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view, ok, err := rowProjectionAt(model.root, model.root.occurrence, nil, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, view.sources, 2)
+
+	first, exists, _, err := rowArrayLengthForAddress(view, nil, uint64(arrayLengthDirect), 0, 0)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, uint64(0), first.value)
+
+	later, exists, _, err := rowArrayLengthForAddress(view, nil, uint64(arrayLengthDirect), 1, 2)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, uint64(3), later.value)
+}
+
+// TestConjunctionEnumRankUsesActualSourceIndex locks non-enum source holes.
+func TestConjunctionEnumRankUsesActualSourceIndex(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{"type":"boolean"},
+		"allOf":[{"items":{"type":"boolean"}},{"items":{"enum":[false,true]}}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view, ok, err := rowProjectionAt(model.root, model.root.occurrence, nil, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	conjunction := rowProjectedArrayItems(view, nil)
+	require.Len(t, conjunction.sources, 3)
+
+	actualEnumSource := uint64(0)
+
+	for index := range conjunction.sources {
+		if conjunction.sources[index].node.enum != nil {
+			actualEnumSource = uint64(index)
+		}
+	}
+
+	require.Positive(t, actualEnumSource)
+
+	wanted := sourceValueOrdinal(t, uint64(len(conjunction.sources)), actualEnumSource, 1)
+	searchState := &search{model: model, maxSteps: 100}
+	value, exists, usable, _, err := searchState.rowConjunctionValueAt(
+		conjunction, nil, rowSearchContext{}, wanted,
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, usable)
+	require.True(t, value.boolean)
+
+	hole := sourceValueOrdinal(t, uint64(len(conjunction.sources)), 0, 0)
+	holeValue, exists, holeUsable, holeSize, err := searchState.rowConjunctionValueAt(
+		conjunction, nil, rowSearchContext{}, hole,
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.False(t, holeUsable)
+	require.Equal(t, jsonNull, holeValue.kind)
+	require.Positive(t, holeSize)
+}
+
+// TestNestedGeneratedScalarRanksRemainDirectAndDistinct locks generated no-loss ranks.
+func TestNestedGeneratedScalarRanksRemainDirectAndDistinct(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		schema    string
+		kind      jsonKind
+		firstRank uint64
+	}{
+		{
+			name: "string", schema: `{"type":"string","pattern":"^x[ab]$","minLength":2,"maxLength":2}`,
+			kind: jsonString, firstRank: 0,
+		},
+		{name: "number", schema: `{"type":"number","minimum":10,"maximum":11}`, kind: jsonNumber, firstRank: 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(
+				`{"type":"array","minItems":1,"maxItems":1,"items":` + test.schema + `}`,
+			)), OperationID: "selected"})
+			require.NoError(t, err)
+
+			view, ok, err := rowProjectionAt(model.root, model.root.occurrence, nil, 0)
+			require.NoError(t, err)
+			require.True(t, ok)
+
+			conjunction := rowProjectedArrayItems(view, nil)
+
+			var (
+				ranks  []uint64
+				values []string
+				costs  []uint64
+			)
+			for rank := test.firstRank; rank < 512 && len(values) < 2; rank++ {
+				searchState := &search{model: model, maxSteps: 1000}
+				value, exists, usable, _, valueErr := searchState.rowConjunctionValueAt(
+					conjunction, nil, rowSearchContext{}, rank,
+				)
+				require.NoError(t, valueErr)
+
+				if !exists || !usable || value.kind != test.kind {
+					continue
+				}
+
+				encoded, marshalErr := marshalStrict(value)
+				require.NoError(t, marshalErr)
+
+				if len(values) > 0 && values[len(values)-1] == string(encoded) {
+					continue
+				}
+
+				ranks = append(ranks, rank)
+				values = append(values, string(encoded))
+				costs = append(costs, searchState.steps)
+			}
+
+			require.Len(t, values, 2)
+			require.Less(t, ranks[0], ranks[1])
+
+			interleaved := &search{model: model, maxSteps: 1000}
+			_, _, _, _, err = interleaved.rowConjunctionValueAt(
+				conjunction, nil, rowSearchContext{}, ranks[0]+1,
+			)
+			require.NoError(t, err)
+
+			before := interleaved.steps
+			later, exists, usable, _, err := interleaved.rowConjunctionValueAt(
+				conjunction, nil, rowSearchContext{}, ranks[1],
+			)
+			require.NoError(t, err)
+			require.True(t, exists)
+			require.True(t, usable)
+
+			encoded, err := marshalStrict(later)
+			require.NoError(t, err)
+			require.Equal(t, values[1], string(encoded))
+			require.Equal(t, costs[1], interleaved.steps-before)
+		})
+	}
+}
+
+// sourceValueOrdinal returns the direct ordinal for one source/value tuple in tests.
+func sourceValueOrdinal(t *testing.T, sourceCount, sourceRank, valueRank uint64) uint64 {
+	t.Helper()
+
+	for wanted := uint64(0); ; wanted++ {
+		actualSource, actualValue, ok := rowSourceValueRanksAtOrdinal(sourceCount, wanted)
+		require.True(t, ok)
+
+		if actualSource == sourceRank && actualValue == valueRank {
+			return wanted
+		}
+	}
 }
