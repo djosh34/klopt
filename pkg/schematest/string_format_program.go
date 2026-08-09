@@ -12,6 +12,7 @@ const (
 	formatFlagGeneralMatchesIPv6
 	formatFlagIPv6Compressed
 	formatFlagIPv6PreviousColon
+	formatFlagIPv6Decimal
 )
 
 const (
@@ -431,7 +432,7 @@ func advanceDateTimeFormat(state stringFormatProgramState, unit uint16) stringFo
 		}
 	case 1:
 		if unit >= '0' && unit <= '9' {
-			state.counts[1]++
+			state.counts[1] = 1
 		} else if state.counts[1] > 0 && unit == 'Z' && position+1 == state.length {
 			state.phase = 3
 		} else if state.counts[1] > 0 && (unit == '+' || unit == '-') {
@@ -879,6 +880,9 @@ func advanceEmailLiteralIPv6(state *stringFormatProgramState, unit uint16) {
 		}
 
 		state.counts[7]++
+		if state.counts[7] == 5 {
+			state.flags |= formatFlagIPv6Decimal
+		}
 
 		return
 	}
@@ -890,13 +894,13 @@ func advanceEmailLiteralIPv6(state *stringFormatProgramState, unit uint16) {
 	}
 
 	if unit == '.' {
-		if state.values[3] == 0 || state.values[3] > 3 || state.values[1] > 255 {
+		if state.flags&formatFlagIPv6Decimal == 0 || state.values[7] == 0 {
 			state.flags &^= formatFlagIPv6
 
 			return
 		}
 
-		state.values[4] = 1
+		state.values[4] = 2
 		state.values[5] = 0
 		state.values[1] = 0
 		state.values[3] = 0
@@ -909,7 +913,9 @@ func advanceEmailLiteralIPv6(state *stringFormatProgramState, unit uint16) {
 			state.values[2]++
 			state.values[3] = 0
 			state.values[1] = 0
-			state.flags |= formatFlagIPv6PreviousColon
+			state.values[6] = 0
+			state.values[7] = 0
+			state.flags |= formatFlagIPv6PreviousColon | formatFlagIPv6Decimal
 
 			return
 		}
@@ -926,7 +932,7 @@ func advanceEmailLiteralIPv6(state *stringFormatProgramState, unit uint16) {
 			return
 		}
 
-		state.flags |= formatFlagIPv6Compressed
+		state.flags |= formatFlagIPv6Compressed | formatFlagIPv6Decimal
 		state.flags &^= formatFlagIPv6PreviousColon
 
 		return
@@ -941,6 +947,19 @@ func advanceEmailLiteralIPv6(state *stringFormatProgramState, unit uint16) {
 	state.flags &^= formatFlagIPv6PreviousColon
 	state.values[3]++
 	state.values[1] = state.values[1]*16 + uint16(searchHexValue(byte(unit)))
+
+	if unit < '0' || unit > '9' || state.values[7] == 3 {
+		state.flags &^= formatFlagIPv6Decimal
+
+		return
+	}
+
+	state.values[6] = state.values[6]*10 + unit - '0'
+
+	state.values[7]++
+	if state.values[6] > 255 {
+		state.flags &^= formatFlagIPv6Decimal
+	}
 }
 
 func searchHexValue(unit byte) int {

@@ -736,9 +736,9 @@ func validRequestFormatBoundary(request *validRequest) *formatBoundaryObjective 
 	return request.formatBoundary
 }
 
-// rowGeneratedStringValueAt selects one result from the charged product cursor.
+// rowGeneratedStringValueAt advances one transient charged cursor to the requested result.
 //
-//nolint:cyclop // Rule compilation and one charged cursor traversal form one adapter.
+//nolint:cyclop // Rule compilation and one suspended cursor traversal form one adapter.
 func (s *search) rowGeneratedStringValueAt(
 	source *rowSchemaSource,
 	requirements []requirement,
@@ -796,27 +796,39 @@ func (s *search) rowGeneratedStringValueAt(
 		return nil, false, err
 	}
 
-	var selected *jsonValue
-
-	complete, err := s.walkBasicStringProductAtRank(
+	next, stop := s.newBasicStringProductCursor(
 		product,
 		lengths,
 		basicStringLengthObjective{},
 		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
-		wanted,
-		func(candidate *jsonValue) (bool, error) {
-			var cloneErr error
-
-			selected, cloneErr = cloneJSONValue(candidate)
-
-			return cloneErr == nil, cloneErr
-		},
 	)
-	if err != nil {
-		return nil, false, err
-	}
+	defer stop()
 
-	return selected, complete, nil
+	remaining := wanted
+
+	for {
+		candidate, cursorErr, exists := next()
+		if cursorErr != nil || !exists {
+			return nil, false, cursorErr
+		}
+
+		if remaining > 0 {
+			remaining--
+
+			continue
+		}
+
+		if candidate == nil {
+			return nil, false, nil
+		}
+
+		selected, cloneErr := cloneJSONValue(candidate)
+		if cloneErr != nil {
+			return nil, false, cloneErr
+		}
+
+		return selected, true, nil
+	}
 }
 
 // rowGeneratedNumberValueAt directly evaluates one deterministic edge or seeded primitive tuple.

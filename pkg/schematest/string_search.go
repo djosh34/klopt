@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"unicode/utf16"
 )
 
@@ -1467,61 +1468,53 @@ func (s *search) walkBasicStringProductForLengths(
 	return complete, walkErr
 }
 
-const basicStringCursorDimensions = 2
-
-func (s *search) walkBasicStringProductAtRank(
+// newBasicStringProductCursor suspends the scalar length-then-edge traversal at each candidate.
+// An exhausted length yields one empty result so structural siblings remain fair.
+func (s *search) newBasicStringProductCursor(
 	product *basicStringProduct,
 	lengths basicStringLengths,
 	objective basicStringLengthObjective,
 	seed uint64,
-	wanted uint64,
-	visit rowVisit,
-) (bool, error) {
-	decoder, exists := newDirectRankTupleDecoder(basicStringCursorDimensions, wanted)
-	if !exists {
-		return false, nil
-	}
+) (func() (*jsonValue, error, bool), func()) {
+	return iter.Pull2(func(yield func(*jsonValue, error) bool) {
+		stopped := false
 
-	lengthRank, _ := decoder.Next()
-	candidateRank, _ := decoder.Next()
+		lengths.each(product, objective, func(runeLength uint64) bool {
+			if err := s.assign(); err != nil {
+				yield(nil, err)
 
-	var (
-		runeLength uint64
-		ordinal    uint64
-		found      bool
-	)
+				return true
+			}
 
-	lengths.each(product, objective, func(candidate uint64) bool {
-		if ordinal == lengthRank {
-			runeLength = candidate
-			found = true
+			if !lengths.allows(runeLength) {
+				return !yield(nil, nil)
+			}
 
-			return true
-		}
+			yielded := false
 
-		ordinal++
+			complete, err := s.walkBasicStringRuneLength(
+				product,
+				runeLength,
+				seed,
+				func(candidate *jsonValue) (bool, error) {
+					yielded = true
 
-		return false
-	})
+					return !yield(candidate, nil), nil
+				},
+			)
+			if err != nil {
+				yield(nil, err)
 
-	if !found {
-		return false, nil
-	}
+				return true
+			}
 
-	if err := s.assign(); err != nil {
-		return false, err
-	}
+			stopped = complete
+			if !yielded && !stopped {
+				stopped = !yield(nil, nil)
+			}
 
-	candidateOrdinal := uint64(0)
-
-	return s.walkBasicStringRuneLength(product, runeLength, seed, func(candidate *jsonValue) (bool, error) {
-		if candidateOrdinal != candidateRank {
-			candidateOrdinal++
-
-			return false, nil
-		}
-
-		return visit(candidate)
+			return stopped
+		})
 	})
 }
 

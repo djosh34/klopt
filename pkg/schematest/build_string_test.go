@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -543,6 +544,59 @@ func TestBuildExhaustsContradictoryFormatLengthIntersection(t *testing.T) {
 	require.Equal(t, uint64(38), firstReport.Steps)
 	require.Equal(t, firstCases, secondCases)
 	require.Equal(t, firstReport, secondReport)
+}
+
+func TestBuildAcceptsPatternFixedMixedIPv6EmailLiterals(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		candidate string
+		valid     bool
+	}{
+		{candidate: "a@[IPv6:::ffff:192.0.2.1]", valid: true},
+		{candidate: "a@[IPv6:a:b:c:d:e:f:1.2.3.4]", valid: true},
+		{candidate: "a@[IPv6:a:b:c:d:e:1.2.3.4]", valid: false},
+		{candidate: "a@[IPv6:a:b:c:d:e:f:1.2.3]", valid: false},
+		{candidate: "a@[IPv6:a:b:c:d:e:f:1..2.3.4]", valid: false},
+		{candidate: "a@[IPv6:a:b:c:d:e:f:1.2.3.4.5]", valid: false},
+		{candidate: "a@[IPv6:a:b:c:d:e:f:256.2.3.4]", valid: false},
+	} {
+		pattern := "^" + strings.NewReplacer("[", `\[`, "]", `\]`, ".", `\.`).Replace(test.candidate) + "$"
+		schema := `{"type":"string","format":"email","pattern":` + strconv.Quote(pattern) + `}`
+		cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(schema)), 100_000)
+
+		validCase := Case{JSON: []byte(strconv.Quote(test.candidate)), Valid: true}
+		if test.valid {
+			require.Contains(t, cases, validCase)
+		} else {
+			require.NotContains(t, cases, validCase)
+		}
+	}
+}
+
+func TestBuildAcceptsUnboundedDateTimeFraction(t *testing.T) {
+	t.Parallel()
+
+	candidate := "1970-01-01T00:00:00." + strings.Repeat("0", 65_536) + "Z"
+	schema := `{"type":"string","format":"date-time","minLength":` + strconv.Itoa(len(candidate)) +
+		`,"maxLength":` + strconv.Itoa(len(candidate)) + `,"pattern":` +
+		strconv.Quote(`^1970-01-01T00:00:00\.0+Z$`) + `}`
+	reached := errors.New("reached exact long date-time")
+	_, err := Build(
+		Input{
+			OpenAPI:     []byte(documentWithJSONSchema(schema)),
+			OperationID: "selected",
+			MaxSteps:    2_000_000,
+		},
+		func(testCase Case) error {
+			if testCase.Valid && string(testCase.JSON) == strconv.Quote(candidate) {
+				return reached
+			}
+
+			return nil
+		},
+	)
+	require.ErrorIs(t, err, reached)
 }
 
 func TestBuildFindsSemanticFormatObjectivesWithSiblingPatterns(t *testing.T) {

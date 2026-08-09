@@ -840,6 +840,65 @@ func TestNestedGeneratedScalarRanksRemainDirectAndDistinct(t *testing.T) {
 	}
 }
 
+// TestNestedStringCursorMatchesScalarLengthThenEdgeOrder locks non-diagonal structural retries.
+func TestNestedStringCursorMatchesScalarLengthThenEdgeOrder(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(
+		`{"type":"array","minItems":1,"maxItems":1,"items":` +
+			`{"type":"string","pattern":"^[ab]+$","minLength":1,"maxLength":2}}`,
+	)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view, ok, err := rowProjectionAt(model.root, model.root.occurrence, nil, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	conjunction := rowProjectedArrayItems(view, nil)
+	require.Len(t, conjunction.sources, 1)
+	source := &conjunction.sources[0]
+
+	scalar := &search{model: model, maxSteps: 100}
+
+	var scalarValues []string
+
+	complete, err := scalar.walkActiveStringRules(
+		source.node,
+		source.occurrence,
+		nil,
+		nil,
+		func(candidate *jsonValue) (bool, error) {
+			scalarValues = append(scalarValues, candidate.text)
+
+			return len(scalarValues) == 4, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+
+	nestedValues := make([]string, 0, len(scalarValues))
+	for wanted := range uint64(len(scalarValues)) {
+		nested := &search{model: model, maxSteps: 100}
+		candidate, exists, valueErr := nested.rowGeneratedStringValueAt(
+			source, nil, rowSearchContext{}, wanted,
+		)
+		require.NoError(t, valueErr)
+		require.True(t, exists)
+
+		nestedValues = append(nestedValues, candidate.text)
+	}
+
+	require.Equal(t, []string{"a", "b", "aa", "ab"}, scalarValues)
+	require.Equal(t, scalarValues, nestedValues)
+
+	cutoff := &search{model: model, maxSteps: 5}
+	candidate, exists, err := cutoff.rowGeneratedStringValueAt(source, nil, rowSearchContext{}, 2)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, exists)
+	require.Nil(t, candidate)
+	require.Equal(t, uint64(5), cutoff.steps)
+}
+
 // sourceValueOrdinal returns the direct ordinal for one source/value tuple in tests.
 func sourceValueOrdinal(t *testing.T, sourceCount, sourceRank, valueRank uint64) uint64 {
 	t.Helper()

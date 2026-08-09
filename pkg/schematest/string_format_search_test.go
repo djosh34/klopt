@@ -186,20 +186,56 @@ func TestStringFormatProgramsAcceptExactRetainedLanguages(t *testing.T) {
 func TestEmailIPv6MixedSuffixRequiresAuthoredCompression(t *testing.T) {
 	t.Parallel()
 
-	for _, candidate := range []string{
-		"a@[IPv6:a:b:1.2.3.4]",
+	valid := []string{
+		"a@[IPv6:::ffff:192.0.2.1]",
 		"a@[IPv6:a:b:c:d:e:f:1.2.3.4]",
 		"a@[IPv6:a:b::1.2.3.4]",
-	} {
-		searchMatches := searchEmailFormatMatches(candidate)
-		cleanMatches, err := cleanStringFormatMatches(candidate, schemaFormatEmail)
-		require.NoError(t, err)
-		require.Equal(t, searchMatches, cleanMatches, candidate)
+	}
+	invalid := []string{
+		"a@[IPv6:a:b:1.2.3.4]",
+		"a@[IPv6:a:b:c:d:e:1.2.3.4]",
+		"a@[IPv6:a:b:c:d:e:f:1.2.3]",
+		"a@[IPv6:a:b:c:d:e:f:1..2.3.4]",
+		"a@[IPv6:a:b:c:d:e:f:1.2.3.4.5]",
+		"a@[IPv6:a:b:c:d:e:f:256.2.3.4]",
 	}
 
-	require.False(t, searchEmailFormatMatches("a@[IPv6:a:b:1.2.3.4]"))
-	require.True(t, searchEmailFormatMatches("a@[IPv6:a:b:c:d:e:f:1.2.3.4]"))
-	require.True(t, searchEmailFormatMatches("a@[IPv6:a:b::1.2.3.4]"))
+	specification, exists := stringFormatSpecificationFor(schemaFormatEmail)
+	require.True(t, exists)
+
+	for _, test := range []struct {
+		candidates []string
+		want       bool
+	}{
+		{candidates: valid, want: true},
+		{candidates: invalid, want: false},
+	} {
+		for _, candidate := range test.candidates {
+			cleanMatches, err := cleanStringFormatMatches(candidate, schemaFormatEmail)
+			require.NoError(t, err)
+			require.Equal(t, test.want, cleanMatches, candidate)
+			require.Equal(t, cleanMatches, searchEmailFormatMatches(candidate), candidate)
+			require.Equal(t, cleanMatches, specification.program.accepts(candidate), candidate)
+		}
+	}
+}
+
+func TestDateTimeFractionDoesNotOverflowIncrementalState(t *testing.T) {
+	t.Parallel()
+
+	specification, exists := stringFormatSpecificationFor(schemaFormatDateTime)
+	require.True(t, exists)
+
+	for _, suffix := range []string{"Z", "+00:00"} {
+		candidate := "1970-01-01T00:00:00." + strings.Repeat("0", 65_536) + suffix
+		cleanMatches, err := cleanStringFormatMatches(candidate, schemaFormatDateTime)
+		require.NoError(t, err)
+		require.True(t, cleanMatches)
+		require.True(t, searchDateTimeFormatMatches(candidate))
+		require.True(t, specification.program.accepts(candidate))
+	}
+
+	require.False(t, specification.program.accepts("1970-01-01T00:00:00.Z"))
 }
 
 func TestStringFormatTransitionPartitionsSeparateExactSemantics(t *testing.T) {
