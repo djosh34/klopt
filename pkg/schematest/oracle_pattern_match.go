@@ -1,4 +1,4 @@
-//nolint:cyclop,godoclint // The clean matcher mirrors the admitted pattern AST directly.
+//nolint:cyclop,godoclint // The clean compiler and matcher are intentionally independent from search.
 package schematest
 
 import (
@@ -6,25 +6,214 @@ import (
 	"unicode/utf16"
 )
 
-// cleanPatternMatches evaluates one admitted pattern over ECMAScript UTF-16 units.
-func cleanPatternMatches(pattern *patternAST, value string) (bool, error) {
+type cleanPatternProgram struct {
+	assertions []cleanPatternAssertion
+	expression *cleanPatternExpression
+}
+
+type cleanPatternAssertion struct {
+	positive   bool
+	expression *cleanPatternExpression
+}
+
+type cleanPatternExpression struct {
+	alternatives []*cleanPatternSequence
+}
+
+type cleanPatternSequence struct {
+	terms []*cleanPatternTerm
+}
+
+type cleanPatternTerm struct {
+	atom       *cleanPatternAtom
+	quantified bool
+	minimum    uint64
+	maximum    uint64
+	unbounded  bool
+	greedy     bool
+}
+
+type cleanPatternAtomKind uint8
+
+const (
+	cleanPatternLiteral cleanPatternAtomKind = iota
+	cleanPatternDot
+	cleanPatternClassAtom
+	cleanPatternStart
+	cleanPatternEnd
+	cleanPatternWordBoundary
+	cleanPatternNotWordBoundary
+	cleanPatternGroup
+)
+
+type cleanPatternAtom struct {
+	kind       cleanPatternAtomKind
+	literal    uint16
+	class      cleanPatternClass
+	expression *cleanPatternExpression
+}
+
+type cleanPatternClass struct {
+	parts   []cleanPatternClassPart
+	negated bool
+}
+
+type cleanPatternClassPart struct {
+	ranges  []cleanPatternRange
+	negated bool
+}
+
+type cleanPatternRange struct {
+	low  uint16
+	high uint16
+}
+
+func compileCleanPattern(pattern *patternAST) (*cleanPatternProgram, error) {
 	if pattern == nil || pattern.expression == nil {
-		return false, errors.New("pattern has no expression")
+		return nil, errors.New("pattern has no expression")
 	}
 
-	units := utf16.Encode([]rune(value))
-	matcher := cleanPatternMatcher{units: units}
-
-	if len(pattern.leadingAssertions) > 0 {
-		if !matcher.matchesLeadingAssertions(pattern.leadingAssertions) {
-			return false, nil
+	program := &cleanPatternProgram{assertions: make([]cleanPatternAssertion, 0, len(pattern.leadingAssertions))}
+	for _, assertion := range pattern.leadingAssertions {
+		expression, err := compileCleanPatternExpression(assertion.expression)
+		if err != nil {
+			return nil, err
 		}
 
-		return matcher.matchesExpressionAt(pattern.expression, 0), nil
+		program.assertions = append(program.assertions, cleanPatternAssertion{
+			positive: assertion.positive, expression: expression,
+		})
 	}
 
-	for start := 0; start <= len(units); start++ {
-		if matcher.matchesExpressionAt(pattern.expression, start) {
+	expression, err := compileCleanPatternExpression(pattern.expression)
+	if err != nil {
+		return nil, err
+	}
+
+	program.expression = expression
+
+	return program, nil
+}
+
+func compileCleanPatternExpression(expression *patternExpression) (*cleanPatternExpression, error) {
+	if expression == nil {
+		return nil, errors.New("pattern expression is nil")
+	}
+
+	compiled := &cleanPatternExpression{alternatives: make([]*cleanPatternSequence, 0, len(expression.alternatives))}
+	for _, alternative := range expression.alternatives {
+		sequence, err := compileCleanPatternSequence(alternative)
+		if err != nil {
+			return nil, err
+		}
+
+		compiled.alternatives = append(compiled.alternatives, sequence)
+	}
+
+	return compiled, nil
+}
+
+func compileCleanPatternSequence(sequence *patternSequence) (*cleanPatternSequence, error) {
+	if sequence == nil {
+		return nil, errors.New("pattern sequence is nil")
+	}
+
+	compiled := &cleanPatternSequence{terms: make([]*cleanPatternTerm, 0, len(sequence.terms))}
+	for _, term := range sequence.terms {
+		if term == nil || term.atom == nil {
+			return nil, errors.New("pattern term is nil")
+		}
+
+		atom, err := compileCleanPatternAtom(term.atom)
+		if err != nil {
+			return nil, err
+		}
+
+		compiled.terms = append(compiled.terms, &cleanPatternTerm{
+			atom: atom, quantified: term.quantified, minimum: term.minimum,
+			maximum: term.maximum, unbounded: term.unbounded, greedy: term.greedy,
+		})
+	}
+
+	return compiled, nil
+}
+
+func compileCleanPatternAtom(atom *patternAtom) (*cleanPatternAtom, error) {
+	if atom == nil {
+		return nil, errors.New("pattern atom is nil")
+	}
+
+	compiled := &cleanPatternAtom{literal: atom.literal}
+	switch atom.kind {
+	case patternLiteral:
+		compiled.kind = cleanPatternLiteral
+	case patternDot:
+		compiled.kind = cleanPatternDot
+	case patternClassAtom:
+		compiled.kind = cleanPatternClassAtom
+	case patternStart:
+		compiled.kind = cleanPatternStart
+	case patternEnd:
+		compiled.kind = cleanPatternEnd
+	case patternWordBoundary:
+		compiled.kind = cleanPatternWordBoundary
+	case patternNotWordBoundary:
+		compiled.kind = cleanPatternNotWordBoundary
+	case patternGroup:
+		compiled.kind = cleanPatternGroup
+	default:
+		return nil, errors.New("pattern atom kind is unsupported")
+	}
+
+	for _, part := range atom.class.parts {
+		compiledPart := cleanPatternClassPart{negated: part.negated}
+		for _, characterRange := range part.ranges {
+			compiledPart.ranges = append(compiledPart.ranges, cleanPatternRange(characterRange))
+		}
+
+		compiled.class.parts = append(compiled.class.parts, compiledPart)
+	}
+
+	compiled.class.negated = atom.class.negated
+
+	if atom.expression != nil {
+		expression, err := compileCleanPatternExpression(atom.expression)
+		if err != nil {
+			return nil, err
+		}
+
+		compiled.expression = expression
+	}
+
+	return compiled, nil
+}
+
+// cleanPatternMatches evaluates one admitted pattern over ECMAScript UTF-16 units.
+func cleanPatternMatches(pattern *patternAST, value string) (bool, error) {
+	if pattern == nil || pattern.cleanProgram == nil || pattern.cleanProgram.expression == nil {
+		return false, errors.New("pattern has no compiled clean program")
+	}
+
+	matcher := cleanPatternMatcher{
+		units:          utf16.Encode([]rune(value)),
+		expressionMemo: make(map[cleanExpressionMemoKey][]int),
+		sequenceMemo:   make(map[cleanSequenceMemoKey][]int),
+		atomMemo:       make(map[cleanAtomMemoKey][]int),
+	}
+
+	for _, assertion := range pattern.cleanProgram.assertions {
+		matched := len(matcher.matchExpressionEnds(assertion.expression, 0)) > 0
+		if matched != assertion.positive {
+			return false, nil
+		}
+	}
+
+	if len(pattern.cleanProgram.assertions) > 0 {
+		return len(matcher.matchExpressionEnds(pattern.cleanProgram.expression, 0)) > 0, nil
+	}
+
+	for start := 0; start <= len(matcher.units); start++ {
+		if len(matcher.matchExpressionEnds(pattern.cleanProgram.expression, start)) > 0 {
 			return true, nil
 		}
 	}
@@ -32,32 +221,32 @@ func cleanPatternMatches(pattern *patternAST, value string) (bool, error) {
 	return false, nil
 }
 
+type cleanExpressionMemoKey struct {
+	expression *cleanPatternExpression
+	start      int
+}
+
+type cleanSequenceMemoKey struct {
+	sequence *cleanPatternSequence
+	start    int
+}
+
+type cleanAtomMemoKey struct {
+	atom     *cleanPatternAtom
+	position int
+}
+
 type cleanPatternMatcher struct {
-	units []uint16
+	units          []uint16
+	expressionMemo map[cleanExpressionMemoKey][]int
+	sequenceMemo   map[cleanSequenceMemoKey][]int
+	atomMemo       map[cleanAtomMemoKey][]int
 }
 
-func (matcher *cleanPatternMatcher) matchesLeadingAssertions(assertions []patternLookahead) bool {
-	for _, assertion := range assertions {
-		if assertion.expression == nil {
-			return false
-		}
-
-		matched := matcher.matchesExpressionAt(assertion.expression, 0)
-		if matched != assertion.positive {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (matcher *cleanPatternMatcher) matchesExpressionAt(expression *patternExpression, start int) bool {
-	return len(matcher.matchExpressionEnds(expression, start)) > 0
-}
-
-func (matcher *cleanPatternMatcher) matchExpressionEnds(expression *patternExpression, start int) []int {
-	if expression == nil {
-		return nil
+func (matcher *cleanPatternMatcher) matchExpressionEnds(expression *cleanPatternExpression, start int) []int {
+	key := cleanExpressionMemoKey{expression: expression, start: start}
+	if ends, exists := matcher.expressionMemo[key]; exists {
+		return ends
 	}
 
 	ends := make([]int, 0)
@@ -65,64 +254,69 @@ func (matcher *cleanPatternMatcher) matchExpressionEnds(expression *patternExpre
 		ends = appendUniquePatternPositions(ends, matcher.matchSequenceEnds(alternative, start)...)
 	}
 
+	matcher.expressionMemo[key] = ends
+
 	return ends
 }
 
-func (matcher *cleanPatternMatcher) matchSequenceEnds(sequence *patternSequence, start int) []int {
-	if sequence == nil {
-		return nil
+func (matcher *cleanPatternMatcher) matchSequenceEnds(sequence *cleanPatternSequence, start int) []int {
+	key := cleanSequenceMemoKey{sequence: sequence, start: start}
+	if ends, exists := matcher.sequenceMemo[key]; exists {
+		return ends
 	}
 
 	positions := []int{start}
-
 	for _, term := range sequence.terms {
-		if term == nil || term.atom == nil {
-			return nil
-		}
-
 		positions = matcher.matchTerm(term, positions)
 		if len(positions) == 0 {
-			return nil
+			break
 		}
 	}
+
+	matcher.sequenceMemo[key] = positions
 
 	return positions
 }
 
-func (matcher *cleanPatternMatcher) matchTerm(term *patternTerm, starts []int) []int {
+func (matcher *cleanPatternMatcher) matchTerm(term *cleanPatternTerm, starts []int) []int {
 	if !term.quantified {
 		return matcher.matchAtomFromStarts(term.atom, starts)
 	}
 
-	positions := uniquePatternPositions(starts)
-	accepted := make([]int, 0, len(positions))
-
-	if term.minimum == 0 {
-		accepted = append(accepted, positions...)
-	}
-
+	levels := [][]int{uniquePatternPositions(starts)}
 	for count := uint64(1); term.unbounded || count <= term.maximum; count++ {
-		positions = matcher.matchAtomFromStarts(term.atom, positions)
-		if len(positions) == 0 {
+		next := matcher.matchAtomFromStarts(term.atom, levels[len(levels)-1])
+		if len(next) == 0 {
 			break
 		}
 
-		before := len(accepted)
-		if count >= term.minimum {
-			accepted = appendUniquePatternPositions(accepted, positions...)
-		}
-
-		if term.unbounded && count >= term.minimum && len(accepted) == before {
+		levels = append(levels, next)
+		if term.unbounded && equalPatternPositions(next, levels[len(levels)-2]) {
 			break
 		}
 	}
 
-	return uniquePatternPositions(accepted)
+	accepted := make([]int, 0)
+
+	if term.greedy {
+		for level := len(levels) - 1; level >= 0; level-- {
+			if uint64(level) >= term.minimum {
+				accepted = appendUniquePatternPositions(accepted, levels[level]...)
+			}
+		}
+	} else {
+		for level, positions := range levels {
+			if uint64(level) >= term.minimum {
+				accepted = appendUniquePatternPositions(accepted, positions...)
+			}
+		}
+	}
+
+	return accepted
 }
 
-func (matcher *cleanPatternMatcher) matchAtomFromStarts(atom *patternAtom, starts []int) []int {
+func (matcher *cleanPatternMatcher) matchAtomFromStarts(atom *cleanPatternAtom, starts []int) []int {
 	matches := make([]int, 0, len(starts))
-
 	for _, start := range starts {
 		matches = appendUniquePatternPositions(matches, matcher.matchAtom(atom, start)...)
 	}
@@ -130,53 +324,50 @@ func (matcher *cleanPatternMatcher) matchAtomFromStarts(atom *patternAtom, start
 	return matches
 }
 
-func (matcher *cleanPatternMatcher) matchAtom(atom *patternAtom, position int) []int {
-	switch atom.kind {
-	case patternLiteral:
-		if position < len(matcher.units) && matcher.units[position] == atom.literal {
-			return []int{position + 1}
-		}
-
-		return nil
-	case patternDot:
-		if position < len(matcher.units) && !isPatternLineTerminator(matcher.units[position]) {
-			return []int{position + 1}
-		}
-
-		return nil
-	case patternClassAtom:
-		if position < len(matcher.units) && patternClassMatches(atom.class, matcher.units[position]) {
-			return []int{position + 1}
-		}
-
-		return nil
-	case patternStart:
-		if position == 0 {
-			return []int{position}
-		}
-
-		return nil
-	case patternEnd:
-		if position == len(matcher.units) {
-			return []int{position}
-		}
-
-		return nil
-	case patternWordBoundary, patternNotWordBoundary:
-		boundary := patternWordBoundaryAt(matcher.units, position)
-		if boundary == (atom.kind == patternWordBoundary) {
-			return []int{position}
-		}
-
-		return nil
-	case patternGroup:
-		return matcher.matchExpressionEnds(atom.expression, position)
-	default:
-		return nil
+func (matcher *cleanPatternMatcher) matchAtom(atom *cleanPatternAtom, position int) []int {
+	key := cleanAtomMemoKey{atom: atom, position: position}
+	if matches, exists := matcher.atomMemo[key]; exists {
+		return matches
 	}
+
+	var matches []int
+
+	switch atom.kind {
+	case cleanPatternLiteral:
+		if position < len(matcher.units) && matcher.units[position] == atom.literal {
+			matches = []int{position + 1}
+		}
+	case cleanPatternDot:
+		if position < len(matcher.units) && !isPatternLineTerminator(matcher.units[position]) {
+			matches = []int{position + 1}
+		}
+	case cleanPatternClassAtom:
+		if position < len(matcher.units) && cleanPatternClassMatches(atom.class, matcher.units[position]) {
+			matches = []int{position + 1}
+		}
+	case cleanPatternStart:
+		if position == 0 {
+			matches = []int{position}
+		}
+	case cleanPatternEnd:
+		if position == len(matcher.units) {
+			matches = []int{position}
+		}
+	case cleanPatternWordBoundary, cleanPatternNotWordBoundary:
+		boundary := patternWordBoundaryAt(matcher.units, position)
+		if boundary == (atom.kind == cleanPatternWordBoundary) {
+			matches = []int{position}
+		}
+	case cleanPatternGroup:
+		matches = matcher.matchExpressionEnds(atom.expression, position)
+	}
+
+	matcher.atomMemo[key] = matches
+
+	return matches
 }
 
-func patternClassMatches(class patternClass, value uint16) bool {
+func cleanPatternClassMatches(class cleanPatternClass, value uint16) bool {
 	matched := false
 
 	for _, part := range class.parts {
@@ -222,15 +413,13 @@ func isPatternLineTerminator(value uint16) bool {
 
 func uniquePatternPositions(positions []int) []int {
 	unique := make([]int, 0, len(positions))
+
 	seen := make(map[int]bool, len(positions))
-
 	for _, position := range positions {
-		if seen[position] {
-			continue
+		if !seen[position] {
+			seen[position] = true
+			unique = append(unique, position)
 		}
-
-		seen[position] = true
-		unique = append(unique, position)
 	}
 
 	return unique
@@ -243,13 +432,30 @@ func appendUniquePatternPositions(destination []int, positions ...int) []int {
 	}
 
 	for _, position := range positions {
-		if seen[position] {
-			continue
+		if !seen[position] {
+			seen[position] = true
+			destination = append(destination, position)
 		}
-
-		seen[position] = true
-		destination = append(destination, position)
 	}
 
 	return destination
+}
+
+func equalPatternPositions(left, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	positions := make(map[int]bool, len(left))
+	for _, position := range left {
+		positions[position] = true
+	}
+
+	for _, position := range right {
+		if !positions[position] {
+			return false
+		}
+	}
+
+	return true
 }

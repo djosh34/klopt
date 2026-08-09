@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"sort"
 	"testing"
 	"unicode/utf8"
 
@@ -630,6 +631,83 @@ func TestBasicStringProductChargesLengthAndCountedRepeatEdges(t *testing.T) {
 	require.Equal(t, uint64(5), searchState.steps)
 }
 
+func TestBasicStringPatternProgramKeepsCountedRepeatsCompact(t *testing.T) {
+	t.Parallel()
+
+	pattern := parseBasicSearchPatterns(t, `^(?:a{10}){100}$`)[0]
+	machines, err := compileBasicStringPatternMachines(pattern)
+	require.NoError(t, err)
+	require.Len(t, machines, 1)
+	require.Less(t, len(machines[0].states), 20)
+	require.Len(t, machines[0].repeats, 2)
+}
+
+func TestBasicStringPatternRepeatFramesPreserveGreedyAndLazyOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		pattern string
+		first   basicStringEdgeKind
+	}{
+		{name: "greedy", pattern: `^a{0,1}$`, first: basicStringRepeatBody},
+		{name: "lazy", pattern: `^a{0,1}?$`, first: basicStringRepeatExit},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			machine := parseBasicSearchPatterns(t, test.pattern)[0].searchMachines[0]
+
+			var decision int
+
+			for _, edges := range machine.states {
+				for _, edge := range edges {
+					if edge.kind == basicStringRepeatInit {
+						decision = edge.target
+					}
+				}
+			}
+
+			require.NotZero(t, decision)
+			require.Equal(t, test.first, machine.states[decision][0].kind)
+			require.Len(t, machine.repeats, 1)
+		})
+	}
+}
+
+func TestBasicStringPatternBoundsHandleZeroCountAndEndAssertion(t *testing.T) {
+	t.Parallel()
+
+	zero, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^(?:a+){0}$`))
+	require.NoError(t, err)
+	require.False(t, zero.unbounded)
+	require.Zero(t, zero.maxUnits)
+	require.Zero(t, zero.machines[0].minUnits)
+
+	counted := parseBasicSearchPatterns(t, `^(?:ab){2,3}$`)[0].searchMachines[0]
+	require.Equal(t, uint64(4), counted.minUnits)
+	require.Equal(t, uint64(6), counted.maxUnits)
+	require.False(t, counted.unbounded)
+
+	asserted, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^(?=a{2,4}$)a+`))
+	require.NoError(t, err)
+	require.False(t, asserted.unbounded)
+	require.Equal(t, uint64(4), asserted.maxUnits)
+}
+
+func TestBasicStringProductTerminatesNullableUnboundedRepeat(t *testing.T) {
+	t.Parallel()
+
+	searchState := &search{maxSteps: 10}
+	witness, found, err := searchState.findBasicStringWitness(
+		parseBasicSearchPatterns(t, `^(?:^)*$`),
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Empty(t, witness)
+	require.Equal(t, uint64(1), searchState.steps)
+}
+
 func TestBuildUsesOneBasicStringProductForActiveAllOfPatterns(t *testing.T) {
 	t.Parallel()
 
@@ -735,7 +813,11 @@ func basicStringIntervalCandidates(interval basicStringInterval, seed uint64) []
 func basicStringProductStateIDs(state basicStringProductState) [][]int {
 	identities := make([][]int, len(state.patterns))
 	for index := range state.patterns {
-		identities[index] = append([]int(nil), state.patterns[index].active...)
+		for _, configuration := range state.patterns[index].active {
+			identities[index] = append(identities[index], configuration.state)
+		}
+
+		sort.Ints(identities[index])
 	}
 
 	return identities
