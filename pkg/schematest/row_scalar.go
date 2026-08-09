@@ -6,6 +6,8 @@ import (
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
+//
+//nolint:cyclop // Number, boundary, canonical, and searched scalar phases share one dispatch.
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -25,6 +27,10 @@ func (s *search) walkScalar(
 				)
 			},
 		)
+	}
+
+	if handled, complete, err := s.walkFormatBoundary(kind, occurrence, context, visit); handled {
+		return complete, err
 	}
 
 	complete := false
@@ -69,6 +75,29 @@ func (s *search) walkScalar(
 	default:
 		return false, nil
 	}
+}
+
+// walkFormatBoundary assigns one exact registry witness when the request targets this scalar.
+func (s *search) walkFormatBoundary(
+	kind jsonKind,
+	occurrence schemaOccurrence,
+	context rowSearchContext,
+	visit rowVisit,
+) (bool, bool, error) {
+	boundary := validRequestFormatBoundary(context.validRequest)
+	if kind != jsonString || boundary == nil || !stringObjectiveWithin(
+		&stringSearchObjective{occurrence: boundary.identity.occurrence}, occurrence,
+	) {
+		return false, false, nil
+	}
+
+	if err := s.assign(); err != nil {
+		return true, false, err
+	}
+
+	complete, err := visit(&jsonValue{kind: jsonString, text: boundary.boundary.witness})
+
+	return true, complete, err
 }
 
 // walkActiveStringRules searches one canonical applicable rule view.

@@ -720,9 +720,42 @@ func nodeHasStringSearchRules(node *schemaNode) bool {
 	return false
 }
 
+// validRequestFormatBoundary safely reads one optional boundary objective.
+func validRequestFormatBoundary(request *validRequest) *formatBoundaryObjective {
+	if request == nil {
+		return nil
+	}
+
+	return request.formatBoundary
+}
+
+// rowFormatBoundaryValueAt selects one requested registry witness before the general frontier.
+func (s *search) rowFormatBoundaryValueAt(
+	request *validRequest,
+	occurrence schemaOccurrence,
+	wanted uint64,
+) (*jsonValue, bool, uint64, error) {
+	boundary := validRequestFormatBoundary(request)
+	if boundary == nil || !stringObjectiveWithin(
+		&stringSearchObjective{occurrence: boundary.identity.occurrence}, occurrence,
+	) {
+		return nil, false, wanted, nil
+	}
+
+	if wanted != 0 {
+		return nil, false, wanted - 1, nil
+	}
+
+	if err := s.assign(); err != nil {
+		return nil, false, 0, err
+	}
+
+	return &jsonValue{kind: jsonString, text: boundary.boundary.witness}, true, 0, nil
+}
+
 // rowGeneratedStringValueAt directly evaluates one length/unit/transition tuple.
 //
-//nolint:cyclop,gocognit,gocyclo,mnd // Compilation and exact primitive tuple evaluation share one adapter.
+//nolint:cyclop,gocognit,gocyclo,maintidx,mnd // Compilation and exact primitive tuple evaluation share one adapter.
 func (s *search) rowGeneratedStringValueAt(
 	source *rowSchemaSource,
 	requirements []requirement,
@@ -747,6 +780,15 @@ func (s *search) rowGeneratedStringValueAt(
 	if len(patterns) == 0 && len(rules.formats) == 0 && len(lengths.boundaries) == 0 {
 		return nil, false, nil
 	}
+
+	boundaryValue, boundaryFound, remainingRank, err := s.rowFormatBoundaryValueAt(
+		context.validRequest, source.occurrence, wanted,
+	)
+	if err != nil || boundaryFound {
+		return boundaryValue, boundaryFound, err
+	}
+
+	wanted = remainingRank
 
 	product, err := newBasicStringProduct(patterns)
 	if err != nil {

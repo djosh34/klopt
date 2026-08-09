@@ -19,7 +19,7 @@ func TestSimpleStringFormatWitnessesAreCanonicalAndDeterministic(t *testing.T) {
 	}{
 		{
 			name: "byte", format: schemaFormatByte,
-			positive: []string{"YQ=="},
+			positive: []string{"YQ==", "YWI="},
 			negative: []string{"YQ="},
 		},
 		{

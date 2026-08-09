@@ -29,9 +29,9 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 		{JSON: []byte(`"b"`), Valid: true},
 		{JSON: []byte(`"b"`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
-		{JSON: []byte(`"bb"`), Valid: false},
 		{JSON: []byte(`"c"`), Valid: false},
 		{JSON: []byte(`"a"`), Valid: false},
+		{JSON: []byte(`"bb"`), Valid: false},
 	}, firstCases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
@@ -77,6 +77,8 @@ func TestBuildStreamsValidFormatTargets(t *testing.T) {
 
 	require.Equal(t, []Case{
 		{JSON: []byte(`"0.0.0.0"`), Valid: true},
+		{JSON: []byte(`"0.0.0.0"`), Valid: true},
+		{JSON: []byte(`"255.255.255.255"`), Valid: true},
 	}, validCasesOnly(cases))
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
@@ -358,6 +360,64 @@ func TestBuildStreamsDirectedStringFaultAfterValidRows(t *testing.T) {
 	require.True(t, cases[0].Valid)
 	require.Contains(t, cases, Case{JSON: []byte(`""`), Valid: false})
 	require.Contains(t, strings.Join(report.Covered, ""), "|pattern|fault:pattern")
+}
+
+func TestBuildStreamsRegistryFormatBoundaries(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		format string
+		want   []string
+	}{
+		{name: "byte", format: "byte", want: []string{"YQ==", "YWI="}},
+		{name: "date", format: "date", want: []string{
+			"1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31",
+		}},
+		{name: "date-time", format: "date-time", want: []string{
+			"1970-01-01T00:00:00Z", "2000-02-29T23:59:59.0Z",
+			"1900-02-28T00:00:00+23:59", "9999-12-31T23:59:59-23:59",
+		}},
+		{name: "email", format: "email", want: []string{
+			"a@b",
+			strings.Repeat("a", emailLocalLimit) + "@b",
+			strings.Repeat("a", emailLocalLimit) + "@" + strings.Repeat("b", emailDomainLabelLimit) + "." +
+				strings.Repeat("c", emailDomainLabelLimit) + "." + strings.Repeat("d", emailFinalBoundaryLabelLimit),
+		}},
+		{name: "ipv4", format: "ipv4", want: []string{"0.0.0.0", "255.255.255.255"}},
+		{name: "cidr", format: "cidr", want: []string{"192.0.2.7/0", "192.0.2.7/32"}},
+		{name: "ipv4-cidr alias", format: "ipv4-cidr", want: []string{"192.0.2.7/0", "192.0.2.7/32"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(
+				`{"type":"string","format":"`+test.format+`"}`,
+			)), 10_000)
+
+			valid := validCasesOnly(cases)
+			require.GreaterOrEqual(t, len(valid), len(test.want)+1)
+
+			for index, wanted := range test.want {
+				require.Equal(t, strconv.Quote(wanted), string(valid[index+1].JSON))
+			}
+		})
+	}
+}
+
+func TestBuildRetainsSiblingRulesForFormatBoundaries(t *testing.T) {
+	t.Parallel()
+
+	cases, _ := buildStringCases(t, []byte(documentWithJSONSchema(`{
+		"type":"string","format":"date","pattern":"^2000-02-29$"
+	}`)), 100_000)
+
+	valid := validCasesOnly(cases)
+	require.NotEmpty(t, valid)
+
+	for _, testCase := range valid {
+		require.Equal(t, `"2000-02-29"`, string(testCase.JSON))
+	}
 }
 
 func buildStringCases(t *testing.T, document []byte, maxSteps uint64) ([]Case, Report) {

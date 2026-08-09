@@ -22,35 +22,17 @@ const (
 // retained formats.
 func simpleStringFormatWitnesses(format schemaFormat, valid bool) []string {
 	if valid {
-		switch format {
-		case schemaFormatByte:
-			return []string{"YQ=="}
-		case schemaFormatDate:
-			return []string{"1970-01-01", "2000-02-29", "1900-02-28", "9999-12-31"}
-		case schemaFormatDateTime:
-			return []string{
-				"1970-01-01T00:00:00Z",
-				"2000-02-29T23:59:59.0Z",
-				"1900-02-28T00:00:00+23:59",
-				"9999-12-31T23:59:59-23:59",
-			}
-		case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
-			return []string{"00000000-0000-4000-8000-000000000000"}
-		case schemaFormatEmail:
-			return []string{
-				"a@b",
-				strings.Repeat("a", emailLocalLimit) + "@b",
-				strings.Repeat("a", emailLocalLimit) + "@" + strings.Repeat("b", emailDomainLabelLimit) + "." +
-					strings.Repeat("c", emailDomainLabelLimit) + "." +
-					strings.Repeat("d", emailFinalBoundaryLabelLimit),
-			}
-		case schemaFormatIPv4:
-			return []string{"0.0.0.0", "255.255.255.255"}
-		case schemaFormatCIDR, schemaFormatIPv4CIDR:
-			return []string{"192.0.2.7/0", "192.0.2.7/32"}
-		default:
+		specification, exists := stringFormatSpecificationFor(format)
+		if !exists || specification.inert {
 			return nil
 		}
+
+		witnesses := make([]string, specification.objectiveCount)
+		for index := range witnesses {
+			witnesses[index] = specification.objectives[index].witness
+		}
+
+		return witnesses
 	}
 
 	switch format {

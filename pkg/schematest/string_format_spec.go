@@ -17,6 +17,11 @@ const (
 	stringFormatObjectiveSemanticFailure
 )
 
+type stringFormatBoundary struct {
+	kind    stringFormatObjective
+	witness string
+}
+
 type stringFormatBounds struct {
 	minimum  uint64
 	maximum  uint64
@@ -123,7 +128,7 @@ func (program *stringFormatProgram) eachUnit(yield func(uint16)) {
 type stringFormatSpecification struct {
 	program        *stringFormatProgram
 	bounds         stringFormatBounds
-	objectives     [4]stringFormatObjective
+	objectives     [4]stringFormatBoundary
 	objectiveCount uint8
 	inert          bool
 }
@@ -134,14 +139,17 @@ var (
 		stringFormatBounds{multiple: 4}, searchByteFormatMatches, searchByteFormatPrefixViable,
 		searchByteFormatTransitionClass,
 		`^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$`,
-		stringFormatObjectiveCanonical, stringFormatObjectivePadding,
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical, witness: "YQ=="},
+		stringFormatBoundary{kind: stringFormatObjectivePadding, witness: "YWI="},
 	)
 	dateFormatSpecification = newStringFormatSpecification(
 		"0123456789-", exactStringFormatBounds(10), searchDateFormatMatches, searchDateFormatPrefixViable,
 		searchDateFormatTransitionClass,
 		`^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$`,
-		stringFormatObjectiveCanonical, stringFormatObjectiveLeapBoundary,
-		stringFormatObjectiveCenturyBoundary, stringFormatObjectiveUpperBoundary,
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical, witness: "1970-01-01"},
+		stringFormatBoundary{kind: stringFormatObjectiveLeapBoundary, witness: "2000-02-29"},
+		stringFormatBoundary{kind: stringFormatObjectiveCenturyBoundary, witness: "1900-02-28"},
+		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary, witness: "9999-12-31"},
 	)
 	dateTimeFormatSpecification = newStringFormatSpecification(
 		"0123456789-T:.Z+", stringFormatBounds{minimum: 20}, searchDateTimeFormatMatches,
@@ -149,8 +157,10 @@ var (
 		`^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T`+
 			`(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?`+
 			`(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$`,
-		stringFormatObjectiveCanonical, stringFormatObjectiveLeapBoundary,
-		stringFormatObjectiveCenturyBoundary, stringFormatObjectiveUpperBoundary,
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical, witness: "1970-01-01T00:00:00Z"},
+		stringFormatBoundary{kind: stringFormatObjectiveLeapBoundary, witness: "2000-02-29T23:59:59.0Z"},
+		stringFormatBoundary{kind: stringFormatObjectiveCenturyBoundary, witness: "1900-02-28T00:00:00+23:59"},
+		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary, witness: "9999-12-31T23:59:59-23:59"},
 	)
 	emailFormatSpecification = newStringFormatSpecification(
 		"", stringFormatBounds{minimum: 3, maximum: 254, bounded: true}, searchEmailFormatMatches,
@@ -161,24 +171,35 @@ var (
 			`[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*|`+
 			`\[(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|[Ii][Pp][Vv]6:[0-9A-Fa-f:.]+|`+
 			`[A-Za-z0-9-]+:[\x21-\x5a\x5e-\x7e]+)\])$`,
-		stringFormatObjectiveCanonical, stringFormatObjectiveLocalLimit, stringFormatObjectiveDomainLimit,
+		stringFormatBoundary{kind: stringFormatObjectiveCanonical, witness: "a@b"},
+		stringFormatBoundary{kind: stringFormatObjectiveLocalLimit, witness: strings.Repeat("a", 64) + "@b"},
+		stringFormatBoundary{
+			kind: stringFormatObjectiveDomainLimit,
+			witness: strings.Repeat("a", 64) + "@" + strings.Repeat("b", 63) + "." +
+				strings.Repeat("c", 63) + "." + strings.Repeat("d", 61),
+		},
 	)
 	ipv4FormatSpecification = newStringFormatSpecification(
 		"0123456789.", stringFormatBounds{minimum: 7, maximum: 15, bounded: true}, searchIPv4FormatMatches, nil, nil,
 		`^(?:0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])`+
 			`(?:\.(?:0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])){3}$`,
-		stringFormatObjectiveLowerBoundary, stringFormatObjectiveUpperBoundary,
+		stringFormatBoundary{kind: stringFormatObjectiveLowerBoundary, witness: "0.0.0.0"},
+		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary, witness: "255.255.255.255"},
 	)
 	uuidFormatSpecification = newStringFormatSpecification(
 		"0123456789ABCDEFabcdef-", exactStringFormatBounds(36), searchUUIDFormatMatches, nil, nil,
 		`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$`,
-		stringFormatObjectiveCanonical,
+		stringFormatBoundary{
+			kind:    stringFormatObjectiveCanonical,
+			witness: "00000000-0000-4000-8000-000000000000",
+		},
 	)
 	cidrFormatSpecification = newStringFormatSpecification(
 		"0123456789./", stringFormatBounds{minimum: 9, maximum: 18, bounded: true}, searchCIDRFormatMatches, nil, nil,
 		`^(?:0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])`+
 			`(?:\.(?:0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])){3}/(?:0|[1-9]|[12][0-9]|3[0-2])$`,
-		stringFormatObjectiveLowerBoundary, stringFormatObjectiveUpperBoundary,
+		stringFormatBoundary{kind: stringFormatObjectiveLowerBoundary, witness: "192.0.2.7/0"},
+		stringFormatBoundary{kind: stringFormatObjectiveUpperBoundary, witness: "192.0.2.7/32"},
 	)
 	passwordFormatSpecification = &stringFormatSpecification{inert: true}
 )
@@ -190,7 +211,7 @@ func newStringFormatSpecification(
 	prefix func(string, int) bool,
 	transitionClass func(string, uint16) uint32,
 	pattern string,
-	objectives ...stringFormatObjective,
+	objectives ...stringFormatBoundary,
 ) *stringFormatSpecification {
 	if prefix == nil {
 		prefix = func(candidate string, length int) bool {

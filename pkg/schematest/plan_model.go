@@ -76,6 +76,7 @@ type validIntent struct {
 	obligation   obligation
 	expected     levelIdentity
 	requirements []requirement
+	stringFormat schemaFormat
 }
 
 // validRequest is one additive row request. The baseline has no focus; every
@@ -85,7 +86,14 @@ type validRequest struct {
 	components       [][]requirement
 	requirements     []requirement
 	stringObjectives []levelIdentity
+	formatBoundary   *formatBoundaryObjective
 	focus            int
+}
+
+// formatBoundaryObjective is one registry-owned valid witness request.
+type formatBoundaryObjective struct {
+	identity levelIdentity
+	boundary stringFormatBoundary
 }
 
 // failureSet is one immutable expected failure identity set.

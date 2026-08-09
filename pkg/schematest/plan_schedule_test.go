@@ -19,16 +19,23 @@ func TestMakePlanEmitsOneBaselineForOneLevelRules(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, plan.validCatalog, 4)
-	require.Len(t, plan.validSchedule, 1)
+	require.Len(t, plan.validSchedule, 4)
 	require.Len(t, plan.validSchedule[0].targets, 4)
 	require.Equal(t, []string{
-		"minLength|valid", "maxLength|valid", "format|valid",
+		"format|valid", "minLength|valid", "maxLength|valid",
 	}, levelRuleNames(plan.stringObjectives))
 	require.Len(t, plan.faultExecution, len(plan.faultSchedule))
 
-	for index := range plan.faultExecution {
-		require.Equal(t, index, plan.faultExecution[index])
+	var stringFaults []string
+
+	for _, index := range plan.faultExecution {
+		rule := plan.faultSchedule[index].obligation.rule
+		if rule == oracleRuleFormat || rule == oracleRuleMinLength || rule == oracleRuleMaxLength {
+			stringFaults = append(stringFaults, rule)
+		}
 	}
+
+	require.Equal(t, []string{oracleRuleFormat, oracleRuleMinLength, oracleRuleMaxLength}, stringFaults)
 }
 
 // TestMakePlanEmitsAdditiveValidSchedule proves the mixed-radix formula.
@@ -125,7 +132,7 @@ func TestValidStringObjectiveConsumesExplicitExecutionOrder(t *testing.T) {
 	baseline := plan.validSchedule[0]
 	objective := validStringObjective(&baseline, model.root, model.root.occurrence)
 	require.NotNil(t, objective)
-	require.Equal(t, oracleRuleMinLength, objective.identity.rule)
+	require.Equal(t, oracleRulePattern, objective.identity.rule)
 	require.Same(t, model.root, objective.node)
 
 	focus := -1
@@ -146,6 +153,33 @@ func TestValidStringObjectiveConsumesExplicitExecutionOrder(t *testing.T) {
 	require.NotNil(t, objective)
 	require.Equal(t, oracleRulePattern, objective.identity.rule)
 	require.Equal(t, oracleRulePattern, focused.stringObjectives[0].rule)
+}
+
+// TestStringFaultExecutionOrderIsIndependentFromReportOrder locks the directed schedule.
+func TestStringFaultExecutionOrderIsIndependentFromReportOrder(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string","minLength":1,"maxLength":3,"pattern":"^a+$","format":"email"
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	var rules []string
+
+	for _, index := range plan.faultExecution {
+		rule := plan.faultSchedule[index].obligation.rule
+		switch rule {
+		case oracleRulePattern, oracleRuleFormat, oracleRuleMinLength, oracleRuleMaxLength:
+			rules = append(rules, rule)
+		}
+	}
+
+	require.Equal(t, []string{
+		oracleRulePattern, oracleRuleFormat, oracleRuleMinLength, oracleRuleMaxLength,
+	}, rules)
 }
 
 // TestFocusedRequestCopiesCompatibleBaselineComponents locks one-radix replacement.

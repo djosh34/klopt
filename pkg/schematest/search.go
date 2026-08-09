@@ -84,7 +84,7 @@ func findTargetRow(plan *searchPlan, request validRequest, s *search) (*jsonValu
 //
 //nolint:cyclop // Validity, levels, and the three requirement dimensions are one acceptance pass.
 func targetRowMatches(result evaluation, request validRequest, value *jsonValue) bool {
-	if !result.valid {
+	if !result.valid || !formatBoundaryWasSatisfied(value, request.formatBoundary) {
 		return false
 	}
 
@@ -105,6 +105,22 @@ func targetRowMatches(result evaluation, request validRequest, value *jsonValue)
 	}
 
 	return true
+}
+
+// formatBoundaryWasSatisfied checks the exact requested value at its instance template.
+func formatBoundaryWasSatisfied(value *jsonValue, objective *formatBoundaryObjective) bool {
+	if objective == nil {
+		return true
+	}
+
+	for _, path := range matchingValuePaths(value, objective.identity.occurrence.instanceTemplate) {
+		candidate := valueAtPath(value, path)
+		if candidate != nil && candidate.kind == jsonString && candidate.text == objective.boundary.witness {
+			return true
+		}
+	}
+
+	return false
 }
 
 // levelWasObserved matches wildcard instance templates to concrete array members.
