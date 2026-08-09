@@ -486,6 +486,7 @@ type rowProjectedObject struct {
 	hasExact       bool
 	allowsExtra    bool
 	requiresExtra  bool
+	infeasible     bool
 }
 
 // walkObject offers complete projected witnesses, then constructs each active shape lazily.
@@ -740,7 +741,7 @@ func newRowProjectedObject(
 
 		if !allowed {
 			if _, mustExist := required[name]; mustExist {
-				return shape, nil
+				shape.infeasible = true
 			}
 
 			continue
@@ -835,8 +836,21 @@ func projectedObjectAllowsExtra(owners []rowSchemaSource) bool {
 //
 //nolint:cyclop // Bounded, unbounded, exact, and intersected count states are explicit.
 func (shape *rowProjectedObject) feasible() bool {
-	if shape.countConflict {
+	if shape.infeasible || shape.countConflict {
 		return false
+	}
+
+	required := shape.requiredFrom(0)
+	if shape.hasMaximum && required > shape.maximum {
+		return false
+	}
+
+	if !shape.allowsExtra {
+		capacity := uint64(len(shape.members))
+		if shape.minimumBeyond || shape.exactBeyond || shape.minimum > capacity ||
+			shape.hasExact && shape.exact > capacity || shape.requiresExtra {
+			return false
+		}
 	}
 
 	if shape.minimumBeyond {
@@ -913,6 +927,10 @@ func (s *search) walkProjectedObjectMembers(
 		shape, member, presenceRequirement, presenceRequirementFound, present, nextRequired,
 	)
 	for _, choice := range choices {
+		if !projectedPresenceFeasible(shape, index, choice, present, nextRequired) {
+			continue
+		}
+
 		if err := s.assign(); err != nil {
 			return false, err
 		}
@@ -950,6 +968,43 @@ func (s *search) walkProjectedObjectMembers(
 	}
 
 	return false, nil
+}
+
+// projectedPresenceFeasible prunes impossible prefixes before charging their presence choice.
+//
+//nolint:cyclop // Count and capacity intersections are one forward feasibility predicate.
+func projectedPresenceFeasible(
+	shape *rowProjectedObject,
+	index int,
+	choice bool,
+	present uint64,
+	remainingRequired uint64,
+) bool {
+	nextPresent := present
+	if choice {
+		nextPresent++
+	}
+
+	if shape.hasMaximum && (nextPresent > shape.maximum || nextPresent+remainingRequired > shape.maximum) {
+		return false
+	}
+
+	if shape.hasExact && !shape.exactBeyond && nextPresent > shape.exact {
+		return false
+	}
+
+	if shape.allowsExtra {
+		return true
+	}
+
+	remainingCapacity := uint64(len(shape.members) - index - 1)
+
+	maximumPresent := nextPresent + remainingCapacity
+	if shape.hasExact {
+		return !shape.exactBeyond && maximumPresent >= shape.exact
+	}
+
+	return !shape.minimumBeyond && maximumPresent >= shape.minimum
 }
 
 // projectedMemberPresenceChoices puts the incremental canonical state first.

@@ -121,6 +121,32 @@ func TestProjectedObjectRejectsConflictingBoundsBeforeConstruction(t *testing.T)
 	require.False(t, shape.feasible())
 }
 
+// TestProjectedObjectRejectsImpossiblePresenceCapacity compiles infeasible shapes up front.
+func TestProjectedObjectRejectsImpossiblePresenceCapacity(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{
+		`{"type":"object","properties":{"x":{}},"additionalProperties":false,"minProperties":2}`,
+		`{"type":"object","required":["x","y"],"maxProperties":1}`,
+		`{"type":"object","required":["x"],"allOf":[{"additionalProperties":false}]}`,
+	}
+
+	for _, schema := range tests {
+		model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(schema)), OperationID: "selected"})
+		require.NoError(t, err)
+
+		cursor := newRowProjectionCursor(model.root, model.root.occurrence, nil)
+		view, ok, err := cursor.Next()
+		cursor.Close()
+		require.NoError(t, err)
+		require.True(t, ok)
+
+		shape, err := newRowProjectedObject(view, nil, model.root.occurrence)
+		require.NoError(t, err)
+		require.False(t, shape.feasible(), schema)
+	}
+}
+
 // TestBuildCutsOffHugeMinPropertiesBeforeSyntheticAllocation locks incremental repair.
 func TestBuildCutsOffHugeMinPropertiesBeforeSyntheticAllocation(t *testing.T) {
 	t.Parallel()
