@@ -323,6 +323,29 @@ func TestBasicStringProductChargesBeforeEveryEdge(t *testing.T) {
 	require.Equal(t, uint64(1), searchState.steps)
 }
 
+func TestBasicStringProductCutoffsNeverEmitPartialCandidates(t *testing.T) {
+	t.Parallel()
+
+	patterns := parseBasicSearchPatterns(t, `^[a-b]$`, `^b$`)
+
+	for _, maximum := range []uint64{0, 1, 2} {
+		searchState := &search{maxSteps: maximum}
+		emitted := 0
+		complete, err := searchState.walkBasicStringWitnesses(
+			patterns, 0,
+			func(*jsonValue) (bool, error) {
+				emitted++
+
+				return false, nil
+			},
+		)
+		require.ErrorIs(t, err, errMaxSteps)
+		require.False(t, complete)
+		require.Equal(t, maximum, searchState.steps)
+		require.Zero(t, emitted)
+	}
+}
+
 func TestBasicStringProductExhaustsContradictoryFinitePatterns(t *testing.T) {
 	t.Parallel()
 
@@ -427,6 +450,47 @@ func TestBasicStringProductNegativeAssertionPreservesSiblingPattern(t *testing.T
 	require.True(t, found)
 	require.Equal(t, "b", witness)
 	require.Equal(t, uint64(7), searchState.steps)
+}
+
+func TestBasicStringProductPrunesFailedNegativeAssertionBeforeSuffix(t *testing.T) {
+	t.Parallel()
+
+	product, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^(?!a)a..$`, `^a..$`))
+	require.NoError(t, err)
+
+	searchState := &search{maxSteps: 100}
+	complete, err := searchState.walkBasicStringRuneLength(
+		product, 3, 0,
+		func(*jsonValue) (bool, error) {
+			t.Fatal("failed negative assertion must not emit")
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Equal(t, uint64(52), searchState.steps)
+}
+
+func TestBasicStringProductPrunesExactFormatFailureBeforeSuffix(t *testing.T) {
+	t.Parallel()
+
+	product, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^AB==$`))
+	require.NoError(t, err)
+	require.NoError(t, product.addFormats([]activeStringFormat{{format: schemaFormatByte}}, -1))
+
+	searchState := &search{maxSteps: 10_000}
+	complete, err := searchState.walkBasicStringRuneLength(
+		product, 4, 0,
+		func(*jsonValue) (bool, error) {
+			t.Fatal("invalid Base64 padding bits must not emit")
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Equal(t, uint64(140), searchState.steps)
 }
 
 func TestBasicStringProductLeadingAssertionContradictionStopsAtBudget(t *testing.T) {

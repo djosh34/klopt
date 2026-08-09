@@ -128,6 +128,37 @@ func TestBuildSearchesFormatsAtActiveLengths(t *testing.T) {
 	}
 }
 
+func TestBuildSearchesEveryExactFormatTransitionClass(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{
+			name:   "base64 significant padding bits",
+			schema: `{"type":"string","format":"byte","pattern":"^A[B-R]==$"}`,
+			want:   `"AQ=="`,
+		},
+		{
+			name:   "Gregorian leap day",
+			schema: `{"type":"string","format":"date","pattern":"^190[0-5]-02-29$"}`,
+			want:   `"1904-02-29"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cases, report := buildStringCases(
+				t, []byte(documentWithJSONSchema(test.schema)), 100_000,
+			)
+			require.Contains(t, cases, Case{JSON: []byte(test.want), Valid: true})
+			require.Equal(t, SpaceExhausted, report.Stop)
+		})
+	}
+}
+
 func TestBuildEnumeratesUnconstrainedAnyOfStringRules(t *testing.T) {
 	t.Parallel()
 

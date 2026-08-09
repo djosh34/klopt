@@ -189,28 +189,28 @@ func TestStringFormatTransitionPartitionsSeparateExactSemantics(t *testing.T) {
 
 	base64Specification, _ := stringFormatSpecificationFor(schemaFormatByte)
 
-	base64State := base64Specification.program.start()
+	base64State := base64Specification.program.start(4)
 	for _, unit := range []uint16{'Y', 'Q'} {
 		base64State = base64Specification.program.advance(base64State, unit)
 	}
 
 	require.NotEqual(
 		t,
-		base64Specification.program.transitionClass(base64State, 'A'),
-		base64Specification.program.transitionClass(base64State, 'R'),
+		base64Specification.program.transition(base64State, 'A'),
+		base64Specification.program.transition(base64State, 'R'),
 	)
 
 	dateSpecification, _ := stringFormatSpecificationFor(schemaFormatDate)
 
-	dateState := dateSpecification.program.start()
+	dateState := dateSpecification.program.start(10)
 	for _, unit := range []uint16{'2', '0', '0', '0', '-', '0', '2', '-'} {
 		dateState = dateSpecification.program.advance(dateState, unit)
 	}
 
 	require.NotEqual(
 		t,
-		dateSpecification.program.transitionClass(dateState, '2'),
-		dateSpecification.program.transitionClass(dateState, '3'),
+		dateSpecification.program.transition(dateState, '2'),
+		dateSpecification.program.transition(dateState, '3'),
 	)
 }
 
@@ -397,11 +397,14 @@ func TestBuildSearchesRemainingFormatsAcrossActiveSiblingConstraints(t *testing.
 				`,"maxLength":` + itoa(test.length) + `}`))
 			cases := make([]Case, 0)
 
-			report, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000}, func(testCase Case) error {
-				cases = append(cases, testCase)
+			report, err := Build(
+				Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100_000},
+				func(testCase Case) error {
+					cases = append(cases, testCase)
 
-				return nil
-			})
+					return nil
+				},
+			)
 			require.NoError(t, err)
 			require.Contains(t, cases, Case{JSON: []byte(`"` + test.witness + `"`), Valid: true})
 			require.Equal(t, test.stop, report.Stop)

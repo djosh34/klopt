@@ -797,7 +797,7 @@ func (product *basicStringProduct) start(length int) basicStringProductState {
 
 	for index, program := range product.formatPrograms {
 		if program != nil {
-			state.formats[index] = program.start()
+			state.formats[index] = program.start(length)
 		}
 	}
 
@@ -1050,6 +1050,27 @@ func (product *basicStringProduct) intervalHigh(state basicStringProductState, l
 		}
 	})
 
+	for index, program := range product.formatPrograms {
+		if program == nil {
+			continue
+		}
+
+		class := program.transition(state.formats[index], low)
+		maximumUnit := uint16(0)
+
+		program.eachUnit(func(unit uint16) {
+			maximumUnit = max(maximumUnit, unit)
+		})
+
+		for unit := uint32(low) + 1; unit <= uint32(maximumUnit)+1 && unit <= uint32(high); unit++ {
+			if program.transition(state.formats[index], uint16(unit)) != class {
+				high = uint16(unit - 1)
+
+				break
+			}
+		}
+	}
+
 	return high
 }
 
@@ -1205,9 +1226,18 @@ func (product *basicStringProduct) viable(state basicStringProductState) bool {
 		}
 	}
 
-	for index, pattern := range state.patterns {
+	return product.patternsViable(state.patterns)
+}
+
+func (product *basicStringProduct) patternsViable(patterns []basicStringPatternState) bool {
+	for index, pattern := range patterns {
 		machine := &product.machines[index]
-		if machine.required && machine.expected && !pattern.matched && len(pattern.active) == 0 {
+		if !machine.required {
+			continue
+		}
+
+		if !machine.expected && pattern.matched ||
+			machine.expected && !pattern.matched && len(pattern.active) == 0 {
 			return false
 		}
 	}
