@@ -81,7 +81,7 @@ func isGeneratedImport(path string) bool {
 	return false
 }
 
-// TestGeneratedImportGuardRejectsCheckedInConsumer pins the actual generated semantic package root.
+// TestGeneratedImportGuardRejectsCheckedInConsumer requirements the actual generated semantic package root.
 func TestGeneratedImportGuardRejectsCheckedInConsumer(t *testing.T) {
 	t.Parallel()
 
@@ -672,6 +672,162 @@ func TestValidatedJSONEqualityDoesNotSortObjects(t *testing.T) {
 	require.Fail(t, "jsonValidatedSemanticEqual is missing")
 }
 
+// TestPlannerCallGraphIsDeclarative forbids candidate search and oracle evaluation below makePlan.
+func TestPlannerCallGraphIsDeclarative(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	functions := guardFunctions(guardPackage)
+	planner, ok := guardPackage.pkg.Scope().Lookup("makePlan").(*types.Func)
+	require.True(t, ok)
+
+	for function := range reachableGuardFunctions(guardPackage, functions, planner) {
+		declaration := functions[function]
+		if declaration == nil {
+			continue
+		}
+
+		for _, called := range calledGuardFunctions(guardPackage, declaration.Body) {
+			name := strings.ToLower(called.Name())
+			forbidden := strings.HasPrefix(name, "evaluate") || strings.Contains(name, "witness") ||
+				strings.Contains(name, "candidate") || strings.Contains(name, "realizable") ||
+				(strings.Contains(name, "scalar") && called.Name() != "addScalarRule")
+			require.Falsef(t, forbidden, "planner function %s calls forbidden %s", function.Name(), called.Name())
+		}
+	}
+}
+
+// TestValidScheduleHasNoContradictionPreflight locks the sole charged traversal boundary.
+func TestValidScheduleHasNoContradictionPreflight(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	for _, name := range []string{
+		"requestHasSyntacticKindConflict",
+		"requestHasSyntacticCompositionConflict",
+		"requestPresenceForbiddenByActiveSchema",
+		"validRequirementsConflict",
+		"requirementsForbidObjectMember",
+		"requirementsConflictWithBranchKind",
+		"validTargetConflictsWithSelectedComposition",
+	} {
+		require.Nil(t, guardPackage.pkg.Scope().Lookup(name), name)
+	}
+
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != "findTargetRow" {
+				continue
+			}
+
+			require.True(t, functionCallsAny(function, "walkNode"))
+			require.False(t, functionCallsAny(function,
+				"jsonValidatedSemanticEqual", "nodeAcceptsKindForTarget"))
+
+			return
+		}
+	}
+
+	require.Fail(t, "findTargetRow is missing")
+}
+
+// TestRowAndFaultCandidateSourcesRetainNoCandidateCollections locks the lazy source call graph.
+func TestRowAndFaultCandidateSourcesRetainNoCandidateCollections(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+
+	functions := guardFunctions(guardPackage)
+	roots := map[string]bool{
+		"rowScalarValueSource":        false,
+		"canonicalAnyOfWitnesses":     false,
+		"canonicalEnumFaultWitnesses": false,
+		"walkDirectNodeValues":        false,
+		"walkGenericValue":            false,
+	}
+
+	for function := range functions {
+		if _, wanted := roots[function.Name()]; !wanted {
+			continue
+		}
+
+		roots[function.Name()] = true
+		for reachable := range reachableGuardFunctions(guardPackage, functions, function) {
+			require.NotContains(t, []string{
+				"canonicalKindWitnesses", "appendUniqueJSONWitness", "rowDirectValues", "rowScalarValues",
+				"collectAnyOfWitnesses",
+			}, reachable.Name(), function.Name())
+		}
+	}
+
+	require.Equal(t, map[string]bool{
+		"rowScalarValueSource":        true,
+		"canonicalAnyOfWitnesses":     true,
+		"canonicalEnumFaultWitnesses": true,
+		"walkDirectNodeValues":        true,
+		"walkGenericValue":            true,
+	}, roots)
+}
+
+// TestDirectCompositeValuesStopBeforeScanningTheRemainingEnum locks pull-based authored traversal.
+func TestDirectCompositeValuesStopBeforeScanningTheRemainingEnum(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []jsonKind{jsonArray, jsonObject} {
+		t.Run(jsonKindName(kind), func(t *testing.T) {
+			t.Parallel()
+
+			node := &schemaNode{schemaShape: &schemaShape{enum: make([]enumMember, 10_000)}}
+			node.enum[0].value = &jsonValue{kind: kind}
+			search := &search{maxSteps: 0}
+
+			_, err := search.walkDirectNodeValues(node, kind, func(*jsonValue) (bool, error) {
+				require.Fail(t, "candidate must not reach the visitor after the cutoff")
+
+				return false, nil
+			})
+			require.ErrorIs(t, err, errMaxSteps)
+		})
+	}
+}
+
+// TestGenericValuesAdvanceOneChargedCandidateAtATime locks pull-based canonical traversal.
+func TestGenericValuesAdvanceOneChargedCandidateAtATime(t *testing.T) {
+	t.Parallel()
+
+	search := &search{maxSteps: 2}
+	visits := 0
+	complete, err := search.walkGenericValue(nil, func(value *jsonValue) (bool, error) {
+		visits++
+
+		require.Equal(t, jsonNull, value.kind)
+
+		return true, nil
+	})
+
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, 1, visits)
+	require.Equal(t, uint64(2), search.steps)
+}
+
+// TestR4FaultRuntimeDoesNotConsumeClosurePrograms locks compile-only closure ownership.
+func TestR4FaultRuntimeDoesNotConsumeClosurePrograms(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	functions := guardFunctions(guardPackage)
+	stream, ok := guardPackage.pkg.Scope().Lookup("streamBasicFault").(*types.Func)
+	require.True(t, ok)
+
+	for function := range reachableGuardFunctions(guardPackage, functions, stream) {
+		name := strings.ToLower(function.Name())
+		require.NotContains(t, name, "closureprogram")
+		require.NotContains(t, name, "syntacticallyunreachable")
+	}
+}
+
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
 func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	t.Parallel()
@@ -681,7 +837,7 @@ func TestProductionSourceDoesNotEmbedFixtureAnswers(t *testing.T) {
 	require.Emptyf(t, violations, "production contains copied or fixture-derived semantics: %v", violations)
 }
 
-// TestCopiedAnswerGuardRejectsConcreteBypasses pins semantic selectors and renamed generated structures.
+// TestCopiedAnswerGuardRejectsConcreteBypasses requirements semantic selectors and renamed generated structures.
 func TestCopiedAnswerGuardRejectsConcreteBypasses(t *testing.T) {
 	t.Parallel()
 
@@ -747,7 +903,7 @@ func TestBuildReachableStateOwnsNoCaseCorpus(t *testing.T) {
 	require.Emptyf(t, violations, "production contains corpus-bearing execution state: %v", violations)
 }
 
-// TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes pins representative retention bypasses.
+// TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes requirements representative retention bypasses.
 func TestCorpusOwnershipGuardCoversLocalsClosuresAndPrivateTypes(t *testing.T) {
 	t.Parallel()
 
@@ -1529,7 +1685,7 @@ func reachableOwnerTypes(
 func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]bool {
 	authorized := make(map[*types.TypeName]bool)
 	for _, root := range []string{
-		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext", "canonicalWitnesses",
+		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext",
 		"jsonActivePath", "jsonValuePair", "jsonValidationFrame", "jsonCloneFrame", "jsonMarshalFrame",
 		"strictJSONContainerFrame",
 	} {
@@ -1666,7 +1822,7 @@ func authorizedActiveLocalName(name string) bool {
 	lower := strings.ToLower(name)
 
 	for _, category := range []string{
-		"admitted", "candidate", "generated", "witness", "parentpins", "parenttokens", "canonical",
+		"admitted", "candidate", "generated", "witness", "parentrequirements", "parenttokens", "canonical",
 		"derived", "edits", "elements", "filtered", "seeded", "selected", "values",
 	} {
 		if strings.Contains(lower, category) {

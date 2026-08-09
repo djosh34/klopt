@@ -8,8 +8,40 @@ import (
 
 // activeNumberRule is one numeric schema in the selected composition view.
 type activeNumberRule struct {
-	node       *schemaNode
-	occurrence schemaOccurrence
+	node *schemaNode
+}
+
+// validNumberObjective resolves focused then vector-ordered numeric execution.
+func validNumberObjective(
+	request *validRequest,
+	node *schemaNode,
+	occurrence schemaOccurrence,
+) *resolvedScalarObjective {
+	if request == nil {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(request.targets))
+	if request.focus >= 0 && request.focus < len(request.targets) {
+		indexes = append(indexes, request.focus)
+	}
+
+	for index := range request.targets {
+		if index != request.focus {
+			indexes = append(indexes, index)
+		}
+	}
+
+	for _, index := range indexes {
+		identity := request.targets[index].expected
+
+		resolved, found := scalarTargetNode(node, occurrence, identity.occurrence)
+		if found {
+			return &resolvedScalarObjective{identity: identity, node: resolved}
+		}
+	}
+
+	return nil
 }
 
 // walkActiveNumberRules tries all exact authored edges, then the fair decimal frontier.
@@ -18,15 +50,15 @@ type activeNumberRule struct {
 func (s *search) walkActiveNumberRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	target *validTarget,
+	requirements []requirement,
+	request *validRequest,
 	visit rowVisit,
 ) (bool, error) {
 	rules := make([]activeNumberRule, 0)
 
 	falseBranchObjective := false
 	if err := collectActiveNumberRules(
-		node, occurrence, pins, &rules, &falseBranchObjective,
+		node, occurrence, requirements, &rules, &falseBranchObjective,
 	); err != nil {
 		return false, err
 	}
@@ -52,13 +84,11 @@ func (s *search) walkActiveNumberRules(
 	rule := oracleRuleType
 	level := jsonKindName(jsonNumber)
 
-	if target != nil {
-		if found, ok := scalarTargetNode(node, occurrence, target.expected.occurrence); ok {
-			seedNode = found
-			seedPointer = target.expected.occurrence.usePointer
-			rule = target.expected.rule
-			level = target.expected.level
-		}
+	if target := validNumberObjective(request, node, occurrence); target != nil {
+		seedNode = target.node
+		seedPointer = target.identity.occurrence.usePointer
+		rule = target.identity.rule
+		level = target.identity.level
 	}
 
 	if seedNode.schemaJSON == nil {
@@ -120,7 +150,7 @@ func nodeHasNumberObjective(node *schemaNode) bool {
 func collectActiveNumberRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	requirements []requirement,
 	rules *[]activeNumberRule,
 	falseBranchObjective *bool,
 ) error {
@@ -128,7 +158,7 @@ func collectActiveNumberRules(
 		return errors.New("schematest: active number schema has no shape")
 	}
 
-	*rules = append(*rules, activeNumberRule{node: node, occurrence: occurrence})
+	*rules = append(*rules, activeNumberRule{node: node})
 
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
@@ -138,15 +168,15 @@ func collectActiveNumberRules(
 			occurrence.instanceTemplate,
 		)
 		if err := collectActiveNumberRules(
-			child, childOccurrence, pins, rules, falseBranchObjective,
+			child, childOccurrence, requirements, rules, falseBranchObjective,
 		); err != nil {
 			return err
 		}
 	}
 
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
-		if pinned && !states[index] {
+		if constrained && !states[index] {
 			*falseBranchObjective = *falseBranchObjective || nodeHasNumberObjective(child)
 
 			continue
@@ -159,7 +189,7 @@ func collectActiveNumberRules(
 			occurrence.instanceTemplate,
 		)
 		if err := collectActiveNumberRules(
-			child, childOccurrence, pins, rules, falseBranchObjective,
+			child, childOccurrence, requirements, rules, falseBranchObjective,
 		); err != nil {
 			return err
 		}

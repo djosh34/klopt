@@ -6,7 +6,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNumberBoundaryCandidates pins exact boundary order, quantum, dedupe, and wire bytes.
+// collectNumberScheduleForTest collects the finite exact-number schedule for assertions.
+func collectNumberScheduleForTest(node *schemaNode) ([]*jsonValue, error) {
+	schedule, err := newNumberSchedule([]activeNumberRule{{node: node}})
+	if err != nil {
+		return nil, err
+	}
+
+	state := &search{maxSteps: ^uint64(0)}
+
+	var values []*jsonValue
+
+	_, err = state.walkNumberDeterministic(schedule, func(value *jsonValue) (bool, error) {
+		values = append(values, value)
+
+		return false, nil
+	})
+
+	return values, err
+}
+
+// TestNumberBoundaryCandidates requirements exact boundary order, quantum, dedupe, and wire bytes.
 func TestNumberBoundaryCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -85,14 +105,14 @@ func TestNumberBoundaryCandidates(t *testing.T) {
 				node.multipleOf = requireExactNumber(t, test.multiple)
 			}
 
-			candidates, err := numberDeterministicCandidates(node)
+			candidates, err := collectNumberScheduleForTest(node)
 			require.NoError(t, err)
 			require.Equal(t, test.want, marshalNumberCandidates(t, candidates))
 		})
 	}
 }
 
-// TestNumberIntegerFormatCandidates pins exact edges and their one-step outside values.
+// TestNumberIntegerFormatCandidates requirements exact edges and their one-step outside values.
 func TestNumberIntegerFormatCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -123,14 +143,14 @@ func TestNumberIntegerFormatCandidates(t *testing.T) {
 			t.Parallel()
 
 			node := &schemaNode{schemaShape: &schemaShape{kind: schemaNumber, format: test.format}}
-			candidates, err := numberDeterministicCandidates(node)
+			candidates, err := collectNumberScheduleForTest(node)
 			require.NoError(t, err)
 			require.Equal(t, test.want, marshalNumberCandidates(t, candidates))
 		})
 	}
 }
 
-// TestNumberFloatFormatCandidates pins the exact finite-overflow edges without float conversion.
+// TestNumberFloatFormatCandidates requirements the exact finite-overflow edges without float conversion.
 func TestNumberFloatFormatCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -139,7 +159,7 @@ func TestNumberFloatFormatCandidates(t *testing.T) {
 			t.Parallel()
 
 			node := &schemaNode{schemaShape: &schemaShape{kind: schemaNumber, format: format}}
-			candidates, err := numberDeterministicCandidates(node)
+			candidates, err := collectNumberScheduleForTest(node)
 			require.NoError(t, err)
 			require.Len(t, candidates, 5)
 			require.Equal(t, "0", marshalNumberCandidates(t, candidates[:1])[0])
@@ -287,7 +307,7 @@ func TestWalkScalarFindsExactBoundIntersections(t *testing.T) {
 	}
 }
 
-// TestWalkScalarChargesMultipleCandidates pins one charge for each deduplicated exact candidate.
+// TestWalkScalarChargesMultipleCandidates requirements one charge for each deduplicated exact candidate.
 func TestWalkScalarChargesMultipleCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -321,7 +341,7 @@ func TestWalkScalarChargesMultipleCandidates(t *testing.T) {
 	require.Equal(t, []string{"0", "0.3", "-0.3", "0.4", "0.2"}, seen)
 }
 
-// TestWalkScalarChargesBoundaryCandidates pins one charge immediately before each candidate.
+// TestWalkScalarChargesBoundaryCandidates requirements one charge immediately before each candidate.
 func TestWalkScalarChargesBoundaryCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -356,7 +376,7 @@ func TestWalkScalarChargesBoundaryCandidates(t *testing.T) {
 	require.Equal(t, []string{"1", "1.01"}, seen)
 }
 
-// TestWalkScalarCompilesOneActiveNumericSchedule pins conjunction order and one global quantum.
+// TestWalkScalarCompilesOneActiveNumericSchedule requirements conjunction order and one global quantum.
 func TestWalkScalarCompilesOneActiveNumericSchedule(t *testing.T) {
 	t.Parallel()
 
@@ -379,7 +399,7 @@ func TestWalkScalarCompilesOneActiveNumericSchedule(t *testing.T) {
 		schemaJSON: requireStrictJSONValue(t, `{"type":"number"}`),
 	}}
 	occurrence := schemaOccurrence{usePointer: "#/schema", instanceTemplate: "#"}
-	pins := []applicabilityPin{
+	requirements := []requirement{
 		{
 			occurrence: schemaOccurrence{
 				usePointer: "#/schema/anyOf/0", instanceTemplate: "#",
@@ -397,7 +417,7 @@ func TestWalkScalarCompilesOneActiveNumericSchedule(t *testing.T) {
 	state := &search{maxSteps: 100}
 	seen := make([]string, 0, 11)
 	complete, err := state.walkScalar(
-		root, occurrence, pins, rowSearchContext{}, jsonNumber,
+		root, occurrence, requirements, rowSearchContext{}, jsonNumber,
 		func(value *jsonValue) (bool, error) {
 			encoded, marshalErr := marshalStrict(value)
 			if marshalErr != nil {

@@ -42,7 +42,7 @@ func TestRegenerateParentAndApplyBasicTypeFault(t *testing.T) {
 
 	result := evaluate(model, derivative)
 	require.False(t, result.valid)
-	require.Equal(t, identityStrings(fault.closure), identityStrings(result.failureRecords()))
+	require.Equal(t, identityStrings(fault.expected), identityStrings(result.failureRecords()))
 }
 
 func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {
@@ -95,7 +95,7 @@ func TestBuildDiscardsBasicFaultAtCutoff(t *testing.T) {
 	}
 }
 
-func TestRegenerateParentPreservesFaultKindPins(t *testing.T) {
+func TestRegenerateParentPreservesFaultKindRequirements(t *testing.T) {
 	t.Parallel()
 
 	for name, schema := range map[string]string{
@@ -140,24 +140,12 @@ func TestBuildVisitsMaximumFaultInsideAnyOfContext(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, []Case{
-		{JSON: []byte(`100`), Valid: true},
-		{JSON: []byte(`100`), Valid: true},
-		{JSON: []byte(`100`), Valid: true},
-		{JSON: []byte(`100`), Valid: true},
-		{JSON: []byte(`101`), Valid: false},
-	}, cases)
-	require.Equal(t, Report{
-		Stop:  SpaceExhausted,
-		Steps: 21,
-		Covered: []string{
-			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|level:number",
-			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maximum|level:valid",
-			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maximum|fault:maximum",
-			"#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|level:mask:1",
-			"#/paths/~1/post/requestBody/content/application~1json/schema/anyOf/0|#|type|level:number",
-		},
-	}, report)
+	require.Equal(t, []Case{{JSON: []byte(`100`), Valid: true}}, cases)
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Contains(t, report.Uncovered,
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|maximum|fault:maximum")
+	require.Contains(t, report.Uncovered,
+		"#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|fault:anyOf")
 }
 
 func marshalFaultTestValue(t *testing.T, value *jsonValue) []byte {

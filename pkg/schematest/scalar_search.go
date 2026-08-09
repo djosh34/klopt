@@ -5,20 +5,20 @@ import (
 	"encoding/binary"
 )
 
-// walkActiveScalarPinAlternatives pins one complete scalar composition view.
-func (s *search) walkActiveScalarPinAlternatives(
+// walkActiveScalarRequirementAlternatives requirements one complete scalar composition view.
+func (s *search) walkActiveScalarRequirementAlternatives(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
-	visit func([]applicabilityPin) (bool, error),
+	requirements []requirement,
+	visit func([]requirement) (bool, error),
 ) (bool, error) {
-	anyOfNode, anyOfOccurrence, found := firstUnpinnedScalarAnyOf(node, occurrence, pins)
+	anyOfNode, anyOfOccurrence, found := firstUnconstrainedScalarAnyOf(node, occurrence, requirements)
 	if !found {
-		return visit(pins)
+		return visit(requirements)
 	}
 
 	for selected := range anyOfNode.anyOf {
-		pathLength := len(pins)
+		pathLength := len(requirements)
 
 		for branch, child := range anyOfNode.anyOf {
 			if err := s.assign(); err != nil {
@@ -31,7 +31,8 @@ func (s *search) walkActiveScalarPinAlternatives(
 				anyOfOccurrence.usePointer+"/anyOf/"+itoa(branch),
 				anyOfOccurrence.instanceTemplate,
 			)
-			pins = append(pins, applicabilityPin{
+			requirements = append(requirements, requirement{
+				tag:         requirementBranchTruth,
 				occurrence:  branchOccurrence,
 				composition: "anyOf",
 				branch:      branch,
@@ -40,8 +41,8 @@ func (s *search) walkActiveScalarPinAlternatives(
 			})
 		}
 
-		complete, err := s.walkActiveScalarPinAlternatives(node, occurrence, pins, visit)
-		pins = pins[:pathLength]
+		complete, err := s.walkActiveScalarRequirementAlternatives(node, occurrence, requirements, visit)
+		requirements = requirements[:pathLength]
 
 		if err != nil || complete {
 			return complete, err
@@ -51,15 +52,15 @@ func (s *search) walkActiveScalarPinAlternatives(
 	return false, nil
 }
 
-// firstUnpinnedScalarAnyOf finds the next composition choice in canonical order.
-func firstUnpinnedScalarAnyOf(
+// firstUnconstrainedScalarAnyOf finds the next composition choice in canonical order.
+func firstUnconstrainedScalarAnyOf(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	requirements []requirement,
 ) (*schemaNode, schemaOccurrence, bool) {
 	if len(node.anyOf) > 0 {
-		states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-		if !pinned {
+		states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
+		if !constrained {
 			return node, occurrence, true
 		}
 
@@ -74,8 +75,8 @@ func firstUnpinnedScalarAnyOf(
 				occurrence.usePointer+"/anyOf/"+itoa(index),
 				occurrence.instanceTemplate,
 			)
-			if foundNode, foundOccurrence, found := firstUnpinnedScalarAnyOf(
-				child, childOccurrence, pins,
+			if foundNode, foundOccurrence, found := firstUnconstrainedScalarAnyOf(
+				child, childOccurrence, requirements,
 			); found {
 				return foundNode, foundOccurrence, true
 			}
@@ -89,8 +90,8 @@ func firstUnpinnedScalarAnyOf(
 			occurrence.usePointer+"/allOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
-		if foundNode, foundOccurrence, found := firstUnpinnedScalarAnyOf(
-			child, childOccurrence, pins,
+		if foundNode, foundOccurrence, found := firstUnconstrainedScalarAnyOf(
+			child, childOccurrence, requirements,
 		); found {
 			return foundNode, foundOccurrence, true
 		}

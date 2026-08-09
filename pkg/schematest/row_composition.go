@@ -32,11 +32,11 @@ const (
 func rowChildSchemaChoices(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	requirements []requirement,
 	kind rowChildKind,
 	name string,
 ) ([]rowSchemaChoice, error) {
-	sets, err := rowChildSchemaSourceSets(node, occurrence, pins, kind, name)
+	sets, err := rowChildSchemaSourceSets(node, occurrence, requirements, kind, name)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +45,7 @@ func rowChildSchemaChoices(
 	fallback := rowSchemaChoice{occurrence: rowChildOccurrence(node, occurrence, kind, name)}
 
 	for _, sources := range sets {
-		ordered := rowPreferredSchemaSources(sources, pins)
+		ordered := rowPreferredSchemaSources(sources, requirements)
 
 		choice, exists, err := mergeRowSchemaSources(ordered)
 		if err != nil {
@@ -70,22 +70,22 @@ func rowChildSchemaChoices(
 func rowChildSchemaSourceSets(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	requirements []requirement,
 	kind rowChildKind,
 	name string,
 ) ([][]rowSchemaSource, error) {
 	return rowChildSchemaSourceSetsAt(
-		node, occurrence, pins, kind, name, make(map[*schemaNode]bool),
+		node, occurrence, requirements, kind, name, make(map[*schemaNode]bool),
 	)
 }
 
 // rowChildSchemaSourceSetsAt recursively preserves nested composition alternatives.
 //
-//nolint:cyclop // Direct, allOf, pinned anyOf, and alternative selection share one seam.
+//nolint:cyclop // Direct, allOf, constrained anyOf, and alternative selection share one seam.
 func rowChildSchemaSourceSetsAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	pins []applicabilityPin,
+	requirements []requirement,
 	kind rowChildKind,
 	name string,
 	visiting map[*schemaNode]bool,
@@ -115,7 +115,7 @@ func rowChildSchemaSourceSetsAt(
 		)
 
 		childSets, err := rowChildSchemaSourceSetsAt(
-			child, childOccurrence, pins, kind, name, visiting,
+			child, childOccurrence, requirements, kind, name, visiting,
 		)
 		if err != nil {
 			return nil, err
@@ -128,8 +128,8 @@ func rowChildSchemaSourceSetsAt(
 		return common, nil
 	}
 
-	states, pinned := rowCompositionTruthStates(pins, occurrence, "anyOf", len(node.anyOf))
-	if pinned {
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
+	if constrained {
 		selected := common
 
 		for index, child := range node.anyOf {
@@ -145,7 +145,7 @@ func rowChildSchemaSourceSetsAt(
 			)
 
 			childSets, err := rowChildSchemaSourceSetsAt(
-				child, childOccurrence, pins, kind, name, visiting,
+				child, childOccurrence, requirements, kind, name, visiting,
 			)
 			if err != nil {
 				return nil, err
@@ -167,7 +167,7 @@ func rowChildSchemaSourceSetsAt(
 		)
 
 		childSets, err := rowChildSchemaSourceSetsAt(
-			child, childOccurrence, pins, kind, name, visiting,
+			child, childOccurrence, requirements, kind, name, visiting,
 		)
 		if err != nil {
 			return nil, err
@@ -303,16 +303,16 @@ func rowChildOccurrence(
 	}
 }
 
-// rowPreferredSchemaSources puts a target-pinned source first before composition merging.
-func rowPreferredSchemaSources(sources []rowSchemaSource, pins []applicabilityPin) []rowSchemaSource {
+// rowPreferredSchemaSources puts a target-constrained source first before composition merging.
+func rowPreferredSchemaSources(sources []rowSchemaSource, requirements []requirement) []rowSchemaSource {
 	ordered := append([]rowSchemaSource(nil), sources...)
 
 	for index, source := range ordered {
 		preferred := false
 
-		for _, pin := range pins {
-			if (pin.hasKind || pin.presence != planPinNoPresence) &&
-				rowOccurrenceMatches(pin.occurrence, source.occurrence) {
+		for _, requirement := range requirements {
+			if (requirement.hasKind || requirement.presence != requirementNoPresence) &&
+				rowOccurrenceMatches(requirement.occurrence, source.occurrence) {
 				preferred = true
 
 				break
@@ -370,12 +370,17 @@ func mergeRowSchemaSources(sources []rowSchemaSource) (rowSchemaChoice, bool, er
 // composeRowMember merges all direct and active composed schemas for one object name.
 //
 //nolint:cyclop // Common-schema selection and inactive-branch alternatives are one phase.
-func composeRowMember(name string, candidates []rowMember, required bool, pins []applicabilityPin) (rowMember, error) {
+func composeRowMember(
+	name string,
+	candidates []rowMember,
+	required bool,
+	requirements []requirement,
+) (rowMember, error) {
 	common := make([]rowSchemaSource, 0, len(candidates))
 	fallback := make([]rowMember, 0, len(candidates))
 
 	for _, candidate := range candidates {
-		active, constrained := rowMemberCompositionState(candidate, pins)
+		active, constrained := rowMemberCompositionState(candidate, requirements)
 		if constrained && !active {
 			fallback = append(fallback, candidate)
 
@@ -399,7 +404,7 @@ func composeRowMember(name string, candidates []rowMember, required bool, pins [
 	}
 
 	if len(common) > 0 {
-		ordered := rowPreferredSchemaSources(common, pins)
+		ordered := rowPreferredSchemaSources(common, requirements)
 
 		choice, _, err := mergeRowSchemaSources(ordered)
 		if err != nil {
@@ -441,19 +446,19 @@ func composeRowMember(name string, candidates []rowMember, required bool, pins [
 // rowMemberCompositionState identifies anyOf branch context for one property schema.
 //
 //nolint:cyclop // Candidate branch and sibling-parent checks are one applicability decision.
-func rowMemberCompositionState(candidate rowMember, pins []applicabilityPin) (bool, bool) {
+func rowMemberCompositionState(candidate rowMember, requirements []requirement) (bool, bool) {
 	active := false
 	constrained := false
 
-	for _, pin := range pins {
-		if !pin.hasBranch || pin.composition != "anyOf" {
+	for _, requirement := range requirements {
+		if !requirement.hasBranch || requirement.composition != "anyOf" {
 			continue
 		}
 
-		if rowBranchContainsOccurrence(pin, candidate.occurrence) {
+		if rowBranchContainsOccurrence(requirement, candidate.occurrence) {
 			constrained = true
 
-			if !pin.truth {
+			if !requirement.truth {
 				return false, true
 			}
 
@@ -463,11 +468,11 @@ func rowMemberCompositionState(candidate rowMember, pins []applicabilityPin) (bo
 		}
 
 		candidateParent, candidateNested := rowAnyOfParentUsePointer(candidate.occurrence.usePointer)
-		pinParent, pinNested := rowAnyOfParentUsePointer(pin.occurrence.usePointer)
+		constrainParent, constrainNested := rowAnyOfParentUsePointer(requirement.occurrence.usePointer)
 
 		candidateInstance, instanceOK := rowInstanceParentTemplate(candidate.occurrence.instanceTemplate)
-		if candidateNested && pinNested && instanceOK && candidateParent == pinParent &&
-			instanceTemplateMatches(pin.occurrence.instanceTemplate, candidateInstance) {
+		if candidateNested && constrainNested && instanceOK && candidateParent == constrainParent &&
+			instanceTemplateMatches(requirement.occurrence.instanceTemplate, candidateInstance) {
 			constrained = true
 		}
 	}
@@ -504,31 +509,31 @@ func rowAnyOfParentUsePointer(usePointer string) (string, bool) {
 	return usePointer[:index], branchEnd > 0
 }
 
-// rowCompositionTruthStates reads branch pins using the pin template as wildcard pattern.
+// rowCompositionTruthStates reads branch requirements using the requirement template as wildcard pattern.
 func rowCompositionTruthStates(
-	pins []applicabilityPin,
+	requirements []requirement,
 	occurrence schemaOccurrence,
 	composition string,
 	count int,
 ) ([]bool, bool) {
 	states := make([]bool, count)
-	pinned := false
+	constrained := false
 
 	for index := 0; index < count; index++ {
 		branchUsePointer := occurrence.usePointer + "/" + composition + "/" + itoa(index)
-		for _, pin := range pins {
-			if !pin.hasBranch || pin.composition != composition || pin.branch != index ||
-				pin.occurrence.usePointer != branchUsePointer ||
-				!instanceTemplateMatches(pin.occurrence.instanceTemplate, occurrence.instanceTemplate) {
+		for _, requirement := range requirements {
+			if !requirement.hasBranch || requirement.composition != composition || requirement.branch != index ||
+				requirement.occurrence.usePointer != branchUsePointer ||
+				!instanceTemplateMatches(requirement.occurrence.instanceTemplate, occurrence.instanceTemplate) {
 				continue
 			}
 
-			states[index] = pin.truth
-			pinned = true
+			states[index] = requirement.truth
+			constrained = true
 
 			break
 		}
 	}
 
-	return states, pinned
+	return states, constrained
 }

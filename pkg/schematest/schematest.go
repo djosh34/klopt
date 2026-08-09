@@ -70,8 +70,8 @@ func Build(input Input, yield func(Case) error) (Report, error) {
 
 	stop := SpaceExhausted
 
-	for _, target := range plan.validTargets {
-		row, found, searchErr := findTargetRow(plan, target, searchState)
+	for _, request := range plan.validSchedule {
+		row, found, searchErr := findTargetRow(plan, request, searchState)
 		if searchErr != nil {
 			if errors.Is(searchErr, errMaxSteps) {
 				stop = MaxStepsReached
@@ -122,7 +122,7 @@ func Build(input Input, yield func(Case) error) (Report, error) {
 
 // markObservedValidTargets records every valid obligation observed by one row.
 func markObservedValidTargets(plan *searchPlan, result evaluation, covered map[string]bool) {
-	for _, target := range plan.validTargets {
+	for _, target := range plan.validCatalog {
 		if levelWasObserved(result.observedRecords(), target.expected) ||
 			compositionLevelWasObserved(result, target.expected) {
 			covered[target.obligation.String()] = true

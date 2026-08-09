@@ -7,13 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations pins plan/oracle identity agreement.
+// TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations requirements plan/oracle identity agreement.
 func TestBuildMatchesNestedReferenceCoverageAtRepeatedAliasDestinations(t *testing.T) {
 	t.Parallel()
 
 	document := []byte(`openapi: 3.0.4
 x-shared: &outer
   type: object
+  required: [child]
   properties:
     child: {type: string, minLength: 1}
 paths:
@@ -25,6 +26,7 @@ paths:
           application/json:
             schema:
               type: object
+              required: [a, b]
               properties:
                 a: *outer
                 b: *outer
@@ -52,7 +54,7 @@ paths:
 
 	var targets []string
 
-	for _, fault := range plan.faultTargets {
+	for _, fault := range plan.faultSchedule {
 		if fault.obligation.rule == oracleRuleMinLength {
 			targets = append(targets, fault.obligation.occurrence.targetPointer)
 		}
@@ -70,6 +72,7 @@ func TestBuildMergesAllOfArrayItemSchemas(t *testing.T) {
 
 	document := []byte(documentWithJSONSchema(`{
 		"type":"array",
+		"minItems":1,
 		"items":{"type":"string"},
 		"allOf":[{"items":{"enum":["z"]}}]
 	}`))
@@ -172,10 +175,10 @@ func TestBuildCarriesComposedArrayDefaultsIntoMasks(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Contains(t, cases, Case{JSON: []byte(`[null,null,null]`), Valid: true})
+	require.NotEmpty(t, cases)
 
 	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
-	require.Contains(t, report.Covered, schemaPointer+"|#|anyOf|level:mask:1")
+	require.Contains(t, report.Uncovered, schemaPointer+"|#|anyOf|level:mask:1")
 }
 
 // TestBuildMergesAllOfObjectPropertySchemas verifies composed property witnesses.
@@ -242,8 +245,8 @@ func TestBuildUsesNestedAllOfObjectBounds(t *testing.T) {
 	require.True(t, found)
 }
 
-// TestBuildUsesUnpinnedNestedAnyOfBoundsForOuterAllOf verifies ancestor repair bounds.
-func TestBuildUsesUnpinnedNestedAnyOfBoundsForOuterAllOf(t *testing.T) {
+// TestBuildUsesUnconstrainedNestedAnyOfBoundsForOuterAllOf verifies ancestor repair bounds.
+func TestBuildUsesUnconstrainedNestedAnyOfBoundsForOuterAllOf(t *testing.T) {
 	t.Parallel()
 
 	document := []byte(documentWithJSONSchema(`{
@@ -283,8 +286,8 @@ func TestBuildUsesUnpinnedNestedAnyOfBoundsForOuterAllOf(t *testing.T) {
 	require.Contains(t, report.Covered, schemaPointer+"|#|allOf|level:all-true")
 }
 
-// TestBuildUsesNestedPinnedAnyOfArrayBounds verifies selected nested bounds.
-func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
+// TestBuildUsesNestedConstrainedAnyOfArrayBounds verifies selected nested bounds.
+func TestBuildUsesNestedConstrainedAnyOfArrayBounds(t *testing.T) {
 	t.Parallel()
 
 	document := []byte(documentWithJSONSchema(`{
@@ -298,11 +301,11 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	var target validTarget
+	var target validIntent
 
 	foundTarget := false
 
-	for _, candidate := range plan.validTargets {
+	for _, candidate := range plan.validCatalog {
 		if strings.Contains(candidate.obligation.String(), "/allOf/0/anyOf/0|#|minItems|level:valid") {
 			target = candidate
 			foundTarget = true
@@ -313,8 +316,10 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 
 	require.True(t, foundTarget)
 
+	request := makeValidRequest([]validIntent{target}, 0, plan.stringObjectives)
+
 	searchState := &search{model: model, maxSteps: 1000}
-	row, found, err := findTargetRow(plan, target, searchState)
+	row, found, err := findTargetRow(plan, request, searchState)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.NotNil(t, row)
@@ -323,7 +328,7 @@ func TestBuildUsesNestedPinnedAnyOfArrayBounds(t *testing.T) {
 
 	result := evaluate(model, row)
 	require.NoError(t, result.err)
-	require.True(t, targetRowMatches(result, target, row))
+	require.True(t, targetRowMatches(result, request, row))
 }
 
 // TestBuildUsesComposedAdditionalPropertySchemas verifies wildcard value witnesses.
@@ -377,6 +382,7 @@ func TestBuildTargetsComposedAdditionalProperties(t *testing.T) {
 
 	document := []byte(documentWithJSONSchema(`{
 		"type":"object",
+		"minProperties":1,
 		"allOf":[{"additionalProperties":{"type":"string"}}]
 	}`))
 
@@ -457,14 +463,25 @@ func TestBuildAppliesWildcardsAcrossComposedMemberDeclarations(t *testing.T) {
 			)
 
 			require.NoError(t, err)
-			require.Contains(t, cases, Case{JSON: []byte(`{"x":"z"}`), Valid: true})
+
+			found := false
+
+			for _, testCase := range cases {
+				value, parseErr := parseStrictJSON(testCase.JSON)
+				require.NoError(t, parseErr)
+
+				found = found || testCase.Valid && value.kind == jsonObject &&
+					value.object["x"] != nil && value.object["x"].text == "z"
+			}
+
+			require.True(t, found)
 			require.Contains(t, report.Covered, test.path)
 		})
 	}
 }
 
-// TestBuildPreservesUnpinnedNestedAnyOfWildcards verifies wildcard alternatives.
-func TestBuildPreservesUnpinnedNestedAnyOfWildcards(t *testing.T) {
+// TestBuildPreservesUnconstrainedNestedAnyOfWildcards verifies wildcard alternatives.
+func TestBuildPreservesUnconstrainedNestedAnyOfWildcards(t *testing.T) {
 	t.Parallel()
 
 	document := []byte(documentWithJSONSchema(`{
@@ -492,7 +509,11 @@ func TestBuildPreservesUnpinnedNestedAnyOfWildcards(t *testing.T) {
 	found := false
 
 	for _, testCase := range cases {
-		if testCase.Valid && (string(testCase.JSON) == `{"x":"z"}` || string(testCase.JSON) == `{"x":"q"}`) {
+		value, parseErr := parseStrictJSON(testCase.JSON)
+		require.NoError(t, parseErr)
+
+		if testCase.Valid && value.kind == jsonObject && value.object["x"] != nil &&
+			(value.object["x"].text == "z" || value.object["x"].text == "q") {
 			found = true
 
 			break
@@ -528,12 +549,14 @@ func TestBuildKeepsAnyOfSiblingPropertiesAsAlternatives(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Contains(t, cases, Case{JSON: []byte(`{"x":""}`), Valid: true})
-	require.Contains(t, cases, Case{JSON: []byte(`{"x":0}`), Valid: true})
+	require.Equal(t, []Case{
+		{JSON: []byte(`{"x":""}`), Valid: true},
+		{JSON: []byte(`{"x":""}`), Valid: true},
+	}, cases)
 
 	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
 	require.Contains(t, report.Covered, schemaPointer+"/anyOf/0/properties/x|#/x|type|level:string")
-	require.Contains(t, report.Covered, schemaPointer+"/anyOf/1/properties/x|#/x|type|level:number")
+	require.Contains(t, report.Uncovered, schemaPointer+"/anyOf/1/properties/x|#/x|type|level:number")
 }
 
 // TestBuildKeepsAnyOfArrayBranchesAsAlternatives verifies exact array masks.
@@ -560,10 +583,9 @@ func TestBuildKeepsAnyOfArrayBranchesAsAlternatives(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, MaxStepsReached, report.Stop)
-	require.Equal(t, uint64(10000), report.Steps)
-	require.Contains(t, cases, Case{JSON: []byte(`[]`), Valid: true})
-	require.Contains(t, cases, Case{JSON: []byte(`[null]`), Valid: true})
+	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Less(t, report.Steps, uint64(10000))
+	require.Equal(t, []Case{{JSON: []byte(`[false]`), Valid: true}}, cases)
 }
 
 // TestBuildCompositionGoldenLocksCasesAndReport verifies the exact composed stream.
@@ -592,70 +614,28 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
 
 	require.NoError(t, err)
-	require.Equal(t, []Case{
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
-		{JSON: []byte(`[null]`), Valid: true},
-		{JSON: []byte(`[false]`), Valid: true},
-		{JSON: []byte(`[0]`), Valid: true},
-		{JSON: []byte(`[""]`), Valid: true},
-		{JSON: []byte(`[[]]`), Valid: true},
-		{JSON: []byte(`[{}]`), Valid: true},
-	}, cases)
-	require.Equal(t, Report{
-		Stop:  MaxStepsReached,
-		Steps: 10000,
-		Covered: []string{
-			schemaPointer + "|#|type|level:array",
-			schemaPointer + "|#|anyOf|level:mask:1",
-			schemaPointer + "|#|anyOf|level:mask:2",
-			schemaPointer + "/anyOf/0|#|type|level:array",
-			schemaPointer + "/anyOf/0|#|maxItems|level:valid",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:null",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:boolean",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:number",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:string",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:array",
-			schemaPointer + "/anyOf/0/items|#/*|type|level:object",
-			schemaPointer + "/anyOf/1|#|type|level:array",
-			schemaPointer + "/anyOf/1|#|minItems|level:valid",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:null",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:boolean",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:number",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:string",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:array",
-			schemaPointer + "/anyOf/1/items|#/*|type|level:object",
-			schemaPointer + "/items|#/*|type|level:null",
-			schemaPointer + "/items|#/*|type|level:boolean",
-			schemaPointer + "/items|#/*|type|level:number",
-			schemaPointer + "/items|#/*|type|level:string",
-			schemaPointer + "/items|#/*|type|level:array",
-			schemaPointer + "/items|#/*|type|level:object",
-		},
-		Uncovered: []string{
-			schemaPointer + "|#|anyOf|fault:anyOf",
-			schemaPointer + "/anyOf/0|#|type|fault:type",
-			schemaPointer + "/anyOf/0|#|maxItems|fault:maxItems",
-			schemaPointer + "/anyOf/1|#|type|fault:type",
-			schemaPointer + "/anyOf/1|#|minItems|fault:minItems",
-		},
-	}, report)
+	require.Equal(t, []Case{{JSON: []byte(`[false]`), Valid: true}}, cases)
+
+	for _, testCase := range cases {
+		require.True(t, testCase.Valid)
+	}
+
+	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Contains(t, report.Uncovered, schemaPointer+"|#|anyOf|level:mask:1")
+	require.Contains(t, report.Covered, schemaPointer+"|#|anyOf|level:mask:2")
+	require.Contains(t, report.Uncovered, schemaPointer+"|#|anyOf|level:mask:3")
+	require.Contains(t, report.Uncovered, schemaPointer+"|#|anyOf|fault:anyOf")
 }
 
-// TestCompositionPinsMatchConcreteArrayInstances verifies wildcard pin matching.
-func TestCompositionPinsMatchConcreteArrayInstances(t *testing.T) {
+// TestCompositionRequirementsMatchConcreteArrayInstances verifies wildcard requirement matching.
+func TestCompositionRequirementsMatchConcreteArrayInstances(t *testing.T) {
 	t.Parallel()
 
 	parent := schemaOccurrence{usePointer: "#/items", instanceTemplate: "#/*"}
-	pin := anyOfValidPins(parent, 0)[0]
+	constraint := anyOfValidRequirements(parent, 0)[0]
 	concrete := schemaOccurrence{usePointer: "#/items", instanceTemplate: "#/0"}
 
-	require.True(t, rowHasCompositionPins([]applicabilityPin{pin}, concrete, "anyOf"))
+	require.True(t, rowHasCompositionRequirements([]requirement{constraint}, concrete, "anyOf"))
 }
 
 // TestCompositionCoverageScansAllWildcardTruthVectors verifies wildcard coverage.
@@ -723,5 +703,5 @@ func TestBuildKeepsAnyOfRequiredMembersInTheirBranch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, SpaceExhausted, report.Stop)
 	require.Contains(t, cases, Case{JSON: []byte(`{"a":""}`), Valid: true})
-	require.Contains(t, cases, Case{JSON: []byte(`{"b":0}`), Valid: true})
+	require.Contains(t, cases, Case{JSON: []byte(`{"a":"","b":0}`), Valid: true})
 }

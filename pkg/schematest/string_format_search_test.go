@@ -1,4 +1,4 @@
-//nolint:godoclint // Tests pin the private clean format-search seam.
+//nolint:godoclint // Tests requirement the private clean format-search seam.
 package schematest
 
 import (
@@ -151,7 +151,7 @@ func TestFindStringFaultRowDirectsFormatAndPreservesSiblingPattern(t *testing.T)
 	require.True(t, found)
 	require.Equal(t, "YQ=", row.text)
 	require.Equal(t, uint64(10), searchState.steps)
-	require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
+	require.Equal(t, identityStrings(target.expected), identityStrings(evaluate(model, row).failureRecords()))
 }
 
 func TestFindStringFaultRowDirectsRemainingFormatsAndPreservesSiblings(t *testing.T) {
@@ -205,7 +205,7 @@ func TestFindStringFaultRowDirectsRemainingFormatsAndPreservesSiblings(t *testin
 			require.True(t, found)
 			require.Equal(t, test.witness, row.text)
 			require.Equal(t, test.steps, searchState.steps)
-			require.Equal(t, identityStrings(target.closure), identityStrings(evaluate(model, row).failureRecords()))
+			require.Equal(t, identityStrings(target.expected), identityStrings(evaluate(model, row).failureRecords()))
 		})
 	}
 }
@@ -264,7 +264,7 @@ func TestPasswordAddsNoFormatObjective(t *testing.T) {
 	t.Parallel()
 
 	model, plan := parseStringFaultPlan(t, `{"type":"string","format":"password"}`)
-	for _, target := range plan.faultTargets {
+	for _, target := range plan.faultSchedule {
 		require.NotEqual(t, oracleRuleFormat, target.obligation.rule)
 	}
 

@@ -17,6 +17,22 @@ type planPointerToken struct {
 	arrayIndex uint64
 }
 
+type planOccurrenceOrderKey struct {
+	use       []planPointerToken
+	target    []planPointerToken
+	instance  []planPointerToken
+	reference bool
+}
+
+type planOrderKey struct {
+	occurrence planOccurrenceOrderKey
+	ruleRank   int
+	rule       string
+	fault      bool
+	level      uint64
+	component  string
+}
+
 // compareSchemaOccurrences applies use-site, target, instance, and reference order.
 func compareSchemaOccurrences(left, right schemaOccurrence) (int, error) {
 	comparison, err := comparePlanPointers(left.usePointer, right.usePointer, true)
@@ -57,26 +73,7 @@ func comparePlanPointers(left, right string, schemaPointer bool) (int, error) {
 		return 0, err
 	}
 
-	limit := len(leftTokens)
-	if len(rightTokens) < limit {
-		limit = len(rightTokens)
-	}
-
-	for index := 0; index < limit; index++ {
-		comparison := comparePlanPointerTokens(leftTokens[index], rightTokens[index])
-		if comparison != 0 {
-			return comparison, nil
-		}
-	}
-
-	switch {
-	case len(leftTokens) < len(rightTokens):
-		return -1, nil
-	case len(leftTokens) > len(rightTokens):
-		return 1, nil
-	default:
-		return 0, nil
-	}
+	return comparePlanPointerTokenSlices(leftTokens, rightTokens), nil
 }
 
 // comparePlanPointerTokens compares array indices numerically and object tokens by UTF-8 bytes.
@@ -158,40 +155,125 @@ func canonicalPlanArrayIndex(value string) (uint64, bool) {
 	return index, true
 }
 
-// comparePlanObligations applies occurrence, rule, level, and fault order.
-func comparePlanObligations(left, right obligation) (int, error) {
-	comparison, err := compareSchemaOccurrences(left.occurrence, right.occurrence)
-	if err != nil || comparison != 0 {
-		return comparison, err
+// makePlanOrderKey parses canonical pointer and order metadata once.
+func makePlanOrderKey(identity obligation) (*planOrderKey, error) {
+	use, err := parsePlanPointer(identity.occurrence.usePointer, true)
+	if err != nil {
+		return nil, err
 	}
 
-	leftRank := obligationRuleRank(left)
+	target, err := parsePlanPointer(identity.occurrence.targetPointer, true)
+	if err != nil {
+		return nil, err
+	}
 
-	rightRank := obligationRuleRank(right)
-	if leftRank != rightRank {
-		return compareInts(leftRank, rightRank), nil
+	instance, err := parsePlanPointer(identity.occurrence.instanceTemplate, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return &planOrderKey{
+		occurrence: planOccurrenceOrderKey{
+			use: use, target: target, instance: instance, reference: identity.occurrence.reference,
+		},
+		ruleRank:  obligationRuleRank(identity),
+		rule:      identity.rule,
+		fault:     planComponentIsFault(identity.component),
+		level:     identity.order,
+		component: identity.component,
+	}, nil
+}
+
+// comparePlanObligations applies occurrence, rule, level, and fault order.
+func comparePlanObligations(left, right obligation) (int, error) {
+	leftKey := left.orderKey
+	if leftKey == nil {
+		var err error
+
+		leftKey, err = makePlanOrderKey(left)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	rightKey := right.orderKey
+	if rightKey == nil {
+		var err error
+
+		rightKey, err = makePlanOrderKey(right)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return comparePlanOrderKeys(leftKey, rightKey), nil
+}
+
+func comparePlanOrderKeys(left, right *planOrderKey) int {
+	if comparison := comparePlanOccurrenceOrderKeys(left.occurrence, right.occurrence); comparison != 0 {
+		return comparison
+	}
+
+	if left.ruleRank != right.ruleRank {
+		return compareInts(left.ruleRank, right.ruleRank)
 	}
 
 	if left.rule != right.rule {
-		return strings.Compare(left.rule, right.rule), nil
+		return strings.Compare(left.rule, right.rule)
 	}
 
-	leftFault := planComponentIsFault(left.component)
-
-	rightFault := planComponentIsFault(right.component)
-	if leftFault != rightFault {
-		if leftFault {
-			return 1, nil
+	if left.fault != right.fault {
+		if left.fault {
+			return 1
 		}
 
-		return -1, nil
+		return -1
 	}
 
-	if left.order != right.order {
-		return compareUint64(left.order, right.order), nil
+	if left.level != right.level {
+		return compareUint64(left.level, right.level)
 	}
 
-	return strings.Compare(left.component, right.component), nil
+	return strings.Compare(left.component, right.component)
+}
+
+func comparePlanOccurrenceOrderKeys(left, right planOccurrenceOrderKey) int {
+	if comparison := comparePlanPointerTokenSlices(left.use, right.use); comparison != 0 {
+		return comparison
+	}
+
+	if comparison := comparePlanPointerTokenSlices(left.target, right.target); comparison != 0 {
+		return comparison
+	}
+
+	if comparison := comparePlanPointerTokenSlices(left.instance, right.instance); comparison != 0 {
+		return comparison
+	}
+
+	if left.reference == right.reference {
+		return 0
+	}
+
+	if left.reference {
+		return 1
+	}
+
+	return -1
+}
+
+func comparePlanPointerTokenSlices(left, right []planPointerToken) int {
+	limit := len(left)
+	if len(right) < limit {
+		limit = len(right)
+	}
+
+	for index := 0; index < limit; index++ {
+		if comparison := comparePlanPointerTokens(left[index], right[index]); comparison != 0 {
+			return comparison
+		}
+	}
+
+	return compareInts(len(left), len(right))
 }
 
 // obligationRuleRank returns an explicit family rank or the generic rule rank.
@@ -232,32 +314,6 @@ func compareRuleIdentities(left, right ruleIdentity) (int, error) {
 	}
 
 	return strings.Compare(left.rule, right.rule), nil
-}
-
-// stablePlanSort performs a stable insertion sort while preserving comparison errors.
-func stablePlanSort[T any](values []T, compare func(T, T) (int, error)) error {
-	for index := 1; index < len(values); index++ {
-		current := values[index]
-		position := index
-
-		for position > 0 {
-			comparison, err := compare(current, values[position-1])
-			if err != nil {
-				return err
-			}
-
-			if comparison >= 0 {
-				break
-			}
-
-			values[position] = values[position-1]
-			position--
-		}
-
-		values[position] = current
-	}
-
-	return nil
 }
 
 // compareInts compares two planner ranks.

@@ -1,4 +1,4 @@
-//nolint:godoclint // Fault-planning tables pin the private planner seam.
+//nolint:godoclint // Fault-planning tests requirement the private declarative seam.
 package schematest
 
 import (
@@ -7,105 +7,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMakePlanMinLengthZeroTerminates(t *testing.T) {
+func TestMakePlanCompilesTypedObjectFaultRolesWithoutWitnesses(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"anyOf":[{"minLength":0}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-	findValidTarget(t, plan, "|minLength|level:valid")
-}
-
-func TestMakePlanRetainsAnyOfObligationBeyondStringWitnessGuard(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"anyOf":[{"minLength":4097}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-	findValidTarget(t, plan, "|anyOf|level:mask:1")
-}
-
-func TestMakePlanAnyOfWitnessCountsUseExactValues(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"anyOf":[{"minLength":1000}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-	findValidTarget(t, plan, "|anyOf|level:mask:1")
-}
-
-func TestMakePlanOmitsAnyOfFaultsIncompatibleWithParentType(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"anyOf":[{"type":"string"}, {"type":"number"}]
+		"type":"object",
+		"required":["id","name"],
+		"properties":{"id":{"type":"number"},"name":{"type":"string"}},
+		"additionalProperties":false
 	}`)), OperationID: "selected"})
 	require.NoError(t, err)
 
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	for _, target := range plan.faultTargets {
-		require.NotEqual(t, oracleRuleAnyOf, target.obligation.rule)
-		require.NotContains(t, target.obligation.occurrence.usePointer, "/anyOf/")
-	}
+	required := findFaultTarget(t, plan, "|#/id|required|fault:required")
+	requireRequirement(t, required.requirements, "#/id", requirementAbsent)
+	requireRequirement(t, required.requirements, "#/name", requirementPresent)
+	requireKindRequirement(t, required.requirements, model.root.occurrence, jsonObject)
+	require.Equal(t, failureSet{failureIdentity(required.obligation.ruleIdentity)}, required.expected)
+	require.Nil(t, required.alternatives)
+
+	additional := findFaultTarget(t, plan, "|#/*|additionalProperties|fault:additionalProperties")
+	requireRequirement(t, additional.requirements, "#/*", requirementPresent)
+	requireKindRequirement(t, additional.requirements, model.root.occurrence, jsonObject)
+	require.Equal(t, failureSet{failureIdentity(additional.obligation.ruleIdentity)}, additional.expected)
+	require.Nil(t, additional.alternatives)
 }
 
-func TestMakePlanAnyOfUsesWitnessBeyondExclusiveNumberBound(t *testing.T) {
+func TestMakePlanCompilesNestedAnyOfClosureDomainsWithoutInheritedKindRequirements(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"anyOf":[{"type":"number","minimum":5,"exclusiveMinimum":true}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-	findValidTarget(t, plan, "|anyOf|level:mask:1")
-}
-
-func TestMakePlanDirectedFaultsUseTheirOwnAnyOfApplicability(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"pattern":"^z$",
-		"anyOf":[{"pattern":"^z$"}, {"pattern":"^y$"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|pattern|fault:pattern")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
-}
-
-func TestMakePlanMaxLengthFaultUsesExactAnyOfApplicability(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"maxLength":0,
+		"allOf":[{"type":"string"}],
 		"anyOf":[
-			{"type":"string","pattern":"^z$","maxLength":0},
-			{"type":"string","pattern":"^q$"}
+			{"allOf":[{"type":"number"}]},
+			{"type":"boolean","enum":[true,false]}
 		]
 	}`)), OperationID: "selected"})
 	require.NoError(t, err)
@@ -113,293 +50,33 @@ func TestMakePlanMaxLengthFaultUsesExactAnyOfApplicability(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	fault := findFaultTarget(t, plan, "|maxLength|fault:maxLength")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
-}
-
-func TestMakePlanTypeFaultUsesWrongKindAnyOfApplicability(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"anyOf":[{"type":"number"}, {"type":"string"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|type|fault:type")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, true)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, false)
-}
-
-func TestFaultCandidateSupportsKindRejectsConflictingSameInstancePins(t *testing.T) {
-	t.Parallel()
-
-	occurrence := schemaOccurrence{usePointer: "#/branch", instanceTemplate: "#"}
-	candidate := faultTarget{pins: []applicabilityPin{
-		kindPin(occurrence, jsonString),
-		kindPin(occurrence, jsonNumber),
-	}}
-
-	branch := &schemaNode{schemaShape: &schemaShape{}}
-	require.False(t, faultCandidateSupportsKind(candidate, branch, occurrence, jsonString))
-}
-
-func TestMakePlanPreservesNestedAllOfFaultsInAnyOfAggregate(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"anyOf":[{"allOf":[{"type":"number"}]}, {"type":"number"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
 	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
-	require.Equal(t, []string{
-		aggregate.obligation.ruleIdentity.String(),
-		aggregate.obligation.occurrence.usePointer + "/anyOf/0/allOf/0|#|type",
-		aggregate.obligation.occurrence.usePointer + "/anyOf/1|#|type",
-	}, identityStrings(aggregate.closure))
-	requireKindPin(t, aggregate.pins, aggregate.obligation.occurrence, jsonString)
+	require.Equal(t, failureSet{failureIdentity(aggregate.obligation.ruleIdentity)}, aggregate.expected)
+	requireNoKindRequirement(t, aggregate.requirements, aggregate.obligation.occurrence)
+	requireCompositionRequirement(t, aggregate.requirements, "anyOf", 0, false)
+	requireCompositionRequirement(t, aggregate.requirements, "anyOf", 1, false)
+
+	first := aggregate.alternatives
+	require.NotNil(t, first)
+	require.NotNil(t, first.alternatives)
+	require.Contains(t, identityStrings(first.alternatives.expected),
+		aggregate.obligation.occurrence.usePointer+"/anyOf/0/allOf/0|#|type")
+
+	second := first.next
+	require.NotNil(t, second)
+	require.NotNil(t, second.alternatives)
+	require.Contains(t, identityStrings(second.alternatives.expected),
+		aggregate.obligation.occurrence.usePointer+"/anyOf/1|#|type")
+	require.NotNil(t, second.alternatives.next, "every branch-local fault remains an alternative")
+	require.Nil(t, second.next)
 }
 
-func TestMakePlanAnyOfAggregateUsesInheritedKindPins(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"allOf":[{"type":"string"}],
-		"anyOf":[{"type":"number"}, {"type":"boolean"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
-	requireKindPin(t, aggregate.pins, aggregate.obligation.occurrence, jsonString)
-	requireCompositionPin(t, aggregate.pins, "anyOf", 0, false)
-	requireCompositionPin(t, aggregate.pins, "anyOf", 1, false)
-	require.Equal(t, []string{
-		aggregate.obligation.ruleIdentity.String(),
-		aggregate.obligation.occurrence.usePointer + "/anyOf/0|#|type",
-		aggregate.obligation.occurrence.usePointer + "/anyOf/1|#|type",
-	}, identityStrings(aggregate.closure))
-}
-
-func TestMakePlanMaximumFaultUsesDirectedBoundWitness(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"number",
-		"maximum":100,
-		"anyOf":[{"type":"number"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|maximum|fault:maximum")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, true)
-	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
-}
-
-func TestMakePlanRequiredFaultsPopulateUnaffectedSiblings(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"object",
-		"required":["id","name"],
-		"anyOf":[{}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	idFault := findFaultTarget(t, plan, "|#/id|required|fault:required")
-	requirePin(t, idFault.pins, "#/id", planPinAbsent)
-	requirePin(t, idFault.pins, "#/name", planPinPresent)
-	requireCompositionPin(t, idFault.pins, "anyOf", 0, true)
-
-	nameFault := findFaultTarget(t, plan, "|#/name|required|fault:required")
-	requirePin(t, nameFault.pins, "#/name", planPinAbsent)
-	requirePin(t, nameFault.pins, "#/id", planPinPresent)
-	requireCompositionPin(t, nameFault.pins, "anyOf", 0, true)
-}
-
-func TestMakePlanEnumFaultUsesStringOutsideCannedEnum(t *testing.T) {
+func TestMakePlanCompilesOptionalAnyOfClosureRequirements(t *testing.T) {
 	t.Parallel()
 
 	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
 		"type":"string",
-		"enum":["","a","b","text"]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|enum|fault:enum")
-	requireKindPin(t, fault.pins, fault.obligation.occurrence, jsonString)
-	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
-}
-
-func TestMakePlanOmitsContradictoryAnyOfScalarLevel(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"anyOf":[{"minLength":2,"maxLength":1}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	for _, target := range plan.validTargets {
-		require.NotEqual(t, "|anyOf|level:mask:1", target.obligation.String())
-	}
-}
-
-func TestMakePlanAdditionalPropertyFaultUsesAnAddedMemberAnyOfMask(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"object",
-		"additionalProperties":false,
-		"anyOf":[{"type":"object","additionalProperties":false}, {"type":"object"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|#/*|additionalProperties|fault:additionalProperties")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
-}
-
-func TestMakePlanAdditionalPropertyWitnessAvoidsAuthoredName(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"object",
-		"properties":{"__schematest_extra__":{"type":"boolean"},"a":{"type":"string"}},
-		"additionalProperties":false,
-		"anyOf":[{"type":"object","additionalProperties":false}, {"type":"object"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|#/*|additionalProperties|fault:additionalProperties")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
-}
-
-func TestMakePlanRequiredFaultUsesAnOmittedMemberAnyOfMask(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"object",
-		"required":["id"],
-		"anyOf":[{"required":["id"]}, {"type":"object"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|#/id|required|fault:required")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
-}
-
-func TestMakePlanEnumFaultUsesNullableKindWhenSiblingRulesExhaustStrings(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"nullable":true,
-		"enum":[""],
-		"maxLength":0
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|enum|fault:enum")
-	requireKindPin(t, fault.pins, fault.obligation.occurrence, jsonNull)
-	require.Equal(t, []string{fault.obligation.ruleIdentity.String()}, identityStrings(fault.closure))
-}
-
-func TestMakePlanOmitsExhaustiveNullableBooleanEnumFault(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"boolean",
-		"nullable":true,
-		"enum":[false,true,null]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	for _, target := range plan.faultTargets {
-		require.NotEqual(t, oracleRuleEnum, target.obligation.rule)
-	}
-}
-
-func TestMakePlanEnumFaultPinsTheDeclaredKind(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"enum":["ok"]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|enum|fault:enum")
-	requireKindPin(t, fault.pins, fault.obligation.occurrence, jsonString)
-}
-
-func TestMakePlanIntegerTypeFaultUsesFractionalAnyOfApplicability(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"integer",
-		"anyOf":[{"type":"integer"}, {"type":"number"}]
-	}`)), OperationID: "selected"})
-	require.NoError(t, err)
-
-	plan, err := makePlan(model)
-	require.NoError(t, err)
-
-	fault := findFaultTarget(t, plan, "|type|fault:type")
-	requireCompositionPin(t, fault.pins, "anyOf", 0, false)
-	requireCompositionPin(t, fault.pins, "anyOf", 1, true)
-}
-
-func TestMakePlanFaultClosureDoesNotIncludeInapplicableLocalRules(t *testing.T) {
-	t.Parallel()
-
-	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
-		"type":"string",
-		"minLength":1,
-		"format":"date"
+		"anyOf":[{"pattern":"^a$"},{"pattern":"^b$"}]
 	}`)), OperationID: "selected"})
 	require.NoError(t, err)
 
@@ -407,5 +84,59 @@ func TestMakePlanFaultClosureDoesNotIncludeInapplicableLocalRules(t *testing.T) 
 	require.NoError(t, err)
 
 	typeFault := findFaultTarget(t, plan, "|type|fault:type")
-	require.Equal(t, []string{typeFault.obligation.ruleIdentity.String()}, identityStrings(typeFault.closure))
+	require.NotNil(t, typeFault.alternatives)
+	preserved := typeFault.alternatives.alternatives
+	require.NotNil(t, preserved)
+	require.Empty(t, preserved.requirements)
+
+	closed := preserved.next
+	require.NotNil(t, closed)
+	requireCompositionRequirement(t, closed.requirements, "anyOf", 0, false)
+	requireCompositionRequirement(t, closed.requirements, "anyOf", 1, false)
+}
+
+func TestMakePlanKeepsSymbolicAggregateWithEmptyBranchDomain(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{}, {"type":"string"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	require.NotNil(t, aggregate.alternatives)
+	require.Nil(t, aggregate.alternatives.alternatives)
+	require.NotNil(t, aggregate.alternatives.next)
+	require.NotNil(t, aggregate.alternatives.next.alternatives)
+}
+
+func TestMakePlanRetainsFaultsWithoutFiniteRealizabilityProof(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"boolean",
+		"nullable":true,
+		"enum":[false,true,null],
+		"anyOf":[{"minLength":2,"maxLength":1}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	findFaultTarget(t, plan, "|type|fault:type")
+	findFaultTarget(t, plan, "|enum|fault:enum")
+	findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	findValidTarget(t, plan, "|anyOf|level:mask:1")
+}
+
+func requireNoKindRequirement(t *testing.T, requirements []requirement, occurrence schemaOccurrence) {
+	t.Helper()
+
+	for _, requirement := range requirements {
+		require.False(t, requirement.hasKind && rowOccurrenceMatches(requirement.occurrence, occurrence), requirements)
+	}
 }

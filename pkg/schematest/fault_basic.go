@@ -6,7 +6,7 @@ import (
 	"math/big"
 )
 
-// errFaultNotFound leaves an unrealizable planned fault uncovered.
+// errFaultNotFound leaves a planned fault without an isolated derivative uncovered.
 var errFaultNotFound = errors.New("schematest: planned fault has no isolated derivative")
 
 // streamBasicFaults visits supported faults in planner order.
@@ -16,8 +16,12 @@ func streamBasicFaults(
 	covered map[string]bool,
 	yield func(Case) error,
 ) (StopReason, error) {
-	for _, fault := range plan.faultTargets {
-		if err := streamBasicFault(plan, fault, s, covered, yield); err != nil {
+	for _, index := range plan.faultExecution {
+		if index < 0 || index >= len(plan.faultSchedule) {
+			return "", errors.New("schematest: invalid fault execution order")
+		}
+
+		if err := streamBasicFault(plan, plan.faultSchedule[index], s, covered, yield); err != nil {
 			if errors.Is(err, errMaxSteps) {
 				return MaxStepsReached, nil
 			}
@@ -30,13 +34,20 @@ func streamBasicFaults(
 }
 
 // streamBasicFault replays, applies, verifies, and emits one fault derivative.
+//
+//nolint:cyclop // Every error and uncovered outcome remains explicit at the streaming boundary.
 func streamBasicFault(
 	plan *searchPlan,
-	fault faultTarget,
+	fault faultProgram,
 	s *search,
 	covered map[string]bool,
 	yield func(Case) error,
 ) error {
+	// R4 only compiles aggregate closure domains. R7 owns their charged runtime cursor.
+	if fault.alternatives != nil {
+		return nil
+	}
+
 	parent, found, err := regenerateParent(plan, fault, s)
 	if err != nil || !found {
 		return err
@@ -56,9 +67,9 @@ func streamBasicFault(
 		return fmt.Errorf("evaluate fault derivative: %w", result.err)
 	}
 
-	matches, err := exactFailureClosure(result.failureRecords(), fault.closure)
+	matches, err := faultFailureClosureMatches(result.failureRecords(), fault)
 	if err != nil {
-		return fmt.Errorf("compare fault closure: %w", err)
+		return fmt.Errorf("compare fault expected: %w", err)
 	}
 
 	if result.valid || !matches {
@@ -76,7 +87,7 @@ func streamBasicFault(
 }
 
 // regenerateParent replays row search for one fresh, complete oracle-valid parent.
-func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValue, bool, error) {
+func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonValue, bool, error) {
 	if plan == nil {
 		return nil, false, errors.New("schematest: nil search plan")
 	}
@@ -85,7 +96,7 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 		return nil, false, errors.New("schematest: parent replay has no model")
 	}
 
-	parentPins := parentReplayPins(fault)
+	parentRequirements := parentReplayRequirements(fault)
 
 	var parent *jsonValue
 
@@ -95,7 +106,7 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 			return false, fmt.Errorf("evaluate regenerated parent: %w", result.err)
 		}
 
-		if !result.valid || !faultPinsMatch(result, value, parentPins) {
+		if !result.valid || !faultRequirementsMatch(result, value, parentRequirements) {
 			return false, nil
 		}
 
@@ -107,7 +118,7 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 	complete, err := s.walkNode(
 		s.model.root,
 		s.model.root.occurrence,
-		parentPins,
+		parentRequirements,
 		rowSearchContext{},
 		visit,
 	)
@@ -118,55 +129,56 @@ func regenerateParent(plan *searchPlan, fault faultTarget, s *search) (*jsonValu
 	return parent, complete, nil
 }
 
-// parentReplayPins turns mutation-result presence into valid-parent presence.
+// parentReplayRequirements turns mutation-result presence into valid-parent presence.
 //
-//nolint:cyclop // Presence, type, and enum faults translate distinct pin dimensions.
-func parentReplayPins(fault faultTarget) []applicabilityPin {
-	pins := copyPlanPins(fault.pins)
-	for index := range pins {
-		if pins[index].hasBranch {
-			if pins[index].composition == "anyOf" {
-				pins[index].hasBranch = false
+//nolint:cyclop // Presence, type, and enum faults translate distinct requirement dimensions.
+func parentReplayRequirements(fault faultProgram) []requirement {
+	requirements := copyPlanRequirements(fault.requirements)
+	for index := range requirements {
+		if requirements[index].hasBranch {
+			if requirements[index].composition == "anyOf" {
+				requirements[index].hasBranch = false
 			} else {
-				pins[index].truth = true
+				requirements[index].truth = true
 			}
 		}
 
-		for _, failure := range fault.closure {
+		for _, failure := range fault.expected {
 			if !instanceTemplateMatches(
 				failure.occurrence.instanceTemplate,
-				pins[index].occurrence.instanceTemplate,
+				requirements[index].occurrence.instanceTemplate,
 			) {
 				continue
 			}
 
 			switch failure.rule {
 			case oracleRuleRequired:
-				pins[index].presence = planPinPresent
+				requirements[index].presence = requirementPresent
 			case oracleRuleAdditionalProperties:
-				pins[index].presence = planPinAbsent
+				requirements[index].presence = requirementAbsent
 			case oracleRuleType:
-				pins[index].hasKind = false
+				requirements[index].hasKind = false
 			case oracleRuleEnum:
-				if rowOccurrenceMatches(pins[index].occurrence, failure.occurrence) {
-					pins[index].hasKind = false
+				if rowOccurrenceMatches(requirements[index].occurrence, failure.occurrence) {
+					requirements[index].hasKind = false
 				}
 			}
 		}
 	}
 
-	return pins
+	return requirements
 }
 
-// faultPinsMatch requires every fault-applicability precondition on a valid parent.
-func faultPinsMatch(result evaluation, value *jsonValue, pins []applicabilityPin) bool {
-	for _, pin := range pins {
+// faultRequirementsMatch requires every fault-applicability precondition on a valid parent.
+func faultRequirementsMatch(result evaluation, value *jsonValue, requirements []requirement) bool {
+	for _, requirement := range requirements {
 		switch {
-		case pin.presence != planPinNoPresence && !pin.canonical && !presencePinWasSatisfied(value, pin):
+		case requirement.presence != requirementNoPresence && !requirement.canonical &&
+			!presenceRequirementWasSatisfied(value, requirement):
 			return false
-		case pin.hasKind && !kindWasObserved(result.observedRecords(), pin.occurrence, pin.kind):
+		case requirement.hasKind && !kindWasObserved(result.observedRecords(), requirement.occurrence, requirement.kind):
 			return false
-		case pin.hasBranch && !branchTruthWasObserved(result, pin):
+		case requirement.hasBranch && !branchTruthWasObserved(result, requirement):
 			return false
 		}
 	}
@@ -175,7 +187,7 @@ func faultPinsMatch(result evaluation, value *jsonValue, pins []applicabilityPin
 }
 
 // applyFault copies the current parent, charges one fault choice, and applies one fault.
-func applyFault(parent *jsonValue, fault faultTarget, s *search) (*jsonValue, error) {
+func applyFault(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, error) {
 	if faultNeedsCompositionSearch(fault) {
 		return applyCompositionFault(parent, fault, s)
 	}

@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRowScalarValuesConsumeLargeComposedEnumLinearly pins direct admitted-member consumption.
-func TestRowScalarValuesConsumeLargeComposedEnumLinearly(t *testing.T) {
+// TestRowScalarValueSourceStopsBeforeTraversingLargeComposition locks lazy first assignment.
+func TestRowScalarValueSourceStopsBeforeTraversingLargeComposition(t *testing.T) {
 	t.Parallel()
 
 	const memberCount = 20_000
@@ -25,22 +25,49 @@ func TestRowScalarValuesConsumeLargeComposedEnumLinearly(t *testing.T) {
 	alternative := &schemaNode{schemaShape: &schemaShape{anyOf: []*schemaNode{leaf}}}
 	root := &schemaNode{schemaShape: &schemaShape{allOf: []*schemaNode{alternative}}}
 
-	values, err := rowScalarValues(root, jsonString)
-	require.NoError(t, err)
-	canonical, err := canonicalKindWitnesses(jsonString)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(values), len(canonical)+memberCount)
+	count := 0
+	err := rowScalarValueSource(root, jsonString)(func(value *jsonValue) bool {
+		count++
 
-	for index := range memberCount {
-		require.Same(t, members[index].value, values[len(canonical)+index])
-	}
+		require.Equal(t, "", value.text)
 
-	again, err := rowScalarValues(root, jsonString)
+		return false
+	})
 	require.NoError(t, err)
-	require.Equal(t, values, again)
+	require.Equal(t, 1, count)
 }
 
-// TestSearchSeedUsesLockedDomainAndFields pins the shared private seed contract.
+// TestRowAndFaultCandidateSourcesStopBeforeUnrequestedComposition proves first-choice laziness.
+func TestRowAndFaultCandidateSourcesStopBeforeUnrequestedComposition(t *testing.T) {
+	t.Parallel()
+
+	node := &schemaNode{schemaShape: &schemaShape{
+		defaultValue: &jsonValue{kind: jsonString, text: "first"},
+		anyOf:        []*schemaNode{nil},
+	}}
+
+	rowCount := 0
+	err := rowScalarValueSource(node, jsonString)(func(*jsonValue) bool {
+		rowCount++
+
+		return false
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, rowCount)
+
+	faultCount := 0
+	err = canonicalEnumFaultWitnesses(node, jsonString)(func(value *jsonValue) bool {
+		faultCount++
+
+		require.Equal(t, "first", value.text)
+
+		return false
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, faultCount)
+}
+
+// TestSearchSeedUsesLockedDomainAndFields requirements the shared private seed contract.
 func TestSearchSeedUsesLockedDomainAndFields(t *testing.T) {
 	t.Parallel()
 

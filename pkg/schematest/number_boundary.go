@@ -16,7 +16,7 @@ const (
 // errNumberEdgeStop ends metadata replay without exposing a search error.
 var errNumberEdgeStop = errors.New("schematest: stop numeric edge metadata")
 
-// numberSchedule is the exact numeric conjunction for one pinned composition view.
+// numberSchedule is the exact numeric conjunction for one constrained composition view.
 type numberSchedule struct {
 	rules   []activeNumberRule
 	quantum *exactNumber
@@ -532,38 +532,6 @@ func addSignedExactNumbers(left, right *exactNumber, sign int64) (*exactNumber, 
 	}
 
 	return addExactNumbers(left, negative)
-}
-
-// numberDeterministicCandidates collects the finite schedule for focused golden tests.
-func numberDeterministicCandidates(node *schemaNode) ([]*jsonValue, error) {
-	schedule, err := newNumberSchedule([]activeNumberRule{{node: node}})
-	if err != nil {
-		return nil, err
-	}
-
-	state := &search{maxSteps: ^uint64(0)}
-	candidates := make([]*jsonValue, 0)
-
-	_, err = state.walkNumberDeterministic(schedule, func(value *jsonValue) (bool, error) {
-		candidates = append(candidates, value)
-
-		return false, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return candidates, nil
-}
-
-// numberBoundaryQuantum returns one for integer schemas and the finest authored numeric unit otherwise.
-func numberBoundaryQuantum(node *schemaNode) (*exactNumber, error) {
-	schedule, err := newNumberSchedule([]activeNumberRule{{node: node}})
-	if err != nil {
-		return nil, err
-	}
-
-	return schedule.quantum, nil
 }
 
 // addExactNumbers adds scaled rationals without binary floating point or fixed-width exponents.

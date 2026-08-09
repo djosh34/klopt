@@ -74,8 +74,8 @@ type basicStringProduct struct {
 }
 
 type basicStringLengthObjective struct {
-	length uint64
-	pinned bool
+	length      uint64
+	constrained bool
 }
 
 type basicStringLengths struct {
@@ -130,14 +130,14 @@ func (lengths basicStringLengths) allows(length uint64) bool {
 
 // each streams exact rune-length assignments without retaining the fair frontier.
 //
-//nolint:cyclop // Pinned, boundary, and fair phases share exact first-occurrence deduplication.
+//nolint:cyclop // Constrained, boundary, and fair phases share exact first-occurrence deduplication.
 func (lengths basicStringLengths) each(
 	product *basicStringProduct,
 	objective basicStringLengthObjective,
 	visit func(uint64) bool,
 ) {
 	special := make([]uint64, 0, len(lengths.boundaries)+1)
-	if objective.pinned {
+	if objective.constrained {
 		special = append(special, objective.length)
 	}
 

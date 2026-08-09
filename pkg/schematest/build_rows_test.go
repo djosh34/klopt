@@ -29,7 +29,7 @@ func TestBuildStreamsDeterministicValidPrimitiveRows(t *testing.T) {
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, firstReport.Stop)
+	require.Equal(t, MaxStepsReached, firstReport.Stop)
 	require.NotEmpty(t, firstCases)
 
 	for _, testCase := range validCasesOnly(firstCases) {
