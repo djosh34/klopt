@@ -60,35 +60,347 @@ func (frontier *liveProjectionFrontier) Close() {
 	}
 }
 
-// rowArrayLengthAt rebuilds one emitted length ordinal through the production cursor.
-func rowArrayLengthAt(
+// directRankTupleDecoder resumes one directly addressed canonical tuple component by component.
+type directRankTupleDecoder struct {
+	dimensions int
+	dimension  int
+	remaining  uint64
+	ordinal    uint64
+}
+
+// newDirectRankTupleDecoder directly addresses one tuple without replaying earlier tuples.
+//
+//nolint:mnd // Saturating exponential and binary searches decode one ordinal without prefix replay.
+func newDirectRankTupleDecoder(dimensions int, wanted uint64) (*directRankTupleDecoder, bool) {
+	if dimensions <= 0 {
+		return nil, false
+	}
+
+	diagonal := uint64(0)
+
+	low, high := uint64(0), uint64(1)
+	for saturatedRankTupleCount(high, dimensions) <= wanted && high < ^uint64(0) {
+		low = high + 1
+		if high > (^uint64(0)-1)/2 {
+			high = ^uint64(0)
+		} else {
+			high = high*2 + 1
+		}
+	}
+
+	for low <= high {
+		middle := low + (high-low)/2
+		if saturatedRankTupleCount(middle, dimensions) <= wanted {
+			low = middle + 1
+		} else {
+			diagonal = middle
+			if middle == 0 {
+				break
+			}
+
+			high = middle - 1
+		}
+	}
+
+	before := uint64(0)
+	if diagonal > 0 {
+		before = saturatedRankTupleCount(diagonal-1, dimensions)
+	}
+
+	return &directRankTupleDecoder{
+		dimensions: dimensions,
+		remaining:  diagonal,
+		ordinal:    wanted - before,
+	}, true
+}
+
+// Next returns the next component of the directly addressed tuple.
+func (decoder *directRankTupleDecoder) Next() (uint64, bool) {
+	if decoder == nil || decoder.dimension >= decoder.dimensions {
+		return 0, false
+	}
+
+	if decoder.dimension+1 == decoder.dimensions {
+		decoder.dimension++
+
+		return decoder.remaining, true
+	}
+
+	for rank := uint64(0); rank <= decoder.remaining; rank++ {
+		count := saturatedWeakCompositionCount(
+			decoder.remaining-rank, decoder.dimensions-decoder.dimension-1,
+		)
+		if decoder.ordinal < count {
+			decoder.remaining -= rank
+			decoder.dimension++
+
+			return rank, true
+		}
+
+		decoder.ordinal -= count
+	}
+
+	return 0, false
+}
+
+// saturatedRankTupleCount counts tuples through one diagonal without overflow.
+func saturatedRankTupleCount(diagonal uint64, dimensions int) uint64 {
+	if diagonal > ^uint64(0)-uint64(dimensions) {
+		return ^uint64(0)
+	}
+
+	return saturatedBinomial(diagonal+uint64(dimensions), uint64(dimensions))
+}
+
+// saturatedWeakCompositionCount counts tuples on exactly one diagonal.
+func saturatedWeakCompositionCount(sum uint64, dimensions int) uint64 {
+	if dimensions == 1 {
+		return 1
+	}
+
+	addend := uint64(dimensions) - 1
+	if sum > ^uint64(0)-addend {
+		return ^uint64(0)
+	}
+
+	return saturatedBinomial(sum+addend, addend)
+}
+
+// saturatedBinomial computes one binomial coefficient without uint64 wraparound.
+func saturatedBinomial(total uint64, selected uint64) uint64 {
+	if selected > total {
+		return 0
+	}
+
+	if total-selected < selected {
+		selected = total - selected
+	}
+
+	result := uint64(1)
+
+	for index := uint64(1); index <= selected; index++ {
+		factor := total - selected + index
+		if result > ^uint64(0)/factor {
+			return ^uint64(0)
+		}
+
+		result = result * factor / index
+	}
+
+	return result
+}
+
+// rowSourceValueRanksAtOrdinal decodes a source-bounded source/value product tuple.
+//
+//nolint:mnd // Binary search directly locates one source-bounded diagonal.
+func rowSourceValueRanksAtOrdinal(sourceCount uint64, wanted uint64) (uint64, uint64, bool) {
+	if sourceCount == 0 {
+		return 0, 0, false
+	}
+
+	low, high := uint64(0), wanted
+	for low <= high {
+		middle := low + (high-low)/2
+		if saturatedSourceValueTupleCount(sourceCount, middle) <= wanted {
+			low = middle + 1
+		} else if middle == 0 {
+			break
+		} else {
+			high = middle - 1
+		}
+	}
+
+	diagonal := low
+
+	before := uint64(0)
+	if diagonal > 0 {
+		before = saturatedSourceValueTupleCount(sourceCount, diagonal-1)
+	}
+
+	sourceRank := wanted - before
+	if sourceRank >= sourceCount || sourceRank > diagonal {
+		return 0, 0, false
+	}
+
+	return sourceRank, diagonal - sourceRank, true
+}
+
+// saturatedSourceValueTupleCount counts source-bounded tuples through one diagonal.
+//
+//nolint:mnd // Triangular and rectangular tuple counts use their defining factor.
+func saturatedSourceValueTupleCount(sourceCount uint64, diagonal uint64) uint64 {
+	if diagonal < sourceCount {
+		left := diagonal + 1
+		if left > ^uint64(0)/(diagonal+2) {
+			return ^uint64(0)
+		}
+
+		return left * (diagonal + 2) / 2
+	}
+
+	if sourceCount == ^uint64(0) {
+		return ^uint64(0)
+	}
+
+	if sourceCount > ^uint64(0)/(sourceCount+1) {
+		return ^uint64(0)
+	}
+
+	base := sourceCount * (sourceCount + 1) / 2
+
+	extra := diagonal - sourceCount + 1
+	if extra > (^uint64(0)-base)/sourceCount {
+		return ^uint64(0)
+	}
+
+	return base + extra*sourceCount
+}
+
+// rowArrayLengthForOrdinal directly decodes one emitted length rank from finite named guidance.
+//
+//nolint:cyclop,gocognit,gocyclo // Named guidance deduplication and numeric unranking form one decoder.
+func rowArrayLengthForOrdinal(
 	view rowProjectionView,
 	requirements []requirement,
 	wanted uint64,
 ) (rowArrayCount, bool, uint64, error) {
 	cursor, err := newRowArrayLengthCursor(view, requirements)
-	if err != nil {
+	if err != nil || cursor.infeasible {
 		return rowArrayCount{}, false, 0, err
 	}
 
-	if cursor.infeasible {
-		return rowArrayCount{}, false, 0, nil
+	emitted := uint64(0)
+	namedCount := uint64(0)
+
+	visitNamed := func(candidate rowArrayCount, phase uint8, directRank uint64) (bool, error) {
+		cursor.directRank = directRank
+
+		seen, seenErr := cursor.seenBefore(candidate, phase)
+		if seenErr != nil || seen {
+			return false, seenErr
+		}
+
+		namedCount++
+
+		if emitted == wanted {
+			return true, nil
+		}
+
+		emitted++
+
+		return false, nil
 	}
 
-	for ordinal := uint64(0); ; ordinal++ {
-		length, ok, nextErr := cursor.Next()
-		if nextErr != nil {
-			return rowArrayCount{}, false, 0, nextErr
+	for rank := uint64(0); ; rank++ {
+		candidate, exists, directErr := rowDirectArrayLengthAt(view, rank)
+		if directErr != nil {
+			return rowArrayCount{}, false, 0, directErr
 		}
 
-		if !ok {
-			return rowArrayCount{}, false, ordinal, nil
+		if !exists {
+			break
 		}
 
-		if ordinal == wanted {
-			return length, true, 0, nil
+		selected, visitErr := visitNamed(candidate, arrayLengthDirect, rank+1)
+		if visitErr != nil {
+			return rowArrayCount{}, false, 0, visitErr
+		}
+
+		if selected {
+			return candidate, true, 0, nil
 		}
 	}
+
+	fixed := []struct {
+		phase uint8
+		count rowArrayCount
+		set   bool
+	}{
+		{arrayLengthExact, cursor.exact, cursor.hasExact},
+		{arrayLengthMinimum, cursor.minimum, true},
+		{arrayLengthMaximum, cursor.maximum, cursor.hasMaximum},
+	}
+	for _, candidate := range fixed {
+		if !candidate.set {
+			continue
+		}
+
+		selected, visitErr := visitNamed(candidate.count, candidate.phase, ^uint64(0))
+		if visitErr != nil {
+			return rowArrayCount{}, false, 0, visitErr
+		}
+
+		if selected {
+			return candidate.count, true, 0, nil
+		}
+	}
+
+	numericRank := wanted - emitted
+	candidateValue := numericRank
+
+	for iteration := uint64(0); iteration <= namedCount; iteration++ {
+		beforeOrEqual := uint64(0)
+		countNamed := func(candidate rowArrayCount, phase uint8, directRank uint64) error {
+			cursor.directRank = directRank
+
+			seen, seenErr := cursor.seenBefore(candidate, phase)
+			if seenErr != nil || seen || candidate.beyond || candidate.value > candidateValue {
+				return seenErr
+			}
+
+			beforeOrEqual++
+
+			return nil
+		}
+
+		for rank := uint64(0); ; rank++ {
+			direct, exists, directErr := rowDirectArrayLengthAt(view, rank)
+			if directErr != nil {
+				return rowArrayCount{}, false, 0, directErr
+			}
+
+			if !exists {
+				break
+			}
+
+			if countErr := countNamed(direct, arrayLengthDirect, rank+1); countErr != nil {
+				return rowArrayCount{}, false, 0, countErr
+			}
+		}
+
+		for _, named := range fixed {
+			if named.set {
+				if countErr := countNamed(named.count, named.phase, ^uint64(0)); countErr != nil {
+					return rowArrayCount{}, false, 0, countErr
+				}
+			}
+		}
+
+		if ^uint64(0)-numericRank < beforeOrEqual {
+			return rowArrayCount{}, false, 0, errors.New("schematest: array length rank overflow")
+		}
+
+		next := numericRank + beforeOrEqual
+		if next == candidateValue {
+			break
+		}
+
+		candidateValue = next
+	}
+
+	candidate := rowArrayCount{value: candidateValue}
+	if cursor.hasMaximum {
+		comparison, compareErr := rowArrayCountsCompare(candidate, cursor.maximum)
+		if compareErr != nil {
+			return rowArrayCount{}, false, 0, compareErr
+		}
+
+		if comparison > 0 {
+			return rowArrayCount{}, false, wanted, nil
+		}
+	}
+
+	return candidate, true, 0, nil
 }
 
 // rowProjectionHasExactCount reports whether this view has directed array count guidance.
@@ -195,7 +507,7 @@ func (s *search) rowSourceValueAt(
 
 // rowConjunctionValueAt returns one raw source/value rank and validates it for free.
 //
-//nolint:cyclop,gocognit,gocyclo,mnd,nestif // Enum and generated sources share one rank-addressable adapter.
+//nolint:cyclop,gocognit,nestif // Enum and generated sources share one rank-addressable adapter.
 func (s *search) rowConjunctionValueAt(
 	conjunction rowSchemaConjunction,
 	requirements []requirement,
@@ -276,88 +588,39 @@ func (s *search) rowConjunctionValueAt(
 		sourceCount = 1
 	}
 
-	frontier, err := newRankProductCursor(2)
-	if err != nil {
+	sourceRank, valueRank, ok := rowSourceValueRanksAtOrdinal(uint64(sourceCount), wanted)
+	if !ok {
+		return nil, false, false, wanted, nil
+	}
+
+	if err := s.assign(); err != nil {
 		return nil, false, false, 0, err
 	}
 
-	if err := frontier.SetFinite(0, uint64(sourceCount)); err != nil {
-		return nil, false, false, 0, err
+	var source *rowSchemaSource
+	if len(conjunction.sources) > 0 {
+		source = &conjunction.sources[sourceRank]
 	}
 
-	var ordinal uint64
-
-	for {
-		ranks, ok := frontier.Next()
-		if !ok {
-			return nil, false, false, ordinal, nil
-		}
-
-		if err := s.assign(); err != nil {
-			return nil, false, false, 0, err
-		}
-
-		var source *rowSchemaSource
-		if len(conjunction.sources) > 0 {
-			source = &conjunction.sources[ranks[0]]
-		}
-
-		value, exists, _, valueErr := s.rowSourceValueAt(
-			source, requirements, context, ranks[1],
-		)
-		if valueErr != nil {
-			return nil, false, false, 0, valueErr
-		}
-
-		if !exists {
-			allFinite := len(conjunction.sources) == 0 || sourceCount == 1
-			if sourceCount > 1 {
-				allFinite = true
-
-				for index := range conjunction.sources {
-					_, candidateOK, size, candidateErr := s.rowSourceValueAt(
-						&conjunction.sources[index], requirements, context, ranks[1],
-					)
-					if candidateErr != nil {
-						return nil, false, false, 0, candidateErr
-					}
-
-					if candidateOK || size > ranks[1] {
-						allFinite = false
-
-						break
-					}
-				}
-			}
-
-			if allFinite {
-				if setErr := frontier.SetFinite(1, ranks[1]); setErr != nil {
-					return nil, false, false, 0, setErr
-				}
-			}
-
-			continue
-		}
-
-		if ordinal != wanted {
-			ordinal++
-
-			continue
-		}
-
-		usable, usableErr := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
-		if usableErr != nil {
-			return nil, false, false, 0, usableErr
-		}
-
-		return value, true, usable, 0, nil
+	value, exists, finiteSize, valueErr := s.rowSourceValueAt(
+		source, requirements, context, valueRank,
+	)
+	if valueErr != nil || !exists {
+		return nil, false, false, finiteSize, valueErr
 	}
+
+	usable, usableErr := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
+	if usableErr != nil {
+		return nil, false, false, 0, usableErr
+	}
+
+	return value, true, usable, 0, nil
 }
 
-// rowArrayChildrenAt rebuilds one diagonal tuple while extending position state only after charge.
+// rowArrayChildrenForOrdinal rebuilds one diagonal tuple while extending position state only after charge.
 //
-//nolint:cyclop,gocognit // Component endpoints and incremental transient reconstruction are one operation.
-func (s *search) rowArrayChildrenAt(
+//nolint:cyclop // Component endpoints and incremental transient reconstruction are one operation.
+func (s *search) rowArrayChildrenForOrdinal(
 	structure rankedArrayStructure,
 	requirements []requirement,
 	context rowSearchContext,
@@ -379,128 +642,42 @@ func (s *search) rowArrayChildrenAt(
 		return nil, false, false, 1, nil
 	}
 
+	if structure.length.value > uint64(^uint(0)>>1) {
+		return nil, false, false, 0, errors.New("schematest: array item rank dimension overflow")
+	}
+
+	decoder, ok := newDirectRankTupleDecoder(int(structure.length.value), wanted)
+	if !ok {
+		return nil, false, false, 0, nil
+	}
+
 	items := rowProjectedArrayItems(structure.view, requirements)
+	values := []*jsonValue(nil)
+	usable := true
 
-	var (
-		ranks      []uint64
-		diagonal   uint64
-		finiteSize uint64
-		finite     bool
-		ordinal    uint64
-	)
-
-	for {
-		values := []*jsonValue(nil)
-		tupleExists, tupleUsable := true, true
-
-		for position := uint64(0); position < structure.length.value; position++ {
-			if err := s.assign(); err != nil {
-				return nil, false, false, 0, err
-			}
-
-			if position == uint64(len(ranks)) {
-				ranks = append(ranks, 0)
-			}
-
-			value, exists, usable, size, valueErr := s.rowConjunctionValueAt(
-				items, requirements, context, ranks[position],
-			)
-			if valueErr != nil {
-				return nil, false, false, 0, valueErr
-			}
-
-			if !exists {
-				tupleExists = false
-
-				if finite && finiteSize != size {
-					return nil, false, false, 0, errors.New("schematest: array item rank endpoint changed")
-				}
-
-				finite, finiteSize = true, size
-
-				break
-			}
-
-			tupleUsable = tupleUsable && usable
-
-			values = append(values, value)
+	for position := uint64(0); position < structure.length.value; position++ {
+		if err := s.assign(); err != nil {
+			return nil, false, false, 0, err
 		}
 
-		if tupleExists {
-			if ordinal == wanted {
-				return values, true, tupleUsable, 0, nil
-			}
-
-			ordinal++
+		rank, rankExists := decoder.Next()
+		if !rankExists {
+			return nil, false, false, 0, errors.New("schematest: array item rank tuple ended early")
 		}
 
-		if !advanceArrayRankTuple(ranks, &diagonal, finite, finiteSize) {
-			return nil, false, false, ordinal, nil
+		value, exists, valueUsable, size, valueErr := s.rowConjunctionValueAt(
+			items, requirements, context, rank,
+		)
+		if valueErr != nil || !exists {
+			return nil, false, false, size, valueErr
 		}
-	}
-}
 
-// advanceArrayRankTuple preserves rankProductCursor order without authored-length allocation.
-//
-//nolint:cyclop,gocognit // Incrementing, finite bounds, and tuple-fit checks are one cursor operation.
-func advanceArrayRankTuple(ranks []uint64, diagonal *uint64, finite bool, finiteSize uint64) bool {
-	if len(ranks) == 0 || finite && finiteSize == 0 {
-		return false
+		usable = usable && valueUsable
+
+		values = append(values, value)
 	}
 
-	for {
-		last := len(ranks) - 1
-		advanced := false
-
-		for index := last - 1; index >= 0; index-- {
-			var suffix uint64
-			for _, rank := range ranks[index+1:] {
-				suffix += rank
-			}
-
-			if suffix == 0 {
-				continue
-			}
-
-			ranks[index]++
-			clear(ranks[index+1 : last])
-			ranks[last] = suffix - 1
-			advanced = true
-
-			break
-		}
-
-		if !advanced {
-			if *diagonal == ^uint64(0) {
-				return false
-			}
-
-			if finite && finiteSize > 0 && *diagonal >= uint64(len(ranks))*(finiteSize-1) {
-				return false
-			}
-
-			*diagonal++
-
-			clear(ranks)
-			ranks[last] = *diagonal
-		}
-
-		fits := true
-
-		if finite {
-			for _, rank := range ranks {
-				if rank >= finiteSize {
-					fits = false
-
-					break
-				}
-			}
-		}
-
-		if fits {
-			return true
-		}
-	}
+	return values, true, usable, 0, nil
 }
 
 // rowDirectArrayValueAt returns the authored full witness paired with one direct length rank.
@@ -550,7 +727,7 @@ func (s *search) rowArrayProjectionCandidate(
 	childRank uint64,
 	lengthRank uint64,
 ) (*jsonValue, bool, bool, error) {
-	length, exists, _, err := rowArrayLengthAt(view, active, lengthRank)
+	length, exists, _, err := rowArrayLengthForOrdinal(view, active, lengthRank)
 	if err != nil || !exists {
 		return nil, false, false, err
 	}
@@ -561,7 +738,7 @@ func (s *search) rowArrayProjectionCandidate(
 
 	structure := rankedArrayStructure{view: view, active: active, length: length}
 
-	values, childExists, usable, _, err := s.rowArrayChildrenAt(
+	values, childExists, usable, _, err := s.rowArrayChildrenForOrdinal(
 		structure, active, context, childRank,
 	)
 	if err != nil || !childExists {
@@ -726,10 +903,8 @@ type rankedObjectStructure struct {
 	extraCount uint64
 }
 
-// rowObjectPresenceAt enumerates one forward presence state without recursive prefixes.
-//
-//nolint:cyclop // Forward feasibility and finite choice endpoints form one presence adapter.
-func rowObjectPresenceAt(
+// rowObjectPresenceForOrdinal enumerates one forward presence state without recursive prefixes.
+func rowObjectPresenceForOrdinal(
 	shape *rowProjectedObject,
 	requirements []requirement,
 	wanted uint64,
@@ -744,68 +919,45 @@ func rowObjectPresenceAt(
 		return []bool{}, extras, feasible, 0, nil
 	}
 
-	frontier, err := newRankProductCursor(len(shape.members))
-	if err != nil {
-		return nil, 0, false, 0, err
+	decoder, ok := newDirectRankTupleDecoder(len(shape.members), wanted)
+	if !ok {
+		return nil, 0, false, 0, nil
 	}
 
-	var emitted uint64
+	present := make([]bool, 0)
+	presentCount := uint64(0)
+	remainingRequired := shape.requiredFrom(0)
 
-	for {
-		ranks, ok := frontier.Next()
-		if !ok {
-			return nil, 0, false, emitted, nil
+	for index, member := range shape.members {
+		if member.required {
+			remainingRequired--
 		}
 
-		present := make([]bool, len(shape.members))
-		presentCount := uint64(0)
-		remainingRequired := shape.requiredFrom(0)
-		usable := true
+		constraint, constrained := rowPresenceRequirementDetails(requirements, member.occurrence)
 
-		for index, member := range shape.members {
-			if member.required {
-				remainingRequired--
-			}
+		choices := projectedMemberPresenceChoices(
+			shape, member, constraint, constrained, presentCount, remainingRequired,
+		)
 
-			constraint, constrained := rowPresenceRequirementDetails(requirements, member.occurrence)
-
-			choices := projectedMemberPresenceChoices(
-				shape, member, constraint, constrained, presentCount, remainingRequired,
-			)
-			if ranks[index] >= uint64(len(choices)) {
-				usable = false
-
-				if setErr := frontier.SetFinite(index, uint64(len(choices))); setErr != nil {
-					return nil, 0, false, 0, setErr
-				}
-
-				break
-			}
-
-			choice := choices[ranks[index]]
-			if !projectedPresenceFeasible(shape, index, choice, presentCount, remainingRequired) {
-				usable = false
-
-				break
-			}
-
-			present[index] = choice
-			if choice {
-				presentCount++
-			}
+		rank, rankExists := decoder.Next()
+		if !rankExists || rank >= uint64(len(choices)) {
+			return nil, 0, false, wanted, nil
 		}
 
-		extras, feasible := projectedObjectExtraCount(shape, presentCount)
-		if !usable || !feasible {
-			continue
+		choice := choices[rank]
+		if !projectedPresenceFeasible(shape, index, choice, presentCount, remainingRequired) {
+			return nil, 0, false, wanted, nil
 		}
 
-		if emitted == wanted {
-			return present, extras, true, 0, nil
+		present = append(present, choice)
+		if choice {
+			presentCount++
 		}
-
-		emitted++
 	}
+
+	extras, feasible := projectedObjectExtraCount(shape, presentCount)
+
+	return present, extras, feasible, 0, nil
 }
 
 // projectedObjectExtraCount computes only the selected transient repair count.
@@ -880,10 +1032,8 @@ func (s *search) rowObjectMembersForStructure(structure rankedObjectStructure) (
 	return members, nil
 }
 
-// rowObjectChildrenAt rebuilds one diagonal tuple in canonical member occurrence order.
-//
-//nolint:cyclop // Component endpoints and transient reconstruction form one product operation.
-func (s *search) rowObjectChildrenAt(
+// rowObjectChildrenForOrdinal rebuilds one diagonal tuple in canonical member occurrence order.
+func (s *search) rowObjectChildrenForOrdinal(
 	members []rowMember,
 	requirements []requirement,
 	context rowSearchContext,
@@ -897,59 +1047,37 @@ func (s *search) rowObjectChildrenAt(
 		return nil, false, false, 1, nil
 	}
 
-	frontier, err := newRankProductCursor(len(members))
-	if err != nil {
-		return nil, false, false, 0, err
+	decoder, ok := newDirectRankTupleDecoder(len(members), wanted)
+	if !ok {
+		return nil, false, false, 0, nil
 	}
 
-	var ordinal uint64
+	values := make([]*jsonValue, 0, len(members))
+	usable := true
 
-	for {
-		ranks, ok := frontier.Next()
-		if !ok {
-			return nil, false, false, ordinal, nil
+	for index := range members {
+		if err := s.assign(); err != nil {
+			return nil, false, false, 0, err
 		}
 
-		values := make([]*jsonValue, 0, len(members))
-		tupleExists, tupleUsable := true, true
-
-		for index, rank := range ranks {
-			if err := s.assign(); err != nil {
-				return nil, false, false, 0, err
-			}
-
-			value, exists, usable, finiteSize, valueErr := s.rowConjunctionValueAt(
-				members[index].schemas, requirements, context, rank,
-			)
-			if valueErr != nil {
-				return nil, false, false, 0, valueErr
-			}
-
-			if !exists {
-				tupleExists = false
-
-				if setErr := frontier.SetFinite(index, finiteSize); setErr != nil {
-					return nil, false, false, 0, setErr
-				}
-
-				break
-			}
-
-			tupleUsable = tupleUsable && usable
-
-			values = append(values, value)
+		rank, rankExists := decoder.Next()
+		if !rankExists {
+			return nil, false, false, 0, errors.New("schematest: object child rank tuple ended early")
 		}
 
-		if !tupleExists {
-			continue
+		value, exists, valueUsable, finiteSize, valueErr := s.rowConjunctionValueAt(
+			members[index].schemas, requirements, context, rank,
+		)
+		if valueErr != nil || !exists {
+			return nil, false, false, finiteSize, valueErr
 		}
 
-		if ordinal == wanted {
-			return values, true, tupleUsable, 0, nil
-		}
+		usable = usable && valueUsable
 
-		ordinal++
+		values = append(values, value)
 	}
+
+	return values, true, usable, 0, nil
 }
 
 // rowDirectObjectValueAt returns one complete authored object witness by rank.
@@ -1000,7 +1128,7 @@ func (s *search) rowObjectProjectionCandidate(
 	childRank uint64,
 	presenceRank uint64,
 ) (*jsonValue, bool, bool, error) {
-	present, extras, exists, _, err := rowObjectPresenceAt(shape, active, presenceRank)
+	present, extras, exists, _, err := rowObjectPresenceForOrdinal(shape, active, presenceRank)
 	if err != nil || !exists {
 		return nil, false, false, err
 	}
@@ -1014,7 +1142,7 @@ func (s *search) rowObjectProjectionCandidate(
 		return nil, false, false, err
 	}
 
-	values, childExists, usable, _, err := s.rowObjectChildrenAt(
+	values, childExists, usable, _, err := s.rowObjectChildrenForOrdinal(
 		members, active, context, childRank,
 	)
 	if err != nil || !childExists {

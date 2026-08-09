@@ -120,11 +120,59 @@ func TestArrayChildRanksAdvanceDiagonally(t *testing.T) {
 	var tuples [][]bool
 
 	for rank := uint64(0); rank < 3; rank++ {
-		values, ok, usable, _, childErr := searchState.rowArrayChildrenAt(
+		values, ok, usable, _, childErr := searchState.rowArrayChildrenForOrdinal(
 			structure, nil, rowSearchContext{}, rank,
 		)
 		require.NoError(t, childErr)
 		require.True(t, ok)
+		require.True(t, usable)
+
+		tuples = append(tuples, []bool{values[0].boolean, values[1].boolean})
+	}
+
+	require.Equal(t, [][]bool{{false, false}, {false, true}, {true, false}}, tuples)
+}
+
+// TestObjectComponentRanksAdvanceDiagonally locks direct presence and child tuple decoding.
+func TestObjectComponentRanksAdvanceDiagonally(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object","additionalProperties":false,
+		"properties":{"x":{"enum":[false,true]},"y":{"enum":[false,true]}}
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view, ok, err := rowProjectionAt(model.root, model.root.occurrence, nil, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	shape, err := newRowProjectedObject(view, nil, model.root.occurrence)
+	require.NoError(t, err)
+
+	var states [][]bool
+
+	for rank := uint64(0); rank < 3; rank++ {
+		present, _, exists, _, presenceErr := rowObjectPresenceForOrdinal(shape, nil, rank)
+		require.NoError(t, presenceErr)
+		require.True(t, exists)
+
+		states = append(states, present)
+	}
+
+	require.Equal(t, [][]bool{{false, false}, {false, true}, {true, false}}, states)
+
+	members := shape.members
+	searchState := &search{model: model, maxSteps: 1000}
+
+	var tuples [][]bool
+
+	for rank := uint64(0); rank < 3; rank++ {
+		values, exists, usable, _, childErr := searchState.rowObjectChildrenForOrdinal(
+			members, nil, rowSearchContext{}, rank,
+		)
+		require.NoError(t, childErr)
+		require.True(t, exists)
 		require.True(t, usable)
 
 		tuples = append(tuples, []bool{values[0].boolean, values[1].boolean})
@@ -208,12 +256,12 @@ func TestRowArrayLengthAtKeepsDirectGuidanceAheadOfExact(t *testing.T) {
 		tag: requirementExactCount, occurrence: model.root.occurrence, count: model.root.minItems,
 	}}
 
-	first, ok, _, err := rowArrayLengthAt(view, requirements, 0)
+	first, ok, _, err := rowArrayLengthForOrdinal(view, requirements, 0)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, uint64(2), first.value)
 
-	second, ok, _, err := rowArrayLengthAt(view, requirements, 1)
+	second, ok, _, err := rowArrayLengthForOrdinal(view, requirements, 1)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, uint64(1), second.value)

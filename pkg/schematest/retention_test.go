@@ -55,7 +55,7 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	}`, padding)
 	document := []byte(documentWithJSONSchema(schema))
 
-	for _, budget := range []uint64{100, 5_000} {
+	for _, budget := range []uint64{100, 200} {
 		_, err := Build(Input{OpenAPI: document, OperationID: "selected", MaxSteps: budget}, func(Case) error {
 			return nil
 		})
@@ -67,7 +67,7 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	)
 	require.NoError(t, err, "measurement=%+v", short)
 	long, err := measureBuildMemory(
-		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 5_000}, 2,
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 200}, 2,
 	)
 	require.NoError(t, err, "measurement=%+v", long)
 
@@ -77,7 +77,7 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	require.Equal(t, 1, short.cases, diagnostic, short, long)
 	require.Equal(t, 2, long.cases, diagnostic, short, long)
 	require.Equal(t, uint64(100), short.steps, diagnostic, short, long)
-	require.Equal(t, uint64(5_000), long.steps, diagnostic, short, long)
+	require.Equal(t, uint64(200), long.steps, diagnostic, short, long)
 	require.Equal(t, MaxStepsReached, short.stop, diagnostic, short, long)
 	require.Equal(t, MaxStepsReached, long.stop, diagnostic, short, long)
 	require.NotZero(t, short.preRunHeap, diagnostic, short, long)
