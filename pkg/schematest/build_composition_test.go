@@ -244,7 +244,7 @@ func TestBuildMergesAllOfObjectPropertySchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, SpaceExhausted, report.Stop)
 	require.NotEmpty(t, cases)
 	require.Contains(t, cases, Case{JSON: []byte(`{"x":"z"}`), Valid: true})
 }

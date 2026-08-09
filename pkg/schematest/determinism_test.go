@@ -157,11 +157,10 @@ func TestBuildCutoffsChargeBeforeEveryAssignmentPhase(t *testing.T) {
 	}
 	cases, report, err := collectDeterministicRun(boolean, nil)
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
 	require.Equal(t, uint64(5), report.Steps)
 	require.Equal(t, []Case{
 		{JSON: []byte("false"), Valid: true},
-		{JSON: []byte("null"), Valid: false},
 	}, cases)
 }
 

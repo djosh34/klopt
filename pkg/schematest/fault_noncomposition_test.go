@@ -143,6 +143,21 @@ func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {
 	}
 }
 
+func TestComposedEnumFaultPreservesSiblingType(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{"allOf":[{"type":"string"},{"enum":["ok",7]}]}`)
+	fault := findFaultTarget(t, plan, "/allOf/1|#|enum|fault:enum")
+	searchState := &search{model: model, maxSteps: 10_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `""`, string(marshalFaultTestValue(t, derivative)))
+}
+
 func TestBuildTypeFaultUsesActiveSiblingEnumWitness(t *testing.T) {
 	t.Parallel()
 
@@ -335,6 +350,84 @@ func TestBuildFindsActiveConjunctionFaultWitnesses(t *testing.T) {
 			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
 		})
 	}
+}
+
+func TestScalarFaultSearchPreservesComposedPropertySiblings(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"required":["x"],
+		"allOf":[
+			{"properties":{"x":{"type":"string","pattern":"^[a-b]$"}}},
+			{"properties":{"x":{"pattern":"^[b-c]$"}}}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "/allOf/0/properties/x|#/x|pattern|fault:pattern")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	beforeMutation := searchState.steps
+	searchState.maxSteps = beforeMutation + 12
+	derivative, err := applyFault(parent, fault, searchState)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, derivative)
+	require.Equal(t, searchState.maxSteps, searchState.steps)
+
+	searchState = &search{model: model, maxSteps: 100_000}
+	parent, found, err = regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	beforeMutation = searchState.steps
+	derivative, err = applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `{"x":"c"}`, string(marshalFaultTestValue(t, derivative)))
+	require.Equal(t, uint64(13), searchState.steps-beforeMutation)
+}
+
+func TestStringEnumFaultUsesOpenScalarFrontier(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"string",
+		"enum":["","a","b","text"]
+	}`)
+	fault := findFaultTarget(t, plan, "|enum|fault:enum")
+	searchState := &search{model: model, maxSteps: 10_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	matches, err := derivativeHasClosure(model, derivative, fault.expected)
+	require.NoError(t, err)
+	require.True(t, matches)
+	require.NotContains(t, []string{`""`, `"a"`, `"b"`, `"text"`}, string(marshalFaultTestValue(t, derivative)))
+}
+
+func TestNumericEnumFaultUsesOpenScalarFrontier(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"number",
+		"enum":[-1,0,0.5,1,2,3]
+	}`)
+	fault := findFaultTarget(t, plan, "|enum|fault:enum")
+	searchState := &search{model: model, maxSteps: 10_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	matches, err := derivativeHasClosure(model, derivative, fault.expected)
+	require.NoError(t, err)
+	require.True(t, matches)
+	require.NotContains(t, []string{"-1", "0", "0.5", "1", "2", "3"}, string(marshalFaultTestValue(t, derivative)))
 }
 
 func TestBuildTypelessNumericFormatFaults(t *testing.T) {

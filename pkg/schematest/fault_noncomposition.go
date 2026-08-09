@@ -55,9 +55,9 @@ func findNonCompositionDerivative(parent *jsonValue, fault faultProgram, s *sear
 
 	switch fault.obligation.rule {
 	case oracleRuleType:
-		return findTypeDerivative(parent, fault, node, s.model, s)
+		return findTypeDerivative(parent, fault, s)
 	case oracleRuleEnum:
-		return findEnumDerivative(parent, fault, node, s.model, s)
+		return findEnumDerivative(parent, fault, s)
 	case oracleRuleMinimum, oracleRuleExclusiveMinimum, oracleRuleMaximum,
 		oracleRuleExclusiveMaximum, oracleRuleMultipleOf:
 		return findNumberDerivative(parent, fault, s)
@@ -87,146 +87,100 @@ func formatHasNumericSemantics(format schemaFormat) bool {
 	}
 }
 
-//nolint:cyclop // Seeded witnesses and active-conjunction fallback share one search.
 func findTypeDerivative(
 	parent *jsonValue,
 	fault faultProgram,
-	node *schemaNode,
-	model *schemaModel,
 	s *search,
 ) (*jsonValue, bool, error) {
-	withoutLocalType := schemaNodeWithoutLocalRule(node, oracleRuleType)
+	return findKindDirectedDerivative(parent, fault, oracleRuleType, s)
+}
+
+func findEnumDerivative(
+	parent *jsonValue,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
+	return findKindDirectedDerivative(parent, fault, oracleRuleEnum, s)
+}
+
+func findKindDirectedDerivative(
+	parent *jsonValue,
+	fault faultProgram,
+	rule string,
+	s *search,
+) (*jsonValue, bool, error) {
+	root := cloneWithoutFaultRule(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, rule,
+	)
+
+	_, containerOccurrence, found := resolveFaultValueContainer(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence,
+	)
+	if !found {
+		return nil, false, fmt.Errorf(
+			"schematest: %s fault target was not found: %s", rule, fault.obligation.String(),
+		)
+	}
+
 	for _, kind := range canonicalJSONKinds() {
-		if !typeFaultCanUseKind(node, kind) {
+		if instanceTemplateMatches(
+			fault.obligation.occurrence.instanceTemplate,
+			s.model.root.occurrence.instanceTemplate,
+		) && !activeSchemaAllowsKind(
+			root, s.model.root.occurrence, fault.requirements, kind, make(map[*schemaNode]bool),
+		) {
 			continue
 		}
 
-		seeded := canonicalAnyOfWitnesses(withoutLocalType, kind)
-
-		derivative, found, seedErr := firstReplacementDerivative(parent, fault, seeded, model, s)
-		if seedErr != nil || found {
-			return derivative, found, seedErr
-		}
-
-		container, occurrence, found := resolveFaultValueContainer(
-			model.root, model.root.occurrence, fault.obligation.occurrence,
+		directed := fault
+		directed.requirements = appendPlanRequirements(
+			copyPlanRequirements(fault.requirements),
+			kindRequirement(containerOccurrence, kind),
 		)
-		if !found {
-			continue
+
+		if rule == oracleRuleEnum {
+			derivative, matched, err := findProjectedScalarDerivative(parent, directed, root, kind, s)
+			if err != nil || matched {
+				return derivative, matched, err
+			}
 		}
 
-		withoutType := cloneWithoutFaultRule(container, occurrence, fault.obligation.occurrence, oracleRuleType)
-		if !activeSchemaAllowsKind(withoutType, occurrence, fault.requirements, kind, make(map[*schemaNode]bool)) {
-			continue
-		}
-
-		derivative = nil
-
-		complete, err := s.walkNode(
-			withoutType, occurrence, fault.requirements, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
-				selected, matched, selectErr := firstReplacementDerivative(
-					parent, fault, singleJSONValueSource(candidate), model, s,
-				)
-				if selectErr != nil || !matched {
-					return false, selectErr
-				}
-
-				derivative = selected
-
-				return true, nil
-			},
-		)
-		if err != nil || complete {
-			return derivative, complete, err
+		derivative, matched, err := findScalarDerivativeFromRows(parent, directed, root, s)
+		if err != nil || matched {
+			return derivative, matched, err
 		}
 	}
 
 	return nil, false, nil
 }
 
-//nolint:cyclop // Active-kind pruning and projected witness fallback share one fault search.
-func findEnumDerivative(
+func findProjectedScalarDerivative(
 	parent *jsonValue,
 	fault faultProgram,
-	node *schemaNode,
-	model *schemaModel,
+	root *schemaNode,
+	kind jsonKind,
 	s *search,
 ) (*jsonValue, bool, error) {
-	for _, kind := range enumFaultKinds(node) {
-		if !activeSchemaAllowsKind(
-			model.root, model.root.occurrence, fault.requirements, kind, make(map[*schemaNode]bool),
-		) {
-			continue
+	cursor := newRowProjectionCursor(root, s.model.root.occurrence, fault.requirements)
+	defer cursor.Close()
+
+	for {
+		view, ok, err := cursor.Next()
+		if err != nil || !ok {
+			return nil, false, err
 		}
 
-		seeded := canonicalEnumFaultWitnesses(node, kind)
-
-		derivative, found, seedErr := firstReplacementDerivative(parent, fault, seeded, model, s)
-		if seedErr != nil || found {
-			return derivative, found, seedErr
+		projected := func(yield func(*jsonValue) bool) error {
+			return view.eachDirectValue(func(_ rowSchemaSource, value *jsonValue) bool {
+				return value.kind != kind || yield(value)
+			})
 		}
 
-		container, occurrence, found := resolveFaultContainer(
-			model.root, model.root.occurrence, fault.obligation.occurrence, kind,
-		)
-		if !found {
-			continue
-		}
-
-		cursor := newRowProjectionCursor(container, occurrence, fault.requirements)
-		for {
-			view, ok, projectionErr := cursor.Next()
-			if projectionErr != nil {
-				cursor.Close()
-
-				return nil, false, projectionErr
-			}
-
-			if !ok {
-				break
-			}
-
-			projected := func(yield func(*jsonValue) bool) error {
-				return view.eachDirectValue(func(_ rowSchemaSource, value *jsonValue) bool {
-					return value.kind != kind || yield(value)
-				})
-			}
-
-			projectedDerivative, found, projectedErr := firstReplacementDerivative(
-				parent, fault, projected, model, s,
-			)
-			if projectedErr != nil || found {
-				cursor.Close()
-
-				return projectedDerivative, found, projectedErr
-			}
-		}
-
-		cursor.Close()
-
-		withoutEnum := cloneWithoutFaultRule(container, occurrence, fault.obligation.occurrence, oracleRuleEnum)
-		derivative = nil
-
-		complete, err := s.walkNode(
-			withoutEnum, occurrence, fault.requirements, rowSearchContext{}, func(candidate *jsonValue) (bool, error) {
-				selected, matched, selectErr := firstReplacementDerivative(
-					parent, fault, singleJSONValueSource(candidate), model, s,
-				)
-				if selectErr != nil || !matched {
-					return false, selectErr
-				}
-
-				derivative = selected
-
-				return true, nil
-			},
-		)
-		if err != nil || complete {
-			return derivative, complete, err
+		derivative, matched, err := firstReplacementDerivative(parent, fault, projected, s.model, s)
+		if err != nil || matched {
+			return derivative, matched, err
 		}
 	}
-
-	return nil, false, nil
 }
 
 //nolint:cyclop // Local, allOf, and constrained anyOf kind constraints form one conjunction.
@@ -284,6 +238,7 @@ func activeSchemaAllowsKind(
 	return false
 }
 
+//nolint:cyclop // Structural and composition children use one identity-preserving clone traversal.
 func cloneWithoutFaultRule(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -296,16 +251,47 @@ func cloneWithoutFaultRule(
 
 	shape := *node.schemaShape
 
+	if node.items != nil {
+		childOccurrence := rebasePlanOccurrence(
+			node.items, occurrence, occurrence.usePointer+"/items",
+			appendInstanceToken(occurrence.instanceTemplate, "*"),
+		)
+		if faultTargetWithin(target, childOccurrence) {
+			shape.items = cloneWithoutFaultRule(node.items, childOccurrence, target, rule)
+		}
+	}
+
+	shape.properties = make(map[string]*schemaNode, len(node.properties))
+	for name, child := range node.properties {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence, occurrence.usePointer+"/properties/"+escapePointerToken(name),
+			appendInstanceToken(occurrence.instanceTemplate, name),
+		)
+		if faultTargetWithin(target, childOccurrence) {
+			child = cloneWithoutFaultRule(child, childOccurrence, target, rule)
+		}
+
+		shape.properties[name] = child
+	}
+
+	if node.additionalProperties != nil {
+		childOccurrence := rebasePlanOccurrence(
+			node.additionalProperties, occurrence, occurrence.usePointer+"/additionalProperties",
+			appendInstanceToken(occurrence.instanceTemplate, "*"),
+		)
+		if faultTargetWithin(target, childOccurrence) {
+			shape.additionalProperties = cloneWithoutFaultRule(
+				node.additionalProperties, childOccurrence, target, rule,
+			)
+		}
+	}
+
 	shape.allOf = append([]*schemaNode(nil), node.allOf...)
 	for index, child := range node.allOf {
 		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
+			child, occurrence, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if target.usePointer == childOccurrence.usePointer ||
-			strings.HasPrefix(target.usePointer, childOccurrence.usePointer+"/") {
+		if faultTargetWithin(target, childOccurrence) {
 			shape.allOf[index] = cloneWithoutFaultRule(child, childOccurrence, target, rule)
 		}
 	}
@@ -313,18 +299,19 @@ func cloneWithoutFaultRule(
 	shape.anyOf = append([]*schemaNode(nil), node.anyOf...)
 	for index, child := range node.anyOf {
 		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/anyOf/"+itoa(index),
-			occurrence.instanceTemplate,
+			child, occurrence, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
 		)
-		if target.usePointer == childOccurrence.usePointer ||
-			strings.HasPrefix(target.usePointer, childOccurrence.usePointer+"/") {
+		if faultTargetWithin(target, childOccurrence) {
 			shape.anyOf[index] = cloneWithoutFaultRule(child, childOccurrence, target, rule)
 		}
 	}
 
 	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}
+}
+
+func faultTargetWithin(target, candidate schemaOccurrence) bool {
+	return rowInstancePrefixMatches(candidate.instanceTemplate, target.instanceTemplate) &&
+		(target.usePointer == candidate.usePointer || strings.HasPrefix(target.usePointer, candidate.usePointer+"/"))
 }
 
 func findNumberDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
@@ -338,7 +325,12 @@ func findNumberDerivative(parent *jsonValue, fault faultProgram, s *search) (*js
 	var derivative *jsonValue
 
 	complete, err := s.walkActiveNumberRules(
-		container, occurrence, fault.requirements, nil, func(candidate *jsonValue) (bool, error) {
+		container,
+		occurrence,
+		fault.requirements,
+		nil,
+		&fault,
+		func(candidate *jsonValue) (bool, error) {
 			selected, matched, selectErr := firstReplacementDerivative(
 				parent, fault, singleJSONValueSource(candidate), s.model, s,
 			)
@@ -359,12 +351,89 @@ func findNumberDerivative(parent *jsonValue, fault faultProgram, s *search) (*js
 }
 
 func findStringDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
-	candidate, found, err := findStringFaultRow(fault, s)
-	if err != nil || !found {
+	node, occurrence, found := resolveStringFaultTarget(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence,
+	)
+	if !found {
+		return nil, false, fmt.Errorf("schematest: string fault target was not found: %s", fault.obligation.String())
+	}
+
+	objective := scalarFaultStringObjective(&fault, node, occurrence)
+	if objective == nil {
+		return nil, false, fmt.Errorf("schematest: %s is not a string fault", fault.obligation.rule)
+	}
+
+	var derivative *jsonValue
+
+	_, complete, err := s.walkDirectedStringObjective(
+		node,
+		occurrence,
+		fault.requirements,
+		objective,
+		func(candidate *jsonValue) (bool, error) {
+			selected, matched, selectErr := firstReplacementDerivative(
+				parent, fault, singleJSONValueSource(candidate), s.model, s,
+			)
+			if selectErr != nil || !matched {
+				return false, selectErr
+			}
+
+			derivative = selected
+
+			return true, nil
+		},
+	)
+	if err != nil {
 		return nil, false, err
 	}
 
-	return firstReplacementDerivative(parent, fault, singleJSONValueSource(candidate), s.model, s)
+	return derivative, complete, nil
+}
+
+// findScalarDerivativeFromRows obtains replacement values from the ordinary
+// complete-row scalar search while directing only the selected rule false.
+func findScalarDerivativeFromRows(
+	parent *jsonValue,
+	fault faultProgram,
+	root *schemaNode,
+	s *search,
+) (*jsonValue, bool, error) {
+	var derivative *jsonValue
+
+	complete, err := s.walkNode(
+		root,
+		s.model.root.occurrence,
+		fault.requirements,
+		rowSearchContext{scalarFault: &fault},
+		func(candidateRow *jsonValue) (bool, error) {
+			for _, path := range matchingValuePaths(candidateRow, fault.obligation.occurrence.instanceTemplate) {
+				candidate := valueAtPath(candidateRow, path)
+				if candidate == nil {
+					continue
+				}
+
+				selected, matched, selectErr := firstReplacementDerivative(
+					parent, fault, singleJSONValueSource(candidate), s.model, s,
+				)
+				if selectErr != nil {
+					return false, selectErr
+				}
+
+				if matched {
+					derivative = selected
+
+					return true, nil
+				}
+			}
+
+			return false, nil
+		},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return derivative, complete, nil
 }
 
 //nolint:cyclop // Charging, copying, replacement, and matching share one lazy candidate boundary.

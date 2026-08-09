@@ -38,7 +38,7 @@ func TestRegenerateParentAndApplyBasicTypeFault(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, `null`, string(marshalFaultTestValue(t, derivative)))
 	require.Equal(t, `""`, string(marshalFaultTestValue(t, secondParent)))
-	require.Equal(t, uint64(5), searchState.steps)
+	require.Equal(t, uint64(7), searchState.steps)
 
 	result := evaluate(model, derivative)
 	require.False(t, result.valid)
@@ -81,7 +81,7 @@ func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {
 	var cases []Case
 
 	report, err := Build(
-		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 5},
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 7},
 		func(generated Case) error {
 			cases = append(cases, generated)
 
@@ -94,7 +94,7 @@ func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {
 		{JSON: []byte(`null`), Valid: false},
 	}, cases)
 	require.Equal(t, SpaceExhausted, report.Stop)
-	require.Equal(t, uint64(5), report.Steps)
+	require.Equal(t, uint64(7), report.Steps)
 	require.Empty(t, report.Uncovered)
 }
 
@@ -103,7 +103,7 @@ func TestBuildDiscardsBasicFaultAtCutoff(t *testing.T) {
 
 	document := []byte(documentWithJSONSchema(`{"type":"string"}`))
 
-	for _, maxSteps := range []uint64{3, 4} {
+	for _, maxSteps := range []uint64{3, 4, 5, 6} {
 		var cases []Case
 
 		report, err := Build(

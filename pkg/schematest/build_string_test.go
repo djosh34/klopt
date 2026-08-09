@@ -36,7 +36,7 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 	}, firstCases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 92,
+		Steps: 95,
 		Covered: []string{
 			schemaPointer + "|#|type|level:string",
 			schemaPointer + "|#|type|fault:type",
@@ -317,7 +317,7 @@ func TestBuildReachesSurrogatePairForDirectedBMPComplement(t *testing.T) {
 		steps  uint64
 	}{
 		{
-			name: "one rune", length: 1, steps: 193,
+			name: "one rune", length: 1, steps: 195,
 			want: []Case{
 				{JSON: []byte(`"\u0000"`), Valid: true},
 				{JSON: []byte(`null`), Valid: false},
@@ -326,7 +326,7 @@ func TestBuildReachesSurrogatePairForDirectedBMPComplement(t *testing.T) {
 			},
 		},
 		{
-			name: "two runes", length: 2, steps: 109,
+			name: "two runes", length: 2, steps: 111,
 			want: []Case{
 				{JSON: []byte(`"\u0000\u0000"`), Valid: true},
 				{JSON: []byte(`null`), Valid: false},
@@ -459,40 +459,40 @@ func TestBuildStreamsRegistryFormatBoundaries(t *testing.T) {
 		invalidJSON string
 		steps       uint64
 	}{
-		{name: "byte", format: "byte", valid: []string{"", "+A==", "++0="}, invalidJSON: `"\u0000"`, steps: 66_030},
+		{name: "byte", format: "byte", valid: []string{"", "+A==", "++0="}, invalidJSON: `"\u0000"`, steps: 66_032},
 		{name: "date", format: "date", valid: []string{
 			"0000-01-01", "1970-01-01", "0000-02-29", "0100-02-28", "9999-12-31",
-		}, invalidJSON: `""`, steps: 1_688},
+		}, invalidJSON: `""`, steps: 1_690},
 		{name: "date-time", format: "date-time", valid: []string{
 			"0000-01-01T00:00:00Z", "1970-01-01T00:00:00Z", "0000-02-29T00:00:00Z",
 			"0100-02-28T00:00:00Z", "9999-12-31T00:00:00Z",
-		}, invalidJSON: `""`, steps: 5_794},
+		}, invalidJSON: `""`, steps: 5_796},
 		{name: "email", format: "email", valid: []string{
 			"!@0", "!@0", strings.Repeat("!", 64) + "@0", domainLimit,
-		}, invalidJSON: `""`, steps: 10_970},
+		}, invalidJSON: `""`, steps: 10_972},
 		{
 			name: "ipv4", format: "ipv4",
-			valid: []string{"0.0.0.0", "0.0.0.0", "255.255.255.255"}, invalidJSON: `""`, steps: 245,
+			valid: []string{"0.0.0.0", "0.0.0.0", "255.255.255.255"}, invalidJSON: `""`, steps: 247,
 		},
 		{
 			name: "uuid", format: "uuid",
-			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 587,
+			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 589,
 		},
 		{
 			name: "uuidv4 alias", format: "uuidv4",
-			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 587,
+			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 589,
 		},
 		{
 			name: "uuid-v4 alias", format: "uuid-v4",
-			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 587,
+			valid: []string{canonicalUUID, canonicalUUID}, invalidJSON: `""`, steps: 589,
 		},
 		{
 			name: "cidr", format: "cidr",
-			valid: []string{"0.0.0.0/0", "0.0.0.0/0", "0.0.0.0/32"}, invalidJSON: `""`, steps: 202,
+			valid: []string{"0.0.0.0/0", "0.0.0.0/0", "0.0.0.0/32"}, invalidJSON: `""`, steps: 204,
 		},
 		{
 			name: "ipv4-cidr alias", format: "ipv4-cidr",
-			valid: []string{"0.0.0.0/0", "0.0.0.0/0", "0.0.0.0/32"}, invalidJSON: `""`, steps: 202,
+			valid: []string{"0.0.0.0/0", "0.0.0.0/0", "0.0.0.0/32"}, invalidJSON: `""`, steps: 204,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

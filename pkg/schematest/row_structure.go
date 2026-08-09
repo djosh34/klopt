@@ -611,7 +611,9 @@ func (s *search) walkRowSchemaConjunction(
 					return false, err
 				}
 
-				usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, member.value)
+				usable, err := s.rowConjunctionValueUsable(
+					conjunction.sources, requirements, context, member.value,
+				)
 				if err != nil {
 					return false, err
 				}
@@ -641,7 +643,7 @@ func (s *search) walkRowSchemaConjunction(
 			source.node, source.occurrence, requirements, context,
 			func(value *jsonValue) (bool, error) {
 				usable, usableErr := s.rowConjunctionValueUsable(
-					conjunction.sources, requirements, value,
+					conjunction.sources, requirements, context, value,
 				)
 				if usableErr != nil || !usable {
 					return false, usableErr
@@ -662,12 +664,34 @@ func (s *search) walkRowSchemaConjunction(
 func (s *search) rowConjunctionValueUsable(
 	sources []rowSchemaSource,
 	requirements []requirement,
+	context rowSearchContext,
 	value *jsonValue,
 ) (bool, error) {
 	for _, source := range sources {
 		usable, err := s.rowChildValueUsable(source.node, source.occurrence, requirements, value)
-		if err != nil || !usable {
+		if err != nil {
 			return false, err
+		}
+
+		if usable {
+			continue
+		}
+
+		if context.scalarFault == nil ||
+			!scalarFaultWithin(context.scalarFault, source.occurrence) {
+			return false, nil
+		}
+
+		result := evaluateNode(source.node, value, source.occurrence)
+		if result.err != nil {
+			return false, result.err
+		}
+
+		matches, matchErr := exactFailureClosure(
+			result.failureRecords(), context.scalarFault.expected,
+		)
+		if matchErr != nil || !matches {
+			return false, matchErr
 		}
 	}
 
