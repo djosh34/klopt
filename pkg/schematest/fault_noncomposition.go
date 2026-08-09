@@ -568,29 +568,8 @@ func walkActiveFaultChildValues(
 			return false, err
 		}
 
-		choice, err := rowProjectedArrayItem(view, active)
-		if err != nil {
-			return false, err
-		}
-
-		if choice.node == nil {
-			complete, walkErr := s.walkGenericValue(active, visit)
-			if walkErr != nil || complete {
-				return complete, walkErr
-			}
-
-			continue
-		}
-
-		complete, walkErr := s.walkNode(
-			choice.node, choice.occurrence, active, rowSearchContext{}, func(value *jsonValue) (bool, error) {
-				usable, usableErr := s.rowChildValueUsable(choice.node, choice.occurrence, active, value)
-				if usableErr != nil || !usable {
-					return false, usableErr
-				}
-
-				return visit(value)
-			},
+		complete, walkErr := s.walkRowSchemaConjunction(
+			rowProjectedArrayItems(view, active), active, rowSearchContext{}, visit,
 		)
 		if walkErr != nil || complete {
 			return complete, walkErr

@@ -10,7 +10,7 @@ import (
 // rowMember describes one object member choice and its best clean schema occurrence.
 type rowMember struct {
 	name       string
-	node       *schemaNode
+	schemas    rowSchemaConjunction
 	occurrence schemaOccurrence
 	required   bool
 }
@@ -545,10 +545,7 @@ func (s *search) walkProjectedArray(
 		return false, false, err
 	}
 
-	item, err := rowProjectedArrayItem(view, requirements)
-	if err != nil {
-		return false, false, err
-	}
+	items := rowProjectedArrayItems(view, requirements)
 
 	walkLength := func(length rowArrayCount) (bool, error) {
 		activeRequirements, activeErr := view.appendBranchRequirements(
@@ -563,7 +560,7 @@ func (s *search) walkProjectedArray(
 		}
 
 		return s.walkArrayElements(
-			item.node, item.occurrence, activeRequirements, context, []*jsonValue{}, 0, length, visit,
+			items, activeRequirements, context, []*jsonValue{}, 0, length, visit,
 		)
 	}
 
@@ -628,59 +625,36 @@ func rowProjectionAcceptsKind(view rowProjectionView, kind jsonKind) bool {
 	return true
 }
 
-// rowProjectedArrayItem merges only the item schemas in the current active view.
-func rowProjectedArrayItem(
-	view rowProjectionView,
-	requirements []requirement,
-) (rowSchemaChoice, error) {
-	var (
-		sources  []rowSchemaSource
-		fallback schemaOccurrence
-	)
+// rowSchemaConjunction keeps every child schema at its authored occurrence.
+type rowSchemaConjunction struct {
+	sources  []rowSchemaSource
+	fallback schemaOccurrence
+}
+
+// rowProjectedArrayItems retains every active authored item occurrence in conjunction order.
+func rowProjectedArrayItems(view rowProjectionView, requirements []requirement) rowSchemaConjunction {
+	var conjunction rowSchemaConjunction
 
 	view.eachSource(func(source rowSchemaSource) bool {
-		if fallback.usePointer == "" {
-			fallback = rowChildOccurrence(source.node, source.occurrence, rowChildItems, "")
+		if conjunction.fallback.usePointer == "" {
+			conjunction.fallback = rowChildOccurrence(source.node, source.occurrence, rowChildItems, "")
 		}
 
 		if item, exists := rowChildSchemaSource(source.node, source.occurrence, rowChildItems, ""); exists {
-			sources = append(sources, item)
+			conjunction.sources = append(conjunction.sources, item)
 		}
 
 		return true
 	})
 
-	ordered := rowPreferredSchemaSources(sources, requirements)
-	for index, source := range ordered {
-		if source.node.enum == nil && source.node.defaultValue == nil {
-			continue
-		}
+	conjunction.sources = rowPreferredSchemaSources(conjunction.sources, requirements)
 
-		if index > 0 {
-			selected := ordered[index]
-			copy(ordered[1:index+1], ordered[:index])
-			ordered[0] = selected
-		}
-
-		break
-	}
-
-	choice, exists, err := mergeRowSchemaSources(ordered)
-	if err != nil {
-		return rowSchemaChoice{}, err
-	}
-
-	if !exists {
-		choice.occurrence = fallback
-	}
-
-	return choice, nil
+	return conjunction
 }
 
 // walkArrayElements appends one independently owned item after its charged assignment.
 func (s *search) walkArrayElements(
-	item *schemaNode,
-	occurrence schemaOccurrence,
+	items rowSchemaConjunction,
 	requirements []requirement,
 	context rowSearchContext,
 	elements []*jsonValue,
@@ -704,7 +678,7 @@ func (s *search) walkArrayElements(
 
 		elements = append(elements, owned)
 		complete, err := s.walkArrayElements(
-			item, occurrence, requirements, context, elements, index+1, length, visit,
+			items, requirements, context, elements, index+1, length, visit,
 		)
 		elements = elements[:len(elements)-1]
 
@@ -715,18 +689,114 @@ func (s *search) walkArrayElements(
 		return false, err
 	}
 
-	if item == nil {
-		return s.walkGenericValue(requirements, walkValue)
+	return s.walkRowSchemaConjunction(items, requirements, context, walkValue)
+}
+
+// walkRowSchemaConjunction searches each child source at its authored occurrence.
+//
+//nolint:cyclop,gocognit,nestif // Finite enum intersections and generated sources share one seam.
+func (s *search) walkRowSchemaConjunction(
+	conjunction rowSchemaConjunction,
+	requirements []requirement,
+	context rowSearchContext,
+	visit rowVisit,
+) (bool, error) {
+	if len(conjunction.sources) == 0 {
+		return s.walkGenericValue(requirements, visit)
 	}
 
-	return s.walkNode(item, occurrence, requirements, context, func(value *jsonValue) (bool, error) {
-		usable, err := s.rowChildValueUsable(item, occurrence, requirements, value)
+	hasEnum := false
+
+	for _, source := range conjunction.sources {
+		if source.node == nil || source.node.schemaShape == nil {
+			return false, errors.New("schematest: structural child source has no shape")
+		}
+
+		hasEnum = hasEnum || source.node.enum != nil
+	}
+
+	if hasEnum {
+		for index, source := range conjunction.sources {
+			if source.node.enum == nil {
+				continue
+			}
+
+			if index > 0 {
+				if err := s.assign(); err != nil {
+					return false, err
+				}
+			}
+
+			for _, member := range source.node.enum {
+				if member.value == nil {
+					return false, errors.New("schematest: nil structural child enum value")
+				}
+
+				if err := s.assign(); err != nil {
+					return false, err
+				}
+
+				usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, member.value)
+				if err != nil {
+					return false, err
+				}
+
+				if !usable {
+					continue
+				}
+
+				complete, visitErr := visit(member.value)
+				if visitErr != nil || complete {
+					return complete, visitErr
+				}
+			}
+		}
+
+		return false, nil
+	}
+
+	for index, source := range conjunction.sources {
+		if index > 0 {
+			if err := s.assign(); err != nil {
+				return false, err
+			}
+		}
+
+		complete, err := s.walkNode(
+			source.node, source.occurrence, requirements, context,
+			func(value *jsonValue) (bool, error) {
+				usable, usableErr := s.rowConjunctionValueUsable(
+					conjunction.sources, requirements, value,
+				)
+				if usableErr != nil || !usable {
+					return false, usableErr
+				}
+
+				return visit(value)
+			},
+		)
+		if err != nil || complete {
+			return complete, err
+		}
+	}
+
+	return false, nil
+}
+
+// rowConjunctionValueUsable checks every source at its original occurrence.
+func (s *search) rowConjunctionValueUsable(
+	sources []rowSchemaSource,
+	requirements []requirement,
+	value *jsonValue,
+) (bool, error) {
+	for _, source := range sources {
+		usable, err := s.rowChildValueUsable(source.node, source.occurrence, requirements, value)
 		if err != nil || !usable {
 			return false, err
 		}
+	}
 
-		return walkValue(value)
-	})
+	return true, nil
 }
 
 // rowProjectedObject is the incrementally constructed shape of one active projection.
@@ -1008,15 +1078,10 @@ func newRowProjectedObject(
 
 		ordered := rowPreferredSchemaSources(sources, requirements)
 
-		choice, exists, err := mergeRowSchemaSources(ordered)
-		if err != nil {
-			return nil, err
-		}
-
-		member := rowMember{name: name}
-		if exists {
-			member.node = choice.node
-			member.occurrence = choice.occurrence
+		member := rowMember{name: name, schemas: rowSchemaConjunction{sources: ordered}}
+		if len(ordered) > 0 {
+			member.occurrence = ordered[0].occurrence
+			member.schemas.fallback = ordered[0].occurrence
 		} else if requiredOccurrence, mustExist := required[name]; mustExist {
 			member.occurrence = requiredOccurrence
 		} else {
@@ -1412,23 +1477,20 @@ func projectedAdditionalMember(
 	}
 
 	ordered := rowPreferredSchemaSources(sources, requirements)
-
-	choice, exists, err := mergeRowSchemaSources(ordered)
-	if err != nil {
-		return rowMember{}, false, err
-	}
-
 	member := rowMember{
-		name: name,
+		name:    name,
+		schemas: rowSchemaConjunction{sources: ordered},
 		occurrence: schemaOccurrence{
 			usePointer:       shape.rootOccurrence.usePointer + "/additionalProperties",
 			targetPointer:    shape.rootOccurrence.targetPointer,
 			instanceTemplate: appendInstanceToken(shape.rootOccurrence.instanceTemplate, name),
 		},
 	}
-	if exists {
-		member.node = choice.node
-		member.occurrence = choice.occurrence
+
+	member.schemas.fallback = member.occurrence
+	if len(ordered) > 0 {
+		member.occurrence = ordered[0].occurrence
+		member.schemas.fallback = ordered[0].occurrence
 	}
 
 	return member, true, nil
@@ -1441,21 +1503,7 @@ func (s *search) walkRowMemberValues(
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	if member.node == nil {
-		return s.walkGenericValue(requirements, visit)
-	}
-
-	return s.walkNode(
-		member.node, member.occurrence, requirements, context,
-		func(value *jsonValue) (bool, error) {
-			usable, err := s.rowChildValueUsable(member.node, member.occurrence, requirements, value)
-			if err != nil || !usable {
-				return false, err
-			}
-
-			return visit(value)
-		},
-	)
+	return s.walkRowSchemaConjunction(member.schemas, requirements, context, visit)
 }
 
 // rowObjectMembers exposes the first requested active view for fault regeneration.
@@ -1511,15 +1559,15 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, requirement
 			return true
 		})
 
-		choice, exists, mergeErr := mergeRowSchemaSources(rowPreferredSchemaSources(sources, requirements))
-		if mergeErr != nil {
-			return nil, mergeErr
-		}
+		ordered := rowPreferredSchemaSources(sources, requirements)
 
-		member := rowMember{name: name, occurrence: requirement.occurrence}
-		if exists {
-			member.node = choice.node
-			member.occurrence = choice.occurrence
+		member := rowMember{
+			name: name, occurrence: requirement.occurrence,
+			schemas: rowSchemaConjunction{sources: ordered, fallback: requirement.occurrence},
+		}
+		if len(ordered) > 0 {
+			member.occurrence = ordered[0].occurrence
+			member.schemas.fallback = ordered[0].occurrence
 		}
 
 		members = append(members, member)

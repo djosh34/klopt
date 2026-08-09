@@ -1,18 +1,9 @@
 package schematest
 
-import (
-	"errors"
-	"strings"
-)
+import "strings"
 
 // rowSchemaSource identifies one composed child schema and its planner occurrence.
 type rowSchemaSource struct {
-	node       *schemaNode
-	occurrence schemaOccurrence
-}
-
-// rowSchemaChoice is one schema used to construct a structural child value.
-type rowSchemaChoice struct {
 	node       *schemaNode
 	occurrence schemaOccurrence
 }
@@ -129,38 +120,6 @@ func rowPreferredSchemaSources(sources []rowSchemaSource, requirements []require
 	}
 
 	return ordered
-}
-
-// mergeRowSchemaSources combines direct and simultaneously active composition schemas.
-func mergeRowSchemaSources(sources []rowSchemaSource) (rowSchemaChoice, bool, error) {
-	if len(sources) == 0 {
-		return rowSchemaChoice{}, false, nil
-	}
-
-	for _, source := range sources {
-		if source.node == nil || source.node.schemaShape == nil {
-			return rowSchemaChoice{}, false, errors.New("schematest: composed row child has no shape")
-		}
-	}
-
-	if len(sources) == 1 {
-		return rowSchemaChoice{
-			node:       sources[0].node,
-			occurrence: sources[0].occurrence,
-		}, true, nil
-	}
-
-	shape := *sources[0].node.schemaShape
-	shape.allOf = append([]*schemaNode(nil), shape.allOf...)
-
-	for _, source := range sources[1:] {
-		shape.allOf = append(shape.allOf, source.node)
-	}
-
-	return rowSchemaChoice{
-		node:       &schemaNode{schemaShape: &shape, occurrence: sources[0].occurrence},
-		occurrence: sources[0].occurrence,
-	}, true, nil
 }
 
 // rowAnyOfParentUsePointer returns the nearest authored anyOf parent path.
