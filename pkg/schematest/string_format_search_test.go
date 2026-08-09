@@ -112,6 +112,108 @@ func TestSimpleStringFormatWitnessesAreCanonicalAndDeterministic(t *testing.T) {
 	}
 }
 
+func TestStringFormatRegistryOwnsProgramsAliasesBoundsAndObjectives(t *testing.T) {
+	t.Parallel()
+
+	for _, format := range []schemaFormat{
+		schemaFormatByte, schemaFormatDate, schemaFormatDateTime, schemaFormatEmail,
+		schemaFormatIPv4, schemaFormatUUID, schemaFormatCIDR, schemaFormatPassword,
+	} {
+		specification, exists := stringFormatSpecificationFor(format)
+		require.True(t, exists, format)
+		require.NotNil(t, specification)
+	}
+
+	uuid, _ := stringFormatSpecificationFor(schemaFormatUUID)
+	uuidv4, _ := stringFormatSpecificationFor(schemaFormatUUIDv4)
+	uuidDashV4, _ := stringFormatSpecificationFor(schemaFormatUUIDDashV4)
+
+	require.Same(t, uuid, uuidv4)
+	require.Same(t, uuid, uuidDashV4)
+
+	cidr, _ := stringFormatSpecificationFor(schemaFormatCIDR)
+	ipv4CIDR, _ := stringFormatSpecificationFor(schemaFormatIPv4CIDR)
+	require.Same(t, cidr, ipv4CIDR)
+
+	date, _ := stringFormatSpecificationFor(schemaFormatDate)
+	require.True(t, date.bounds.allows(10))
+	require.False(t, date.bounds.allows(9))
+	require.NotZero(t, date.objectiveCount)
+
+	password, _ := stringFormatSpecificationFor(schemaFormatPassword)
+	require.True(t, password.inert)
+	require.Zero(t, password.objectiveCount)
+}
+
+func TestStringFormatProgramsAcceptExactRetainedLanguages(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		format  schemaFormat
+		valid   []string
+		invalid []string
+	}{
+		{schemaFormatByte, []string{"", "YQ==", "YWI="}, []string{"YR==", "YWJ=", "YQ="}},
+		{schemaFormatDate, []string{"0000-02-29", "2000-02-29", "1900-02-28"}, []string{"1900-02-29", "2001-02-29"}},
+		{
+			schemaFormatDateTime,
+			[]string{"2000-02-29T23:59:59.0Z", "1900-02-28T00:00:00+23:59"},
+			[]string{"2001-02-29T00:00:00Z", "1970-01-01t00:00:00Z"},
+		},
+		{schemaFormatEmail, []string{"a@b", "a.b@example.com"}, []string{"a..b@example.com", "é@example.com"}},
+		{schemaFormatIPv4, []string{"0.0.0.0", "255.255.255.255"}, []string{"00.0.0.0", "256.0.0.0"}},
+		{schemaFormatCIDR, []string{"0.0.0.0/0", "255.255.255.255/32"}, []string{"0.0.0.0/00", "0.0.0.0/33"}},
+		{
+			schemaFormatUUID,
+			[]string{"00000000-0000-4000-8000-000000000000"},
+			[]string{"00000000-0000-1000-8000-000000000000"},
+		},
+	}
+
+	for _, test := range tests {
+		specification, exists := stringFormatSpecificationFor(test.format)
+		require.True(t, exists)
+
+		for _, candidate := range test.valid {
+			require.True(t, specification.program.accepts(candidate), "%d accepts %q", test.format, candidate)
+		}
+
+		for _, candidate := range test.invalid {
+			require.False(t, specification.program.accepts(candidate), "%d rejects %q", test.format, candidate)
+		}
+	}
+}
+
+func TestStringFormatTransitionPartitionsSeparateExactSemantics(t *testing.T) {
+	t.Parallel()
+
+	base64Specification, _ := stringFormatSpecificationFor(schemaFormatByte)
+
+	base64State := base64Specification.program.start()
+	for _, unit := range []uint16{'Y', 'Q'} {
+		base64State = base64Specification.program.advance(base64State, unit)
+	}
+
+	require.NotEqual(
+		t,
+		base64Specification.program.transitionClass(base64State, 'A'),
+		base64Specification.program.transitionClass(base64State, 'R'),
+	)
+
+	dateSpecification, _ := stringFormatSpecificationFor(schemaFormatDate)
+
+	dateState := dateSpecification.program.start()
+	for _, unit := range []uint16{'2', '0', '0', '0', '-', '0', '2', '-'} {
+		dateState = dateSpecification.program.advance(dateState, unit)
+	}
+
+	require.NotEqual(
+		t,
+		dateSpecification.program.transitionClass(dateState, '2'),
+		dateSpecification.program.transitionClass(dateState, '3'),
+	)
+}
+
 func TestBuildSearchesSimpleFormatAcrossActiveAllOfConstraints(t *testing.T) {
 	t.Parallel()
 
@@ -133,6 +235,53 @@ func TestBuildSearchesSimpleFormatAcrossActiveAllOfConstraints(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, cases, Case{JSON: []byte(`"YQ=="`), Valid: true})
 	require.Equal(t, SpaceExhausted, report.Stop)
+}
+
+func TestBuildFindsExactBase64AndGregorianIntersections(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		schema  string
+		matches func(string) bool
+	}{
+		{
+			name:    "base64 significant padding bits",
+			schema:  `{"type":"string","format":"byte","pattern":"^Y[B-R]==$"}`,
+			matches: searchByteFormatMatches,
+		},
+		{
+			name:    "Gregorian leap boundary",
+			schema:  `{"type":"string","format":"date","pattern":"^19[0-9][0-9]-02-29$"}`,
+			matches: searchDateFormatMatches,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var witness string
+
+			_, err := Build(
+				Input{OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected", MaxSteps: 10000},
+				func(testCase Case) error {
+					if testCase.Valid {
+						value, parseErr := parseStrictJSON(testCase.JSON)
+						require.NoError(t, parseErr)
+
+						if value.kind == jsonString && test.matches(value.text) {
+							witness = value.text
+						}
+					}
+
+					return nil
+				},
+			)
+			require.NoError(t, err)
+			require.NotEmpty(t, witness)
+		})
+	}
 }
 
 func TestFindStringFaultRowDirectsFormatAndPreservesSiblingPattern(t *testing.T) {

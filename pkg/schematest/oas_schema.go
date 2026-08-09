@@ -56,22 +56,11 @@ var schemaKeywords = map[string]bool{
 	"deprecated":           true,
 }
 
-var schemaFormats = map[string]schemaFormat{
-	"int32":     schemaFormatInt32,
-	"int64":     schemaFormatInt64,
-	"float":     schemaFormatFloat,
-	"double":    schemaFormatDouble,
-	"byte":      schemaFormatByte,
-	"date":      schemaFormatDate,
-	"date-time": schemaFormatDateTime,
-	"email":     schemaFormatEmail,
-	"ipv4":      schemaFormatIPv4,
-	"uuid":      schemaFormatUUID,
-	"uuidv4":    schemaFormatUUIDv4,
-	"uuid-v4":   schemaFormatUUIDDashV4,
-	"cidr":      schemaFormatCIDR,
-	"ipv4-cidr": schemaFormatIPv4CIDR,
-	"password":  schemaFormatPassword,
+var numericFormatNames = map[string]schemaFormat{
+	"int32":  schemaFormatInt32,
+	"int64":  schemaFormatInt64,
+	"float":  schemaFormatFloat,
+	"double": schemaFormatDouble,
 }
 
 func (parser *oasParser) parseSchemaObject(
@@ -447,7 +436,7 @@ func parseSchemaFormat(object map[string]*jsonValue, kind schemaKind, pointer st
 		return schemaFormatNone, fmt.Errorf("%s/format: must be a string", pointer)
 	}
 
-	format, supported := schemaFormats[value.text]
+	format, supported := schemaFormatByName(value.text)
 	if !supported {
 		return schemaFormatNone, fmt.Errorf("%s/format: format %q is legal OAS but outside the Klopt profile", pointer, value.text)
 	}
@@ -462,6 +451,16 @@ func parseSchemaFormat(object map[string]*jsonValue, kind schemaKind, pointer st
 	}
 
 	return format, nil
+}
+
+func schemaFormatByName(name string) (schemaFormat, bool) {
+	if format, exists := numericFormatNames[name]; exists {
+		return format, true
+	}
+
+	format, exists := stringFormatByName(name)
+
+	return format, exists
 }
 
 func formatAllowedForKind(format schemaFormat, kind schemaKind) bool {

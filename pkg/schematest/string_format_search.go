@@ -117,43 +117,29 @@ func basicStringLengthsFromActive(constraints []activeStringLength) (basicString
 }
 
 func basicStringFormatPattern(format schemaFormat) (string, bool) {
-	date := `[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])`
-	octet := `(?:0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])`
-	emailAtext := `[A-Za-z0-9!#$%&'*+/=?^_\x60{|}~-]`
-	emailLocal := `(?:` + emailAtext + `|\.){1,64}`
-	emailQuoted := `"(?:[\x20-\x21\x23-\x5b\x5d-\x7e]|\\[\x20-\x7e]){0,62}"`
-	emailLabel := `[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?`
-	emailDomain := emailLabel + `(?:\.` + emailLabel + `)*`
-	emailLiteral := `\[(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|` +
-		`[Ii][Pp][Vv]6:[0-9A-Fa-f:.]+|[A-Za-z0-9-]+:[\x21-\x5a\x5e-\x7e]+)\]`
-
-	switch format {
-	case schemaFormatByte:
-		return `^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$`, true
-	case schemaFormatDate:
-		return `^` + date + `$`, true
-	case schemaFormatDateTime:
-		return `^` + date + `T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]` +
-			`(?:\.[0-9]+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$`, true
-	case schemaFormatEmail:
-		return `^(?:` + emailLocal + `|` + emailQuoted + `)@(?:` + emailDomain + `|` + emailLiteral + `)$`, true
-	case schemaFormatIPv4:
-		return `^` + octet + `\.` + octet + `\.` + octet + `\.` + octet + `$`, true
-	case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
-		return `^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$`, true
-	case schemaFormatCIDR, schemaFormatIPv4CIDR:
-		return `^` + octet + `\.` + octet + `\.` + octet + `\.` + octet +
-			`/(?:0|[1-9]|[12][0-9]|3[0-2])$`, true
-	default:
+	specification, exists := stringFormatSpecificationFor(format)
+	if !exists || specification.inert || specification.program == nil {
 		return "", false
 	}
+
+	return specification.program.pattern, true
 }
 
 func (product *basicStringProduct) addFormats(formats []activeStringFormat, directed int) error {
 	product.formats = formats
 	product.directedFormat = directed
+	product.formatPrograms = make([]*stringFormatProgram, len(formats))
 
 	for index, format := range formats {
+		specification, exists := stringFormatSpecificationFor(format.format)
+		if !exists {
+			return fmt.Errorf("schematest: format %d has no string specification", format.format)
+		}
+
+		if !specification.inert {
+			product.formatPrograms[index] = specification.program
+		}
+
 		if index == directed {
 			continue
 		}
@@ -179,51 +165,21 @@ func (product *basicStringProduct) addFormats(formats []activeStringFormat, dire
 	return product.setBounds()
 }
 
-//nolint:mnd // Retained format grammar lengths are normative.
 func (product *basicStringProduct) formatsAllowLength(length uint64) bool {
 	for index, format := range product.formats {
 		if index == product.directedFormat {
 			continue
 		}
 
-		allowed := true
-
-		switch format.format {
-		case schemaFormatByte:
-			allowed = length%4 == 0
-		case schemaFormatDate:
-			allowed = length == 10
-		case schemaFormatDateTime:
-			allowed = length >= 20
-		case schemaFormatEmail:
-			allowed = length >= 3 && length <= 254
-		case schemaFormatIPv4:
-			allowed = length >= 7 && length <= 15
-		case schemaFormatUUID, schemaFormatUUIDv4, schemaFormatUUIDDashV4:
-			allowed = length == 36
-		case schemaFormatCIDR, schemaFormatIPv4CIDR:
-			allowed = length >= 9 && length <= 18
+		specification, exists := stringFormatSpecificationFor(format.format)
+		if !exists {
+			return false
 		}
 
-		if !allowed {
+		if !specification.inert && !specification.bounds.allows(length) {
 			return false
 		}
 	}
 
 	return true
-}
-
-func (product *basicStringProduct) formatsAccept(candidate string) (bool, error) {
-	for index, format := range product.formats {
-		matches, err := cleanStringFormatMatches(candidate, format.format)
-		if err != nil {
-			return false, err
-		}
-
-		if matches == (index == product.directedFormat) {
-			return false, nil
-		}
-	}
-
-	return true, nil
 }

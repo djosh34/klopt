@@ -57,6 +57,7 @@ type basicStringPatternState struct {
 
 type basicStringProductState struct {
 	patterns     []basicStringPatternState
+	formats      []stringFormatProgramState
 	position     int
 	length       int
 	previousWord bool
@@ -65,6 +66,7 @@ type basicStringProductState struct {
 
 type basicStringProduct struct {
 	machines       []basicStringMachine
+	formatPrograms []*stringFormatProgram
 	maxUnits       uint64
 	unbounded      bool
 	hasSurrogate   bool
@@ -673,6 +675,7 @@ func basicStringSequenceLength(sequence *patternSequence) (uint64, bool, bool) {
 func (product *basicStringProduct) start(length int) basicStringProductState {
 	state := basicStringProductState{
 		patterns: make([]basicStringPatternState, len(product.machines)),
+		formats:  make([]stringFormatProgramState, len(product.formatPrograms)),
 		length:   length,
 	}
 	for index := range product.machines {
@@ -689,6 +692,12 @@ func (product *basicStringProduct) start(length int) basicStringProductState {
 		}
 	}
 
+	for index, program := range product.formatPrograms {
+		if program != nil {
+			state.formats[index] = program.start()
+		}
+	}
+
 	return state
 }
 
@@ -701,10 +710,17 @@ func (product *basicStringProduct) advance(
 ) basicStringProductState {
 	next := basicStringProductState{
 		patterns:     make([]basicStringPatternState, len(product.machines)),
+		formats:      make([]stringFormatProgramState, len(product.formatPrograms)),
 		position:     position + 1,
 		length:       length,
 		previousWord: isPatternWordUnit(unit),
 		pendingHigh:  unit >= 0xd800 && unit <= 0xdbff,
+	}
+
+	for index, program := range product.formatPrograms {
+		if program != nil {
+			next.formats[index] = program.advance(state.formats[index], unit)
+		}
 	}
 
 	for index := range product.machines {
@@ -1010,6 +1026,12 @@ func eachBasicStringIntervalCandidate(
 }
 
 func (product *basicStringProduct) viable(state basicStringProductState) bool {
+	for index, formatState := range state.formats {
+		if index != product.directedFormat && product.formatPrograms[index] != nil && !formatState.alive {
+			return false
+		}
+	}
+
 	for index, pattern := range state.patterns {
 		machine := &product.machines[index]
 		if machine.required && machine.expected && !pattern.matched && len(pattern.active) == 0 {
@@ -1021,6 +1043,12 @@ func (product *basicStringProduct) viable(state basicStringProductState) bool {
 }
 
 func (product *basicStringProduct) accepting(state basicStringProductState) bool {
+	for index, program := range product.formatPrograms {
+		if program != nil && program.accept(state.formats[index]) == (index == product.directedFormat) {
+			return false
+		}
+	}
+
 	for index, pattern := range state.patterns {
 		if !product.machines[index].required {
 			continue
@@ -1168,11 +1196,6 @@ func (s *search) walkBasicStringProduct(
 		}
 
 		candidate := string(utf16.Decode(units))
-
-		formatsAccept, err := product.formatsAccept(candidate)
-		if err != nil || !formatsAccept {
-			return false, err
-		}
 
 		return visit(&jsonValue{kind: jsonString, text: candidate})
 	}

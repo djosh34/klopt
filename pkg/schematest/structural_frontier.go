@@ -722,7 +722,7 @@ func nodeHasStringSearchRules(node *schemaNode) bool {
 
 // rowGeneratedStringValueAt directly evaluates one length/unit/transition tuple.
 //
-//nolint:cyclop,gocognit,gocyclo,maintidx,mnd // Compilation and exact primitive tuple evaluation share one adapter.
+//nolint:cyclop,gocognit,gocyclo,mnd // Compilation and exact primitive tuple evaluation share one adapter.
 func (s *search) rowGeneratedStringValueAt(
 	source *rowSchemaSource,
 	requirements []requirement,
@@ -892,11 +892,6 @@ func (s *search) rowGeneratedStringValueAt(
 	}
 
 	candidate := string(utf16.Decode(units))
-
-	accepted, err := product.formatsAccept(candidate)
-	if err != nil || !accepted {
-		return nil, false, err
-	}
 
 	return &jsonValue{kind: jsonString, text: candidate}, true, nil
 }
