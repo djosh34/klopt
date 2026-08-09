@@ -34,12 +34,15 @@ func TestRowArrayLengthCursorUsesExactBoundaryOrder(t *testing.T) {
 	var lengths []uint64
 
 	for {
-		length, ok := cursor.Next()
+		length, ok, nextErr := cursor.Next()
+		require.NoError(t, nextErr)
+
 		if !ok {
 			break
 		}
 
-		lengths = append(lengths, length)
+		require.False(t, length.beyond)
+		lengths = append(lengths, length.value)
 	}
 
 	require.Equal(t, []uint64{5, 3, 0, 1, 2, 4}, lengths)
@@ -66,13 +69,85 @@ func TestRowArrayOpenLengthCursorHasNoLocalEndpoint(t *testing.T) {
 	lengths := make([]uint64, 0, 8)
 
 	for range 8 {
-		length, ok := cursor.Next()
+		length, ok, nextErr := cursor.Next()
+		require.NoError(t, nextErr)
 		require.True(t, ok)
 
-		lengths = append(lengths, length)
+		require.False(t, length.beyond)
+		lengths = append(lengths, length.value)
 	}
 
 	require.Equal(t, []uint64{2, 0, 1, 3, 4, 5, 6, 7}, lengths)
+}
+
+// TestRowArrayLengthCursorKeepsAuthoredWitnessLengthsFirst preserves repair guidance from complete values.
+func TestRowArrayLengthCursorKeepsAuthoredWitnessLengthsFirst(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","enum":[[true,true,true]],"items":{"type":"string"},"minItems":1,"maxItems":4
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view := rowProjectionView{sources: []rowSchemaSource{{node: model.root, occurrence: model.root.occurrence}}}
+	cursor, err := newRowArrayLengthCursor(view, nil)
+	require.NoError(t, err)
+
+	var lengths []uint64
+
+	for range 5 {
+		length, ok, nextErr := cursor.Next()
+		require.NoError(t, nextErr)
+		require.True(t, ok)
+		require.False(t, length.beyond)
+		lengths = append(lengths, length.value)
+	}
+
+	require.Equal(t, []uint64{3, 1, 4, 0, 2}, lengths)
+}
+
+// TestRowArrayLengthCursorPreservesBeyondUint64Counts keeps authored exact counts pending.
+func TestRowArrayLengthCursorPreservesBeyondUint64Counts(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{},"minItems":18446744073709551616
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view := rowProjectionView{sources: []rowSchemaSource{{node: model.root, occurrence: model.root.occurrence}}}
+	cursor, err := newRowArrayLengthCursor(view, nil)
+	require.NoError(t, err)
+
+	length, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, length.beyond)
+	require.Same(t, model.root.minItems, length.exact)
+}
+
+// TestWalkArrayChargesBeforeBeyondUint64Minimum proves exact pending counts allocate incrementally.
+func TestWalkArrayChargesBeforeBeyondUint64Minimum(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{},"minItems":18446744073709551616
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1}
+	emitted := 0
+	_, err = searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(*jsonValue) (bool, error) {
+			emitted++
+
+			return false, nil
+		},
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, uint64(1), searchState.steps)
+	require.Zero(t, emitted)
 }
 
 // TestWalkArrayChargesBeforeHugeMinimumAllocation proves authored bounds do not allocate containers.

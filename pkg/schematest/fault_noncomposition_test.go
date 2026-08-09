@@ -383,12 +383,9 @@ func TestOversizedCountFaultChargesRealFrontierToCutoff(t *testing.T) {
 	}`)
 	fault := findFaultTarget(t, plan, "|maxItems|fault:maxItems")
 	searchState := &search{model: model, maxSteps: 25}
-	parent, found, err := regenerateParent(plan, fault, searchState)
-	require.NoError(t, err)
-	require.True(t, found)
-
-	_, err = applyFault(parent, fault, searchState)
+	_, found, err := regenerateParent(plan, fault, searchState)
 	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, found)
 	require.Equal(t, searchState.maxSteps, searchState.steps)
 }
 
