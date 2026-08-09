@@ -139,6 +139,10 @@ func (s *search) walkActiveStringRules(
 		return false, err
 	}
 
+	if err := product.setFormatObjective(matchingFormatBoundary(request, occurrence)); err != nil {
+		return false, err
+	}
+
 	return s.walkBasicStringProductForLengths(
 		product,
 		lengths,
@@ -146,6 +150,21 @@ func (s *search) walkActiveStringRules(
 		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
 		visit,
 	)
+}
+
+// matchingFormatBoundary returns the semantic format objective targeting this scalar.
+func matchingFormatBoundary(
+	request *validRequest,
+	occurrence schemaOccurrence,
+) *formatBoundaryObjective {
+	boundary := validRequestFormatBoundary(request)
+	if boundary == nil || !stringObjectiveWithin(
+		&stringSearchObjective{occurrence: boundary.identity.occurrence}, occurrence,
+	) {
+		return nil
+	}
+
+	return boundary
 }
 
 // validFalseStringObjective returns the first selected false-branch pattern direction.
@@ -303,6 +322,10 @@ func rowScalarValueSource(node *schemaNode, kind jsonKind) jsonValueSource {
 				}
 			}
 
+			return nil
+		}
+
+		if kind == jsonString && nodeHasStringSearchRules(node) {
 			return nil
 		}
 

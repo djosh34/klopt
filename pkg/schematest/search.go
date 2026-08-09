@@ -84,7 +84,7 @@ func findTargetRow(plan *searchPlan, request validRequest, s *search) (*jsonValu
 //
 //nolint:cyclop // Validity, levels, and the three requirement dimensions are one acceptance pass.
 func targetRowMatches(result evaluation, request validRequest, value *jsonValue) bool {
-	if !result.valid {
+	if !result.valid || !formatBoundaryWasSatisfied(value, request.formatBoundary) {
 		return false
 	}
 
@@ -105,6 +105,44 @@ func targetRowMatches(result evaluation, request validRequest, value *jsonValue)
 	}
 
 	return true
+}
+
+// formatBoundaryWasSatisfied checks the requested semantic objective at its instance template.
+//
+//nolint:cyclop // Objective resolution and exact incremental replay form one check.
+func formatBoundaryWasSatisfied(value *jsonValue, objective *formatBoundaryObjective) bool {
+	if objective == nil {
+		return true
+	}
+
+	specification, exists := stringFormatSpecificationFor(objective.format)
+	if !exists || specification.program == nil {
+		return false
+	}
+
+	for _, path := range matchingValuePaths(value, objective.identity.occurrence.instanceTemplate) {
+		candidate := valueAtPath(value, path)
+		if candidate == nil || candidate.kind != jsonString {
+			continue
+		}
+
+		state := specification.program.start(len(candidate.text))
+		for _, character := range candidate.text {
+			if character > rune(basicStringMaxUnit) {
+				state = deadStringFormatState(state)
+
+				break
+			}
+
+			state = specification.program.advance(state, uint16(character))
+		}
+
+		if specification.program.accept(state) && objective.boundary.matches(state) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // levelWasObserved matches wildcard instance templates to concrete array members.

@@ -176,20 +176,74 @@ func TestBuildStringProductEdgeCutoff(t *testing.T) {
 			`{"type":"string","minLength":1,"maxLength":1,"pattern":"^[q]$"}`,
 		)),
 		OperationID: "selected",
-		MaxSteps:    7,
+		MaxSteps:    2,
 	}
 
 	cutoffCases, cutoffReport, err := collectDeterministicRun(input, nil)
 	require.NoError(t, err)
 	require.Empty(t, cutoffCases, "a cutoff before the product edge emits no partial case")
-	require.Equal(t, Report{Stop: MaxStepsReached, Steps: 7, Uncovered: cutoffReport.Uncovered}, cutoffReport)
+	require.Equal(t, Report{Stop: MaxStepsReached, Steps: 2, Uncovered: cutoffReport.Uncovered}, cutoffReport)
 
 	input.MaxSteps++
 	adjacentCases, adjacentReport, err := collectDeterministicRun(input, nil)
 	require.NoError(t, err)
 	require.Equal(t, MaxStepsReached, adjacentReport.Stop)
-	require.Equal(t, uint64(8), adjacentReport.Steps)
+	require.Equal(t, uint64(3), adjacentReport.Steps)
 	require.Equal(t, []Case{{JSON: []byte(`"q"`), Valid: true}}, adjacentCases)
+}
+
+// TestBuildStringProductPublicBudgetPairs locks length and retry assignment cutoffs.
+func TestBuildStringProductPublicBudgetPairs(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		schema      string
+		before      uint64
+		after       uint64
+		beforeCases []Case
+		afterCases  []Case
+	}{
+		{
+			name:        "selected length",
+			schema:      `{"type":"string","minLength":2,"maxLength":4,"pattern":"^aa$"}`,
+			before:      1,
+			after:       2,
+			beforeCases: []Case{},
+			afterCases:  []Case{},
+		},
+		{
+			name: "failed first edge then retry",
+			schema: `{"type":"string","minLength":1,"maxLength":1,"pattern":"^[a-b]$",` +
+				`"allOf":[{"pattern":"^b$"}]}`,
+			before:      4,
+			after:       5,
+			beforeCases: []Case{},
+			afterCases:  []Case{{JSON: []byte(`"b"`), Valid: true}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			document := []byte(documentWithJSONSchema(test.schema))
+			for _, budget := range []struct {
+				steps uint64
+				want  []Case
+			}{
+				{steps: test.before, want: test.beforeCases},
+				{steps: test.after, want: test.afterCases},
+			} {
+				firstCases, firstReport := buildStringCases(t, document, budget.steps)
+				secondCases, secondReport := buildStringCases(t, document, budget.steps)
+
+				require.Equal(t, budget.want, firstCases)
+				require.Equal(t, MaxStepsReached, firstReport.Stop)
+				require.Equal(t, budget.steps, firstReport.Steps)
+				require.Equal(t, firstCases, secondCases)
+				require.Equal(t, firstReport, secondReport)
+			}
+		})
+	}
 }
 
 // TestBuildAdmissionErrorsAreDeterministic requirements non-authoritative malformed and selection failures.

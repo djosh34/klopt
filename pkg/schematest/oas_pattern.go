@@ -83,6 +83,8 @@ type patternAST struct {
 	source            string
 	leadingAssertions []patternLookahead
 	expression        *patternExpression
+	searchMachines    []basicStringMachine
+	cleanProgram      *cleanPatternProgram
 	nodeCount         int
 	matcherBytes      int
 }
@@ -178,7 +180,28 @@ func parseECMAPattern(source string) (*patternAST, error) {
 		}
 	}
 
+	if err := compilePatternPrograms(ast); err != nil {
+		return nil, err
+	}
+
 	return ast, nil
+}
+
+func compilePatternPrograms(ast *patternAST) error {
+	searchMachines, err := compileBasicStringPatternMachinesUncached(ast)
+	if err != nil {
+		return err
+	}
+
+	cleanProgram, err := compileCleanPattern(ast)
+	if err != nil {
+		return err
+	}
+
+	ast.searchMachines = searchMachines
+	ast.cleanProgram = cleanProgram
+
+	return nil
 }
 
 func validateLeadingPatternRemainder(expression *patternExpression) error {

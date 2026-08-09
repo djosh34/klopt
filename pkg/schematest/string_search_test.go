@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"sort"
 	"testing"
 	"unicode/utf8"
 
@@ -138,7 +139,7 @@ func TestBasicStringProductFindsGroupedAlternationIntersection(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "ac", witness)
-	require.Equal(t, uint64(7), searchState.steps)
+	require.Equal(t, uint64(3), searchState.steps)
 }
 
 func TestBasicStringProductPreservesLiteralUTF16Units(t *testing.T) {
@@ -151,7 +152,7 @@ func TestBasicStringProductPreservesLiteralUTF16Units(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "😀x", witness)
-	require.Equal(t, uint64(10), searchState.steps)
+	require.Equal(t, uint64(6), searchState.steps)
 }
 
 func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) {
@@ -164,7 +165,7 @@ func TestBasicStringProductSearchesSimultaneousUnanchoredPatterns(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "ab", witness)
-	require.Equal(t, uint64(55), searchState.steps)
+	require.Equal(t, uint64(54), searchState.steps)
 }
 
 func TestBasicStringProductPadsContextualPatterns(t *testing.T) {
@@ -322,6 +323,29 @@ func TestBasicStringProductChargesBeforeEveryEdge(t *testing.T) {
 	require.Equal(t, uint64(1), searchState.steps)
 }
 
+func TestBasicStringProductCutoffsNeverEmitPartialCandidates(t *testing.T) {
+	t.Parallel()
+
+	patterns := parseBasicSearchPatterns(t, `^[a-b]$`, `^b$`)
+
+	for _, maximum := range []uint64{0, 1, 2} {
+		searchState := &search{maxSteps: maximum}
+		emitted := 0
+		complete, err := searchState.walkBasicStringWitnesses(
+			patterns, 0,
+			func(*jsonValue) (bool, error) {
+				emitted++
+
+				return false, nil
+			},
+		)
+		require.ErrorIs(t, err, errMaxSteps)
+		require.False(t, complete)
+		require.Equal(t, maximum, searchState.steps)
+		require.Zero(t, emitted)
+	}
+}
+
 func TestBasicStringProductExhaustsContradictoryFinitePatterns(t *testing.T) {
 	t.Parallel()
 
@@ -332,7 +356,7 @@ func TestBasicStringProductExhaustsContradictoryFinitePatterns(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 	require.Empty(t, witness)
-	require.Equal(t, uint64(4), searchState.steps)
+	require.Equal(t, uint64(3), searchState.steps)
 }
 
 func TestBasicStringProductSearchesQuantifiersAnchorsAndBoundaries(t *testing.T) {
@@ -378,9 +402,9 @@ func TestBasicStringProductSearchesLeadingAssertionsInAuthoredOrder(t *testing.T
 		want    string
 		steps   uint64
 	}{
-		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 21},
-		{name: "negative", pattern: `^(?!a)[a-b]$`, want: "b", steps: 7},
-		{name: "mixed consecutive", pattern: `^(?=a)(?!b)[a-c]$`, want: "a", steps: 6},
+		{name: "positive", pattern: `^(?=ab)ab$`, want: "ab", steps: 9},
+		{name: "negative", pattern: `^(?!a)[a-b]$`, want: "b", steps: 6},
+		{name: "mixed consecutive", pattern: `^(?=a)(?!b)[a-c]$`, want: "a", steps: 5},
 	}
 
 	for _, test := range tests {
@@ -425,7 +449,48 @@ func TestBasicStringProductNegativeAssertionPreservesSiblingPattern(t *testing.T
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "b", witness)
-	require.Equal(t, uint64(7), searchState.steps)
+	require.Equal(t, uint64(6), searchState.steps)
+}
+
+func TestBasicStringProductPrunesFailedNegativeAssertionBeforeSuffix(t *testing.T) {
+	t.Parallel()
+
+	product, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^(?!a)a..$`, `^a..$`))
+	require.NoError(t, err)
+
+	searchState := &search{maxSteps: 100}
+	complete, err := searchState.walkBasicStringRuneLength(
+		product, 3, 0,
+		func(*jsonValue) (bool, error) {
+			t.Fatal("failed negative assertion must not emit")
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Equal(t, uint64(52), searchState.steps)
+}
+
+func TestBasicStringProductPrunesExactFormatFailureBeforeSuffix(t *testing.T) {
+	t.Parallel()
+
+	product, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^AB==$`))
+	require.NoError(t, err)
+	require.NoError(t, product.addFormats([]activeStringFormat{{format: schemaFormatByte}}, -1))
+
+	searchState := &search{maxSteps: 10_000}
+	complete, err := searchState.walkBasicStringRuneLength(
+		product, 4, 0,
+		func(*jsonValue) (bool, error) {
+			t.Fatal("invalid Base64 padding bits must not emit")
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Equal(t, uint64(3), searchState.steps)
 }
 
 func TestBasicStringProductLeadingAssertionContradictionStopsAtBudget(t *testing.T) {
@@ -495,7 +560,7 @@ func TestBasicStringLengthOrderRequirementsBoundariesThenFairLengths(t *testing.
 		maximum:    maximum,
 		hasMaximum: true,
 	}
-	product := &basicStringProduct{maxUnits: 3}
+	product := &basicStringProduct{maximumRunes: 3, lengthBounded: true}
 	got := make([]uint64, 0)
 
 	lengths.each(product, basicStringLengthObjective{length: 3, constrained: true}, func(length uint64) bool {
@@ -504,7 +569,7 @@ func TestBasicStringLengthOrderRequirementsBoundariesThenFairLengths(t *testing.
 		return false
 	})
 
-	require.Equal(t, []uint64{3, 2, 4, 0, 1}, got)
+	require.Equal(t, []uint64{3, 2, 0, 1}, got)
 }
 
 func TestBasicStringProductSearchesExactRuneLength(t *testing.T) {
@@ -621,13 +686,119 @@ func TestBasicStringProductChargesLengthAndCountedRepeatEdges(t *testing.T) {
 	t.Parallel()
 
 	patterns := parseBasicSearchPatterns(t, `^a{2}$`)
-	searchState := &search{maxSteps: 5}
 
-	witness, found, err := searchState.findBasicStringWitness(patterns)
+	cutoff := &search{maxSteps: 2}
+	witness, found, err := cutoff.findBasicStringWitness(patterns)
 	require.ErrorIs(t, err, errMaxSteps)
 	require.False(t, found)
 	require.Empty(t, witness)
-	require.Equal(t, uint64(5), searchState.steps)
+	require.Equal(t, uint64(2), cutoff.steps)
+
+	complete := &search{maxSteps: 3}
+	witness, found, err = complete.findBasicStringWitness(patterns)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "aa", witness)
+	require.Equal(t, uint64(3), complete.steps)
+}
+
+func TestBasicStringPatternProgramKeepsCountedRepeatsCompact(t *testing.T) {
+	t.Parallel()
+
+	pattern := parseBasicSearchPatterns(t, `^(?:a{10}){100}$`)[0]
+	machines, err := compileBasicStringPatternMachines(pattern)
+	require.NoError(t, err)
+	require.Len(t, machines, 1)
+	require.Less(t, len(machines[0].states), 20)
+	require.Len(t, machines[0].repeats, 2)
+}
+
+func TestBasicStringPatternRepeatFramesPreserveGreedyAndLazyOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		pattern string
+		first   basicStringEdgeKind
+	}{
+		{name: "greedy", pattern: `^a{0,1}$`, first: basicStringRepeatBody},
+		{name: "lazy", pattern: `^a{0,1}?$`, first: basicStringRepeatExit},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			machine := parseBasicSearchPatterns(t, test.pattern)[0].searchMachines[0]
+
+			var decision int
+
+			for _, edges := range machine.states {
+				for _, edge := range edges {
+					if edge.kind == basicStringRepeatInit {
+						decision = edge.target
+					}
+				}
+			}
+
+			require.NotZero(t, decision)
+			require.Equal(t, test.first, machine.states[decision][0].kind)
+			require.Len(t, machine.repeats, 1)
+		})
+	}
+}
+
+func TestBasicStringPatternBoundsHandleZeroCountAndEndAssertion(t *testing.T) {
+	t.Parallel()
+
+	zero, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^(?:a+){0}$`))
+	require.NoError(t, err)
+	require.False(t, zero.unbounded)
+	require.Zero(t, zero.maxUnits)
+	require.Zero(t, zero.machines[0].minUnits)
+
+	counted := parseBasicSearchPatterns(t, `^(?:ab){2,3}$`)[0].searchMachines[0]
+	require.Equal(t, uint64(4), counted.minUnits)
+	require.Equal(t, uint64(6), counted.maxUnits)
+	require.False(t, counted.unbounded)
+
+	asserted, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^(?=a{2,4}$)a+`))
+	require.NoError(t, err)
+	require.False(t, asserted.unbounded)
+	require.Equal(t, uint64(4), asserted.maxUnits)
+}
+
+func TestCleanPatternMatcherSatisfiesNullableRepeatMinimumAtFixedPoint(t *testing.T) {
+	t.Parallel()
+
+	for _, pattern := range []string{`^(?:^){2,}$`, `^(?:^){2,100}$`} {
+		parsed := parseBasicSearchPatterns(t, pattern)[0]
+		matched, err := cleanPatternMatches(parsed, "")
+		require.NoError(t, err)
+		require.True(t, matched, pattern)
+	}
+}
+
+func TestBasicStringProductTerminatesNullableUnboundedRepeat(t *testing.T) {
+	t.Parallel()
+
+	for _, pattern := range []string{`^(?:^)*$`, `^(?:^){2,}$`, `^(?:^){2,100}$`} {
+		searchState := &search{maxSteps: 10}
+		witness, found, err := searchState.findBasicStringWitness(
+			parseBasicSearchPatterns(t, pattern),
+		)
+		require.NoError(t, err, pattern)
+		require.True(t, found, pattern)
+		require.Empty(t, witness, pattern)
+		require.Equal(t, uint64(1), searchState.steps, pattern)
+	}
+}
+
+func TestBasicStringPatternAnchorsThroughZeroCountSuffix(t *testing.T) {
+	t.Parallel()
+
+	product, err := newBasicStringProduct(parseBasicSearchPatterns(t, `^$a{0}`))
+	require.NoError(t, err)
+	require.False(t, product.unbounded)
+	require.Zero(t, product.maxUnits)
 }
 
 func TestBuildUsesOneBasicStringProductForActiveAllOfPatterns(t *testing.T) {
@@ -735,7 +906,11 @@ func basicStringIntervalCandidates(interval basicStringInterval, seed uint64) []
 func basicStringProductStateIDs(state basicStringProductState) [][]int {
 	identities := make([][]int, len(state.patterns))
 	for index := range state.patterns {
-		identities[index] = append([]int(nil), state.patterns[index].active...)
+		for _, configuration := range state.patterns[index].active {
+			identities[index] = append(identities[index], configuration.state)
+		}
+
+		sort.Ints(identities[index])
 	}
 
 	return identities

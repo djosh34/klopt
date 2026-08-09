@@ -187,10 +187,12 @@ func TestEvaluateCleanPatternFamiliesUseIndependentMatchingState(t *testing.T) {
 		{name: "class", pattern: `[a-c]+`, value: `"xxbc"`, valid: true},
 		{name: "negated class", pattern: `[^a]+`, value: `"aaa"`, valid: false},
 		{name: "counted repeat", pattern: `^a{2,3}$`, value: `"aaa"`, valid: true},
+		{name: "zero count suppresses inner unboundedness", pattern: `^(?:a+){0}$`, value: `""`, valid: true},
 		{name: "lazy repeat", pattern: `^a+?$`, value: `"aaa"`, valid: true},
 		{name: "dot excludes line terminator", pattern: `^.$`, value: `"\n"`, valid: false},
 		{name: "word boundary", pattern: `\bword\b`, value: `"a word!"`, valid: true},
 		{name: "positive leading assertion", pattern: `^(?=a)a`, value: `"abc"`, valid: true},
+		{name: "consecutive assertions inspect same suffix", pattern: `^(?=ab)(?!ac)ab$`, value: `"ab"`, valid: true},
 		{name: "negative leading assertion", pattern: `^(?!b)a`, value: `"abc"`, valid: true},
 		{name: "failed negative leading assertion", pattern: `^(?!a)a`, value: `"abc"`, valid: false},
 	}

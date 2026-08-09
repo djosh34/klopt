@@ -57,10 +57,12 @@ func makePlan(model *schemaModel) (*searchPlan, error) {
 		return nil, err
 	}
 
-	faultExecution := make([]int, len(compiled.faults))
-	for index := range compiled.faults {
-		faultExecution[index] = index
+	validSchedule, err = appendFormatBoundaryRequests(validSchedule, compiled.valid, stringObjectives)
+	if err != nil {
+		return nil, err
 	}
+
+	faultExecution := compileFaultExecution(compiled.faults)
 
 	obligations := make([]obligation, 0, len(compiled.valid)+len(compiled.faults))
 	for _, target := range compiled.valid {
@@ -89,26 +91,128 @@ func makePlan(model *schemaModel) (*searchPlan, error) {
 	}, nil
 }
 
-// compileStringObjectiveOrder keeps scalar search objectives independent of report order.
+// compileStringObjectiveOrder keeps scalar execution independent of report order.
 func compileStringObjectiveOrder(catalog []validIntent) []levelIdentity {
 	objectives := make([]levelIdentity, 0)
 
-	for _, target := range catalog {
-		switch target.expected.rule {
-		case oracleRuleMinLength, oracleRuleMaxLength, oracleRulePattern:
-			objectives = append(objectives, target.expected)
-		case oracleRuleFormat:
-			for _, requirement := range target.requirements {
-				if requirement.hasKind && requirement.kind == jsonString {
-					objectives = append(objectives, target.expected)
-
-					break
-				}
+	for _, rule := range []string{
+		oracleRulePattern, oracleRuleFormat, oracleRuleMinLength, oracleRuleMaxLength,
+	} {
+		for _, target := range catalog {
+			if target.expected.rule != rule || rule == oracleRuleFormat && !validTargetRequiresString(target) {
+				continue
 			}
+
+			objectives = append(objectives, target.expected)
 		}
 	}
 
 	return objectives
+}
+
+// validTargetRequiresString reports whether a format level applies to strings.
+func validTargetRequiresString(target validIntent) bool {
+	for _, requirement := range target.requirements {
+		if requirement.hasKind && requirement.kind == jsonString {
+			return true
+		}
+	}
+
+	return false
+}
+
+// appendFormatBoundaryRequests routes every registry boundary through Build.
+func appendFormatBoundaryRequests(
+	schedule []validRequest,
+	catalog []validIntent,
+	objectives []levelIdentity,
+) ([]validRequest, error) {
+	if len(schedule) == 0 {
+		return schedule, nil
+	}
+
+	baseline := schedule[0]
+
+	for _, target := range catalog {
+		if target.expected.rule != oracleRuleFormat || !validTargetRequiresString(target) {
+			continue
+		}
+
+		specification, exists := stringFormatSpecificationFor(target.stringFormat)
+		if !exists {
+			return nil, fmt.Errorf("format boundary target %s has no registry entry", target.obligation.String())
+		}
+
+		if specification.inert {
+			continue
+		}
+
+		for index := 0; index < int(specification.objectiveCount); index++ {
+			boundary := &formatBoundaryObjective{
+				identity: target.expected,
+				format:   target.stringFormat,
+				boundary: specification.objectives[index],
+			}
+			request := baseline
+			request.stringObjectives = validRequestStringObjectives(
+				baseline.targets, catalogTargetIndex(baseline.targets, target.expected), objectives,
+			)
+			request.formatBoundary = boundary
+			schedule = append(schedule, request)
+		}
+	}
+
+	return schedule, nil
+}
+
+// catalogTargetIndex finds one objective in the selected baseline vector.
+func catalogTargetIndex(targets []validIntent, identity levelIdentity) int {
+	for index := range targets {
+		if targets[index].expected == identity {
+			return index
+		}
+	}
+
+	return -1
+}
+
+// compileFaultExecution gives string faults their locked pattern, format, then length order.
+func compileFaultExecution(faults []faultProgram) []int {
+	execution := make([]int, len(faults))
+	for index := range faults {
+		execution[index] = index
+	}
+
+	sort.SliceStable(execution, func(left, right int) bool {
+		return stringFaultExecutionRank(faults[execution[left]].obligation.rule) <
+			stringFaultExecutionRank(faults[execution[right]].obligation.rule)
+	})
+
+	return execution
+}
+
+// stringFaultExecutionRank orders string faults after other canonical faults.
+func stringFaultExecutionRank(rule string) uint8 {
+	const (
+		nonStringRank uint8 = iota
+		patternRank
+		formatRank
+		minLengthRank
+		maxLengthRank
+	)
+
+	switch rule {
+	case oracleRulePattern:
+		return patternRank
+	case oracleRuleFormat:
+		return formatRank
+	case oracleRuleMinLength:
+		return minLengthRank
+	case oracleRuleMaxLength:
+		return maxLengthRank
+	default:
+		return nonStringRank
+	}
 }
 
 // cachePlanOrderKeys parses ordering metadata once before any sort comparison.
@@ -1016,6 +1120,8 @@ func (builder *planBuilder) compileStringRules(
 		); err != nil {
 			return err
 		}
+
+		result.valid[len(result.valid)-1].stringFormat = node.format
 	}
 
 	return nil

@@ -48,7 +48,7 @@ func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T)
 	require.NotContains(t, text, "rowObjectChildrenAt")
 	require.NotContains(t, text, "advanceArrayRankTuple")
 	require.NotContains(t, text, "ranks := make([]uint64")
-	require.Equal(t, 9, strings.Count(text, "newDirectRankTupleDecoder"))
+	require.Equal(t, 8, strings.Count(text, "newDirectRankTupleDecoder"))
 	require.Equal(t, 2, strings.Count(text, "newRankProductCursor("))
 	require.Equal(t, 2, strings.Count(text, "newRankProductCursor(5)"))
 }

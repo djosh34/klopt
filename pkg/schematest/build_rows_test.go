@@ -50,7 +50,7 @@ func TestBuildEmitsOracleValidUUIDWitnesses(t *testing.T) {
 	cases := make([]Case, 0)
 
 	report, err := Build(
-		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100},
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1_000},
 		func(testCase Case) error {
 			cases = append(cases, testCase)
 
