@@ -109,6 +109,7 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 	expectedCases := []Case{
 		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[""]`), Valid: true},
+		{JSON: []byte(`[0]`), Valid: true},
 	}
 
 	firstReport, firstCases, err := collect()

@@ -22,13 +22,242 @@ type rowAdditionalPropertySource struct {
 }
 
 const (
-	// rowLengthCandidateCapacity is the small transient array-length frontier.
-	rowLengthCandidateCapacity = 8
-	// rowSecondRepairLength is the second canonical repair length.
-	rowSecondRepairLength = 2
+	// rowArrayLengthExactPhase emits a directed exact-count requirement.
+	rowArrayLengthExactPhase uint8 = iota
+	// rowArrayLengthMinimumPhase emits the effective composed minimum.
+	rowArrayLengthMinimumPhase
+	// rowArrayLengthMaximumPhase emits the effective composed maximum.
+	rowArrayLengthMaximumPhase
+	// rowArrayLengthRemainingPhase emits the remaining numeric count domain.
+	rowArrayLengthRemainingPhase
 )
 
-// walkArray assigns an array length and recursively assigns every item.
+// rowArrayLengthCursor yields exact structural counts without retaining a frontier.
+type rowArrayLengthCursor struct {
+	exact        uint64
+	minimum      uint64
+	maximum      uint64
+	hasExact     bool
+	hasMaximum   bool
+	phase        uint8
+	remaining    uint64
+	remainingEnd bool
+}
+
+// newRowArrayLengthCursor intersects the active projection's count rules.
+//
+//nolint:cyclop,gocognit // Exact requirements, active minima, and maxima are one cursor initialization.
+func newRowArrayLengthCursor(
+	view rowProjectionView,
+	requirements []requirement,
+) (*rowArrayLengthCursor, error) {
+	cursor := &rowArrayLengthCursor{}
+
+	var cursorErr error
+
+	view.eachSource(func(source rowSchemaSource) bool {
+		minimum, minimumFits, err := exactCountUint64(source.node.minItems)
+		if err != nil {
+			cursorErr = err
+
+			return false
+		}
+
+		if minimumFits && minimum > cursor.minimum {
+			cursor.minimum = minimum
+		}
+
+		if item, exists := rowChildSchemaSource(source.node, source.occurrence, rowChildItems, ""); exists {
+			presence, constrained := rowPresenceRequirementDetails(requirements, item.occurrence)
+			if constrained && !presence.canonical && presence.presence == requirementPresent && cursor.minimum < 1 {
+				cursor.minimum = 1
+			}
+		}
+
+		maximum, maximumFits, err := exactCountUint64(source.node.maxItems)
+		if err != nil {
+			cursorErr = err
+
+			return false
+		}
+
+		if maximumFits && (!cursor.hasMaximum || maximum < cursor.maximum) {
+			cursor.maximum = maximum
+			cursor.hasMaximum = true
+		}
+
+		if cursor.hasExact {
+			return true
+		}
+
+		for _, requirement := range requirements {
+			if requirement.tag != requirementExactCount || requirement.count == nil ||
+				!rowOccurrenceMatches(requirement.occurrence, source.occurrence) {
+				continue
+			}
+
+			exact, fits, exactErr := exactCountUint64(requirement.count)
+			if exactErr != nil {
+				cursorErr = exactErr
+
+				return false
+			}
+
+			if fits {
+				cursor.exact = exact
+				cursor.hasExact = true
+			}
+
+			break
+		}
+
+		return true
+	})
+
+	if cursorErr != nil {
+		return nil, cursorErr
+	}
+
+	return cursor, nil
+}
+
+// Next returns the next first-occurrence count. Open cursors never exhaust locally.
+func (cursor *rowArrayLengthCursor) Next() (uint64, bool) {
+	if candidate, ok := cursor.nextNamed(); ok {
+		return candidate, true
+	}
+
+	for !cursor.remainingEnd {
+		candidate := cursor.remaining
+		if cursor.hasMaximum && candidate == cursor.maximum {
+			cursor.remainingEnd = true
+		} else {
+			cursor.remaining++
+		}
+
+		if !cursor.namedBefore(candidate, rowArrayLengthRemainingPhase) {
+			return candidate, true
+		}
+	}
+
+	return 0, false
+}
+
+// nextNamed yields only the exact requirement and effective boundaries.
+func (cursor *rowArrayLengthCursor) nextNamed() (uint64, bool) {
+	for cursor.phase < rowArrayLengthRemainingPhase {
+		phase := cursor.phase
+		cursor.phase++
+
+		switch phase {
+		case rowArrayLengthExactPhase:
+			if cursor.hasExact {
+				return cursor.exact, true
+			}
+		case rowArrayLengthMinimumPhase:
+			if !cursor.namedBefore(cursor.minimum, rowArrayLengthMinimumPhase) {
+				return cursor.minimum, true
+			}
+		case rowArrayLengthMaximumPhase:
+			if cursor.hasMaximum && !cursor.namedBefore(cursor.maximum, rowArrayLengthMaximumPhase) {
+				return cursor.maximum, true
+			}
+		}
+	}
+
+	return 0, false
+}
+
+// namedBefore reports whether an earlier named phase already yielded one count.
+func (cursor *rowArrayLengthCursor) namedBefore(candidate uint64, phase uint8) bool {
+	return phase > rowArrayLengthExactPhase && cursor.hasExact && candidate == cursor.exact ||
+		phase > rowArrayLengthMinimumPhase && candidate == cursor.minimum ||
+		phase > rowArrayLengthMaximumPhase && cursor.hasMaximum && candidate == cursor.maximum
+}
+
+// walkProjectedDirectArrays offers complete composed array witnesses before repair search.
+//
+//nolint:cyclop // Projection discovery, charging, cloning, and visiting are one lazy source operation.
+func (s *search) walkProjectedDirectArrays(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	visit rowVisit,
+) (bool, error) {
+	cursor := newRowProjectionCursor(node, occurrence, requirements)
+	defer cursor.Close()
+
+	for {
+		view, ok, err := cursor.Next()
+		if err != nil {
+			return false, err
+		}
+
+		if !ok {
+			return false, nil
+		}
+
+		var candidates bool
+
+		err = view.eachDirectValue(func(_ rowSchemaSource, candidate *jsonValue) bool {
+			if candidate.kind == jsonArray {
+				candidates = true
+			}
+
+			return !candidates
+		})
+		if err != nil {
+			return false, err
+		}
+
+		if !candidates {
+			continue
+		}
+
+		if _, activeErr := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...), s.assign,
+		); activeErr != nil {
+			return false, activeErr
+		}
+
+		var (
+			complete bool
+			visitErr error
+		)
+
+		err = view.eachDirectValue(func(_ rowSchemaSource, candidate *jsonValue) bool {
+			if candidate.kind != jsonArray {
+				return true
+			}
+
+			if visitErr = s.assign(); visitErr != nil {
+				return false
+			}
+
+			owned, cloneErr := cloneJSONValue(candidate)
+			if cloneErr != nil {
+				visitErr = cloneErr
+
+				return false
+			}
+
+			complete, visitErr = visit(owned)
+
+			return visitErr == nil && !complete
+		})
+		if err != nil {
+			return false, err
+		}
+
+		if visitErr != nil || complete {
+			return complete, visitErr
+		}
+	}
+}
+
+// walkArray fairly advances every active projection across the open count frontier.
+//
+//nolint:cyclop // Projection rounds and the sole global cutoff share one lazy traversal boundary.
 func (s *search) walkArray(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -36,458 +265,207 @@ func (s *search) walkArray(
 	context rowSearchContext,
 	visit rowVisit,
 ) (bool, error) {
-	lengths, err := rowArrayLengths(node, occurrence, requirements)
-	if err != nil {
-		return false, err
+	complete, err := s.walkProjectedDirectArrays(node, occurrence, requirements, visit)
+	if err != nil || complete {
+		return complete, err
 	}
 
-	for _, length := range lengths {
-		if err := s.assign(); err != nil {
-			return false, err
-		}
+	for round := uint64(0); ; round++ {
+		cursor := newRowProjectionCursor(node, occurrence, requirements)
+		attempted := false
 
-		elements := make([]*jsonValue, length)
+		for {
+			view, ok, err := cursor.Next()
+			if err != nil {
+				cursor.Close()
 
-		itemChoices, err := rowChildSchemaChoices(node, occurrence, requirements, rowChildItems, "")
-		if err != nil {
-			return false, err
-		}
-
-		for _, itemChoice := range itemChoices {
-			if len(itemChoices) > 1 {
-				if err := s.assign(); err != nil {
-					return false, err
-				}
+				return false, err
 			}
 
-			complete, err := s.walkArrayElements(
-				itemChoice.node,
-				itemChoice.occurrence,
-				requirements,
-				context,
-				elements,
-				0,
-				visit,
+			if !ok {
+				break
+			}
+
+			complete, viewAttempted, err := s.walkProjectedArray(
+				view, requirements, context, round, visit,
 			)
+			attempted = attempted || viewAttempted
+
 			if err != nil || complete {
+				cursor.Close()
+
 				return complete, err
 			}
 		}
-	}
 
-	return false, nil
+		cursor.Close()
+
+		if round > 0 && !attempted {
+			return false, nil
+		}
+
+		if round == ^uint64(0) {
+			return false, nil
+		}
+	}
 }
 
-// walkArrayElements assigns item values without retaining completed arrays.
+// walkProjectedArray constructs the named boundaries or one fair remaining count.
+//
+//nolint:cyclop // Named boundaries and one fair open count share the charged assignment operation.
+func (s *search) walkProjectedArray(
+	view rowProjectionView,
+	requirements []requirement,
+	context rowSearchContext,
+	round uint64,
+	visit rowVisit,
+) (bool, bool, error) {
+	lengths, err := newRowArrayLengthCursor(view, requirements)
+	if err != nil {
+		return false, false, err
+	}
+
+	item, err := rowProjectedArrayItem(view, requirements)
+	if err != nil {
+		return false, false, err
+	}
+
+	walkLength := func(length uint64) (bool, error) {
+		activeRequirements, activeErr := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...), s.assign,
+		)
+		if activeErr != nil {
+			return false, activeErr
+		}
+
+		if assignErr := s.assign(); assignErr != nil {
+			return false, assignErr
+		}
+
+		return s.walkArrayElements(
+			item.node, item.occurrence, activeRequirements, context, []*jsonValue{}, 0, length, visit,
+		)
+	}
+
+	if round == 0 {
+		attempted := false
+
+		for {
+			length, ok := lengths.nextNamed()
+			if !ok {
+				return false, attempted, nil
+			}
+
+			attempted = true
+
+			complete, walkErr := walkLength(length)
+			if walkErr != nil || complete {
+				return complete, true, walkErr
+			}
+		}
+	}
+
+	length := round - 1
+	if lengths.hasMaximum && length > lengths.maximum ||
+		lengths.namedBefore(length, rowArrayLengthRemainingPhase) {
+		return false, false, nil
+	}
+
+	complete, err := walkLength(length)
+
+	return complete, true, err
+}
+
+// rowProjectedArrayItem merges only the item schemas in the current active view.
+func rowProjectedArrayItem(
+	view rowProjectionView,
+	requirements []requirement,
+) (rowSchemaChoice, error) {
+	var (
+		sources  []rowSchemaSource
+		fallback schemaOccurrence
+	)
+
+	view.eachSource(func(source rowSchemaSource) bool {
+		if fallback.usePointer == "" {
+			fallback = rowChildOccurrence(source.node, source.occurrence, rowChildItems, "")
+		}
+
+		if item, exists := rowChildSchemaSource(source.node, source.occurrence, rowChildItems, ""); exists {
+			sources = append(sources, item)
+		}
+
+		return true
+	})
+
+	ordered := rowPreferredSchemaSources(sources, requirements)
+	for index, source := range ordered {
+		if source.node.enum == nil && source.node.defaultValue == nil {
+			continue
+		}
+
+		if index > 0 {
+			selected := ordered[index]
+			copy(ordered[1:index+1], ordered[:index])
+			ordered[0] = selected
+		}
+
+		break
+	}
+
+	choice, exists, err := mergeRowSchemaSources(ordered)
+	if err != nil {
+		return rowSchemaChoice{}, err
+	}
+
+	if !exists {
+		choice.occurrence = fallback
+	}
+
+	return choice, nil
+}
+
+// walkArrayElements appends one independently owned item after its charged assignment.
 func (s *search) walkArrayElements(
 	item *schemaNode,
 	occurrence schemaOccurrence,
 	requirements []requirement,
 	context rowSearchContext,
 	elements []*jsonValue,
-	index int,
+	index, length uint64,
 	visit rowVisit,
 ) (bool, error) {
-	if index == len(elements) {
+	if index == length {
 		return visit(&jsonValue{kind: jsonArray, array: elements})
 	}
 
-	if item == nil {
-		return s.walkGenericValue(requirements, func(value *jsonValue) (bool, error) {
-			elements[index] = value
-
-			return s.walkArrayElements(item, occurrence, requirements, context, elements, index+1, visit)
-		})
-	}
-
-	return s.walkNode(item, occurrence, requirements, context, func(value *jsonValue) (bool, error) {
-		usable, err := s.rowChildValueUsable(item, occurrence, requirements, value)
+	walkValue := func(value *jsonValue) (bool, error) {
+		owned, err := cloneJSONValue(value)
 		if err != nil {
 			return false, err
 		}
 
-		if !usable {
-			return false, nil
+		elements = append(elements, owned)
+		complete, err := s.walkArrayElements(
+			item, occurrence, requirements, context, elements, index+1, length, visit,
+		)
+		elements = elements[:len(elements)-1]
+
+		return complete, err
+	}
+
+	if item == nil {
+		return s.walkGenericValue(requirements, walkValue)
+	}
+
+	return s.walkNode(item, occurrence, requirements, context, func(value *jsonValue) (bool, error) {
+		usable, err := s.rowChildValueUsable(item, occurrence, requirements, value)
+		if err != nil || !usable {
+			return false, err
 		}
 
-		elements[index] = value
-
-		return s.walkArrayElements(item, occurrence, requirements, context, elements, index+1, visit)
+		return walkValue(value)
 	})
-}
-
-// rowArrayLengths returns canonical and repair lengths for one array occurrence.
-//
-//nolint:cyclop,gocognit,gocyclo // Bound extraction and deterministic repair choices are one structural phase.
-func rowArrayLengths(node *schemaNode, occurrence schemaOccurrence, requirements []requirement) ([]int, error) {
-	minimum := 0
-	maximum := int(^uint(0) >> 1)
-
-	if count, fits, err := exactCountUint64(node.minItems); err != nil {
-		return nil, err
-	} else if fits {
-		if count > uint64(maximum) {
-			return nil, nil
-		}
-
-		minimum = int(count)
-	}
-
-	if count, fits, err := exactCountUint64(node.maxItems); err != nil {
-		return nil, err
-	} else if fits && count < uint64(maximum) {
-		maximum = int(count)
-	}
-
-	composedBounds := [][2]int{{minimum, maximum}}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-
-		childBounds, err := rowNestedArrayBounds(child, childOccurrence, requirements)
-		if err != nil {
-			return nil, err
-		}
-
-		composedBounds = combineRowArrayBounds(composedBounds, childBounds)
-	}
-
-	anyOfStates, anyOfConstrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
-	if anyOfConstrained {
-		for index, child := range node.anyOf {
-			if !anyOfStates[index] {
-				continue
-			}
-
-			childOccurrence := rebasePlanOccurrence(
-				child,
-				occurrence,
-				occurrence.usePointer+"/anyOf/"+itoa(index),
-				occurrence.instanceTemplate,
-			)
-
-			childBounds, err := rowNestedArrayBounds(child, childOccurrence, requirements)
-			if err != nil {
-				return nil, err
-			}
-
-			composedBounds = combineRowArrayBounds(composedBounds, childBounds)
-		}
-	} else if len(node.anyOf) > 0 {
-		alternativeBounds := make([][2]int, 0, len(node.anyOf))
-		for index, child := range node.anyOf {
-			childOccurrence := rebasePlanOccurrence(
-				child,
-				occurrence,
-				occurrence.usePointer+"/anyOf/"+itoa(index),
-				occurrence.instanceTemplate,
-			)
-
-			childBounds, err := rowNestedArrayBounds(child, childOccurrence, requirements)
-			if err != nil {
-				return nil, err
-			}
-
-			alternativeBounds = append(
-				alternativeBounds,
-				combineRowArrayBounds(composedBounds, childBounds)...,
-			)
-		}
-
-		composedBounds = alternativeBounds
-	}
-
-	if len(composedBounds) == 1 {
-		minimum = composedBounds[0][0]
-		maximum = composedBounds[0][1]
-	}
-
-	itemRequirement, itemConstrained := rowPresenceRequirementDetails(requirements, schemaOccurrence{
-		usePointer:       occurrence.usePointer + "/items",
-		targetPointer:    occurrence.targetPointer,
-		instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
-	})
-	if !itemConstrained {
-		itemChoices, err := rowChildSchemaChoices(node, occurrence, requirements, rowChildItems, "")
-		if err != nil {
-			return nil, err
-		}
-
-		for _, itemChoice := range itemChoices {
-			candidateRequirement, exists := rowPresenceRequirementDetails(requirements, itemChoice.occurrence)
-			if exists && (!itemConstrained || !candidateRequirement.canonical) {
-				itemRequirement, itemConstrained = candidateRequirement, true
-			}
-		}
-	}
-
-	if itemConstrained && !itemRequirement.canonical && itemRequirement.presence == requirementPresent && minimum < 1 {
-		minimum = 1
-	}
-
-	defaultLengths, err := rowComposedArrayDefaultLengths(node, occurrence, requirements)
-	if err != nil {
-		return nil, err
-	}
-
-	if minimum > maximum {
-		return []int{minimum}, nil
-	}
-
-	candidates := make([]int, 0, rowLengthCandidateCapacity)
-	appendLength := func(length int) {
-		if length < 0 || length > maximum {
-			return
-		}
-
-		for _, existing := range candidates {
-			if existing == length {
-				return
-			}
-		}
-
-		candidates = append(candidates, length)
-	}
-
-	appendLength(minimum)
-	appendLength(0)
-	appendLength(1)
-	appendLength(rowSecondRepairLength)
-	appendLength(minimum + 1)
-
-	if maximum < int(^uint(0)>>1) {
-		appendLength(maximum)
-	}
-
-	for _, bounds := range composedBounds {
-		appendLength(bounds[0])
-
-		if bounds[1] < int(^uint(0)>>1) {
-			appendLength(bounds[1])
-		}
-	}
-
-	for _, length := range defaultLengths {
-		appendLength(length)
-	}
-
-	return candidates, nil
-}
-
-// rowComposedArrayDefaultLengths preserves active authored array defaults.
-func rowComposedArrayDefaultLengths(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-) ([]int, error) {
-	return rowComposedArrayDefaultLengthsAt(node, occurrence, requirements, make(map[*schemaNode]bool))
-}
-
-// rowComposedArrayDefaultLengthsAt recursively collects nested authored defaults.
-//
-//nolint:cyclop // Direct, allOf, and constrained anyOf defaults share one recursive pass.
-func rowComposedArrayDefaultLengthsAt(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	visiting map[*schemaNode]bool,
-) ([]int, error) {
-	if node == nil || node.schemaShape == nil {
-		return nil, nil
-	}
-
-	if visiting[node] {
-		return nil, fmt.Errorf("schematest: recursive row array default at %s", occurrence.usePointer)
-	}
-
-	visiting[node] = true
-	defer delete(visiting, node)
-
-	lengths := make([]int, 0, 1)
-	if node.defaultValue != nil && node.defaultValue.kind == jsonArray {
-		lengths = append(lengths, len(node.defaultValue.array))
-	}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-
-		childLengths, err := rowComposedArrayDefaultLengthsAt(child, childOccurrence, requirements, visiting)
-		if err != nil {
-			return nil, err
-		}
-
-		lengths = append(lengths, childLengths...)
-	}
-
-	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
-	for index, child := range node.anyOf {
-		if constrained && !states[index] {
-			continue
-		}
-
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/anyOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-
-		childLengths, err := rowComposedArrayDefaultLengthsAt(child, childOccurrence, requirements, visiting)
-		if err != nil {
-			return nil, err
-		}
-
-		lengths = append(lengths, childLengths...)
-	}
-
-	return lengths, nil
-}
-
-// rowNestedArrayBounds extracts active local and composed bound alternatives.
-func rowNestedArrayBounds(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-) ([][2]int, error) {
-	return rowNestedArrayBoundsAt(node, occurrence, requirements, make(map[*schemaNode]bool))
-}
-
-// rowNestedArrayBoundsAt carries nested composition alternatives through bounds.
-//
-//nolint:cyclop // Bound alternatives are combined in authored composition order.
-func rowNestedArrayBoundsAt(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	visiting map[*schemaNode]bool,
-) ([][2]int, error) {
-	maximum := int(^uint(0) >> 1)
-	if node == nil {
-		return [][2]int{{0, maximum}}, nil
-	}
-
-	if visiting[node] {
-		return nil, fmt.Errorf("schematest: recursive row array bounds at %s", occurrence.usePointer)
-	}
-
-	visiting[node] = true
-	defer delete(visiting, node)
-
-	minimum := 0
-
-	if count, fits, err := exactCountUint64(node.minItems); err != nil {
-		return nil, err
-	} else if fits {
-		if count > uint64(maximum) {
-			return [][2]int{{maximum, maximum}}, nil
-		}
-
-		minimum = int(count)
-	}
-
-	if count, fits, err := exactCountUint64(node.maxItems); err != nil {
-		return nil, err
-	} else if fits && count < uint64(maximum) {
-		maximum = int(count)
-	}
-
-	bounds := [][2]int{{minimum, maximum}}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-
-		childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, requirements, visiting)
-		if err != nil {
-			return nil, err
-		}
-
-		bounds = combineRowArrayBounds(bounds, childBounds)
-	}
-
-	if len(node.anyOf) == 0 {
-		return bounds, nil
-	}
-
-	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
-	if constrained {
-		for index, child := range node.anyOf {
-			if !states[index] {
-				continue
-			}
-
-			childOccurrence := rebasePlanOccurrence(
-				child,
-				occurrence,
-				occurrence.usePointer+"/anyOf/"+itoa(index),
-				occurrence.instanceTemplate,
-			)
-
-			childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, requirements, visiting)
-			if err != nil {
-				return nil, err
-			}
-
-			bounds = combineRowArrayBounds(bounds, childBounds)
-		}
-
-		return bounds, nil
-	}
-
-	alternatives := make([][2]int, 0, len(node.anyOf))
-	for index, child := range node.anyOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/anyOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-
-		childBounds, err := rowNestedArrayBoundsAt(child, childOccurrence, requirements, visiting)
-		if err != nil {
-			return nil, err
-		}
-
-		alternatives = append(alternatives, combineRowArrayBounds(bounds, childBounds)...)
-	}
-
-	return alternatives, nil
-}
-
-// combineRowArrayBounds intersects every left/right bound alternative.
-func combineRowArrayBounds(left, right [][2]int) [][2]int {
-	result := make([][2]int, 0, len(left)*len(right))
-	for _, leftBound := range left {
-		for _, rightBound := range right {
-			minimum := leftBound[0]
-			if rightBound[0] > minimum {
-				minimum = rightBound[0]
-			}
-
-			maximum := leftBound[1]
-			if rightBound[1] < maximum {
-				maximum = rightBound[1]
-			}
-
-			result = append(result, [2]int{minimum, maximum})
-		}
-	}
-
-	return result
 }
 
 // walkObject assigns members in canonical UTF-8 name order.

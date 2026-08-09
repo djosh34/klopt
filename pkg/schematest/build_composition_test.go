@@ -153,7 +153,7 @@ func TestBuildMergesNestedAnyOfArrayItemSchemas(t *testing.T) {
 	require.Contains(t, report.Covered, schemaPointer+"/allOf/0/anyOf/1/items|#/*|enum|level:member:0")
 }
 
-// TestBuildCarriesComposedArrayDefaultsIntoMasks verifies authored structural defaults.
+// TestBuildCarriesComposedArrayDefaultsIntoMasks verifies complete authored structural defaults.
 func TestBuildCarriesComposedArrayDefaultsIntoMasks(t *testing.T) {
 	t.Parallel()
 
@@ -164,21 +164,48 @@ func TestBuildCarriesComposedArrayDefaultsIntoMasks(t *testing.T) {
 		]
 	}`))
 
-	cases := make([]Case, 0)
-	report, err := Build(
-		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100000},
-		func(testCase Case) error {
-			cases = append(cases, testCase)
+	model, err := parseInput(Input{OpenAPI: document, OperationID: "selected"})
+	require.NoError(t, err)
+	plan, err := makePlan(model)
+	require.NoError(t, err)
 
-			return nil
+	var target validIntent
+
+	for _, candidate := range plan.validCatalog {
+		if strings.HasSuffix(candidate.obligation.String(), "|anyOf|level:mask:1") {
+			target = candidate
+
+			break
+		}
+	}
+
+	require.NotEmpty(t, target.obligation.String())
+
+	request := makeValidRequest([]validIntent{target}, 0, plan.stringObjectives)
+	searchState := &search{model: model, maxSteps: 100}
+
+	var row *jsonValue
+
+	found, err := searchState.walkProjectedDirectArrays(
+		model.root,
+		model.root.occurrence,
+		request.requirements,
+		func(candidate *jsonValue) (bool, error) {
+			if !targetRowMatches(evaluate(model, candidate), request, candidate) {
+				return false, nil
+			}
+
+			row = candidate
+
+			return true, nil
 		},
 	)
-
 	require.NoError(t, err)
-	require.NotEmpty(t, cases)
+	require.True(t, found)
 
-	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
-	require.Contains(t, report.Uncovered, schemaPointer+"|#|anyOf|level:mask:1")
+	encoded, err := marshalStrict(row)
+	require.NoError(t, err)
+	require.Equal(t, `[true,true,true]`, string(encoded))
 }
 
 // TestBuildMergesAllOfObjectPropertySchemas verifies composed property witnesses.
