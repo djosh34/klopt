@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -73,6 +74,25 @@ func TestRegenerateParentAtRankPreservesAndAdvancesAnyOfPins(t *testing.T) {
 	require.JSONEq(t, `{"x":"b"}`, string(marshalFaultTestValue(t, second)))
 }
 
+func TestParentReplayYieldsPastUnproductiveFirstAnyOfMask(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"anyOf":[
+			{"type":"string","minLength":2,"maxLength":1},
+			{"enum":[0]}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	searchState := &search{model: model, maxSteps: 1_000}
+
+	parent, found, exhausted, err := regenerateParentAtRank(plan, fault, 0, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.False(t, exhausted)
+	require.Equal(t, `0`, string(marshalFaultTestValue(t, parent)))
+}
+
 func TestParentReplayMaskAtRankReachesBranchesBeyondUint64Bits(t *testing.T) {
 	t.Parallel()
 
@@ -83,8 +103,27 @@ func TestParentReplayMaskAtRankReachesBranchesBeyondUint64Bits(t *testing.T) {
 		require.Equal(t, uint(1), mask.Bit(int(rank)))
 	}
 
-	_, finite := parentReplayMaskCount(65)
+	_, finite := parentReplayMaskFiniteSize(65)
 	require.False(t, finite)
+
+	cursor := &parentReplayMaskCursor{
+		branches: 65,
+		selected: 64,
+		indexes:  append([]int(nil), integerRange(1, 65)...),
+		started:  true,
+	}
+	mask, exists := cursor.Next()
+	require.True(t, exists)
+	require.Equal(t, strings.Repeat("1", 65), mask.Text(2))
+}
+
+func integerRange(first, end int) []int {
+	values := make([]int, 0, end-first)
+	for value := first; value < end; value++ {
+		values = append(values, value)
+	}
+
+	return values
 }
 
 func TestFaultClosureAtRankEnumeratesNestedAlternativesWithoutTuples(t *testing.T) {
@@ -95,14 +134,24 @@ func TestFaultClosureAtRankEnumeratesNestedAlternativesWithoutTuples(t *testing.
 			usePointer: pointer, targetPointer: pointer, instanceTemplate: "#",
 		}, rule)
 	}
-	firstA := &faultClosureAlternative{expected: failureSet{identity("#/a", oracleRuleMinimum)}}
-	firstB := &faultClosureAlternative{expected: failureSet{identity("#/a", oracleRuleMaximum)}}
+	firstA := &faultClosureAlternative{expected: faultClosure{
+		newEvaluationRecordIdentity(identity("#/a", oracleRuleMinimum)),
+	}}
+	firstB := &faultClosureAlternative{expected: faultClosure{
+		newEvaluationRecordIdentity(identity("#/a", oracleRuleMaximum)),
+	}}
 	firstA.next = firstB
-	secondA := &faultClosureAlternative{expected: failureSet{identity("#/b", oracleRulePattern)}}
-	secondB := &faultClosureAlternative{expected: failureSet{identity("#/b", oracleRuleFormat)}}
+	secondA := &faultClosureAlternative{expected: faultClosure{
+		newEvaluationRecordIdentity(identity("#/b", oracleRulePattern)),
+	}}
+	secondB := &faultClosureAlternative{expected: faultClosure{
+		newEvaluationRecordIdentity(identity("#/b", oracleRuleFormat)),
+	}}
 	secondA.next = secondB
 	program := &faultClosureProgram{alternatives: firstA, next: &faultClosureProgram{alternatives: secondA}}
-	fault := faultProgram{expected: failureSet{identity("#", oracleRuleAnyOf)}, alternatives: program}
+	fault := faultProgram{expected: faultClosure{
+		newEvaluationRecordIdentity(identity("#", oracleRuleAnyOf)),
+	}, alternatives: program}
 
 	var got [][]string
 
@@ -214,7 +263,7 @@ func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {
 		{JSON: []byte(`null`), Valid: false},
 	}, cases)
 	require.Equal(t, SpaceExhausted, report.Stop)
-	require.Equal(t, uint64(5), report.Steps)
+	require.Equal(t, uint64(6), report.Steps)
 	require.Empty(t, report.Uncovered)
 }
 
@@ -223,7 +272,7 @@ func TestBuildDiscardsBasicFaultAtCutoff(t *testing.T) {
 
 	document := []byte(documentWithJSONSchema(`{"type":"string"}`))
 
-	for _, maxSteps := range []uint64{3, 4} {
+	for _, maxSteps := range []uint64{3, 4, 5} {
 		var cases []Case
 
 		report, err := Build(

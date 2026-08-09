@@ -88,7 +88,7 @@ func TestBuildMergesAllOfArrayItemSchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
 	require.NotEmpty(t, cases)
 	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
 }
@@ -115,7 +115,7 @@ func TestBuildMergesNestedAllOfArrayItemSchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
 	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
 }
 
@@ -244,7 +244,8 @@ func TestBuildMergesAllOfObjectPropertySchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, uint64(10000), report.Steps)
 	require.NotEmpty(t, cases)
 	require.Contains(t, cases, Case{JSON: []byte(`{"x":"z"}`), Valid: true})
 }

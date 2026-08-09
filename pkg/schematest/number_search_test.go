@@ -212,6 +212,8 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("null"), Valid: false},
 				{JSON: []byte("0"), Valid: false},
+				{JSON: []byte("0"), Valid: false},
+				{JSON: []byte("0"), Valid: false},
 			},
 			wantStop: SpaceExhausted,
 			covered: []string{
@@ -365,7 +367,7 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 				{JSON: []byte("null"), Valid: false},
 			},
 			wantStop:  SpaceExhausted,
-			wantSteps: 287,
+			wantSteps: 386,
 			masks:     []string{"2", "3"},
 		},
 		{

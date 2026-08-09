@@ -21,7 +21,7 @@ const (
 type stringSearchObjective struct {
 	kind       stringSearchObjectiveKind
 	occurrence schemaOccurrence
-	closure    []failureIdentity
+	closure    faultClosure
 	rule       string
 	level      string
 }
@@ -156,7 +156,7 @@ func findStringFaultRow(target faultProgram, searchState *search) (*jsonValue, b
 	objective := &stringSearchObjective{
 		kind:       kind,
 		occurrence: target.obligation.occurrence,
-		closure:    append([]failureIdentity(nil), target.expected...),
+		closure:    append(faultClosure(nil), target.expected...),
 		rule:       target.obligation.rule,
 		level:      target.obligation.component,
 	}
@@ -343,19 +343,16 @@ func exactFailureClosure(actual iter.Seq[failureIdentity], expected []failureIde
 	return completeFailureIdentitySetsMatch(actualSet, expectedSet), nil
 }
 
-func exactEvaluationFailureClosure(result evaluation, expected []failureIdentity) (bool, error) {
-	expectedSet, err := canonicalProjectedFailureIdentities(func(yield func(failureIdentity) bool) {
-		for _, identity := range expected {
-			if !yield(identity) {
-				return
-			}
-		}
-	})
-	if err != nil {
-		return false, err
+func exactEvaluationFailureClosure(result evaluation, expected faultClosure) (bool, error) {
+	expectedSet := make([]evaluationRecordIdentity, 0, len(expected))
+	for _, identity := range expected {
+		expectedSet = append(expectedSet, cloneEvaluationRecordIdentity(identity))
 	}
 
-	return completeFailureIdentitySetsMatch(result.canonicalFailureIdentities(), expectedSet), nil
+	return completeFailureIdentitySetsMatch(
+		result.canonicalFailureIdentities(),
+		canonicalizeEvaluationRecordIdentities(expectedSet),
+	), nil
 }
 
 func canonicalProjectedFailureIdentities(sequence iter.Seq[failureIdentity]) ([]evaluationRecordIdentity, error) {

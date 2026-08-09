@@ -34,6 +34,54 @@ func TestBuildFaultProductContinuesPastUnsuitableRequiredParent(t *testing.T) {
 	require.Contains(t, cases, Case{JSON: []byte(`{"extra":"","spare":""}`), Valid: false})
 }
 
+func TestScalarFaultAdvancesToParentWithExactWholeContainerClosure(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"array",
+		"enum":[["aa","xx"],["aa","yy"],["b","yy"]],
+		"items":{"type":"string","minLength":2}
+	}`)
+	fault := findFaultTarget(t, plan, "/items|#/*|minLength|fault:minLength")
+	searchState := &search{model: model, maxSteps: 100_000}
+
+	var generated Case
+
+	err := streamFault(plan, fault, searchState, make(map[string]bool), func(testCase Case) error {
+		generated = testCase
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `["b","yy"]`, string(generated.JSON))
+}
+
+func TestAdditionalPropertyFaultAdvancesToLaterParent(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"enum":[{}, {"state":0}, {"state":0,"x":1}],
+		"properties":{"x":{"enum":[1]}},
+		"allOf":[{
+			"properties":{"state":{"enum":[0]}},
+			"additionalProperties":false
+		}]
+	}`)
+	fault := findFaultTarget(t, plan, "/allOf/0|#/*|additionalProperties|fault:additionalProperties")
+	searchState := &search{model: model, maxSteps: 100_000}
+
+	var generated Case
+
+	err := streamFault(plan, fault, searchState, make(map[string]bool), func(testCase Case) error {
+		generated = testCase
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"state":0,"x":1}`, string(generated.JSON))
+}
+
 func TestBuildNonCompositionFaultsAreDeterministicAndCutOffAtomically(t *testing.T) {
 	t.Parallel()
 

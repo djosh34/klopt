@@ -16,7 +16,7 @@ func TestBuildStreamsDeterministicValidPrimitiveRows(t *testing.T) {
 	collect := func() (Report, []Case, error) {
 		cases := make([]Case, 0)
 		report, err := Build(
-			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100},
+			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100_000},
 			func(testCase Case) error {
 				cases = append(cases, testCase)
 

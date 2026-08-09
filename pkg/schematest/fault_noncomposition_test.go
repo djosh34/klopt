@@ -116,6 +116,47 @@ func TestMaxPropertiesFaultBuildsAValidTypedAdditionalMember(t *testing.T) {
 	require.Equal(t, `{"__schematest_extra__":false}`, string(marshalFaultTestValue(t, derivative)))
 }
 
+func TestInapplicableObjectGrowthYieldsToFallbackSearch(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"maxProperties":2,
+		"default":{}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxProperties|fault:maxProperties")
+	searchState := &search{model: model, maxSteps: 25}
+
+	_, _, err := findNonCompositionDerivative(
+		&jsonValue{kind: jsonObject, object: map[string]*jsonValue{}},
+		fault,
+		searchState,
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, searchState.maxSteps, searchState.steps)
+}
+
+func TestOversizedArrayFaultStopsOnRealLazyEditCharge(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"array",
+		"maxItems":18446744073709551616,
+		"items":{}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxItems|fault:maxItems")
+	searchState := &search{model: model, maxSteps: 2}
+
+	derivative, attempted, exhausted, err := arrayCountFaultAttemptAtRank(
+		&jsonValue{kind: jsonArray}, fault, 0, searchState,
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, derivative)
+	require.False(t, attempted)
+	require.False(t, exhausted)
+	require.Equal(t, uint64(2), searchState.steps)
+}
+
 func TestObjectFaultRejectsAnImpossibleRootKindBeforeCharging(t *testing.T) {
 	t.Parallel()
 
@@ -123,7 +164,7 @@ func TestObjectFaultRejectsAnImpossibleRootKindBeforeCharging(t *testing.T) {
 	identity := makeRuleIdentity(model.root.occurrence, oracleRuleMaxProperties)
 	fault := faultProgram{
 		obligation: makeFaultObligation(identity, oracleRuleMaxProperties),
-		expected:   failureSet{failureIdentity(identity)},
+		expected:   faultClosure{newEvaluationRecordIdentity(identity)},
 	}
 	searchState := &search{model: model, maxSteps: 10}
 

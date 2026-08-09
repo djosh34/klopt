@@ -97,8 +97,8 @@ type formatBoundaryObjective struct {
 	boundary stringFormatBoundary
 }
 
-// failureSet is one immutable expected failure identity set.
-type failureSet = []failureIdentity
+// faultClosure is one immutable authoritative expected identity set.
+type faultClosure = []evaluationRecordIdentity
 
 // faultClosureProgram is one branch-local closure domain. Its linked
 // alternatives and successor domains describe a lazy product without storing
@@ -111,7 +111,7 @@ type faultClosureProgram struct {
 // faultClosureAlternative is one declarative way to make a branch false.
 type faultClosureAlternative struct {
 	requirements []requirement
-	expected     failureSet
+	expected     faultClosure
 	closure      *faultClosureProgram
 	next         *faultClosureAlternative
 }
@@ -120,7 +120,7 @@ type faultClosureAlternative struct {
 type faultProgram struct {
 	obligation   obligation
 	requirements []requirement
-	expected     failureSet
+	expected     faultClosure
 	alternatives *faultClosureProgram
 }
 

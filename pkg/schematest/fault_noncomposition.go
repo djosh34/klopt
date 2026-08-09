@@ -10,7 +10,10 @@ import (
 	"strings"
 )
 
-const objectFaultProductDimensions = 4
+const (
+	objectFaultProductDimensions = 4
+	arrayFaultProductDimensions  = 3
+)
 
 // applyNonCompositionFault builds one isolated non-composition derivative.
 func applyNonCompositionFault(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, error) {
@@ -82,6 +85,813 @@ func findNonCompositionDerivative(parent *jsonValue, fault faultProgram, s *sear
 	}
 }
 
+// nonCompositionFaultAttemptAtRank performs one addressed family mutation.
+func nonCompositionFaultAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	switch fault.obligation.rule {
+	case oracleRuleEnum, oracleRuleMinimum, oracleRuleExclusiveMinimum, oracleRuleMaximum,
+		oracleRuleExclusiveMaximum, oracleRuleMultipleOf, oracleRuleFormat,
+		oracleRuleMinLength, oracleRuleMaxLength, oracleRulePattern:
+		return scalarFaultAttemptAtRank(parent, fault, rank, s)
+	case oracleRuleRequired:
+		if rank > 0 {
+			return nil, false, true, nil
+		}
+
+		derivative, _, err := findRequiredDerivative(parent, fault, s)
+
+		return derivative, true, false, err
+	case oracleRuleAdditionalProperties:
+		return additionalPropertyFaultAttemptAtRank(parent, fault, rank, s)
+	case oracleRuleMinItems, oracleRuleMaxItems:
+		return arrayCountFaultAttemptAtRank(parent, fault, rank, s)
+	case oracleRuleMinProperties, oracleRuleMaxProperties:
+		return objectCountFaultAttemptAtRank(parent, fault, rank, s)
+	default:
+		if rank > 0 {
+			return nil, false, true, nil
+		}
+
+		derivative, err := applyNonCompositionFault(parent, fault, s)
+		if errors.Is(err, errFaultNotFound) {
+			return nil, true, false, nil
+		}
+
+		return derivative, derivative != nil, false, err
+	}
+}
+
+// scalarFaultAttemptAtRank obtains one replacement from the complete row conjunction.
+//
+//nolint:cyclop // Scalar families share one complete-row adapter.
+func scalarFaultAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	var (
+		derivative *jsonValue
+		attempted  bool
+		observed   uint64
+	)
+
+	root := s.model.root
+	requirements := copyPlanRequirements(fault.requirements)
+
+	if _, occurrence, found := resolveFaultValueContainer(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence,
+	); found {
+		for path := range matchingValuePathSequence(
+			parent, fault.obligation.occurrence.instanceTemplate,
+		) {
+			value := valueAtPath(parent, path)
+			if value != nil {
+				requirements = appendPlanRequirements(
+					requirements,
+					kindRequirement(occurrence, value.kind),
+				)
+			}
+
+			break
+		}
+	}
+
+	if fault.obligation.rule == oracleRuleEnum {
+		root = cloneWithoutFaultRule(
+			s.model.root,
+			s.model.root.occurrence,
+			fault.obligation.occurrence,
+			fault.obligation.rule,
+		)
+	}
+
+	candidateRoot := cloneWithoutFaultRule(
+		s.model.root,
+		s.model.root.occurrence,
+		fault.obligation.occurrence,
+		fault.obligation.rule,
+	)
+
+	wanted := uint64(0)
+	if _, exists := activeEnumValueAtRank(
+		candidateRoot, s.model.root.occurrence, requirements, &wanted,
+	); exists {
+		return scalarEnumFaultAttemptAtRank(parent, fault, candidateRoot, requirements, rank, s)
+	}
+
+	stringFault := fault.obligation.rule == oracleRuleMinLength ||
+		fault.obligation.rule == oracleRuleMaxLength || fault.obligation.rule == oracleRulePattern
+	if fault.obligation.rule == oracleRuleFormat {
+		target, _, found := resolveExactFaultTarget(
+			s.model.root, s.model.root.occurrence, fault.obligation.occurrence,
+		)
+		stringFault = found && !formatHasNumericSemantics(target.format)
+	}
+
+	context := rowSearchContext{scalarFault: &fault}
+	if fault.obligation.rule == oracleRuleEnum || stringFault &&
+		fault.obligation.occurrence.instanceTemplate != "#" {
+		root = candidateRoot
+		context.scalarFault = nil
+	}
+
+	stopped, err := s.walkNode(
+		root,
+		s.model.root.occurrence,
+		requirements,
+		context,
+		func(row *jsonValue) (bool, error) {
+			for path := range matchingValuePathSequence(
+				row, fault.obligation.occurrence.instanceTemplate,
+			) {
+				candidate := valueAtPath(row, path)
+				if candidate == nil {
+					continue
+				}
+
+				if observed < rank {
+					observed++
+
+					continue
+				}
+
+				selected, matched, selectErr := firstReplacementDerivative(
+					parent, fault, singleJSONValueSource(candidate), s.model, s,
+				)
+				if selectErr != nil {
+					return false, selectErr
+				}
+
+				attempted = true
+
+				if matched {
+					derivative = selected
+				}
+
+				return true, nil
+			}
+
+			return false, nil
+		},
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if stopped {
+		return derivative, attempted, false, nil
+	}
+
+	return nil, false, true, nil
+}
+
+// objectCountFaultAttemptAtRank attempts one complete directed object replacement.
+//
+//nolint:cyclop,gocognit // Exact count decoding and one row attempt share this boundary.
+func objectCountFaultAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	node, _, found := resolveExactFaultTarget(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence,
+	)
+	if !found {
+		return nil, false, true, nil
+	}
+
+	bound := node.minProperties
+	direction := int64(-1)
+
+	if fault.obligation.rule == oracleRuleMaxProperties {
+		bound = node.maxProperties
+		direction = 1
+	}
+
+	if bound == nil || bound.number == nil {
+		return nil, false, false, errors.New("schematest: object count fault has no bound")
+	}
+
+	one, err := parseExactNumber("1")
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	desired, err := addSignedExactNumbers(bound.number, one, direction)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if desired.numerator.Sign() < 0 {
+		return nil, false, true, nil
+	}
+
+	if count, fits, countErr := exactCountUint64(&exactCount{number: desired}); countErr != nil {
+		return nil, false, false, countErr
+	} else if !fits || count > uint64(^uint(0)>>1) {
+		for range 3 {
+			if assignErr := s.assign(); assignErr != nil {
+				return nil, false, false, assignErr
+			}
+		}
+
+		return nil, false, false, nil
+	}
+
+	root := cloneWithoutFaultRule(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, fault.obligation.rule,
+	)
+	directed := fault
+	directed.requirements = appendPlanRequirements(
+		copyPlanRequirements(fault.requirements),
+		requirement{
+			tag: requirementExactCount, occurrence: fault.obligation.occurrence,
+			count: &exactCount{number: desired},
+		},
+	)
+
+	var (
+		derivative *jsonValue
+		attempted  bool
+		observed   uint64
+	)
+
+	stopped, err := s.walkNode(
+		root,
+		s.model.root.occurrence,
+		directed.requirements,
+		rowSearchContext{},
+		func(row *jsonValue) (bool, error) {
+			for path := range matchingValuePathSequence(
+				row, fault.obligation.occurrence.instanceTemplate,
+			) {
+				replacement := valueAtPath(row, path)
+
+				current := valueAtPath(parent, path)
+				if replacement == nil || replacement.kind != jsonObject ||
+					current == nil || current.kind != jsonObject {
+					continue
+				}
+
+				if observed < rank {
+					observed++
+
+					continue
+				}
+
+				candidate, matched, candidateErr := tryObjectReplacement(
+					parent, path, current, replacement, fault, s,
+				)
+				if candidateErr != nil {
+					return false, candidateErr
+				}
+
+				attempted = true
+
+				if matched {
+					derivative = candidate
+				}
+
+				return true, nil
+			}
+
+			return false, nil
+		},
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if stopped {
+		return derivative, attempted, false, nil
+	}
+
+	return nil, false, true, nil
+}
+
+// arrayCountFaultAttemptAtRank keeps unrepresentable exact edits open and charged.
+//
+//nolint:cyclop // Exact count decoding and host-safe dispatch share this boundary.
+func arrayCountFaultAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	node, _, found := resolveExactFaultTarget(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence,
+	)
+	if !found {
+		return nil, false, true, nil
+	}
+
+	bound := node.minItems
+	if fault.obligation.rule == oracleRuleMaxItems {
+		bound = node.maxItems
+	}
+
+	count, fits, err := exactCountUint64(bound)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if fits && fault.obligation.rule == oracleRuleMinItems && count > 0 {
+		count--
+	} else if fits && fault.obligation.rule == oracleRuleMaxItems && count < ^uint64(0) {
+		count++
+	} else {
+		fits = false
+	}
+
+	if !fits || count > uint64(^uint(0)>>1) {
+		for range 3 {
+			if assignErr := s.assign(); assignErr != nil {
+				return nil, false, false, assignErr
+			}
+		}
+
+		return nil, false, false, nil
+	}
+
+	return representableArrayFaultAttemptAtRank(parent, fault, int(count), rank, s)
+}
+
+// representableArrayFaultAttemptAtRank attempts one authored or parent-relative array edit.
+//
+//nolint:cyclop // Authored, deletion, and insertion families share one ranked adapter.
+func representableArrayFaultAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	desired int,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	container, occurrence, found := resolveFaultContainer(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, jsonArray,
+	)
+	if !found {
+		return nil, false, true, nil
+	}
+
+	path, exists := matchingValuePathAt(parent, fault.obligation.occurrence.instanceTemplate, 0)
+	if !exists {
+		return nil, false, true, nil
+	}
+
+	current := valueAtPath(parent, path)
+	if current == nil || current.kind != jsonArray {
+		return nil, false, true, nil
+	}
+
+	authoredCount, err := authoredArrayFaultCandidateCount(
+		container, occurrence, fault.requirements, desired,
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if rank < authoredCount {
+		return authoredArrayFaultAttemptAtRank(
+			parent, path, fault, container, occurrence, desired, rank, s,
+		)
+	}
+
+	rank -= authoredCount
+
+	if len(current.array) > desired {
+		removed := len(current.array) - desired
+
+		count := saturatedBinomial(uint64(len(current.array)), uint64(removed))
+		if rank >= count {
+			return nil, false, true, nil
+		}
+
+		indexes, exists := arrayCombinationAt(len(current.array), removed, rank)
+		if !exists {
+			return nil, false, false, errors.New("schematest: array deletion rank disappeared")
+		}
+
+		values := make([]*jsonValue, 0, desired)
+
+		removedIndex := 0
+		for index, value := range current.array {
+			if removedIndex < len(indexes) && indexes[removedIndex] == index {
+				removedIndex++
+
+				continue
+			}
+
+			values = append(values, value)
+		}
+
+		candidate, matched, err := tryArrayCountCandidate(
+			parent, path, values, arrayEditCharges{indexes: pathCopyInts(indexes)}, fault, s,
+		)
+
+		return candidate, matched, false, err
+	}
+
+	if len(current.array) == desired {
+		return nil, false, true, nil
+	}
+
+	return arrayInsertionFaultAttemptAtRank(
+		parent, path, current, fault, container, occurrence, desired, rank, s,
+	)
+}
+
+func authoredArrayFaultCandidateCount(
+	container *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	desired int,
+) (uint64, error) {
+	projectionCount, err := rowProjectionNodeCount(container, occurrence, requirements)
+	if err != nil {
+		return 0, err
+	}
+
+	var count uint64
+
+	for rank := uint64(0); rank < projectionCount; rank++ {
+		view, exists, err := rowProjectionAt(container, occurrence, requirements, rank)
+		if err != nil {
+			return 0, err
+		}
+
+		if !exists {
+			continue
+		}
+
+		err = view.eachDirectValue(func(_ rowSchemaSource, value *jsonValue) bool {
+			if value.kind == jsonArray && len(value.array) == desired && count < ^uint64(0) {
+				count++
+			}
+
+			return true
+		})
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return count, nil
+}
+
+//nolint:cyclop // Projection and authored-value selection share one attempt.
+func authoredArrayFaultAttemptAtRank(
+	parent *jsonValue,
+	path []string,
+	fault faultProgram,
+	container *schemaNode,
+	occurrence schemaOccurrence,
+	desired int,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	cursor := newRowProjectionCursor(container, occurrence, fault.requirements)
+	defer cursor.Close()
+
+	for {
+		view, exists, err := cursor.Next()
+		if err != nil || !exists {
+			return nil, false, !exists, err
+		}
+
+		active, err := view.appendBranchRequirements(copyPlanRequirements(fault.requirements), s.assign)
+		if err != nil {
+			return nil, false, false, err
+		}
+
+		if !rowProjectionAcceptsKind(view, jsonArray) ||
+			!rowProjectionRequirementsAcceptKind(view, active, jsonArray) {
+			continue
+		}
+
+		var selected *jsonValue
+
+		err = view.eachDirectValue(func(_ rowSchemaSource, value *jsonValue) bool {
+			if value.kind != jsonArray || len(value.array) != desired {
+				return true
+			}
+
+			if rank > 0 {
+				rank--
+
+				return true
+			}
+
+			selected = value
+
+			return false
+		})
+		if err != nil {
+			return nil, false, false, err
+		}
+
+		if selected == nil {
+			continue
+		}
+
+		indexes := make([]int, len(selected.array))
+		for index := range indexes {
+			indexes[index] = index
+		}
+
+		candidate, matched, err := tryArrayCountCandidate(
+			parent,
+			path,
+			selected.array,
+			arrayEditCharges{indexes: indexes, itemValues: len(indexes)},
+			fault,
+			s,
+		)
+
+		return candidate, matched, false, err
+	}
+}
+
+//nolint:cyclop // Projection, layout, and item ranks form one insertion attempt.
+func arrayInsertionFaultAttemptAtRank(
+	parent *jsonValue,
+	path []string,
+	current *jsonValue,
+	fault faultProgram,
+	container *schemaNode,
+	occurrence schemaOccurrence,
+	desired int,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	insertions := desired - len(current.array)
+
+	projectionCount, err := rowProjectionNodeCount(container, occurrence, fault.requirements)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	layoutCount := saturatedBinomial(uint64(desired), uint64(insertions))
+
+	frontier, err := newRankProductCursor(arrayFaultProductDimensions)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if setErr := frontier.SetFinite(0, projectionCount); setErr != nil {
+		return nil, false, false, setErr
+	}
+
+	if setErr := frontier.SetFinite(1, layoutCount); setErr != nil {
+		return nil, false, false, setErr
+	}
+
+	var ranks []uint64
+
+	for currentRank := uint64(0); currentRank <= rank; currentRank++ {
+		var exists bool
+
+		ranks, exists = frontier.Next()
+		if !exists {
+			return nil, false, true, nil
+		}
+	}
+
+	view, exists, err := rowProjectionAt(container, occurrence, fault.requirements, ranks[0])
+	if err != nil || !exists {
+		return nil, false, !exists, err
+	}
+
+	active, err := view.appendBranchRequirements(copyPlanRequirements(fault.requirements), s.assign)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if assignErr := s.assign(); assignErr != nil {
+		return nil, false, false, assignErr
+	}
+
+	tupleValues, exists, _, _, err := s.rowArrayChildrenForOrdinal(
+		rankedArrayStructure{view: view, active: active, length: rowArrayCount{value: uint64(insertions)}},
+		active,
+		rowSearchContext{},
+		ranks[2],
+	)
+	if err != nil || !exists {
+		return nil, false, false, err
+	}
+
+	indexes, exists := arrayCombinationAt(desired, insertions, ranks[1])
+	if !exists {
+		return nil, false, false, errors.New("schematest: array insertion layout rank disappeared")
+	}
+
+	values := make([]*jsonValue, 0, desired)
+	parentIndex := 0
+
+	insertedIndex := 0
+	for index := 0; index < desired; index++ {
+		if insertedIndex < len(indexes) && indexes[insertedIndex] == index {
+			values = append(values, tupleValues[insertedIndex])
+			insertedIndex++
+
+			continue
+		}
+
+		values = append(values, current.array[parentIndex])
+		parentIndex++
+	}
+
+	candidate, matched, err := tryArrayCountCandidate(
+		parent,
+		path,
+		values,
+		arrayEditCharges{indexes: pathCopyInts(indexes), itemValues: len(indexes)},
+		fault,
+		s,
+	)
+
+	return candidate, matched, false, err
+}
+
+// additionalPropertyFaultAttemptAtRank attempts one projection/name/value tuple.
+//
+//nolint:cyclop // Target, projection, member, and value decoding share one attempt.
+func additionalPropertyFaultAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	tokens, ok := rowPointerTokens(fault.obligation.occurrence.instanceTemplate)
+	if !ok || len(tokens) == 0 {
+		return nil, false, false, errors.New("schematest: additional-property fault has no member path")
+	}
+
+	parentPointer := pointerFromTokens(tokens[:len(tokens)-1])
+	targetOccurrence := fault.obligation.occurrence
+	targetOccurrence.instanceTemplate = parentPointer
+
+	target, targetOccurrence, found := resolveExactFaultTarget(
+		s.model.root, s.model.root.occurrence, targetOccurrence,
+	)
+	if !found {
+		return nil, false, true, nil
+	}
+
+	root := cloneWithoutFaultRule(
+		s.model.root, s.model.root.occurrence, targetOccurrence, oracleRuleAdditionalProperties,
+	)
+
+	container, containerOccurrence, found := resolveFaultContainer(
+		root, s.model.root.occurrence, targetOccurrence, jsonObject,
+	)
+	if !found {
+		return nil, false, true, nil
+	}
+
+	path, exists := matchingValuePathAt(parent, parentPointer, 0)
+	if !exists {
+		return nil, false, true, nil
+	}
+
+	object := valueAtPath(parent, path)
+	if object == nil || object.kind != jsonObject {
+		return nil, false, true, nil
+	}
+
+	ranks, err := rankProductTupleAt(arrayFaultProductDimensions, rank)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	view, exists, err := rowProjectionAt(
+		container, containerOccurrence, fault.requirements, ranks[0],
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if !exists {
+		return nil, false, true, nil
+	}
+
+	active, err := view.appendBranchRequirements(copyPlanRequirements(fault.requirements), s.assign)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	shape, err := newRowProjectedObject(view, active, containerOccurrence)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if assignErr := s.assign(); assignErr != nil {
+		return nil, false, false, assignErr
+	}
+
+	member, exists, err := objectMutationMemberAtRank(shape, object, target, active, ranks[1])
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if !exists {
+		return nil, false, false, nil
+	}
+
+	candidate, matched, err := tryAdditionalPropertyName(
+		parent, path, object, fault, target, member, active, ranks[2], s,
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	return candidate, matched, false, nil
+}
+
+func rankProductTupleAt(dimensions int, rank uint64) ([]uint64, error) {
+	cursor, err := newRankProductCursor(dimensions)
+	if err != nil {
+		return nil, err
+	}
+
+	for current := uint64(0); ; current++ {
+		tuple, exists := cursor.Next()
+		if !exists {
+			return nil, errors.New("schematest: open rank product exhausted")
+		}
+
+		if current == rank {
+			return append([]uint64(nil), tuple...), nil
+		}
+	}
+}
+
+// scalarEnumFaultAttemptAtRank decodes one finite whole-row enum replacement.
+func scalarEnumFaultAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	root *schemaNode,
+	requirements []requirement,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	model := *s.model
+	model.root = root
+
+	var observed uint64
+
+	for candidateRank := uint64(0); ; candidateRank++ {
+		wanted := candidateRank
+
+		row, exists := activeEnumValueAtRank(root, s.model.root.occurrence, requirements, &wanted)
+		if !exists {
+			return nil, false, true, nil
+		}
+
+		if err := s.assign(); err != nil {
+			return nil, false, false, err
+		}
+
+		result := evaluate(&model, row)
+		if result.err != nil {
+			return nil, false, false, fmt.Errorf("evaluate scalar enum fault row: %w", result.err)
+		}
+
+		if !result.valid {
+			continue
+		}
+
+		for path := range matchingValuePathSequence(row, fault.obligation.occurrence.instanceTemplate) {
+			candidate := valueAtPath(row, path)
+			if candidate == nil {
+				continue
+			}
+
+			if observed < rank {
+				observed++
+
+				continue
+			}
+
+			derivative, _, err := firstReplacementDerivative(
+				parent, fault, singleJSONValueSource(candidate), s.model, s,
+			)
+
+			return derivative, true, false, err
+		}
+
+		if candidateRank == ^uint64(0) {
+			return nil, false, false, errors.New("schematest: scalar enum rank overflow")
+		}
+	}
+}
+
 func formatHasNumericSemantics(format schemaFormat) bool {
 	switch format {
 	case schemaFormatInt32, schemaFormatInt64, schemaFormatFloat, schemaFormatDouble:
@@ -99,8 +909,8 @@ func findTypeDerivative(
 	return findKindDirectedDerivative(parent, fault, oracleRuleType, s)
 }
 
-//nolint:cyclop // Finite authored and canonical sources share one ranked attempt boundary.
-func typeFaultAttemptAtRank(
+//nolint:cyclop // Authored enums and canonical kinds share one ranked attempt.
+func rootTypeFaultAttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
 	rank uint64,
@@ -109,66 +919,47 @@ func typeFaultAttemptAtRank(
 	root := cloneWithoutFaultRule(
 		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, oracleRuleType,
 	)
-	if candidate, exists := activeEnumValueAtRank(
-		root, s.model.root.occurrence, fault.requirements, &rank,
-	); exists {
-		derivative, _, replaceErr := firstReplacementDerivative(
-			parent, fault, singleJSONValueSource(candidate), s.model, s,
-		)
 
-		return derivative, true, false, replaceErr
+	target, _, found := resolveExactFaultTarget(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence,
+	)
+	if !found {
+		return nil, false, true, nil
 	}
 
-	cursor := newRowProjectionCursor(root, s.model.root.occurrence, fault.requirements)
-	for {
-		view, exists, err := cursor.Next()
-		if err != nil {
-			cursor.Close()
+	for enumRank := uint64(0); ; enumRank++ {
+		wanted := enumRank
 
-			return nil, false, false, err
-		}
-
+		candidate, exists := activeEnumValueAtRank(
+			root, s.model.root.occurrence, fault.requirements, &wanted,
+		)
 		if !exists {
 			break
 		}
 
-		var candidate *jsonValue
-
-		err = view.eachDirectValue(func(_ rowSchemaSource, value *jsonValue) bool {
-			if rank > 0 {
-				rank--
-
-				return true
-			}
-
-			candidate = value
-
-			return false
-		})
-		if err != nil {
-			cursor.Close()
-
-			return nil, false, false, err
+		if nodeAcceptsKindForTarget(target, candidate.kind) {
+			continue
 		}
 
-		if candidate != nil {
-			cursor.Close()
+		if rank > 0 {
+			rank--
 
-			derivative, _, replaceErr := firstReplacementDerivative(
-				parent, fault, singleJSONValueSource(candidate), s.model, s,
-			)
-
-			return derivative, true, false, replaceErr
+			continue
 		}
+
+		derivative, _, err := firstReplacementDerivative(
+			parent, fault, singleJSONValueSource(candidate), s.model, s,
+		)
+
+		return derivative, true, false, err
 	}
 
-	cursor.Close()
-
 	for _, kind := range canonicalJSONKinds() {
-		var (
-			candidate *jsonValue
-			found     bool
-		)
+		if nodeAcceptsKindForTarget(target, kind) {
+			continue
+		}
+
+		var candidate *jsonValue
 
 		err := walkCanonicalKindWitnesses(kind, func(value *jsonValue) bool {
 			if rank > 0 {
@@ -178,7 +969,6 @@ func typeFaultAttemptAtRank(
 			}
 
 			candidate = value
-			found = true
 
 			return false
 		})
@@ -186,15 +976,15 @@ func typeFaultAttemptAtRank(
 			return nil, false, false, err
 		}
 
-		if !found {
+		if candidate == nil {
 			continue
 		}
 
-		derivative, _, replaceErr := firstReplacementDerivative(
+		derivative, _, err := firstReplacementDerivative(
 			parent, fault, singleJSONValueSource(candidate), s.model, s,
 		)
 
-		return derivative, true, false, replaceErr
+		return derivative, true, false, err
 	}
 
 	return nil, false, true, nil
@@ -474,21 +1264,6 @@ func findNumberDerivative(parent *jsonValue, fault faultProgram, s *search) (*js
 		return nil, false, nil
 	}
 
-	if boundary, exists, boundaryErr := directedNumberFaultBoundary(s.model.root, fault); boundaryErr != nil {
-		return nil, false, boundaryErr
-	} else if exists {
-		derivative, matched, matchErr := firstReplacementDerivative(
-			parent,
-			fault,
-			singleJSONValueSource(&jsonValue{kind: jsonNumber, number: boundary}),
-			s.model,
-			s,
-		)
-		if matchErr != nil || matched {
-			return derivative, matched, matchErr
-		}
-	}
-
 	var derivative *jsonValue
 
 	complete, err := s.walkActiveNumberRules(
@@ -515,37 +1290,6 @@ func findNumberDerivative(parent *jsonValue, fault faultProgram, s *search) (*js
 	}
 
 	return derivative, complete, nil
-}
-
-func directedNumberFaultBoundary(root *schemaNode, fault faultProgram) (*exactNumber, bool, error) {
-	target, _, found := resolveExactFaultTarget(
-		root, root.occurrence, fault.obligation.occurrence,
-	)
-	if !found {
-		return nil, false, nil
-	}
-
-	one, err := parseExactNumber("1")
-	if err != nil {
-		return nil, false, err
-	}
-
-	switch fault.obligation.rule {
-	case oracleRuleMinimum:
-		value, addErr := addSignedExactNumbers(target.minimum, one, -1)
-
-		return value, addErr == nil, addErr
-	case oracleRuleMaximum:
-		value, addErr := addSignedExactNumbers(target.maximum, one, 1)
-
-		return value, addErr == nil, addErr
-	case oracleRuleExclusiveMinimum:
-		return target.minimum, target.minimum != nil, nil
-	case oracleRuleExclusiveMaximum:
-		return target.maximum, target.maximum != nil, nil
-	default:
-		return nil, false, nil
-	}
 }
 
 func findStringDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
@@ -702,6 +1446,7 @@ func firstReplacementDerivative(
 	return nil, false, nil
 }
 
+//nolint:cyclop // Obligation and authoritative closure identities are concretized together.
 func concretizeFaultAtPath(fault faultProgram, path []string) faultProgram {
 	selected := pointerFromTokens(path)
 	templateTokens, templateOK := rowPointerTokens(fault.obligation.occurrence.instanceTemplate)
@@ -731,9 +1476,17 @@ func concretizeFaultAtPath(fault faultProgram, path []string) faultProgram {
 
 	fault.obligation.ruleIdentity = concretize(fault.obligation.ruleIdentity)
 
-	fault.expected = append(failureSet(nil), fault.expected...)
+	fault.expected = append(faultClosure(nil), fault.expected...)
 	for index := range fault.expected {
-		fault.expected[index] = concretize(fault.expected[index])
+		identity := cloneEvaluationRecordIdentity(fault.expected[index])
+		for tokenIndex := range identity.occurrence.instance.tokens {
+			if identity.occurrence.instance.tokens[tokenIndex] == "*" &&
+				tokenIndex < len(templateTokens) && templateTokens[tokenIndex] == "*" {
+				identity.occurrence.instance.tokens[tokenIndex] = selectedTokens[tokenIndex]
+			}
+		}
+
+		fault.expected[index] = identity
 	}
 
 	return fault
@@ -1274,7 +2027,7 @@ func findObjectCountDerivative(
 // findSingleObjectGrowthDerivative shares one diagonal projection/key/value
 // cursor when the current parent is exactly one member below the directed count.
 //
-//nolint:cyclop,gocognit // One fixed product decodes path, projection, key, and value ranks.
+//nolint:cyclop,gocognit,gocyclo // One fixed product decodes path, projection, key, and value ranks.
 func findSingleObjectGrowthDerivative(
 	parent *jsonValue,
 	fault faultProgram,
@@ -1296,6 +2049,21 @@ func findSingleObjectGrowthDerivative(
 
 	pathCount := matchingValuePathCount(parent, fault.obligation.occurrence.instanceTemplate)
 	if pathCount == 0 {
+		return nil, false, nil
+	}
+
+	applicable := false
+
+	for path := range matchingValuePathSequence(parent, fault.obligation.occurrence.instanceTemplate) {
+		current := valueAtPath(parent, path)
+		if current != nil && current.kind == jsonObject && uint64(len(current.object))+1 == desired {
+			applicable = true
+
+			break
+		}
+	}
+
+	if !applicable {
 		return nil, false, nil
 	}
 
@@ -1868,7 +2636,7 @@ func derivativeMatchesFault(model *schemaModel, derivative *jsonValue, fault fau
 	return faultFailureClosureMatches(result, fault)
 }
 
-func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure []failureIdentity) (bool, error) {
+func derivativeHasClosure(model *schemaModel, derivative *jsonValue, closure faultClosure) (bool, error) {
 	return derivativeMatchesFault(model, derivative, faultProgram{expected: closure})
 }
 

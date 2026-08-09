@@ -349,7 +349,7 @@ func scalarFaultStringObjective(
 	return &stringSearchObjective{
 		kind:       kind,
 		occurrence: fault.obligation.occurrence,
-		closure:    append([]failureIdentity(nil), fault.expected...),
+		closure:    append(faultClosure(nil), fault.expected...),
 		rule:       fault.obligation.rule,
 		level:      fault.obligation.component,
 	}

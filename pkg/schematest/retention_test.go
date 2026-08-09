@@ -160,12 +160,12 @@ func TestBuildMemoryMeasurementPreservesRawResultsAndRequiresItsSample(t *testin
 	measurement, err := measureBuildMemory(Input{
 		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"boolean"}`)),
 		OperationID: "selected",
-		MaxSteps:    5,
+		MaxSteps:    11,
 	}, 100)
 	require.ErrorContains(t, err, "memory sample callback 100 was not reached")
-	require.Equal(t, uint64(5), measurement.budget)
+	require.Equal(t, uint64(11), measurement.budget)
 	require.Equal(t, 2, measurement.cases)
-	require.Equal(t, uint64(5), measurement.steps)
+	require.Equal(t, uint64(6), measurement.steps)
 	require.Equal(t, SpaceExhausted, measurement.stop)
 	require.NotZero(t, measurement.preRunHeap)
 	require.Zero(t, measurement.callbackHeap)

@@ -37,7 +37,11 @@ func TestExactFailureClosureUsesCanonicalCompleteIdentitySets(t *testing.T) {
 	result.records.append(makeEvaluationRecord(evaluationRecordFailure, second))
 	result.records.append(makeEvaluationRecord(evaluationRecordFailure, first))
 	result.records.append(makeEvaluationRecord(evaluationRecordFailure, first))
-	matches, err = exactEvaluationFailureClosure(result, []failureIdentity{first, second, second})
+	matches, err = exactEvaluationFailureClosure(result, faultClosure{
+		newEvaluationRecordIdentity(first),
+		newEvaluationRecordIdentity(second),
+		newEvaluationRecordIdentity(second),
+	})
 	require.NoError(t, err)
 	require.True(t, matches, "the authoritative record API removes only identical full identities")
 
@@ -221,7 +225,7 @@ func TestFindStringFaultRowResolvesNestedScalarTargets(t *testing.T) {
 			require.True(t, resolved)
 
 			result := evaluateNode(node, row, occurrence)
-			matches, err := exactFailureClosure(result.failureRecords(), target.expected)
+			matches, err := exactEvaluationFailureClosure(result, target.expected)
 			require.NoError(t, err)
 			require.True(t, matches)
 		})
