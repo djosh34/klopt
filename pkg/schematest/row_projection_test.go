@@ -245,6 +245,60 @@ func TestRowProjectionViewKeepsCompleteValuesAndOccurrenceIdentity(t *testing.T)
 }
 
 // projectionBranchPointers returns active anyOf branch sources for assertions.
+// TestRowProjectionAtDecodesArbitraryPrecisionMask proves high authored bits need no mask corpus.
+func TestRowProjectionAtDecodesArbitraryPrecisionMask(t *testing.T) {
+	t.Parallel()
+
+	child := &schemaNode{schemaShape: &schemaShape{}}
+
+	root := &schemaNode{schemaShape: &schemaShape{anyOf: make([]*schemaNode, 130)}}
+	for index := range root.anyOf {
+		root.anyOf[index] = child
+	}
+
+	occurrence := schemaOccurrence{usePointer: "#/schema", instanceTemplate: "#"}
+	branchOccurrence := schemaOccurrence{usePointer: "#/schema/anyOf/129", instanceTemplate: "#"}
+	view, ok, err := rowProjectionAt(root, occurrence, []requirement{{
+		tag: requirementBranchTruth, occurrence: branchOccurrence,
+		composition: "anyOf", branch: 129, truth: true, hasBranch: true,
+	}}, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Contains(t, projectionBranchPointers(view), branchOccurrence.usePointer)
+}
+
+// TestRowProjectionAtMatchesCursor proves direct ordinal decoding preserves authored mask order.
+func TestRowProjectionAtMatchesCursor(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"allOf":[{"anyOf":[{},{}]}],
+		"anyOf":[{"anyOf":[{},{}]},{},{}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	cursor := newRowProjectionCursor(model.root, model.root.occurrence, nil)
+	defer cursor.Close()
+
+	for ordinal := uint64(0); ; ordinal++ {
+		fromCursor, cursorOK, cursorErr := cursor.Next()
+		require.NoError(t, cursorErr)
+
+		decoded, decodedOK, decodedErr := rowProjectionAt(
+			model.root, model.root.occurrence, nil, ordinal,
+		)
+		require.NoError(t, decodedErr)
+		require.Equal(t, cursorOK, decodedOK)
+
+		if !cursorOK {
+			break
+		}
+
+		require.Equal(t, projectionBranchPointers(fromCursor), projectionBranchPointers(decoded))
+	}
+}
+
+// projectionBranchPointers returns active anyOf occurrence pointers in source order.
 func projectionBranchPointers(view rowProjectionView) []string {
 	var pointers []string
 

@@ -371,6 +371,36 @@ func TestObjectFrontierStreamsEveryDirectWitness(t *testing.T) {
 	require.Equal(t, []bool{false, true}, witnesses)
 }
 
+// TestSharedArrayFrontierBuildsAllOfItems proves explicit constructed ranks keep composed children.
+func TestSharedArrayFrontierBuildsAllOfItems(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","minItems":1,"items":{"type":"string"},
+		"allOf":[{"items":{"enum":["z"]}}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+	found := false
+	complete, err := searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			encoded, marshalErr := marshalStrict(value)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+
+			found = string(encoded) == `["z"]`
+
+			return found, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, found)
+}
+
 // TestExactArrayCountKeepsEveryDirectWitnessRank proves constructed guidance cannot retire direct values.
 func TestExactArrayCountKeepsEveryDirectWitnessRank(t *testing.T) {
 	t.Parallel()

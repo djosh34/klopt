@@ -6,6 +6,9 @@ import (
 	"math/big"
 )
 
+// maximumProjectionOrdinal is the saturated endpoint of the uint64 rank frontier.
+const maximumProjectionOrdinal = ^uint64(0)
+
 // rowProjectionView is one ephemeral same-instance conjunction. Sources stay in
 // authored traversal order and include local siblings, allOf branches, and only
 // the true branches of each anyOf mask.
@@ -104,6 +107,336 @@ func (view rowProjectionView) eachDirectValue(yield func(rowSchemaSource, *jsonV
 	}
 
 	return nil
+}
+
+// rowProjectionAt decodes one numeric-mask projection without visiting earlier projections.
+func rowProjectionAt(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	wanted uint64,
+) (rowProjectionView, bool, error) {
+	count, err := rowProjectionNodeCount(node, occurrence, requirements)
+	if err != nil || wanted >= count {
+		return rowProjectionView{}, false, err
+	}
+
+	sources, err := rowProjectionDecodeNode(node, occurrence, requirements, wanted, nil)
+	if err != nil {
+		return rowProjectionView{}, false, err
+	}
+
+	return rowProjectionView{sources: sources}, true, nil
+}
+
+// rowProjectionNodeCount returns the saturated number of views rooted at one source.
+func rowProjectionNodeCount(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+) (uint64, error) {
+	if node == nil || node.schemaShape == nil {
+		return 0, errors.New("schematest: projected row schema has no shape")
+	}
+
+	count := uint64(1)
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+
+		childCount, err := rowProjectionNodeCount(child, childOccurrence, requirements)
+		if err != nil {
+			return 0, err
+		}
+
+		count = saturatedProjectionProduct(count, childCount)
+	}
+
+	anyCount, err := rowProjectionAnyOfCount(node, occurrence, requirements, len(node.anyOf)-1, false)
+	if err != nil {
+		return 0, err
+	}
+
+	return saturatedProjectionProduct(count, anyCount), nil
+}
+
+// rowProjectionAnyOfCount counts weighted lower-bit assignments without enumerating masks.
+//
+//nolint:cyclop // Pinned and unpinned weighted bits are decoded in one pass.
+func rowProjectionAnyOfCount(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	last int,
+	selected bool,
+) (uint64, error) {
+	if len(node.anyOf) == 0 {
+		return 1, nil
+	}
+
+	count := uint64(1)
+	fixedTrue := selected
+
+	for branch := 0; branch <= last; branch++ {
+		truth, pinned, err := rowProjectionBranchPin(requirements, occurrence, branch)
+		if err != nil {
+			return 0, err
+		}
+
+		childCount := uint64(0)
+
+		if !pinned || truth {
+			child := node.anyOf[branch]
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				occurrence,
+				occurrence.usePointer+"/anyOf/"+itoa(branch),
+				occurrence.instanceTemplate,
+			)
+
+			childCount, err = rowProjectionNodeCount(child, childOccurrence, requirements)
+			if err != nil {
+				return 0, err
+			}
+		}
+
+		switch {
+		case pinned && truth:
+			fixedTrue = true
+			count = saturatedProjectionProduct(count, childCount)
+		case !pinned:
+			count = saturatedProjectionProduct(count, saturatedProjectionSum(1, childCount))
+		}
+	}
+
+	if !fixedTrue && count > 0 {
+		count--
+	}
+
+	return count, nil
+}
+
+// rowProjectionDecodeNode decodes mixed-radix allOf and anyOf choices into one transient source list.
+//
+//nolint:cyclop,gocognit // Mixed-radix conjunction and numeric mask decoding form one recursive operation.
+func rowProjectionDecodeNode(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	wanted uint64,
+	sources []rowSchemaSource,
+) ([]rowSchemaSource, error) {
+	sources = append(sources, rowSchemaSource{node: node, occurrence: occurrence})
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+
+		suffix, err := rowProjectionNodeSuffixCount(node, occurrence, requirements, index+1)
+		if err != nil {
+			return nil, err
+		}
+
+		childRank := wanted / suffix
+		wanted %= suffix
+
+		sources, err = rowProjectionDecodeNode(child, childOccurrence, requirements, childRank, sources)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if len(node.anyOf) == 0 {
+		return sources, nil
+	}
+
+	mask := new(big.Int)
+	highWeight := uint64(1)
+	selected := false
+
+	for branch := len(node.anyOf) - 1; branch >= 0; branch-- {
+		truth, pinned, err := rowProjectionBranchPin(requirements, occurrence, branch)
+		if err != nil {
+			return nil, err
+		}
+
+		if pinned {
+			if truth {
+				childCount, countErr := rowProjectionBranchCount(node, occurrence, requirements, branch)
+				if countErr != nil {
+					return nil, countErr
+				}
+
+				mask.SetBit(mask, branch, 1)
+
+				selected = true
+				highWeight = saturatedProjectionProduct(highWeight, childCount)
+			}
+
+			continue
+		}
+
+		lowerCount, countErr := rowProjectionAnyOfCount(
+			node, occurrence, requirements, branch-1, selected,
+		)
+		if countErr != nil {
+			return nil, countErr
+		}
+
+		zeroBlock := saturatedProjectionProduct(highWeight, lowerCount)
+		if wanted < zeroBlock {
+			continue
+		}
+
+		wanted -= zeroBlock
+
+		childCount, countErr := rowProjectionBranchCount(node, occurrence, requirements, branch)
+		if countErr != nil {
+			return nil, countErr
+		}
+
+		mask.SetBit(mask, branch, 1)
+
+		selected = true
+		highWeight = saturatedProjectionProduct(highWeight, childCount)
+	}
+
+	for branch, child := range node.anyOf {
+		if mask.Bit(branch) == 0 {
+			continue
+		}
+
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence,
+			occurrence.usePointer+"/anyOf/"+itoa(branch),
+			occurrence.instanceTemplate,
+		)
+
+		suffix, err := rowProjectionSelectedBranchSuffixCount(
+			node, occurrence, requirements, mask, branch+1,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		childRank := wanted / suffix
+		wanted %= suffix
+
+		sources, err = rowProjectionDecodeNode(child, childOccurrence, requirements, childRank, sources)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return sources, nil
+}
+
+// rowProjectionNodeSuffixCount counts the dimensions following one allOf branch.
+func rowProjectionNodeSuffixCount(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	first int,
+) (uint64, error) {
+	count, err := rowProjectionAnyOfCount(node, occurrence, requirements, len(node.anyOf)-1, false)
+	if err != nil {
+		return 0, err
+	}
+
+	for index := first; index < len(node.allOf); index++ {
+		child := node.allOf[index]
+		childOccurrence := rebasePlanOccurrence(
+			child,
+			occurrence,
+			occurrence.usePointer+"/allOf/"+itoa(index),
+			occurrence.instanceTemplate,
+		)
+
+		childCount, countErr := rowProjectionNodeCount(child, childOccurrence, requirements)
+		if countErr != nil {
+			return 0, countErr
+		}
+
+		count = saturatedProjectionProduct(count, childCount)
+	}
+
+	return count, nil
+}
+
+// rowProjectionBranchCount returns one anyOf branch's saturated view count.
+func rowProjectionBranchCount(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	branch int,
+) (uint64, error) {
+	child := node.anyOf[branch]
+	childOccurrence := rebasePlanOccurrence(
+		child,
+		occurrence,
+		occurrence.usePointer+"/anyOf/"+itoa(branch),
+		occurrence.instanceTemplate,
+	)
+
+	return rowProjectionNodeCount(child, childOccurrence, requirements)
+}
+
+// rowProjectionSelectedBranchSuffixCount counts selected branches after one numeric mask bit.
+func rowProjectionSelectedBranchSuffixCount(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	mask *big.Int,
+	first int,
+) (uint64, error) {
+	count := uint64(1)
+
+	for branch := first; branch < len(node.anyOf); branch++ {
+		if mask.Bit(branch) == 0 {
+			continue
+		}
+
+		childCount, err := rowProjectionBranchCount(node, occurrence, requirements, branch)
+		if err != nil {
+			return 0, err
+		}
+
+		count = saturatedProjectionProduct(count, childCount)
+	}
+
+	return count, nil
+}
+
+// saturatedProjectionProduct multiplies projection counts without ordinal wraparound.
+func saturatedProjectionProduct(left uint64, right uint64) uint64 {
+	if left == 0 || right == 0 {
+		return 0
+	}
+
+	if left > maximumProjectionOrdinal/right {
+		return maximumProjectionOrdinal
+	}
+
+	return left * right
+}
+
+// saturatedProjectionSum adds projection counts without ordinal wraparound.
+func saturatedProjectionSum(left uint64, right uint64) uint64 {
+	if maximumProjectionOrdinal-left < right {
+		return maximumProjectionOrdinal
+	}
+
+	return left + right
 }
 
 // rowProjectionCursor pulls one projection at a time and retains no yielded corpus.

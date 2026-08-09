@@ -26,6 +26,22 @@ import (
 // modulePath is the local module import prefix checked by source guards.
 const modulePath = "github.com/djosh34/klopt"
 
+// TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct locks the ordinal-only frontier shape.
+func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("structural_frontier.go")
+	require.NoError(t, err)
+
+	text := string(source)
+	require.NotContains(t, text, "states :=")
+	require.NotContains(t, text, "arrayProjectionFrontier")
+	require.NotContains(t, text, "objectProjectionFrontier")
+	require.NotContains(t, text, "rowArrayProjectionCandidateAt")
+	require.NotContains(t, text, "rowObjectProjectionCandidateAt")
+	require.Equal(t, 2, strings.Count(text, "newRankProductCursor(5)"))
+}
+
 // TestProductionImportsStayCleanRoom forbids semantic production dependencies in non-test sources.
 func TestProductionImportsStayCleanRoom(t *testing.T) {
 	t.Parallel()
