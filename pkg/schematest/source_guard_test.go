@@ -839,20 +839,16 @@ func TestGenericValuesAdvanceOneChargedCandidateAtATime(t *testing.T) {
 	require.Equal(t, uint64(2), search.steps)
 }
 
-// TestR4FaultRuntimeDoesNotConsumeClosurePrograms locks compile-only closure ownership.
-func TestR4FaultRuntimeDoesNotConsumeClosurePrograms(t *testing.T) {
+// TestFaultRuntimeHasOneAccuratelyNamedContinuation rejects the obsolete basic-fault seam.
+func TestFaultRuntimeHasOneAccuratelyNamedContinuation(t *testing.T) {
 	t.Parallel()
 
 	guardPackage := productionGuardPackage(t)
-	functions := guardFunctions(guardPackage)
-	stream, ok := guardPackage.pkg.Scope().Lookup("streamBasicFault").(*types.Func)
-	require.True(t, ok)
+	_, obsolete := guardPackage.pkg.Scope().Lookup("streamBasicFault").(*types.Func)
+	require.False(t, obsolete)
 
-	for function := range reachableGuardFunctions(guardPackage, functions, stream) {
-		name := strings.ToLower(function.Name())
-		require.NotContains(t, name, "closureprogram")
-		require.NotContains(t, name, "syntacticallyunreachable")
-	}
+	_, exists := guardPackage.pkg.Scope().Lookup("streamFault").(*types.Func)
+	require.True(t, exists)
 }
 
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.

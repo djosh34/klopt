@@ -4,13 +4,30 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 )
 
 // errFaultNotFound leaves a planned fault without an isolated derivative uncovered.
 var errFaultNotFound = errors.New("schematest: planned fault has no isolated derivative")
 
-// streamBasicFaults visits supported faults in planner order.
-func streamBasicFaults(
+const (
+	// faultParentDimension selects the valid-parent rank.
+	faultParentDimension = iota
+	// faultClosureDimension selects the declared failure closure.
+	faultClosureDimension
+	// faultOccurrenceDimension selects one concrete instance path.
+	faultOccurrenceDimension
+	// faultMutationDimension selects one mutation alternative.
+	faultMutationDimension
+	// faultProductDimensions is the fixed fault-product arity.
+	faultProductDimensions
+)
+
+// parentReplayMaskBits is the number of anyOf mask bits addressable by a rank.
+const parentReplayMaskBits = 64
+
+// streamFaults visits fault programs in their deterministic execution order.
+func streamFaults(
 	plan *searchPlan,
 	s *search,
 	covered map[string]bool,
@@ -21,7 +38,7 @@ func streamBasicFaults(
 			return "", errors.New("schematest: invalid fault execution order")
 		}
 
-		if err := streamBasicFault(plan, plan.faultSchedule[index], s, covered, yield); err != nil {
+		if err := streamFault(plan, plan.faultSchedule[index], s, covered, yield); err != nil {
 			if errors.Is(err, errMaxSteps) {
 				return MaxStepsReached, nil
 			}
@@ -33,94 +50,250 @@ func streamBasicFaults(
 	return SpaceExhausted, nil
 }
 
-// streamBasicFault replays, applies, verifies, and emits one fault derivative.
+// streamFault is the sole continuation over parent, closure, occurrence, and mutation ranks.
 //
-//nolint:cyclop // Every error and uncovered outcome remains explicit at the streaming boundary.
-func streamBasicFault(
+//nolint:cyclop,gocognit // Product exhaustion, exact verification, and callback errors meet here.
+func streamFault(
 	plan *searchPlan,
 	fault faultProgram,
 	s *search,
 	covered map[string]bool,
 	yield func(Case) error,
 ) error {
-	// R4 only compiles aggregate closure domains. R7 owns their charged runtime cursor.
-	if fault.alternatives != nil {
-		return nil
-	}
-
-	parent, found, err := regenerateParent(plan, fault, s)
-	if err != nil || !found {
-		return err
-	}
-
-	derivative, err := applyFault(parent, fault, s)
-	if errors.Is(err, errFaultNotFound) {
-		return nil
-	}
-
+	product, err := newRankProductCursor(faultProductDimensions)
 	if err != nil {
 		return err
 	}
 
-	result := evaluate(s.model, derivative)
-	if result.err != nil {
-		return fmt.Errorf("evaluate fault derivative: %w", result.err)
+	for _, dimension := range []int{faultOccurrenceDimension, faultMutationDimension} {
+		if err := product.SetFinite(dimension, 1); err != nil {
+			return err
+		}
 	}
 
-	matches, err := faultFailureClosureMatches(result.failureRecords(), fault)
-	if err != nil {
-		return fmt.Errorf("compare fault expected: %w", err)
+	for {
+		ranks, ok := product.Next()
+		if !ok {
+			return nil
+		}
+
+		selectedFault, closureExists, closureExhausted := faultClosureAtRank(
+			fault, ranks[faultClosureDimension],
+		)
+		if closureExhausted {
+			if err := product.SetFinite(faultClosureDimension, ranks[faultClosureDimension]); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if !closureExists {
+			continue
+		}
+
+		parent, found, exhausted, replayErr := regenerateParentAtRank(
+			plan, selectedFault, ranks[faultParentDimension], s,
+		)
+		if replayErr != nil {
+			return replayErr
+		}
+
+		if exhausted {
+			if err := product.SetFinite(faultParentDimension, ranks[faultParentDimension]); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if !found {
+			continue
+		}
+
+		derivative, faultErr := applyFault(parent, selectedFault, s)
+		if errors.Is(faultErr, errFaultNotFound) {
+			continue
+		}
+
+		if faultErr != nil {
+			return faultErr
+		}
+
+		result := evaluate(s.model, derivative)
+		if result.err != nil {
+			return fmt.Errorf("evaluate fault derivative: %w", result.err)
+		}
+
+		matches, matchErr := faultFailureClosureMatches(result.failureRecords(), selectedFault)
+		if matchErr != nil {
+			return fmt.Errorf("compare fault expected: %w", matchErr)
+		}
+
+		if result.valid || !matches {
+			continue
+		}
+
+		encoded, marshalErr := marshalStrict(derivative)
+		if marshalErr != nil {
+			return fmt.Errorf("serialize fault derivative: %w", marshalErr)
+		}
+
+		covered[fault.obligation.String()] = true
+
+		return yield(Case{JSON: encoded, Valid: false})
 	}
-
-	if result.valid || !matches {
-		return nil
-	}
-
-	encoded, err := marshalStrict(derivative)
-	if err != nil {
-		return fmt.Errorf("serialize fault derivative: %w", err)
-	}
-
-	covered[fault.obligation.String()] = true
-
-	return yield(Case{JSON: encoded, Valid: false})
 }
 
-// regenerateParent replays row search for one fresh, complete oracle-valid parent.
+// faultClosureAtRank adapts direct closures to the shared product. Declarative
+// aggregate programs have no executable closure cursor in this bounded stage.
+func faultClosureAtRank(fault faultProgram, rank uint64) (faultProgram, bool, bool) {
+	if fault.alternatives != nil || rank > 0 {
+		return faultProgram{}, false, true
+	}
+
+	return fault, true, false
+}
+
+// parentReplayGroup identifies one authored anyOf truth vector.
+type parentReplayGroup struct {
+	indexes []int
+	count   int
+}
+
+// regenerateParent replays the first fresh, complete oracle-valid parent.
 func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonValue, bool, error) {
+	parent, found, _, err := regenerateParentAtRank(plan, fault, 0, s)
+
+	return parent, found, err
+}
+
+// regenerateParentAtRank fairly addresses one valid parent across nonempty
+// anyOf masks and complete-row ranks. It retains no generated parent corpus.
+//
+//nolint:cyclop // Finite mask setup and diagonal exhaustion share the replay cursor boundary.
+func regenerateParentAtRank(
+	plan *searchPlan,
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
 	if plan == nil {
-		return nil, false, errors.New("schematest: nil search plan")
+		return nil, false, false, errors.New("schematest: nil search plan")
 	}
 
 	if s == nil || s.model == nil || s.model.root == nil {
-		return nil, false, errors.New("schematest: parent replay has no model")
+		return nil, false, false, errors.New("schematest: parent replay has no model")
 	}
 
-	parentRequirements := parentReplayRequirements(fault)
+	groups := parentReplayGroups(fault.requirements)
 
-	var parent *jsonValue
-
-	visit := func(value *jsonValue) (bool, error) {
-		result := evaluate(s.model, value)
-		if result.err != nil {
-			return false, fmt.Errorf("evaluate regenerated parent: %w", result.err)
-		}
-
-		if !result.valid || !faultRequirementsMatch(result, value, parentRequirements) {
-			return false, nil
-		}
-
-		parent = value
-
-		return true, nil
+	frontier, err := newRankProductCursor(len(groups) + 1)
+	if err != nil {
+		return nil, false, false, err
 	}
+
+	maximumMaskDiagonal := uint64(0)
+	allMasksFinite := true
+
+	for index, group := range groups {
+		size, finite := parentReplayMaskCount(group.count)
+		if !finite {
+			allMasksFinite = false
+
+			continue
+		}
+
+		if err := frontier.SetFinite(index, size); err != nil {
+			return nil, false, false, err
+		}
+
+		addend := size - 1
+		if ^uint64(0)-maximumMaskDiagonal < addend {
+			maximumMaskDiagonal = ^uint64(0)
+		} else {
+			maximumMaskDiagonal += addend
+		}
+	}
+
+	var (
+		observed        uint64
+		diagonal        uint64
+		diagonalLive    bool
+		diagonalStarted bool
+	)
+
+	for {
+		ranks, ok := frontier.Next()
+		if !ok {
+			return nil, false, true, nil
+		}
+
+		if !diagonalStarted || frontier.diagonal != diagonal {
+			if diagonalStarted && allMasksFinite && diagonal > maximumMaskDiagonal && !diagonalLive {
+				return nil, false, true, nil
+			}
+
+			diagonal = frontier.diagonal
+			diagonalLive = false
+			diagonalStarted = true
+		}
+
+		requirements := parentReplayRequirementsAt(fault, groups, ranks[:len(groups)])
+
+		parent, found, replayErr := parentCandidateAtRank(
+			s, requirements, ranks[len(ranks)-1],
+		)
+		if replayErr != nil {
+			return nil, false, false, replayErr
+		}
+
+		if !found {
+			continue
+		}
+
+		diagonalLive = true
+
+		if observed == rank {
+			return parent, true, false, nil
+		}
+
+		observed++
+	}
+}
+
+// parentCandidateAtRank regenerates one complete row rank under exact parent requirements.
+func parentCandidateAtRank(s *search, requirements []requirement, rank uint64) (*jsonValue, bool, error) {
+	var (
+		parent   *jsonValue
+		observed uint64
+	)
 
 	complete, err := s.walkNode(
 		s.model.root,
 		s.model.root.occurrence,
-		parentRequirements,
+		requirements,
 		rowSearchContext{},
-		visit,
+		func(value *jsonValue) (bool, error) {
+			result := evaluate(s.model, value)
+			if result.err != nil {
+				return false, fmt.Errorf("evaluate regenerated parent: %w", result.err)
+			}
+
+			if !result.valid || !requirementsMatch(result, value, requirements) {
+				return false, nil
+			}
+
+			if observed != rank {
+				observed++
+
+				return false, nil
+			}
+
+			parent = value
+
+			return true, nil
+		},
 	)
 	if err != nil {
 		return nil, false, err
@@ -129,18 +302,25 @@ func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonVal
 	return parent, complete, nil
 }
 
-// parentReplayRequirements turns mutation-result presence into valid-parent presence.
-//
-//nolint:cyclop // Presence, type, and enum faults translate distinct requirement dimensions.
+// parentReplayRequirements turns mutation-result requirements into one valid-parent state.
 func parentReplayRequirements(fault faultProgram) []requirement {
+	groups := parentReplayGroups(fault.requirements)
+
+	return parentReplayRequirementsAt(fault, groups, make([]uint64, len(groups)))
+}
+
+// parentReplayRequirementsAt converts one fault program to one nonempty anyOf parent state.
+//
+//nolint:cyclop // Presence, type, enum, and composition faults translate distinct dimensions.
+func parentReplayRequirementsAt(
+	fault faultProgram,
+	groups []parentReplayGroup,
+	maskRanks []uint64,
+) []requirement {
 	requirements := copyPlanRequirements(fault.requirements)
 	for index := range requirements {
-		if requirements[index].hasBranch {
-			if requirements[index].composition == "anyOf" {
-				requirements[index].hasBranch = false
-			} else {
-				requirements[index].truth = true
-			}
+		if requirements[index].hasBranch && requirements[index].composition == "allOf" {
+			requirements[index].truth = true
 		}
 
 		for _, failure := range fault.expected {
@@ -166,24 +346,67 @@ func parentReplayRequirements(fault faultProgram) []requirement {
 		}
 	}
 
-	return requirements
-}
+	for groupIndex, group := range groups {
+		mask := new(big.Int).SetUint64(maskRanks[groupIndex])
+		mask.Add(mask, big.NewInt(1))
 
-// faultRequirementsMatch requires every fault-applicability precondition on a valid parent.
-func faultRequirementsMatch(result evaluation, value *jsonValue, requirements []requirement) bool {
-	for _, requirement := range requirements {
-		switch {
-		case requirement.presence != requirementNoPresence && !requirement.canonical &&
-			!presenceRequirementWasSatisfied(value, requirement):
-			return false
-		case requirement.hasKind && !kindWasObserved(result.observedRecords(), requirement.occurrence, requirement.kind):
-			return false
-		case requirement.hasBranch && !branchTruthWasObserved(result, requirement):
-			return false
+		for _, requirementIndex := range group.indexes {
+			branch := requirements[requirementIndex].branch
+			requirements[requirementIndex].truth = mask.Bit(branch) == 1
 		}
 	}
 
-	return true
+	return requirements
+}
+
+// parentReplayGroups returns authored anyOf vectors in requirement order.
+func parentReplayGroups(requirements []requirement) []parentReplayGroup {
+	type groupKey struct {
+		usePointer       string
+		instanceTemplate string
+	}
+
+	indexes := make(map[groupKey]int)
+
+	var groups []parentReplayGroup
+
+	for index, requirement := range requirements {
+		if !requirement.hasBranch || requirement.composition != "anyOf" || requirement.branch < 0 {
+			continue
+		}
+
+		suffix := "/anyOf/" + itoa(requirement.branch)
+		key := groupKey{
+			usePointer:       strings.TrimSuffix(requirement.occurrence.usePointer, suffix),
+			instanceTemplate: requirement.occurrence.instanceTemplate,
+		}
+
+		groupIndex, exists := indexes[key]
+		if !exists {
+			groupIndex = len(groups)
+			indexes[key] = groupIndex
+
+			groups = append(groups, parentReplayGroup{})
+		}
+
+		groups[groupIndex].indexes = append(groups[groupIndex].indexes, index)
+		groups[groupIndex].count = max(groups[groupIndex].count, requirement.branch+1)
+	}
+
+	return groups
+}
+
+// parentReplayMaskCount returns the finite number of nonempty uint64-addressable masks.
+func parentReplayMaskCount(branches int) (uint64, bool) {
+	if branches <= 0 {
+		return 0, true
+	}
+
+	if branches >= parentReplayMaskBits {
+		return 0, false
+	}
+
+	return uint64(1)<<branches - 1, true
 }
 
 // applyFault copies the current parent, charges one fault choice, and applies one fault.

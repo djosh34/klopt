@@ -45,6 +45,34 @@ func TestRegenerateParentAndApplyBasicTypeFault(t *testing.T) {
 	require.Equal(t, identityStrings(fault.expected), identityStrings(result.failureRecords()))
 }
 
+func TestRegenerateParentAtRankPreservesAndAdvancesAnyOfPins(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"required":["x"],
+		"properties":{"x":{"type":"string"}},
+		"anyOf":[
+			{"properties":{"x":{"enum":["a"]}}},
+			{"properties":{"x":{"enum":["b"]}}}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+
+	searchState := &search{model: model, maxSteps: 100_000}
+	first, found, exhausted, err := regenerateParentAtRank(plan, fault, 0, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.False(t, exhausted)
+	require.JSONEq(t, `{"x":"a"}`, string(marshalFaultTestValue(t, first)))
+
+	second, found, exhausted, err := regenerateParentAtRank(plan, fault, 1, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.False(t, exhausted)
+	require.JSONEq(t, `{"x":"b"}`, string(marshalFaultTestValue(t, second)))
+}
+
 func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {
 	t.Parallel()
 
