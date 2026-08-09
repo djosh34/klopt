@@ -84,7 +84,8 @@ func TestArrayStructureSkipsInfeasibleProjection(t *testing.T) {
 	}`)), OperationID: "selected"})
 	require.NoError(t, err)
 
-	structure, ok, _, err := rowArrayStructureAt(
+	searchState := &search{model: model, maxSteps: 1000}
+	structure, ok, _, err := searchState.rowArrayStructureAt(
 		model.root, model.root.occurrence, nil, 0,
 	)
 	require.NoError(t, err)
@@ -183,6 +184,96 @@ func TestFiniteObjectFrontierExhausts(t *testing.T) {
 	require.False(t, complete)
 	require.Positive(t, rows)
 	require.Less(t, searchState.steps, searchState.maxSteps)
+}
+
+// TestArrayFrontierStreamsSameLengthDirectWitnesses proves witness rank is independent of length.
+func TestArrayFrontierStreamsSameLengthDirectWitnesses(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","enum":[[false],[true]],"items":{},"minItems":1,"maxItems":1
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+
+	var witnesses []bool
+
+	complete, err := searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			if len(value.array) == 1 && value.array[0].kind == jsonBoolean &&
+				(len(witnesses) == 0 || witnesses[len(witnesses)-1] != value.array[0].boolean) {
+				witnesses = append(witnesses, value.array[0].boolean)
+			}
+
+			return len(witnesses) == 2, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []bool{false, true}, witnesses)
+}
+
+// TestObjectFrontierStreamsEveryDirectWitness proves object witnesses have their own rank.
+func TestObjectFrontierStreamsEveryDirectWitness(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object","enum":[{"x":false},{"x":true}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+
+	var witnesses []bool
+
+	complete, err := searchState.walkObject(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			member, exists := value.object["x"]
+			if exists && member.kind == jsonBoolean {
+				witnesses = append(witnesses, member.boolean)
+			}
+
+			return len(witnesses) == 2, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, []bool{false, true}, witnesses)
+}
+
+// TestObjectMemberSelectionAndPresenceChargeSeparately locks the two mutation boundaries.
+func TestObjectMemberSelectionAndPresenceChargeSeparately(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"object","properties":{"x":{}},"additionalProperties":false
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	cursor := newRowProjectionCursor(model.root, model.root.occurrence, nil)
+	view, ok, err := cursor.Next()
+	cursor.Close()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	shape, err := newRowProjectedObject(view, nil, model.root.occurrence)
+	require.NoError(t, err)
+
+	structure := rankedObjectStructure{shape: shape, present: []bool{false}}
+
+	selectionOnly := &search{model: model, maxSteps: 1}
+	_, err = selectionOnly.rowObjectMembersForStructure(structure)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, uint64(1), selectionOnly.steps)
+
+	withPresence := &search{model: model, maxSteps: 2}
+	members, err := withPresence.rowObjectMembersForStructure(structure)
+	require.NoError(t, err)
+	require.Empty(t, members)
+	require.Equal(t, uint64(2), withPresence.steps)
 }
 
 // TestBuildRequiredMembersMayExceedDirectedObjectTarget proves exact guidance is not a ceiling.

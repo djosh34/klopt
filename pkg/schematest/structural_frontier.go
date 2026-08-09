@@ -5,6 +5,7 @@ import "errors"
 // rankedArrayStructure is one transient projection/length choice.
 type rankedArrayStructure struct {
 	view           rowProjectionView
+	active         []requirement
 	length         rowArrayCount
 	projectionRank uint64
 	lengthRank     uint64
@@ -95,6 +96,11 @@ func rowArrayLengthsFiniteAt(
 			return false, errors.New("schematest: projection endpoint changed")
 		}
 
+		if !rowProjectionAcceptsKind(view, jsonArray) ||
+			!rowProjectionRequirementsAcceptKind(view, requirements, jsonArray) {
+			continue
+		}
+
 		_, ok, size, err := rowArrayLengthAt(view, requirements, wanted)
 		if err != nil {
 			return false, err
@@ -126,44 +132,15 @@ func rowProjectionRequirementsAcceptKind(
 	return true
 }
 
-// rowProjectionDomainAcceptsKind reports whether any finite projection admits the directed kind.
-func rowProjectionDomainAcceptsKind(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-	kind jsonKind,
-) (bool, error) {
-	for rank := uint64(0); ; rank++ {
-		view, ok, _, err := rowProjectionAt(node, occurrence, requirements, rank)
-		if err != nil {
-			return false, err
-		}
-
-		if !ok {
-			return false, nil
-		}
-
-		if rowProjectionAcceptsKind(view, kind) &&
-			rowProjectionRequirementsAcceptKind(view, requirements, kind) {
-			return true, nil
-		}
-	}
-}
-
 // rowArrayStructureAt enumerates projection/length tuples with the shared rank product.
 //
 //nolint:cyclop,gocognit,mnd,nestif // Dependent finite endpoints are proven at the shared product seam.
-func rowArrayStructureAt(
+func (s *search) rowArrayStructureAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	requirements []requirement,
 	wanted uint64,
 ) (rankedArrayStructure, bool, uint64, error) {
-	accepted, err := rowProjectionDomainAcceptsKind(node, occurrence, requirements, jsonArray)
-	if err != nil || !accepted {
-		return rankedArrayStructure{}, false, 0, err
-	}
-
 	frontier, err := newRankProductCursor(2)
 	if err != nil {
 		return rankedArrayStructure{}, false, 0, err
@@ -195,12 +172,34 @@ func rowArrayStructureAt(
 			continue
 		}
 
+		active, activeErr := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...), s.assign,
+		)
+		if activeErr != nil {
+			return rankedArrayStructure{}, false, 0, activeErr
+		}
+
 		if !rowProjectionAcceptsKind(view, jsonArray) ||
 			!rowProjectionRequirementsAcceptKind(view, requirements, jsonArray) {
+			if projectionDone {
+				finite, finiteErr := rowArrayLengthsFiniteAt(
+					node, occurrence, requirements, projectionSize, ranks[0],
+				)
+				if finiteErr != nil {
+					return rankedArrayStructure{}, false, 0, finiteErr
+				}
+
+				if finite {
+					if setErr := frontier.SetFinite(0, ranks[0]); setErr != nil {
+						return rankedArrayStructure{}, false, 0, setErr
+					}
+				}
+			}
+
 			continue
 		}
 
-		length, exists, _, lengthErr := rowArrayLengthAt(view, requirements, ranks[0])
+		length, exists, _, lengthErr := rowArrayLengthAt(view, active, ranks[0])
 		if lengthErr != nil {
 			return rankedArrayStructure{}, false, 0, lengthErr
 		}
@@ -226,7 +225,8 @@ func rowArrayStructureAt(
 
 		if emitted == wanted {
 			return rankedArrayStructure{
-				view: view, length: length, projectionRank: ranks[1], lengthRank: ranks[0],
+				view: view, active: active, length: length,
+				projectionRank: ranks[1], lengthRank: ranks[0],
 			}, true, 0, nil
 		}
 
@@ -465,17 +465,16 @@ func (s *search) rowConjunctionValueAt(
 	}
 }
 
-// rowArrayChildrenAt rebuilds one diagonal tuple of independently ranked positions.
+// rowArrayChildrenAt rebuilds one diagonal tuple while extending position state only after charge.
 //
-//nolint:cyclop,gocognit // Component endpoints and transient reconstruction form one product operation.
+//nolint:cyclop,gocognit // Component endpoints and incremental transient reconstruction are one operation.
 func (s *search) rowArrayChildrenAt(
 	structure rankedArrayStructure,
 	requirements []requirement,
 	context rowSearchContext,
 	wanted uint64,
 ) ([]*jsonValue, bool, bool, uint64, error) {
-	if structure.length.beyond || structure.length.value > uint64(maxInt()) ||
-		structure.length.value > s.maxSteps-s.steps {
+	if structure.length.beyond {
 		for {
 			if err := s.assign(); err != nil {
 				return nil, false, false, 0, err
@@ -483,8 +482,7 @@ func (s *search) rowArrayChildrenAt(
 		}
 	}
 
-	dimensions := int(structure.length.value)
-	if dimensions == 0 {
+	if structure.length.value == 0 {
 		if wanted == 0 {
 			return []*jsonValue{}, true, true, 0, nil
 		}
@@ -494,29 +492,29 @@ func (s *search) rowArrayChildrenAt(
 
 	items := rowProjectedArrayItems(structure.view, requirements)
 
-	frontier, err := newRankProductCursor(dimensions)
-	if err != nil {
-		return nil, false, false, 0, err
-	}
-
-	var ordinal uint64
+	var (
+		ranks      []uint64
+		diagonal   uint64
+		finiteSize uint64
+		finite     bool
+		ordinal    uint64
+	)
 
 	for {
-		ranks, ok := frontier.Next()
-		if !ok {
-			return nil, false, false, ordinal, nil
-		}
-
-		values := make([]*jsonValue, 0, dimensions)
+		values := []*jsonValue(nil)
 		tupleExists, tupleUsable := true, true
 
-		for index, rank := range ranks {
+		for position := uint64(0); position < structure.length.value; position++ {
 			if err := s.assign(); err != nil {
 				return nil, false, false, 0, err
 			}
 
-			value, exists, usable, finiteSize, valueErr := s.rowConjunctionValueAt(
-				items, requirements, context, rank,
+			if position == uint64(len(ranks)) {
+				ranks = append(ranks, 0)
+			}
+
+			value, exists, usable, size, valueErr := s.rowConjunctionValueAt(
+				items, requirements, context, ranks[position],
 			)
 			if valueErr != nil {
 				return nil, false, false, 0, valueErr
@@ -525,9 +523,11 @@ func (s *search) rowArrayChildrenAt(
 			if !exists {
 				tupleExists = false
 
-				if setErr := frontier.SetFinite(index, finiteSize); setErr != nil {
-					return nil, false, false, 0, setErr
+				if finite && finiteSize != size {
+					return nil, false, false, 0, errors.New("schematest: array item rank endpoint changed")
 				}
+
+				finite, finiteSize = true, size
 
 				break
 			}
@@ -537,15 +537,80 @@ func (s *search) rowArrayChildrenAt(
 			values = append(values, value)
 		}
 
-		if !tupleExists {
-			continue
+		if tupleExists {
+			if ordinal == wanted {
+				return values, true, tupleUsable, 0, nil
+			}
+
+			ordinal++
 		}
 
-		if ordinal == wanted {
-			return values, true, tupleUsable, 0, nil
+		if !advanceArrayRankTuple(ranks, &diagonal, finite, finiteSize) {
+			return nil, false, false, ordinal, nil
+		}
+	}
+}
+
+// advanceArrayRankTuple preserves rankProductCursor order without authored-length allocation.
+//
+//nolint:cyclop,gocognit // Incrementing, finite bounds, and tuple-fit checks are one cursor operation.
+func advanceArrayRankTuple(ranks []uint64, diagonal *uint64, finite bool, finiteSize uint64) bool {
+	if len(ranks) == 0 || finite && finiteSize == 0 {
+		return false
+	}
+
+	for {
+		last := len(ranks) - 1
+		advanced := false
+
+		for index := last - 1; index >= 0; index-- {
+			var suffix uint64
+			for _, rank := range ranks[index+1:] {
+				suffix += rank
+			}
+
+			if suffix == 0 {
+				continue
+			}
+
+			ranks[index]++
+			clear(ranks[index+1 : last])
+			ranks[last] = suffix - 1
+			advanced = true
+
+			break
 		}
 
-		ordinal++
+		if !advanced {
+			if *diagonal == ^uint64(0) {
+				return false
+			}
+
+			if finite && finiteSize > 0 && *diagonal >= uint64(len(ranks))*(finiteSize-1) {
+				return false
+			}
+
+			*diagonal++
+
+			clear(ranks)
+			ranks[last] = *diagonal
+		}
+
+		fits := true
+
+		if finite {
+			for _, rank := range ranks {
+				if rank >= finiteSize {
+					fits = false
+
+					break
+				}
+			}
+		}
+
+		if fits {
+			return true
+		}
 	}
 }
 
@@ -561,7 +626,7 @@ func (s *search) rowArrayChildrenFiniteAt(
 	var maximum uint64
 
 	for structureRank := uint64(0); structureRank < structureSize; structureRank++ {
-		structure, ok, _, err := rowArrayStructureAt(node, occurrence, requirements, structureRank)
+		structure, ok, _, err := s.rowArrayStructureAt(node, occurrence, requirements, structureRank)
 		if err != nil {
 			return 0, false, err
 		}
@@ -570,15 +635,8 @@ func (s *search) rowArrayChildrenFiniteAt(
 			return 0, false, errors.New("schematest: array structure endpoint changed")
 		}
 
-		active, err := structure.view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), s.assign,
-		)
-		if err != nil {
-			return 0, false, err
-		}
-
 		candidateValues, ok, candidateUsable, size, err := s.rowArrayChildrenAt(
-			structure, active, context, wanted,
+			structure, structure.active, context, wanted,
 		)
 		clear(candidateValues)
 
@@ -662,7 +720,7 @@ func (s *search) walkArrayFrontier(
 			return false, nil
 		}
 
-		structure, exists, finiteSize, structureErr := rowArrayStructureAt(
+		structure, exists, finiteSize, structureErr := s.rowArrayStructureAt(
 			node, occurrence, requirements, ranks[0],
 		)
 		if structureErr != nil {
@@ -678,20 +736,17 @@ func (s *search) walkArrayFrontier(
 			continue
 		}
 
-		active, activeErr := structure.view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), s.assign,
-		)
-		if activeErr != nil {
-			return false, activeErr
-		}
+		directExists := false
 
-		if ranks[1] == 0 {
-			direct, directOK, directErr := rowDirectArrayValueAt(structure.view, structure.lengthRank)
+		if structure.lengthRank == 0 {
+			direct, directOK, directErr := rowDirectArrayValueAt(structure.view, ranks[1])
 			if directErr != nil {
 				return false, directErr
 			}
 
 			if directOK {
+				directExists = true
+
 				if assignErr := s.assign(); assignErr != nil {
 					return false, assignErr
 				}
@@ -713,13 +768,17 @@ func (s *search) walkArrayFrontier(
 		}
 
 		values, childOK, childUsable, _, childErr := s.rowArrayChildrenAt(
-			structure, active, context, ranks[1],
+			structure, structure.active, context, ranks[1],
 		)
 		if childErr != nil {
 			return false, childErr
 		}
 
 		if !childOK {
+			if directExists {
+				continue
+			}
+
 			if structureSize > 0 {
 				finiteSize, finite, finiteErr := s.rowArrayChildrenFiniteAt(
 					node, occurrence, requirements, context, structureSize, ranks[1],
@@ -876,6 +935,8 @@ func projectedObjectExtraCount(shape *rowProjectedObject, present uint64) (uint6
 }
 
 // rowObjectPresencesFiniteAt proves one rank is beyond every finite projection presence domain.
+//
+//nolint:cyclop // Kind, feasibility, and finite endpoint checks are one domain proof.
 func rowObjectPresencesFiniteAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -891,6 +952,11 @@ func rowObjectPresencesFiniteAt(
 
 		if !ok {
 			return false, errors.New("schematest: projection endpoint changed")
+		}
+
+		if !rowProjectionAcceptsKind(view, jsonObject) ||
+			!rowProjectionRequirementsAcceptKind(view, requirements, jsonObject) {
+			continue
 		}
 
 		active, err := view.appendBranchRequirements(append([]requirement(nil), requirements...), func() error {
@@ -925,17 +991,12 @@ func rowObjectPresencesFiniteAt(
 // rowObjectStructureAt enumerates projection/presence tuples with the shared rank product.
 //
 //nolint:cyclop,gocognit,mnd,nestif // Dependent finite endpoints are proven at the shared product seam.
-func rowObjectStructureAt(
+func (s *search) rowObjectStructureAt(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	requirements []requirement,
 	wanted uint64,
 ) (rankedObjectStructure, bool, uint64, error) {
-	accepted, err := rowProjectionDomainAcceptsKind(node, occurrence, requirements, jsonObject)
-	if err != nil || !accepted {
-		return rankedObjectStructure{}, false, 0, err
-	}
-
 	frontier, err := newRankProductCursor(2)
 	if err != nil {
 		return rankedObjectStructure{}, false, 0, err
@@ -967,16 +1028,31 @@ func rowObjectStructureAt(
 			continue
 		}
 
-		if !rowProjectionAcceptsKind(view, jsonObject) ||
-			!rowProjectionRequirementsAcceptKind(view, requirements, jsonObject) {
-			continue
-		}
-
 		active, activeErr := view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), func() error { return nil },
+			append([]requirement(nil), requirements...), s.assign,
 		)
 		if activeErr != nil {
 			return rankedObjectStructure{}, false, 0, activeErr
+		}
+
+		if !rowProjectionAcceptsKind(view, jsonObject) ||
+			!rowProjectionRequirementsAcceptKind(view, requirements, jsonObject) {
+			if projectionDone {
+				finite, finiteErr := rowObjectPresencesFiniteAt(
+					node, occurrence, requirements, projectionSize, ranks[0],
+				)
+				if finiteErr != nil {
+					return rankedObjectStructure{}, false, 0, finiteErr
+				}
+
+				if finite {
+					if setErr := frontier.SetFinite(0, ranks[0]); setErr != nil {
+						return rankedObjectStructure{}, false, 0, setErr
+					}
+				}
+			}
+
+			continue
 		}
 
 		shape, shapeErr := newRowProjectedObject(view, active, occurrence)
@@ -985,6 +1061,21 @@ func rowObjectStructureAt(
 		}
 
 		if !shape.feasible() {
+			if projectionDone {
+				finite, finiteErr := rowObjectPresencesFiniteAt(
+					node, occurrence, requirements, projectionSize, ranks[0],
+				)
+				if finiteErr != nil {
+					return rankedObjectStructure{}, false, 0, finiteErr
+				}
+
+				if finite {
+					if setErr := frontier.SetFinite(0, ranks[0]); setErr != nil {
+						return rankedObjectStructure{}, false, 0, setErr
+					}
+				}
+			}
+
 			continue
 		}
 
@@ -1029,8 +1120,17 @@ func (s *search) rowObjectMembersForStructure(structure rankedObjectStructure) (
 	values := make(map[string]*jsonValue)
 
 	for index, present := range structure.present {
+		if err := s.assign(); err != nil {
+			return nil, err
+		}
+
+		member := structure.shape.members[index]
+
+		if err := s.assign(); err != nil {
+			return nil, err
+		}
+
 		if present {
-			member := structure.shape.members[index]
 			members = append(members, member)
 			values[member.name] = nil
 		}
@@ -1147,7 +1247,7 @@ func (s *search) rowObjectChildrenFiniteAt(
 	var maximum uint64
 
 	for structureRank := uint64(0); structureRank < structureSize; structureRank++ {
-		structure, ok, _, err := rowObjectStructureAt(node, occurrence, requirements, structureRank)
+		structure, ok, _, err := s.rowObjectStructureAt(node, occurrence, requirements, structureRank)
 		if err != nil {
 			return 0, false, err
 		}
@@ -1156,22 +1256,13 @@ func (s *search) rowObjectChildrenFiniteAt(
 			return 0, false, errors.New("schematest: object structure endpoint changed")
 		}
 
-		active, err := structure.view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), s.assign,
-		)
-		if err != nil {
-			return 0, false, err
-		}
-
-		structure.active = active
-
 		members, err := s.rowObjectMembersForStructure(structure)
 		if err != nil {
 			return 0, false, err
 		}
 
 		candidateValues, ok, candidateUsable, size, err := s.rowObjectChildrenAt(
-			members, active, context, wanted,
+			members, structure.active, context, wanted,
 		)
 		clear(candidateValues)
 
@@ -1255,7 +1346,7 @@ func (s *search) walkObjectFrontier(
 			return false, nil
 		}
 
-		structure, exists, finiteSize, structureErr := rowObjectStructureAt(
+		structure, exists, finiteSize, structureErr := s.rowObjectStructureAt(
 			node, occurrence, requirements, ranks[0],
 		)
 		if structureErr != nil {
@@ -1271,22 +1362,17 @@ func (s *search) walkObjectFrontier(
 			continue
 		}
 
-		active, activeErr := structure.view.appendBranchRequirements(
-			append([]requirement(nil), requirements...), s.assign,
-		)
-		if activeErr != nil {
-			return false, activeErr
-		}
+		directExists := false
 
-		structure.active = active
-
-		if ranks[1] == 0 && structure.presenceRank == 0 {
-			direct, directOK, directErr := rowDirectObjectValueAt(structure.view, 0)
+		if structure.presenceRank == 0 {
+			direct, directOK, directErr := rowDirectObjectValueAt(structure.view, ranks[1])
 			if directErr != nil {
 				return false, directErr
 			}
 
 			if directOK {
+				directExists = true
+
 				if assignErr := s.assign(); assignErr != nil {
 					return false, assignErr
 				}
@@ -1303,25 +1389,23 @@ func (s *search) walkObjectFrontier(
 			}
 		}
 
-		for range structure.present {
-			if assignErr := s.assign(); assignErr != nil {
-				return false, assignErr
-			}
-		}
-
 		members, memberErr := s.rowObjectMembersForStructure(structure)
 		if memberErr != nil {
 			return false, memberErr
 		}
 
 		values, childOK, childUsable, _, childErr := s.rowObjectChildrenAt(
-			members, active, context, ranks[1],
+			members, structure.active, context, ranks[1],
 		)
 		if childErr != nil {
 			return false, childErr
 		}
 
 		if !childOK {
+			if directExists {
+				continue
+			}
+
 			if structureSize > 0 {
 				finiteSize, finite, finiteErr := s.rowObjectChildrenFiniteAt(
 					node, occurrence, requirements, context, structureSize, ranks[1],

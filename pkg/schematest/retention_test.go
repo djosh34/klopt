@@ -63,7 +63,7 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	}
 
 	short, err := measureBuildMemory(
-		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 50}, 1,
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100}, 1,
 	)
 	require.NoError(t, err, "measurement=%+v", short)
 	long, err := measureBuildMemory(
@@ -76,7 +76,7 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	diagnostic := "short=%+v long=%+v"
 	require.Equal(t, 1, short.cases, diagnostic, short, long)
 	require.Equal(t, 2, long.cases, diagnostic, short, long)
-	require.Equal(t, uint64(50), short.steps, diagnostic, short, long)
+	require.Equal(t, uint64(100), short.steps, diagnostic, short, long)
 	require.Equal(t, uint64(5_000), long.steps, diagnostic, short, long)
 	require.Equal(t, MaxStepsReached, short.stop, diagnostic, short, long)
 	require.Equal(t, MaxStepsReached, long.stop, diagnostic, short, long)
