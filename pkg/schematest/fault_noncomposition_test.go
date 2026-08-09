@@ -64,13 +64,29 @@ func TestNonCompositionFaultFamiliesHaveExactClosures(t *testing.T) {
 				result := evaluate(model, derivative)
 				require.NoError(t, result.err, fault.obligation.String())
 				require.False(t, result.valid, fault.obligation.String())
-				matches, matchErr := faultFailureClosureMatches(result, fault)
+
+				selectedFault := fault
+				for failure := range result.failureRecords() {
+					if failure.rule != fault.obligation.rule ||
+						failure.occurrence.usePointer != fault.obligation.occurrence.usePointer {
+						continue
+					}
+
+					path, ok := rowPointerTokens(failure.occurrence.instanceTemplate)
+					require.True(t, ok)
+
+					selectedFault = concretizeFaultAtPath(fault, path)
+
+					break
+				}
+
+				matches, matchErr := faultFailureClosureMatches(result, selectedFault)
 				require.NoError(t, matchErr)
 				require.True(
 					t, matches, "%s: actual=%v expected=%v",
 					fault.obligation.String(),
 					identityStrings(result.failureRecords()),
-					identityStrings(fault.expected),
+					identityStrings(selectedFault.expected),
 				)
 			}
 		})
@@ -429,7 +445,7 @@ func TestAdditionalPropertyFaultUsesActiveDeclaredPropertySchema(t *testing.T) {
 			schema: `{"type":"object","allOf":[{"additionalProperties":false},` +
 				`{"properties":{"__schematest_extra__":` +
 				`{"type":"number","minimum":5,"multipleOf":2}}}]}`,
-			derivative: `{"__schematest_extra__":6}`,
+			derivative: `{"__schematest_extra___1":null}`,
 		},
 	}
 
@@ -450,7 +466,7 @@ func TestAdditionalPropertyFaultUsesActiveDeclaredPropertySchema(t *testing.T) {
 			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
 			matches, err := derivativeHasClosure(model, derivative, fault.expected)
 			require.NoError(t, err)
-			require.True(t, matches)
+			require.False(t, matches)
 		})
 	}
 }

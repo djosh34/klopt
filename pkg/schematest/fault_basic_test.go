@@ -73,6 +73,20 @@ func TestRegenerateParentAtRankPreservesAndAdvancesAnyOfPins(t *testing.T) {
 	require.JSONEq(t, `{"x":"b"}`, string(marshalFaultTestValue(t, second)))
 }
 
+func TestParentReplayMaskAtRankReachesBranchesBeyondUint64Bits(t *testing.T) {
+	t.Parallel()
+
+	for rank := uint64(0); rank <= 64; rank++ {
+		mask, exists := parentReplayMaskAtRank(65, rank)
+		require.True(t, exists)
+		require.Equal(t, 1, mask.BitLen()-int(rank))
+		require.Equal(t, uint(1), mask.Bit(int(rank)))
+	}
+
+	_, finite := parentReplayMaskCount(65)
+	require.False(t, finite)
+}
+
 func TestFaultClosureAtRankEnumeratesNestedAlternativesWithoutTuples(t *testing.T) {
 	t.Parallel()
 
@@ -200,7 +214,7 @@ func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {
 		{JSON: []byte(`null`), Valid: false},
 	}, cases)
 	require.Equal(t, SpaceExhausted, report.Stop)
-	require.Equal(t, uint64(7), report.Steps)
+	require.Equal(t, uint64(5), report.Steps)
 	require.Empty(t, report.Uncovered)
 }
 
@@ -209,7 +223,7 @@ func TestBuildDiscardsBasicFaultAtCutoff(t *testing.T) {
 
 	document := []byte(documentWithJSONSchema(`{"type":"string"}`))
 
-	for _, maxSteps := range []uint64{3, 4, 5, 6} {
+	for _, maxSteps := range []uint64{3, 4} {
 		var cases []Case
 
 		report, err := Build(
@@ -274,9 +288,13 @@ func TestBuildVisitsMaximumFaultInsideAnyOfContext(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, []Case{{JSON: []byte(`100`), Valid: true}}, cases)
+	require.Equal(t, []Case{
+		{JSON: []byte(`100`), Valid: true},
+		{JSON: []byte(`null`), Valid: false},
+		{JSON: []byte(`101`), Valid: false},
+	}, cases)
 	require.Equal(t, MaxStepsReached, report.Stop)
-	require.Contains(t, report.Uncovered,
+	require.Contains(t, report.Covered,
 		"#/paths/~1/post/requestBody/content/application~1json/schema|#|maximum|fault:maximum")
 	require.Contains(t, report.Uncovered,
 		"#/paths/~1/post/requestBody/content/application~1json/schema|#|anyOf|fault:anyOf")

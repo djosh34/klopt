@@ -88,7 +88,7 @@ func TestBuildMergesAllOfArrayItemSchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, SpaceExhausted, report.Stop)
 	require.NotEmpty(t, cases)
 	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
 }
@@ -115,7 +115,7 @@ func TestBuildMergesNestedAllOfArrayItemSchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, MaxStepsReached, report.Stop)
+	require.Equal(t, SpaceExhausted, report.Stop)
 	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
 }
 
@@ -596,6 +596,9 @@ func TestBuildKeepsAnyOfSiblingPropertiesAsAlternatives(t *testing.T) {
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`{}`), Valid: false},
 		{JSON: []byte(`{}`), Valid: false},
+		{JSON: []byte(`{"x":null}`), Valid: false},
+		{JSON: []byte(`{}`), Valid: false},
+		{JSON: []byte(`{"x":null}`), Valid: false},
 	}, cases)
 
 	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
@@ -629,7 +632,10 @@ func TestBuildKeepsAnyOfArrayBranchesAsAlternatives(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, MaxStepsReached, report.Stop)
 	require.Equal(t, uint64(10000), report.Steps)
-	require.Equal(t, []Case{{JSON: []byte(`[false]`), Valid: true}}, cases)
+	require.Equal(t, []Case{
+		{JSON: []byte(`[false]`), Valid: true},
+		{JSON: []byte(`null`), Valid: false},
+	}, cases)
 }
 
 // TestBuildCompositionGoldenLocksCasesAndReport verifies the exact composed stream.
@@ -658,11 +664,13 @@ func TestBuildCompositionGoldenLocksCasesAndReport(t *testing.T) {
 	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
 
 	require.NoError(t, err)
-	require.Equal(t, []Case{{JSON: []byte(`[false]`), Valid: true}}, cases)
+	require.Equal(t, []Case{
+		{JSON: []byte(`[false]`), Valid: true},
+		{JSON: []byte(`null`), Valid: false},
+	}, cases)
 
-	for _, testCase := range cases {
-		require.True(t, testCase.Valid)
-	}
+	require.True(t, cases[0].Valid)
+	require.False(t, cases[1].Valid)
 
 	require.Equal(t, MaxStepsReached, report.Stop)
 	require.Equal(t, uint64(10000), report.Steps)

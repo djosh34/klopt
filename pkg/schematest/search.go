@@ -124,7 +124,7 @@ func formatBoundaryWasSatisfied(value *jsonValue, objective *formatBoundaryObjec
 		return false
 	}
 
-	for _, path := range matchingValuePaths(value, objective.identity.occurrence.instanceTemplate) {
+	for path := range matchingValuePathSequence(value, objective.identity.occurrence.instanceTemplate) {
 		candidate := valueAtPath(value, path)
 		if candidate == nil || candidate.kind != jsonString {
 			continue
@@ -335,7 +335,8 @@ func ruleOccurrenceMatches(actual, expected schemaOccurrence) bool {
 	return actual.usePointer == expected.usePointer &&
 		actual.targetPointer == expected.targetPointer &&
 		actual.reference == expected.reference &&
-		instanceTemplateMatches(expected.instanceTemplate, actual.instanceTemplate)
+		(instanceTemplateMatches(expected.instanceTemplate, actual.instanceTemplate) ||
+			instanceTemplateMatches(actual.instanceTemplate, expected.instanceTemplate))
 }
 
 // rowOccurrenceMatches compares planner requirements, which intentionally omit target identity.

@@ -4,6 +4,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,6 +97,147 @@ func findTypeDerivative(
 	s *search,
 ) (*jsonValue, bool, error) {
 	return findKindDirectedDerivative(parent, fault, oracleRuleType, s)
+}
+
+//nolint:cyclop // Finite authored and canonical sources share one ranked attempt boundary.
+func typeFaultAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	root := cloneWithoutFaultRule(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, oracleRuleType,
+	)
+	if candidate, exists := activeEnumValueAtRank(
+		root, s.model.root.occurrence, fault.requirements, &rank,
+	); exists {
+		derivative, _, replaceErr := firstReplacementDerivative(
+			parent, fault, singleJSONValueSource(candidate), s.model, s,
+		)
+
+		return derivative, true, false, replaceErr
+	}
+
+	cursor := newRowProjectionCursor(root, s.model.root.occurrence, fault.requirements)
+	for {
+		view, exists, err := cursor.Next()
+		if err != nil {
+			cursor.Close()
+
+			return nil, false, false, err
+		}
+
+		if !exists {
+			break
+		}
+
+		var candidate *jsonValue
+
+		err = view.eachDirectValue(func(_ rowSchemaSource, value *jsonValue) bool {
+			if rank > 0 {
+				rank--
+
+				return true
+			}
+
+			candidate = value
+
+			return false
+		})
+		if err != nil {
+			cursor.Close()
+
+			return nil, false, false, err
+		}
+
+		if candidate != nil {
+			cursor.Close()
+
+			derivative, _, replaceErr := firstReplacementDerivative(
+				parent, fault, singleJSONValueSource(candidate), s.model, s,
+			)
+
+			return derivative, true, false, replaceErr
+		}
+	}
+
+	cursor.Close()
+
+	for _, kind := range canonicalJSONKinds() {
+		var (
+			candidate *jsonValue
+			found     bool
+		)
+
+		err := walkCanonicalKindWitnesses(kind, func(value *jsonValue) bool {
+			if rank > 0 {
+				rank--
+
+				return true
+			}
+
+			candidate = value
+			found = true
+
+			return false
+		})
+		if err != nil {
+			return nil, false, false, err
+		}
+
+		if !found {
+			continue
+		}
+
+		derivative, _, replaceErr := firstReplacementDerivative(
+			parent, fault, singleJSONValueSource(candidate), s.model, s,
+		)
+
+		return derivative, true, false, replaceErr
+	}
+
+	return nil, false, true, nil
+}
+
+func activeEnumValueAtRank(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	rank *uint64,
+) (*jsonValue, bool) {
+	for _, member := range node.enum {
+		if *rank == 0 {
+			return member.value, true
+		}
+
+		*rank--
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if value, found := activeEnumValueAtRank(child, childOccurrence, requirements, rank); found {
+			return value, true
+		}
+	}
+
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, oracleRuleAnyOf, len(node.anyOf))
+	for index, child := range node.anyOf {
+		if constrained && !states[index] {
+			continue
+		}
+
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if value, found := activeEnumValueAtRank(child, childOccurrence, requirements, rank); found {
+			return value, true
+		}
+	}
+
+	return nil, false
 }
 
 func findEnumDerivative(
@@ -318,11 +460,33 @@ func faultTargetWithin(target, candidate schemaOccurrence) bool {
 }
 
 func findNumberDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
+	root := s.model.root
+	if fault.obligation.rule != oracleRuleFormat {
+		root = cloneWithoutFaultRule(
+			s.model.root, s.model.root.occurrence, fault.obligation.occurrence, fault.obligation.rule,
+		)
+	}
+
 	container, occurrence, found := resolveFaultContainer(
-		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, jsonNumber,
+		root, s.model.root.occurrence, fault.obligation.occurrence, jsonNumber,
 	)
 	if !found {
 		return nil, false, nil
+	}
+
+	if boundary, exists, boundaryErr := directedNumberFaultBoundary(s.model.root, fault); boundaryErr != nil {
+		return nil, false, boundaryErr
+	} else if exists {
+		derivative, matched, matchErr := firstReplacementDerivative(
+			parent,
+			fault,
+			singleJSONValueSource(&jsonValue{kind: jsonNumber, number: boundary}),
+			s.model,
+			s,
+		)
+		if matchErr != nil || matched {
+			return derivative, matched, matchErr
+		}
 	}
 
 	var derivative *jsonValue
@@ -351,6 +515,37 @@ func findNumberDerivative(parent *jsonValue, fault faultProgram, s *search) (*js
 	}
 
 	return derivative, complete, nil
+}
+
+func directedNumberFaultBoundary(root *schemaNode, fault faultProgram) (*exactNumber, bool, error) {
+	target, _, found := resolveExactFaultTarget(
+		root, root.occurrence, fault.obligation.occurrence,
+	)
+	if !found {
+		return nil, false, nil
+	}
+
+	one, err := parseExactNumber("1")
+	if err != nil {
+		return nil, false, err
+	}
+
+	switch fault.obligation.rule {
+	case oracleRuleMinimum:
+		value, addErr := addSignedExactNumbers(target.minimum, one, -1)
+
+		return value, addErr == nil, addErr
+	case oracleRuleMaximum:
+		value, addErr := addSignedExactNumbers(target.maximum, one, 1)
+
+		return value, addErr == nil, addErr
+	case oracleRuleExclusiveMinimum:
+		return target.minimum, target.minimum != nil, nil
+	case oracleRuleExclusiveMaximum:
+		return target.maximum, target.maximum != nil, nil
+	default:
+		return nil, false, nil
+	}
 }
 
 func findStringDerivative(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, bool, error) {
@@ -409,7 +604,7 @@ func findScalarDerivativeFromRows(
 		fault.requirements,
 		rowSearchContext{scalarFault: &fault},
 		func(candidateRow *jsonValue) (bool, error) {
-			for _, path := range matchingValuePaths(candidateRow, fault.obligation.occurrence.instanceTemplate) {
+			for path := range matchingValuePathSequence(candidateRow, fault.obligation.occurrence.instanceTemplate) {
 				candidate := valueAtPath(candidateRow, path)
 				if candidate == nil {
 					continue
@@ -447,8 +642,9 @@ func firstReplacementDerivative(
 	model *schemaModel,
 	s *search,
 ) (*jsonValue, bool, error) {
-	paths := matchingValuePaths(parent, fault.obligation.occurrence.instanceTemplate)
-	for _, path := range paths {
+	for path := range matchingValuePathSequence(parent, fault.obligation.occurrence.instanceTemplate) {
+		concreteFault := concretizeFaultAtPath(fault, path)
+
 		var (
 			selected     *jsonValue
 			candidateErr error
@@ -479,7 +675,7 @@ func firstReplacementDerivative(
 				return true
 			}
 
-			matched, matchErr := derivativeMatchesFault(model, derivative, fault)
+			matched, matchErr := derivativeMatchesFault(model, derivative, concreteFault)
 			if matchErr != nil {
 				candidateErr = matchErr
 
@@ -504,6 +700,43 @@ func firstReplacementDerivative(
 	}
 
 	return nil, false, nil
+}
+
+func concretizeFaultAtPath(fault faultProgram, path []string) faultProgram {
+	selected := pointerFromTokens(path)
+	templateTokens, templateOK := rowPointerTokens(fault.obligation.occurrence.instanceTemplate)
+
+	selectedTokens, selectedOK := rowPointerTokens(selected)
+	if !templateOK || !selectedOK || len(templateTokens) != len(selectedTokens) {
+		return fault
+	}
+
+	concretize := func(identity failureIdentity) failureIdentity {
+		tokens, ok := rowPointerTokens(identity.occurrence.instanceTemplate)
+		if !ok {
+			return identity
+		}
+
+		for index := range tokens {
+			if tokens[index] == "*" && index < len(templateTokens) && templateTokens[index] == "*" {
+				tokens[index] = selectedTokens[index]
+			}
+		}
+
+		identity.occurrence.instanceTemplate = pointerFromTokens(tokens)
+		identity.occurrence.structured = nil
+
+		return identity
+	}
+
+	fault.obligation.ruleIdentity = concretize(fault.obligation.ruleIdentity)
+
+	fault.expected = append(failureSet(nil), fault.expected...)
+	for index := range fault.expected {
+		fault.expected[index] = concretize(fault.expected[index])
+	}
+
+	return fault
 }
 
 func singleJSONValueSource(candidate *jsonValue) jsonValueSource {
@@ -535,7 +768,7 @@ func findArrayCountDerivative(
 	}
 
 	if !fits || fault.obligation.rule == oracleRuleMaxItems && count == ^uint64(0) {
-		return nil, false, chargeArrayInsertionsToCutoff(s)
+		return nil, false, nil
 	}
 
 	desired := count
@@ -549,8 +782,8 @@ func findArrayCountDerivative(
 		desired++
 	}
 
-	if desired > uint64(maxInt()) {
-		return nil, false, chargeArrayInsertionsToCutoff(s)
+	if desired > uint64(^uint(0)>>1) {
+		return nil, false, nil
 	}
 
 	container, containerOccurrence, found := resolveFaultContainer(
@@ -560,7 +793,7 @@ func findArrayCountDerivative(
 		return nil, false, nil
 	}
 
-	for _, path := range matchingValuePaths(parent, fault.obligation.occurrence.instanceTemplate) {
+	for path := range matchingValuePathSequence(parent, fault.obligation.occurrence.instanceTemplate) {
 		value := valueAtPath(parent, path)
 		if value == nil || value.kind != jsonArray {
 			continue
@@ -632,7 +865,14 @@ func findAuthoredArrayCountDerivative(
 				return true
 			}
 
-			derivative, _, candidateErr = tryArrayCountCandidate(parent, path, value.array, fault, s)
+			indexes := make([]int, len(value.array))
+			for index := range indexes {
+				indexes[index] = index
+			}
+
+			derivative, _, candidateErr = tryArrayCountCandidate(
+				parent, path, value.array, arrayEditCharges{indexes: indexes, itemValues: len(indexes)}, fault, s,
+			)
 
 			return candidateErr == nil && derivative == nil
 		})
@@ -671,7 +911,9 @@ func findArrayDeletionDerivative(
 			values = append(values, value)
 		}
 
-		derivative, matched, err := tryArrayCountCandidate(parent, path, values, fault, s)
+		derivative, matched, err := tryArrayCountCandidate(
+			parent, path, values, arrayEditCharges{indexes: pathCopyInts(indexes)}, fault, s,
+		)
 		if err != nil || matched {
 			return derivative, matched, err
 		}
@@ -693,9 +935,6 @@ func findArrayInsertionDerivative(
 	array := valueAtPath(parent, path)
 
 	insertions := desired - len(array.array)
-	if uint64(insertions) > s.maxSteps-s.steps {
-		return nil, false, chargeArrayInsertionsToCutoff(s)
-	}
 
 	projectionCount, err := rowProjectionNodeCount(container, occurrence, fault.requirements)
 	if err != nil {
@@ -799,21 +1038,35 @@ func findArrayInsertionDerivative(
 			parentIndex++
 		}
 
-		derivative, matched, err := tryArrayCountCandidate(parent, path, values, fault, s)
+		derivative, matched, err := tryArrayCountCandidate(
+			parent,
+			path,
+			values,
+			arrayEditCharges{indexes: pathCopyInts(indexes), itemValues: len(indexes)},
+			fault,
+			s,
+		)
 		if err != nil || matched {
 			return derivative, matched, err
 		}
 	}
 }
 
-// tryArrayCountCandidate charges the retry, length edit, changed indexes, and
-// replacement values before installing one independently cloned complete array.
+// arrayEditCharges identifies the selected atomic coordinates and item witnesses.
+type arrayEditCharges struct {
+	indexes    []int
+	itemValues int
+}
+
+// tryArrayCountCandidate charges the retry, length edit, selected indexes, and
+// item values before installing one independently cloned complete array.
 //
-//nolint:cyclop // Charging must remain immediately adjacent to each atomic assignment.
+//nolint:cyclop // Each atomic assignment remains explicit at the apply boundary.
 func tryArrayCountCandidate(
 	parent *jsonValue,
 	path []string,
 	values []*jsonValue,
+	charges arrayEditCharges,
 	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
@@ -830,15 +1083,13 @@ func tryArrayCountCandidate(
 		return nil, false, err
 	}
 
-	for index, value := range values {
-		if index < len(current.array) && jsonValuesEqual(current.array[index], value) {
-			continue
-		}
-
+	for range charges.indexes {
 		if err := s.assign(); err != nil {
 			return nil, false, err
 		}
+	}
 
+	for range charges.itemValues {
 		if err := s.assign(); err != nil {
 			return nil, false, err
 		}
@@ -863,7 +1114,7 @@ func tryArrayCountCandidate(
 		return nil, false, errors.New("schematest: array fault path disappeared")
 	}
 
-	matched, err := derivativeMatchesFault(s.model, candidate, fault)
+	matched, err := derivativeMatchesFault(s.model, candidate, concretizeFaultAtPath(fault, path))
 	if err != nil || !matched {
 		return nil, false, err
 	}
@@ -871,20 +1122,8 @@ func tryArrayCountCandidate(
 	return candidate, true, nil
 }
 
-func chargeArrayInsertionsToCutoff(s *search) error {
-	for index := uint64(0); ; index++ {
-		if err := s.assign(); err != nil {
-			return err
-		}
-
-		if err := s.assign(); err != nil {
-			return err
-		}
-
-		if err := s.assign(); err != nil {
-			return err
-		}
-	}
+func pathCopyInts(values []int) []int {
+	return append([]int(nil), values...)
 }
 
 type arrayCombinationCursor struct {
@@ -1055,8 +1294,8 @@ func findSingleObjectGrowthDerivative(
 		return nil, false, err
 	}
 
-	paths := matchingValuePaths(parent, fault.obligation.occurrence.instanceTemplate)
-	if len(paths) == 0 {
+	pathCount := matchingValuePathCount(parent, fault.obligation.occurrence.instanceTemplate)
+	if pathCount == 0 {
 		return nil, false, nil
 	}
 
@@ -1065,7 +1304,7 @@ func findSingleObjectGrowthDerivative(
 		return nil, false, err
 	}
 
-	if err := frontier.SetFinite(0, uint64(len(paths))); err != nil {
+	if err := frontier.SetFinite(0, pathCount); err != nil {
 		return nil, false, err
 	}
 
@@ -1079,7 +1318,12 @@ func findSingleObjectGrowthDerivative(
 			return nil, false, nil
 		}
 
-		path := paths[ranks[0]]
+		path, exists := matchingValuePathAt(
+			parent, fault.obligation.occurrence.instanceTemplate, ranks[0],
+		)
+		if !exists {
+			return nil, false, errors.New("schematest: object occurrence rank disappeared")
+		}
 
 		current := valueAtPath(parent, path)
 		if current == nil || current.kind != jsonObject || uint64(len(current.object))+1 != desired {
@@ -1113,7 +1357,9 @@ func findSingleObjectGrowthDerivative(
 			return nil, false, err
 		}
 
-		member, memberExists, memberErr := objectGrowthMemberAtRank(shape, current, active, ranks[2])
+		member, memberExists, memberErr := objectMutationMemberAtRank(
+			shape, current, nil, active, ranks[2],
+		)
 		if memberErr != nil {
 			return nil, false, memberErr
 		}
@@ -1149,49 +1395,44 @@ func findSingleObjectGrowthDerivative(
 	}
 }
 
-func objectGrowthMemberAtRank(
+func objectMutationMemberAtRank(
 	shape *rowProjectedObject,
 	current *jsonValue,
+	target *schemaNode,
 	requirements []requirement,
 	rank uint64,
 ) (rowMember, bool, error) {
-	for _, member := range shape.members {
+	if rank < uint64(len(shape.members)) {
+		member := shape.members[rank]
 		if _, present := current.object[member.name]; present {
-			continue
+			return rowMember{}, false, nil
 		}
 
-		if rank == 0 {
-			return member, true, nil
+		if target != nil {
+			if _, declared := target.properties[member.name]; declared {
+				return rowMember{}, false, nil
+			}
 		}
 
-		rank--
+		return member, true, nil
 	}
 
 	if !shape.allowsExtra {
 		return rowMember{}, false, nil
 	}
 
-	for freshRank := uint64(0); ; freshRank++ {
-		name := freshObjectMutationName(freshRank)
-		if _, present := current.object[name]; present {
-			continue
-		}
-
-		member, allowed, err := projectedAdditionalMember(shape, name, requirements)
-		if err != nil {
-			return rowMember{}, false, err
-		}
-
-		if !allowed {
-			continue
-		}
-
-		if rank == 0 {
-			return member, true, nil
-		}
-
-		rank--
+	name := freshObjectMutationName(rank - uint64(len(shape.members)))
+	if _, present := current.object[name]; present {
+		return rowMember{}, false, nil
 	}
+
+	if target != nil {
+		if _, declared := target.properties[name]; declared {
+			return rowMember{}, false, nil
+		}
+	}
+
+	return projectedAdditionalMember(shape, name, requirements)
 }
 
 // findObjectReplacementFromRows installs one complete object produced by the
@@ -1224,7 +1465,7 @@ func findObjectReplacementFromRows(
 				return false, nil
 			}
 
-			for _, path := range matchingValuePaths(row, fault.obligation.occurrence.instanceTemplate) {
+			for path := range matchingValuePathSequence(row, fault.obligation.occurrence.instanceTemplate) {
 				replacement := valueAtPath(row, path)
 
 				current := valueAtPath(parent, path)
@@ -1326,7 +1567,7 @@ func tryObjectReplacement(
 		return nil, false, errors.New("schematest: object fault path disappeared")
 	}
 
-	matched, err := derivativeMatchesFault(s.model, candidate, fault)
+	matched, err := derivativeMatchesFault(s.model, candidate, concretizeFaultAtPath(fault, path))
 	if err != nil || !matched {
 		return nil, false, err
 	}
@@ -1355,17 +1596,16 @@ func findRequiredDerivative(parent *jsonValue, fault faultProgram, s *search) (*
 	name := tokens[len(tokens)-1]
 
 	parentPointer := pointerFromTokens(tokens[:len(tokens)-1])
-	for _, path := range matchingValuePaths(parent, parentPointer) {
-		if err := s.assign(); err != nil {
-			return nil, false, err
+	for path := range matchingValuePathSequence(parent, parentPointer) {
+		object := valueAtPath(parent, path)
+		if object == nil || object.kind != jsonObject {
+			continue
 		}
 
-		if err := s.assign(); err != nil {
-			return nil, false, err
-		}
-
-		if err := s.assign(); err != nil {
-			return nil, false, err
+		for range 3 {
+			if err := s.assign(); err != nil {
+				return nil, false, err
+			}
 		}
 
 		candidate, err := cloneJSONValue(parent)
@@ -1373,14 +1613,12 @@ func findRequiredDerivative(parent *jsonValue, fault faultProgram, s *search) (*
 			return nil, false, err
 		}
 
-		object := valueAtPath(candidate, path)
-		if object == nil || object.kind != jsonObject {
-			continue
-		}
-
+		object = valueAtPath(candidate, path)
 		delete(object.object, name)
 
-		matched, err := derivativeMatchesFault(s.model, candidate, fault)
+		matched, err := derivativeMatchesFault(
+			s.model, candidate, concretizeFaultAtPath(fault, append(pathCopy(path), name)),
+		)
 		if err != nil || matched {
 			return candidate, matched, err
 		}
@@ -1426,107 +1664,8 @@ func findAdditionalPropertyDerivative(
 	}
 
 	return searchAdditionalPropertyNames(
-		parent,
-		matchingValuePaths(parent, parentPointer),
-		fault,
-		target,
-		container,
-		containerOccurrence,
-		s,
+		parent, parentPointer, fault, target, container, containerOccurrence, s,
 	)
-}
-
-// searchDeclaredAdditionalPropertyNames tries active declared members before
-// entering the unbounded fresh-name frontier.
-//
-//nolint:cyclop,gocognit // Path, projection, member, and value exhaustion form one canonical prefix.
-func searchDeclaredAdditionalPropertyNames(
-	parent *jsonValue,
-	paths [][]string,
-	fault faultProgram,
-	target *schemaNode,
-	container *schemaNode,
-	containerOccurrence schemaOccurrence,
-	s *search,
-) (*jsonValue, bool, error) {
-	for _, path := range paths {
-		object := valueAtPath(parent, path)
-		if object == nil || object.kind != jsonObject {
-			continue
-		}
-
-		cursor := newRowProjectionCursor(container, containerOccurrence, fault.requirements)
-		for {
-			view, ok, err := cursor.Next()
-			if err != nil {
-				cursor.Close()
-
-				return nil, false, err
-			}
-
-			if !ok {
-				break
-			}
-
-			active, activeErr := view.appendBranchRequirements(
-				copyPlanRequirements(fault.requirements), s.assign,
-			)
-			if activeErr != nil {
-				cursor.Close()
-
-				return nil, false, activeErr
-			}
-
-			shape, shapeErr := newRowProjectedObject(view, active, containerOccurrence)
-			if shapeErr != nil {
-				cursor.Close()
-
-				return nil, false, shapeErr
-			}
-
-			for _, member := range shape.members {
-				if assignErr := s.assign(); assignErr != nil {
-					cursor.Close()
-
-					return nil, false, assignErr
-				}
-
-				if _, declared := target.properties[member.name]; declared {
-					continue
-				}
-
-				if _, collision := object.object[member.name]; collision {
-					continue
-				}
-
-				var derivative *jsonValue
-
-				complete, walkErr := s.walkRowMemberValues(
-					member, active, rowSearchContext{}, func(witness *jsonValue) (bool, error) {
-						candidate, candidateErr := installAdditionalProperty(
-							parent, path, member.name, witness, fault, s,
-						)
-						if candidateErr != nil || candidate == nil {
-							return false, candidateErr
-						}
-
-						derivative = candidate
-
-						return true, nil
-					},
-				)
-				if walkErr != nil || complete {
-					cursor.Close()
-
-					return derivative, complete, walkErr
-				}
-			}
-		}
-
-		cursor.Close()
-	}
-
-	return nil, false, nil
 }
 
 // searchAdditionalPropertyNames diagonally enumerates occurrence, projection,
@@ -1535,22 +1674,16 @@ func searchDeclaredAdditionalPropertyNames(
 //nolint:cyclop // One product decodes occurrence, projection, name, and value ranks.
 func searchAdditionalPropertyNames(
 	parent *jsonValue,
-	paths [][]string,
+	instanceTemplate string,
 	fault faultProgram,
 	target *schemaNode,
 	container *schemaNode,
 	containerOccurrence schemaOccurrence,
 	s *search,
 ) (*jsonValue, bool, error) {
-	if len(paths) == 0 {
+	pathCount := matchingValuePathCount(parent, instanceTemplate)
+	if pathCount == 0 {
 		return nil, false, nil
-	}
-
-	derivative, found, err := searchDeclaredAdditionalPropertyNames(
-		parent, paths, fault, target, container, containerOccurrence, s,
-	)
-	if err != nil || found {
-		return derivative, found, err
 	}
 
 	projectionCount, err := rowProjectionNodeCount(container, containerOccurrence, fault.requirements)
@@ -1563,7 +1696,7 @@ func searchAdditionalPropertyNames(
 		return nil, false, err
 	}
 
-	if err := frontier.SetFinite(0, uint64(len(paths))); err != nil {
+	if err := frontier.SetFinite(0, pathCount); err != nil {
 		return nil, false, err
 	}
 
@@ -1577,7 +1710,10 @@ func searchAdditionalPropertyNames(
 			return nil, false, nil
 		}
 
-		path := paths[ranks[0]]
+		path, exists := matchingValuePathAt(parent, instanceTemplate, ranks[0])
+		if !exists {
+			return nil, false, errors.New("schematest: additional-property occurrence rank disappeared")
+		}
 
 		object := valueAtPath(parent, path)
 		if object == nil || object.kind != jsonObject {
@@ -1611,9 +1747,9 @@ func searchAdditionalPropertyNames(
 			return nil, false, assignErr
 		}
 
-		name := freshObjectMutationName(ranks[2])
-
-		member, exists, err := projectedAdditionalMember(shape, name, active)
+		member, exists, err := objectMutationMemberAtRank(
+			shape, object, target, active, ranks[2],
+		)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1640,8 +1776,7 @@ func freshObjectMutationName(rank uint64) string {
 	return fmt.Sprintf("%s_%d", base, rank)
 }
 
-// tryAdditionalPropertyName skips only collisions and names declared by the
-// directed occurrence, then searches its complete active value requirements.
+// tryAdditionalPropertyName searches one charged canonical name's complete active value requirements.
 func tryAdditionalPropertyName(
 	parent *jsonValue,
 	path []string,
@@ -1710,7 +1845,9 @@ func installAdditionalProperty(
 
 	object.object[name] = value
 
-	matched, err := derivativeMatchesFault(s.model, candidate, fault)
+	matched, err := derivativeMatchesFault(
+		s.model, candidate, concretizeFaultAtPath(fault, append(pathCopy(path), name)),
+	)
 	if err != nil || !matched {
 		return nil, err
 	}
@@ -1857,28 +1994,56 @@ func faultSchemaChildren(node *schemaNode, occurrence schemaOccurrence) []faultS
 	return children
 }
 
-func matchingValuePaths(root *jsonValue, template string) [][]string {
-	tokens, ok := rowPointerTokens(template)
-	if !ok {
-		return nil
+// matchingValuePathSequence yields concrete occurrences in canonical order while
+// retaining only the recursive cursor stack and the current path.
+func matchingValuePathSequence(root *jsonValue, template string) iter.Seq[[]string] {
+	return func(yield func([]string) bool) {
+		tokens, ok := rowPointerTokens(template)
+		if !ok {
+			return
+		}
+
+		walkMatchingValuePaths(root, tokens, nil, yield)
+	}
+}
+
+func matchingValuePathCount(root *jsonValue, template string) uint64 {
+	var count uint64
+	for range matchingValuePathSequence(root, template) {
+		if count == ^uint64(0) {
+			return count
+		}
+
+		count++
 	}
 
-	var result [][]string
-	collectMatchingValuePaths(root, tokens, nil, &result)
+	return count
+}
 
-	return result
+func matchingValuePathAt(root *jsonValue, template string, rank uint64) ([]string, bool) {
+	for path := range matchingValuePathSequence(root, template) {
+		if rank == 0 {
+			return path, true
+		}
+
+		rank--
+	}
+
+	return nil, false
 }
 
 //nolint:cyclop // Pointer completion and two container kinds form one traversal.
-func collectMatchingValuePaths(value *jsonValue, tokens, path []string, result *[][]string) {
+func walkMatchingValuePaths(
+	value *jsonValue,
+	tokens, path []string,
+	yield func([]string) bool,
+) bool {
 	if len(tokens) == 0 {
-		*result = append(*result, append([]string(nil), path...))
-
-		return
+		return yield(pathCopy(path))
 	}
 
 	if value == nil {
-		return
+		return true
 	}
 
 	token := tokens[0]
@@ -1887,30 +2052,35 @@ func collectMatchingValuePaths(value *jsonValue, tokens, path []string, result *
 	case jsonArray:
 		if token == "*" {
 			for index, child := range value.array {
-				collectMatchingValuePaths(child, tokens[1:], append(path, strconv.Itoa(index)), result)
+				if !walkMatchingValuePaths(child, tokens[1:], append(path, strconv.Itoa(index)), yield) {
+					return false
+				}
 			}
 
-			return
+			return true
 		}
 
 		index, err := strconv.Atoi(token)
 		if err == nil && index >= 0 && index < len(value.array) {
-			collectMatchingValuePaths(value.array[index], tokens[1:], append(path, token), result)
+			return walkMatchingValuePaths(value.array[index], tokens[1:], append(path, token), yield)
 		}
 	case jsonObject:
 		if token == "*" {
-			names := sortedObjectNames(value.object)
-			for _, name := range names {
-				collectMatchingValuePaths(value.object[name], tokens[1:], append(path, name), result)
+			for _, name := range sortedObjectNames(value.object) {
+				if !walkMatchingValuePaths(value.object[name], tokens[1:], append(path, name), yield) {
+					return false
+				}
 			}
 
-			return
+			return true
 		}
 
 		if child, exists := value.object[token]; exists {
-			collectMatchingValuePaths(child, tokens[1:], append(path, token), result)
+			return walkMatchingValuePaths(child, tokens[1:], append(path, token), yield)
 		}
 	}
+
+	return true
 }
 
 func valueAtPath(root *jsonValue, path []string) *jsonValue {
@@ -1984,8 +2154,4 @@ func pointerFromTokens(tokens []string) string {
 	}
 
 	return "#/" + strings.Join(encoded, "/")
-}
-
-func maxInt() int {
-	return int(^uint(0) >> 1)
 }

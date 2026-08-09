@@ -185,7 +185,7 @@ func compositionDirectEdits(parent *jsonValue, requirements []requirement) []com
 			continue
 		}
 
-		for _, path := range matchingValuePaths(parent, requirement.occurrence.instanceTemplate) {
+		for path := range matchingValuePathSequence(parent, requirement.occurrence.instanceTemplate) {
 			if len(path) == 0 || valueAtPath(parent, path) == nil {
 				continue
 			}
@@ -229,6 +229,8 @@ func applyCompositionRequirementEdits(
 }
 
 // tryCompositionEdits charges and verifies one transient edit set.
+//
+//nolint:cyclop // Atomic charging, application, and exact verification meet here.
 func tryCompositionEdits(
 	parent *jsonValue,
 	fault faultProgram,
@@ -245,6 +247,10 @@ func tryCompositionEdits(
 	}
 
 	for _, edit := range edits {
+		if chargeErr := chargeCompositionEdit(candidate, edit, s); chargeErr != nil {
+			return nil, false, chargeErr
+		}
+
 		if applyErr := applyCompositionEdit(candidate, edit); applyErr != nil {
 			if errors.Is(applyErr, errCompositionEditInapplicable) {
 				return nil, false, nil
@@ -269,6 +275,44 @@ func tryCompositionEdits(
 	}
 
 	return candidate, true, nil
+}
+
+// chargeCompositionEdit charges every atomic part of one selected edit.
+//
+//nolint:cyclop // Presence, index, and replacement charges are intentionally explicit.
+func chargeCompositionEdit(candidate *jsonValue, edit compositionEdit, s *search) error {
+	if err := s.assign(); err != nil { // selected path
+		return err
+	}
+
+	if len(edit.path) == 0 {
+		return s.assign() // root replacement
+	}
+
+	parent := valueAtPath(candidate, edit.path[:len(edit.path)-1])
+	if parent == nil {
+		return nil
+	}
+
+	if edit.remove || edit.append {
+		if err := s.assign(); err != nil { // presence
+			return err
+		}
+	}
+
+	if parent.kind == jsonArray {
+		if err := s.assign(); err != nil { // selected index
+			return err
+		}
+	}
+
+	if !edit.remove {
+		if err := s.assign(); err != nil { // replacement value
+			return err
+		}
+	}
+
+	return nil
 }
 
 // compositionEditExists reports whether an equivalent edit is already planned.
@@ -475,6 +519,10 @@ func jsonValuesEqual(left, right *jsonValue) bool {
 func faultNeedsCompositionSearch(fault faultProgram) bool {
 	if fault.obligation.rule == oracleRuleAllOf || fault.obligation.rule == oracleRuleAnyOf {
 		return true
+	}
+
+	if fault.obligation.rule != oracleRuleRequired && fault.obligation.rule != oracleRuleAdditionalProperties {
+		return false
 	}
 
 	for _, failure := range fault.expected {

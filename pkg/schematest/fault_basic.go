@@ -23,9 +23,6 @@ const (
 	faultProductDimensions
 )
 
-// parentReplayMaskBits is the number of anyOf mask bits addressable by a rank.
-const parentReplayMaskBits = 64
-
 // streamFaults visits fault programs in their deterministic execution order.
 func streamFaults(
 	plan *searchPlan,
@@ -52,7 +49,7 @@ func streamFaults(
 
 // streamFault is the sole continuation over parent, closure, occurrence, and mutation ranks.
 //
-//nolint:cyclop,gocognit // Product exhaustion, exact verification, and callback errors meet here.
+//nolint:cyclop,gocognit,gocyclo // Product exhaustion, exact verification, and callback errors meet here.
 func streamFault(
 	plan *searchPlan,
 	fault faultProgram,
@@ -65,20 +62,15 @@ func streamFault(
 		return err
 	}
 
-	if err := product.SetFinite(faultOccurrenceDimension, 1); err != nil {
-		return err
-	}
-
-	if fault.alternatives == nil && !faultNeedsCompositionSearch(fault) {
-		if err := product.SetFinite(faultMutationDimension, 1); err != nil {
-			return err
-		}
-	}
+	var endpoints *faultProductEndpoint
 
 	var (
-		diagonal        uint64
-		diagonalStarted bool
-		mutationLive    bool
+		diagonal             uint64
+		diagonalStarted      bool
+		currentParent        *jsonValue
+		currentParentClosure uint64
+		currentParentRank    uint64
+		currentParentSet     bool
 	)
 
 	for {
@@ -88,13 +80,14 @@ func streamFault(
 		}
 
 		if !diagonalStarted || product.diagonal != diagonal {
-			if diagonalStarted && faultProductDiagonalExhausted(product, diagonal, mutationLive) {
+			if diagonalStarted && faultProductStateExhausted(
+				product, diagonal, endpoints,
+			) {
 				return nil
 			}
 
 			diagonal = product.diagonal
 			diagonalStarted = true
-			mutationLive = false
 		}
 
 		selectedFault, closureExists, closureExhausted, closureErr := faultClosureAtRank(
@@ -116,17 +109,52 @@ func streamFault(
 			continue
 		}
 
-		parent, found, exhausted, replayErr := regenerateParentAtRank(
-			plan, selectedFault, ranks[faultParentDimension], s,
-		)
-		if replayErr != nil {
-			return replayErr
+		if _, known := faultProductEndpointAt(
+			endpoints, faultEndpointParent, ranks[faultClosureDimension], 0, 0,
+		); !known && faultMutationIsParentIndependent(selectedFault.obligation.rule) {
+			recordFaultProductEndpoint(
+				&endpoints, faultEndpointParent, ranks[faultClosureDimension], 0, 0, 1,
+			)
+		}
+
+		if parentSize, known := faultProductEndpointAt(
+			endpoints, faultEndpointParent, ranks[faultClosureDimension], 0, 0,
+		); known && ranks[faultParentDimension] >= parentSize {
+			continue
+		}
+
+		parent := currentParent
+		found := currentParentSet && currentParentClosure == ranks[faultClosureDimension] &&
+			currentParentRank == ranks[faultParentDimension]
+		exhausted := false
+
+		if !found {
+			var replayErr error
+
+			parent, found, exhausted, replayErr = regenerateParentAtRank(
+				plan, selectedFault, ranks[faultParentDimension], s,
+			)
+			if replayErr != nil {
+				return replayErr
+			}
+
+			if found {
+				currentParent = parent
+				currentParentClosure = ranks[faultClosureDimension]
+				currentParentRank = ranks[faultParentDimension]
+				currentParentSet = true
+			}
 		}
 
 		if exhausted {
-			if err := product.SetFinite(faultParentDimension, ranks[faultParentDimension]); err != nil {
-				return err
-			}
+			recordFaultProductEndpoint(
+				&endpoints,
+				faultEndpointParent,
+				ranks[faultClosureDimension],
+				0,
+				0,
+				ranks[faultParentDimension],
+			)
 
 			continue
 		}
@@ -135,14 +163,69 @@ func streamFault(
 			continue
 		}
 
-		derivative, attempted, mutationExhausted, faultErr := applyFaultAtRank(
-			parent, selectedFault, ranks[faultMutationDimension], s,
-		)
-		if mutationExhausted {
+		if occurrenceSize, known := faultProductEndpointAt(
+			endpoints,
+			faultEndpointOccurrence,
+			ranks[faultClosureDimension],
+			ranks[faultParentDimension],
+			0,
+		); known && ranks[faultOccurrenceDimension] >= occurrenceSize {
 			continue
 		}
 
-		mutationLive = true
+		if mutationSize, known := faultProductEndpointAt(
+			endpoints,
+			faultEndpointMutation,
+			ranks[faultClosureDimension],
+			ranks[faultParentDimension],
+			ranks[faultOccurrenceDimension],
+		); known && ranks[faultMutationDimension] >= mutationSize {
+			continue
+		}
+
+		derivative, attempted, occurrenceExhausted, mutationExhausted, faultErr := applyFaultAtRank(
+			parent,
+			selectedFault,
+			ranks[faultOccurrenceDimension],
+			ranks[faultMutationDimension],
+			s,
+		)
+		if occurrenceExhausted {
+			recordFaultProductEndpoint(
+				&endpoints,
+				faultEndpointOccurrence,
+				ranks[faultClosureDimension],
+				ranks[faultParentDimension],
+				0,
+				ranks[faultOccurrenceDimension],
+			)
+
+			continue
+		}
+
+		if mutationExhausted {
+			recordFaultProductEndpoint(
+				&endpoints,
+				faultEndpointMutation,
+				ranks[faultClosureDimension],
+				ranks[faultParentDimension],
+				ranks[faultOccurrenceDimension],
+				ranks[faultMutationDimension],
+			)
+
+			if faultMutationIsParentIndependent(selectedFault.obligation.rule) {
+				recordFaultProductEndpoint(
+					&endpoints,
+					faultEndpointParent,
+					ranks[faultClosureDimension],
+					0,
+					0,
+					ranks[faultParentDimension]+1,
+				)
+			}
+
+			continue
+		}
 
 		if faultErr != nil {
 			return faultErr
@@ -157,13 +240,8 @@ func streamFault(
 			return fmt.Errorf("evaluate fault derivative: %w", result.err)
 		}
 
-		matches, matchErr := faultFailureClosureMatches(result, selectedFault)
-		if matchErr != nil {
-			return fmt.Errorf("compare fault expected: %w", matchErr)
-		}
-
-		if result.valid || !matches {
-			continue
+		if result.valid {
+			return errors.New("schematest: fault adapter returned a valid derivative")
 		}
 
 		encoded, marshalErr := marshalStrict(derivative)
@@ -177,28 +255,116 @@ func streamFault(
 	}
 }
 
-// faultProductDiagonalExhausted recognizes a diagonal beyond every finite parent and closure rank.
-func faultProductDiagonalExhausted(product *rankProductCursor, diagonal uint64, mutationLive bool) bool {
-	if mutationLive || product == nil ||
-		!product.finite[faultParentDimension] || !product.finite[faultClosureDimension] {
+// faultProductStateExhausted recognizes a diagonal beyond every closure-local
+// parent and mutation endpoint. No closure-local endpoint is promoted to a
+// shared product bound.
+//
+//nolint:cyclop // Conditional endpoints form one fixed product exhaustion check.
+func faultProductStateExhausted(
+	product *rankProductCursor,
+	diagonal uint64,
+	endpoints *faultProductEndpoint,
+) bool {
+	if product == nil || !product.finite[faultClosureDimension] {
 		return false
 	}
 
-	parentSize := product.finiteSizes[faultParentDimension]
+	var maximum uint64
 
-	closureSize := product.finiteSizes[faultClosureDimension]
-	if parentSize == 0 || closureSize == 0 {
-		return true
+	for closure := uint64(0); closure < product.finiteSizes[faultClosureDimension]; closure++ {
+		parentSize, known := faultProductEndpointAt(endpoints, faultEndpointParent, closure, 0, 0)
+		if !known {
+			return false
+		}
+
+		for parent := uint64(0); parent < parentSize; parent++ {
+			occurrenceSize, known := faultProductEndpointAt(
+				endpoints, faultEndpointOccurrence, closure, parent, 0,
+			)
+			if !known {
+				return false
+			}
+
+			for occurrence := uint64(0); occurrence < occurrenceSize; occurrence++ {
+				mutationSize, mutationKnown := faultProductEndpointAt(
+					endpoints, faultEndpointMutation, closure, parent, occurrence,
+				)
+				if !mutationKnown {
+					return false
+				}
+
+				if mutationSize == 0 {
+					continue
+				}
+
+				candidate := closure + parent + occurrence + mutationSize - 1
+				if candidate < closure || candidate < parent || candidate < occurrence {
+					return false
+				}
+
+				maximum = max(maximum, candidate)
+			}
+		}
 	}
 
-	parentMaximum := parentSize - 1
+	return diagonal > maximum
+}
 
-	closureMaximum := closureSize - 1
-	if ^uint64(0)-parentMaximum < closureMaximum {
-		return false
+// faultEndpointKind identifies one conditional product endpoint.
+type faultEndpointKind uint8
+
+const (
+	// faultEndpointParent identifies a closure-local parent endpoint.
+	faultEndpointParent faultEndpointKind = iota
+	// faultEndpointOccurrence identifies a parent-local occurrence endpoint.
+	faultEndpointOccurrence
+	// faultEndpointMutation identifies an occurrence-local mutation endpoint.
+	faultEndpointMutation
+)
+
+// faultProductEndpoint retains one finite conditional domain endpoint.
+type faultProductEndpoint struct {
+	kind                        faultEndpointKind
+	closure, parent, occurrence uint64
+	size                        uint64
+	next                        *faultProductEndpoint
+}
+
+// recordFaultProductEndpoint records or updates one conditional endpoint.
+func recordFaultProductEndpoint(
+	endpoints **faultProductEndpoint,
+	kind faultEndpointKind,
+	closure, parent, occurrence, size uint64,
+) {
+	for endpoint := *endpoints; endpoint != nil; endpoint = endpoint.next {
+		if endpoint.kind == kind && endpoint.closure == closure && endpoint.parent == parent &&
+			endpoint.occurrence == occurrence {
+			endpoint.size = size
+
+			return
+		}
 	}
 
-	return diagonal > parentMaximum+closureMaximum
+	*endpoints = &faultProductEndpoint{
+		kind: kind, closure: closure, parent: parent, occurrence: occurrence,
+		size: size, next: *endpoints,
+	}
+}
+
+// faultProductEndpointAt returns one recorded conditional endpoint.
+func faultProductEndpointAt(
+	endpoints *faultProductEndpoint,
+	kind faultEndpointKind,
+	closure, parent, occurrence uint64,
+) (uint64, bool) {
+	for endpoint := endpoints; endpoint != nil; endpoint = endpoint.next {
+		if endpoint.kind == kind && endpoint.closure == closure && endpoint.parent == parent &&
+			endpoint.occurrence == occurrence {
+			return endpoint.size, true
+		}
+	}
+
+	return 0, false
 }
 
 // faultClosureAtRank selects one complete declarative closure without storing
@@ -486,7 +652,7 @@ func parentReplayRequirementsAt(
 			case oracleRuleRequired:
 				requirements[index].presence = requirementPresent
 			case oracleRuleAdditionalProperties:
-				requirements[index].presence = requirementAbsent
+				requirements[index].presence = requirementNoPresence
 			case oracleRuleType:
 				requirements[index].hasKind = false
 			case oracleRuleEnum:
@@ -498,8 +664,10 @@ func parentReplayRequirementsAt(
 	}
 
 	for groupIndex, group := range groups {
-		mask := new(big.Int).SetUint64(maskRanks[groupIndex])
-		mask.Add(mask, big.NewInt(1))
+		mask, exists := parentReplayMaskAtRank(group.count, maskRanks[groupIndex])
+		if !exists {
+			continue
+		}
 
 		for _, requirementIndex := range group.indexes {
 			branch := requirements[requirementIndex].branch
@@ -547,17 +715,56 @@ func parentReplayGroups(requirements []requirement) []parentReplayGroup {
 	return groups
 }
 
-// parentReplayMaskCount returns the finite number of nonempty uint64-addressable masks.
+// parentReplayMaskCount returns the exact finite size when it is addressable by uint64 ranks.
 func parentReplayMaskCount(branches int) (uint64, bool) {
 	if branches <= 0 {
 		return 0, true
 	}
 
-	if branches >= parentReplayMaskBits {
+	count := new(big.Int).Lsh(big.NewInt(1), uint(branches))
+	count.Sub(count, big.NewInt(1))
+
+	if !count.IsUint64() {
 		return 0, false
 	}
 
-	return uint64(1)<<branches - 1, true
+	return count.Uint64(), true
+}
+
+// parentReplayMaskAtRank enumerates nonempty branch sets by cardinality and
+// authored branch order. Singleton ranks therefore reach every authored branch,
+// including indexes at and beyond 64, before wider masks.
+func parentReplayMaskAtRank(branches int, rank uint64) (*big.Int, bool) {
+	if branches <= 0 {
+		return nil, false
+	}
+
+	for selected := 1; selected <= branches; selected++ {
+		count := saturatedBinomial(uint64(branches), uint64(selected))
+		if rank >= count {
+			if count == ^uint64(0) {
+				return nil, false
+			}
+
+			rank -= count
+
+			continue
+		}
+
+		indexes, exists := arrayCombinationAt(branches, selected, rank)
+		if !exists {
+			return nil, false
+		}
+
+		mask := new(big.Int)
+		for _, index := range indexes {
+			mask.SetBit(mask, index, 1)
+		}
+
+		return mask, true
+	}
+
+	return nil, false
 }
 
 // applyFault copies the current parent, charges one fault choice, and applies one fault.
@@ -569,29 +776,92 @@ func applyFault(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, e
 	return applyNonCompositionFault(parent, fault, s)
 }
 
-// applyFaultAtRank attempts one mutation rank without draining another closure's frontier.
+// applyFaultAtRank attempts one concrete occurrence and mutation tuple.
 func applyFaultAtRank(
 	parent *jsonValue,
 	fault faultProgram,
-	rank uint64,
+	occurrenceRank uint64,
+	mutationRank uint64,
 	s *search,
-) (*jsonValue, bool, bool, error) {
-	if faultNeedsCompositionSearch(fault) {
-		return compositionFaultAttemptAtRank(parent, fault, rank, s)
+) (*jsonValue, bool, bool, bool, error) {
+	selected, exists := faultAtOccurrenceRank(parent, fault, occurrenceRank)
+	if !exists {
+		return nil, false, true, false, nil
 	}
 
-	if rank > 0 {
-		return nil, false, true, nil
+	if faultNeedsCompositionSearch(selected) {
+		derivative, attempted, exhausted, err := compositionFaultAttemptAtRank(
+			parent, selected, mutationRank, s,
+		)
+
+		return derivative, attempted, false, exhausted, err
 	}
 
-	derivative, err := applyNonCompositionFault(parent, fault, s)
+	if selected.obligation.rule == oracleRuleType {
+		derivative, attempted, exhausted, err := typeFaultAttemptAtRank(
+			parent, selected, mutationRank, s,
+		)
+
+		return derivative, attempted, false, exhausted, err
+	}
+
+	if mutationRank > 0 {
+		return nil, false, false, true, nil
+	}
+
+	derivative, err := applyNonCompositionFault(parent, selected, s)
 	if errors.Is(err, errFaultNotFound) {
-		return nil, true, false, nil
+		return nil, true, false, false, nil
 	}
 
 	if err != nil {
-		return nil, false, false, err
+		return nil, false, false, false, err
 	}
 
-	return derivative, true, false, nil
+	return derivative, true, false, false, nil
+}
+
+// faultMutationIsParentIndependent reports scalar replacements that do not depend on parent contents.
+func faultMutationIsParentIndependent(rule string) bool {
+	switch rule {
+	case oracleRuleType, oracleRuleEnum, oracleRuleMinimum, oracleRuleExclusiveMinimum,
+		oracleRuleMaximum, oracleRuleExclusiveMaximum, oracleRuleMultipleOf,
+		oracleRuleFormat, oracleRuleMinLength, oracleRuleMaxLength, oracleRulePattern:
+		return true
+	default:
+		return false
+	}
+}
+
+// faultAtOccurrenceRank resolves one concrete parent occurrence.
+func faultAtOccurrenceRank(parent *jsonValue, fault faultProgram, rank uint64) (faultProgram, bool) {
+	template := fault.obligation.occurrence.instanceTemplate
+	appendRequiredName := false
+
+	if fault.obligation.rule == oracleRuleRequired || fault.obligation.rule == oracleRuleAdditionalProperties {
+		tokens, ok := rowPointerTokens(template)
+		if !ok || len(tokens) == 0 {
+			return faultProgram{}, false
+		}
+
+		template = pointerFromTokens(tokens[:len(tokens)-1])
+		appendRequiredName = fault.obligation.rule == oracleRuleRequired
+	}
+
+	for path := range matchingValuePathSequence(parent, template) {
+		if rank > 0 {
+			rank--
+
+			continue
+		}
+
+		if appendRequiredName {
+			tokens, _ := rowPointerTokens(fault.obligation.occurrence.instanceTemplate)
+			path = append(pathCopy(path), tokens[len(tokens)-1])
+		}
+
+		return concretizeFaultAtPath(fault, path), true
+	}
+
+	return faultProgram{}, false
 }

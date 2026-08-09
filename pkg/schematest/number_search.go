@@ -69,9 +69,9 @@ func (s *search) walkActiveNumberRules(
 		return false, err
 	}
 
-	directedEnum := fault != nil && fault.obligation.rule == oracleRuleEnum &&
+	directedFault := fault != nil && fault.obligation.rule != oracleRuleType &&
 		scalarTargetNodeMatches(node, occurrence, fault.obligation.occurrence)
-	schedule.seeded = schedule.seeded || falseBranchObjective && !schedule.hasEnum || directedEnum
+	schedule.seeded = schedule.seeded || falseBranchObjective && !schedule.hasEnum || directedFault
 
 	complete, err := s.walkNumberDeterministic(schedule, visit)
 	if err != nil || complete || !schedule.seeded {

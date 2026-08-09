@@ -360,29 +360,8 @@ func exactEvaluationFailureClosure(result evaluation, expected []failureIdentity
 
 func canonicalProjectedFailureIdentities(sequence iter.Seq[failureIdentity]) ([]evaluationRecordIdentity, error) {
 	var identities []evaluationRecordIdentity
-
 	for identity := range sequence {
-		use, err := parseEvaluationPointer(identity.occurrence.usePointer)
-		if err != nil {
-			return nil, fmt.Errorf("failure use pointer: %w", err)
-		}
-
-		target, err := parseEvaluationPointer(identity.occurrence.targetPointer)
-		if err != nil {
-			return nil, fmt.Errorf("failure target pointer: %w", err)
-		}
-
-		instance, err := parseEvaluationPointer(identity.occurrence.instanceTemplate)
-		if err != nil {
-			return nil, fmt.Errorf("failure instance template: %w", err)
-		}
-
-		identities = append(identities, evaluationRecordIdentity{
-			occurrence: evaluationOccurrencePaths{
-				use: use, target: target, instance: instance, reference: identity.occurrence.reference,
-			},
-			rule: identity.rule,
-		})
+		identities = append(identities, newEvaluationRecordIdentity(identity))
 	}
 
 	return canonicalizeEvaluationRecordIdentities(identities), nil
@@ -418,11 +397,7 @@ func completeFailureIdentitySetsMatch(actual, expected []evaluationRecordIdentit
 }
 
 func completeFailureIdentityMatches(actual, expected evaluationRecordIdentity) bool {
-	return actual.rule == expected.rule &&
-		actual.occurrence.use.equal(expected.occurrence.use) &&
-		actual.occurrence.target.equal(expected.occurrence.target) &&
-		actual.occurrence.reference == expected.occurrence.reference &&
-		instanceTemplateMatches(expected.occurrence.instance.String(), actual.occurrence.instance.String())
+	return compareEvaluationRecordIdentities(actual, expected) == 0
 }
 
 func faultFailureClosureMatches(result evaluation, fault faultProgram) (bool, error) {

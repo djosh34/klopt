@@ -38,11 +38,12 @@ func (s *search) walkScalar(
 		}
 
 		if objective := scalarFaultStringObjective(context.scalarFault, node, occurrence); objective != nil {
-			_, complete, err := s.walkDirectedStringObjective(
+			handled, complete, err := s.walkDirectedStringObjective(
 				node, occurrence, requirements, objective, visit,
 			)
-
-			return complete, err
+			if err != nil || handled {
+				return complete, err
+			}
 		}
 	}
 
