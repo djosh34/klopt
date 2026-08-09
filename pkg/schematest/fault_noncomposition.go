@@ -511,127 +511,446 @@ func singleJSONValueSource(candidate *jsonValue) jsonValueSource {
 	}
 }
 
-//nolint:cyclop // Exact count conversion, resize, and item repair are one mutation.
+// findArrayCountDerivative searches complete authored arrays first, then every
+// order-preserving deletion or insertion alternative without retaining candidates.
+//
+//nolint:cyclop // Exact count direction, occurrence search, and mutation family dispatch meet here.
 func findArrayCountDerivative(
 	parent *jsonValue,
 	fault faultProgram,
 	node *schemaNode,
 	s *search,
 ) (*jsonValue, bool, error) {
-	paths := matchingValuePaths(parent, fault.obligation.occurrence.instanceTemplate)
-	for _, path := range paths {
+	bound := node.minItems
+	if fault.obligation.rule == oracleRuleMaxItems {
+		bound = node.maxItems
+	}
+
+	count, fits, err := exactCountUint64(bound)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !fits || fault.obligation.rule == oracleRuleMaxItems && count == ^uint64(0) {
+		return nil, false, chargeArrayInsertionsToCutoff(s)
+	}
+
+	desired := count
+	if fault.obligation.rule == oracleRuleMinItems {
+		if desired == 0 {
+			return nil, false, nil
+		}
+
+		desired--
+	} else {
+		desired++
+	}
+
+	if desired > uint64(maxInt()) {
+		return nil, false, chargeArrayInsertionsToCutoff(s)
+	}
+
+	container, containerOccurrence, found := resolveFaultContainer(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, jsonArray,
+	)
+	if !found {
+		return nil, false, nil
+	}
+
+	for _, path := range matchingValuePaths(parent, fault.obligation.occurrence.instanceTemplate) {
 		value := valueAtPath(parent, path)
 		if value == nil || value.kind != jsonArray {
 			continue
 		}
 
-		bound := node.minItems
-		if fault.obligation.rule == oracleRuleMaxItems {
-			bound = node.maxItems
-		}
-
-		count, fits, err := exactCountUint64(bound)
-		if err != nil {
-			return nil, false, err
-		}
-
-		if !fits || count > uint64(maxInt()) {
-			return nil, false, exhaustFaultStructuralBudget(s)
-		}
-
-		desired := int(count)
-		if fault.obligation.rule == oracleRuleMinItems {
-			if desired == 0 {
-				continue
-			}
-
-			desired--
-		} else {
-			if desired == maxInt() {
-				return nil, false, exhaustFaultStructuralBudget(s)
-			}
-
-			desired++
-		}
-
-		if len(value.array) >= desired {
-			return buildArrayCountDerivative(parent, path, desired, nil, fault, s)
-		}
-
-		container, containerOccurrence, found := resolveFaultContainer(
-			s.model.root, s.model.root.occurrence, fault.obligation.occurrence, jsonArray,
+		derivative, matched, candidateErr := findAuthoredArrayCountDerivative(
+			parent, path, int(desired), fault, container, containerOccurrence, s,
 		)
-		if !found {
-			continue
+		if candidateErr != nil || matched {
+			return derivative, matched, candidateErr
 		}
 
-		var derivative *jsonValue
+		if len(value.array) > int(desired) {
+			derivative, matched, candidateErr = findArrayDeletionDerivative(
+				parent, path, int(desired), fault, s,
+			)
+		} else if len(value.array) < int(desired) {
+			derivative, matched, candidateErr = findArrayInsertionDerivative(
+				parent, path, int(desired), fault, container, containerOccurrence, s,
+			)
+		}
 
-		complete, walkErr := walkActiveFaultChildValues(
-			container, containerOccurrence, fault.requirements, rowChildItems, "", s,
-			func(witness *jsonValue) (bool, error) {
-				candidate, matched, candidateErr := buildArrayCountDerivative(
-					parent, path, desired, witness, fault, s,
-				)
-				if candidateErr != nil || !matched {
-					return false, candidateErr
-				}
-
-				derivative = candidate
-
-				return true, nil
-			},
-		)
-		if walkErr != nil || complete {
-			return derivative, complete, walkErr
+		if candidateErr != nil || matched {
+			return derivative, matched, candidateErr
 		}
 	}
 
 	return nil, false, nil
 }
 
-func buildArrayCountDerivative(
+//nolint:cyclop // Projection traversal and callback error propagation share one lazy boundary.
+func findAuthoredArrayCountDerivative(
 	parent *jsonValue,
 	path []string,
 	desired int,
-	witness *jsonValue,
+	fault faultProgram,
+	container *schemaNode,
+	occurrence schemaOccurrence,
+	s *search,
+) (*jsonValue, bool, error) {
+	cursor := newRowProjectionCursor(container, occurrence, fault.requirements)
+	defer cursor.Close()
+
+	for {
+		view, ok, err := cursor.Next()
+		if err != nil || !ok {
+			return nil, false, err
+		}
+
+		active, err := view.appendBranchRequirements(
+			append([]requirement(nil), fault.requirements...), s.assign,
+		)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if !rowProjectionAcceptsKind(view, jsonArray) ||
+			!rowProjectionRequirementsAcceptKind(view, active, jsonArray) {
+			continue
+		}
+
+		var (
+			derivative   *jsonValue
+			candidateErr error
+		)
+
+		err = view.eachDirectValue(func(_ rowSchemaSource, value *jsonValue) bool {
+			if value.kind != jsonArray || len(value.array) != desired {
+				return true
+			}
+
+			derivative, _, candidateErr = tryArrayCountCandidate(parent, path, value.array, fault, s)
+
+			return candidateErr == nil && derivative == nil
+		})
+		if err != nil {
+			return nil, false, err
+		}
+
+		if candidateErr != nil || derivative != nil {
+			return derivative, derivative != nil, candidateErr
+		}
+	}
+}
+
+func findArrayDeletionDerivative(
+	parent *jsonValue,
+	path []string,
+	desired int,
 	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
-	if assignErr := s.assign(); assignErr != nil {
-		return nil, false, assignErr
-	}
+	array := valueAtPath(parent, path)
+	removed := len(array.array) - desired
+	cursor := newArrayCombinationCursor(len(array.array), removed)
 
-	candidate, copyErr := cloneJSONValue(parent)
-	if copyErr != nil {
-		return nil, false, copyErr
-	}
+	for indexes, ok := cursor.Next(); ok; indexes, ok = cursor.Next() {
+		values := make([]*jsonValue, 0, desired)
+		removedIndex := 0
 
-	array := valueAtPath(candidate, path)
-	if len(array.array) > desired {
-		if assignErr := s.assign(); assignErr != nil {
-			return nil, false, assignErr
+		for index, value := range array.array {
+			if removedIndex < len(indexes) && indexes[removedIndex] == index {
+				removedIndex++
+
+				continue
+			}
+
+			values = append(values, value)
 		}
 
-		array.array = array.array[:desired]
+		derivative, matched, err := tryArrayCountCandidate(parent, path, values, fault, s)
+		if err != nil || matched {
+			return derivative, matched, err
+		}
 	}
 
-	for len(array.array) < desired {
-		if assignErr := s.assign(); assignErr != nil {
-			return nil, false, assignErr
-		}
+	return nil, false, nil
+}
 
-		item, itemErr := cloneJSONValue(witness)
-		if itemErr != nil {
-			return nil, false, itemErr
-		}
+//nolint:cyclop,gocognit // Three fair ranks meet at one independently owned insertion attempt.
+func findArrayInsertionDerivative(
+	parent *jsonValue,
+	path []string,
+	desired int,
+	fault faultProgram,
+	container *schemaNode,
+	occurrence schemaOccurrence,
+	s *search,
+) (*jsonValue, bool, error) {
+	array := valueAtPath(parent, path)
 
-		array.array = append(array.array, item)
+	insertions := desired - len(array.array)
+	if uint64(insertions) > s.maxSteps-s.steps {
+		return nil, false, chargeArrayInsertionsToCutoff(s)
 	}
 
-	matched, matchErr := derivativeMatchesFault(s.model, candidate, fault)
+	projectionCount, err := rowProjectionNodeCount(container, occurrence, fault.requirements)
+	if err != nil {
+		return nil, false, err
+	}
 
-	return candidate, matched, matchErr
+	layoutCount := saturatedBinomial(uint64(desired), uint64(insertions))
+
+	const productDimensions = 3
+
+	frontier, err := newRankProductCursor(productDimensions)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if err := frontier.SetFinite(0, projectionCount); err != nil {
+		return nil, false, err
+	}
+
+	if err := frontier.SetFinite(1, layoutCount); err != nil {
+		return nil, false, err
+	}
+
+	var diagonal uint64
+
+	diagonalLive := true
+
+	for {
+		ranks, ok := frontier.Next()
+		if !ok {
+			return nil, false, nil
+		}
+
+		if frontier.diagonal != diagonal {
+			if !diagonalLive {
+				return nil, false, nil
+			}
+
+			diagonal = frontier.diagonal
+			diagonalLive = false
+		}
+
+		view, exists, err := rowProjectionAt(container, occurrence, fault.requirements, ranks[0])
+		if err != nil {
+			return nil, false, err
+		}
+
+		if !exists {
+			continue
+		}
+
+		if ranks[0] == diagonal {
+			diagonalLive = true
+		}
+
+		active, err := view.appendBranchRequirements(
+			append([]requirement(nil), fault.requirements...), s.assign,
+		)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if ranks[1] == diagonal {
+			diagonalLive = true
+		}
+
+		tupleValues, exists, _, _, err := s.rowArrayChildrenForOrdinal(
+			rankedArrayStructure{view: view, active: active, length: rowArrayCount{value: uint64(insertions)}},
+			active,
+			rowSearchContext{},
+			ranks[2],
+		)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if !exists {
+			continue
+		}
+
+		diagonalLive = true
+
+		indexes, exists := arrayCombinationAt(desired, insertions, ranks[1])
+		if !exists {
+			return nil, false, errors.New("schematest: array insertion layout rank disappeared")
+		}
+
+		values := make([]*jsonValue, 0, desired)
+		parentIndex := 0
+		insertedIndex := 0
+
+		for index := 0; index < desired; index++ {
+			if insertedIndex < len(indexes) && indexes[insertedIndex] == index {
+				values = append(values, tupleValues[insertedIndex])
+				insertedIndex++
+
+				continue
+			}
+
+			values = append(values, array.array[parentIndex])
+			parentIndex++
+		}
+
+		derivative, matched, err := tryArrayCountCandidate(parent, path, values, fault, s)
+		if err != nil || matched {
+			return derivative, matched, err
+		}
+	}
+}
+
+// tryArrayCountCandidate charges the retry, length edit, changed indexes, and
+// replacement values before installing one independently cloned complete array.
+//
+//nolint:cyclop // Charging must remain immediately adjacent to each atomic assignment.
+func tryArrayCountCandidate(
+	parent *jsonValue,
+	path []string,
+	values []*jsonValue,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
+	if err := s.assign(); err != nil {
+		return nil, false, err
+	}
+
+	current := valueAtPath(parent, path)
+	if current == nil || current.kind != jsonArray {
+		return nil, false, errors.New("schematest: array fault path is not an array")
+	}
+
+	if err := s.assign(); err != nil {
+		return nil, false, err
+	}
+
+	for index, value := range values {
+		if index < len(current.array) && jsonValuesEqual(current.array[index], value) {
+			continue
+		}
+
+		if err := s.assign(); err != nil {
+			return nil, false, err
+		}
+
+		if err := s.assign(); err != nil {
+			return nil, false, err
+		}
+	}
+
+	candidate, err := cloneJSONValue(parent)
+	if err != nil {
+		return nil, false, err
+	}
+
+	owned := &jsonValue{kind: jsonArray, array: make([]*jsonValue, 0, len(values))}
+	for _, value := range values {
+		item, cloneErr := cloneJSONValue(value)
+		if cloneErr != nil {
+			return nil, false, cloneErr
+		}
+
+		owned.array = append(owned.array, item)
+	}
+
+	if !replaceValueAtPath(candidate, path, owned) {
+		return nil, false, errors.New("schematest: array fault path disappeared")
+	}
+
+	matched, err := derivativeMatchesFault(s.model, candidate, fault)
+	if err != nil || !matched {
+		return nil, false, err
+	}
+
+	return candidate, true, nil
+}
+
+func chargeArrayInsertionsToCutoff(s *search) error {
+	for index := uint64(0); ; index++ {
+		if err := s.assign(); err != nil {
+			return err
+		}
+
+		if err := s.assign(); err != nil {
+			return err
+		}
+
+		if err := s.assign(); err != nil {
+			return err
+		}
+	}
+}
+
+type arrayCombinationCursor struct {
+	indexes []int
+	length  int
+	started bool
+}
+
+func newArrayCombinationCursor(length, selected int) *arrayCombinationCursor {
+	indexes := make([]int, selected)
+	for index := range indexes {
+		indexes[index] = index
+	}
+
+	return &arrayCombinationCursor{indexes: indexes, length: length}
+}
+
+func (cursor *arrayCombinationCursor) Next() ([]int, bool) {
+	if cursor == nil || len(cursor.indexes) > cursor.length {
+		return nil, false
+	}
+
+	if !cursor.started {
+		cursor.started = true
+
+		return cursor.indexes, true
+	}
+
+	for index := len(cursor.indexes) - 1; index >= 0; index-- {
+		maximum := cursor.length - len(cursor.indexes) + index
+		if cursor.indexes[index] == maximum {
+			continue
+		}
+
+		cursor.indexes[index]++
+		for next := index + 1; next < len(cursor.indexes); next++ {
+			cursor.indexes[next] = cursor.indexes[next-1] + 1
+		}
+
+		return cursor.indexes, true
+	}
+
+	return nil, false
+}
+
+func arrayCombinationAt(length, selected int, rank uint64) ([]int, bool) {
+	if selected < 0 || selected > length || rank >= saturatedBinomial(uint64(length), uint64(selected)) {
+		return nil, false
+	}
+
+	indexes := make([]int, 0, selected)
+	next := 0
+
+	for remaining := selected; remaining > 0; remaining-- {
+		maximum := length - remaining
+		for candidate := next; candidate <= maximum; candidate++ {
+			block := saturatedBinomial(uint64(length-candidate-1), uint64(remaining-1))
+			if rank < block {
+				indexes = append(indexes, candidate)
+				next = candidate + 1
+
+				break
+			}
+
+			rank -= block
+		}
+	}
+
+	return indexes, true
 }
 
 //nolint:cyclop // Structural choice and complete child walking share one seam.
@@ -702,7 +1021,7 @@ func findObjectCountDerivative(
 	}
 
 	if !fits || count >= uint64(maxInt()) {
-		return nil, false, exhaustFaultStructuralBudget(s)
+		return nil, false, chargeObjectInsertionsToCutoff(s)
 	}
 
 	desired := int(count) + 1
@@ -726,7 +1045,7 @@ func findObjectCountDerivative(
 		}
 
 		if uint64(needed) > s.maxSteps-s.steps {
-			return nil, false, exhaustFaultStructuralBudget(s)
+			return nil, false, chargeObjectInsertionsToCutoff(s)
 		}
 
 		growthRequirements := append([]requirement(nil), fault.requirements...)
@@ -791,7 +1110,7 @@ func findObjectShrinkDerivative(
 	}
 
 	if !fits || count > uint64(maxInt()) {
-		return nil, false, exhaustFaultStructuralBudget(s)
+		return nil, false, chargeObjectDeletionsToCutoff(s)
 	}
 
 	if count == 0 {
@@ -1335,19 +1654,31 @@ func pointerFromTokens(tokens []string) string {
 	return "#/" + strings.Join(encoded, "/")
 }
 
-func exhaustFaultStructuralBudget(s *search) error {
-	if s == nil {
-		return errors.New("schematest: nil search")
-	}
-
-	var frontier uint64
-
+func chargeObjectInsertionsToCutoff(s *search) error {
 	for {
 		if err := s.assign(); err != nil {
 			return err
 		}
 
-		frontier++
+		if err := s.assign(); err != nil {
+			return err
+		}
+
+		if err := s.assign(); err != nil {
+			return err
+		}
+	}
+}
+
+func chargeObjectDeletionsToCutoff(s *search) error {
+	for {
+		if err := s.assign(); err != nil {
+			return err
+		}
+
+		if err := s.assign(); err != nil {
+			return err
+		}
 	}
 }
 

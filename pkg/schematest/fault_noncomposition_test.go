@@ -100,6 +100,102 @@ func TestMaxPropertiesFaultBuildsAValidTypedAdditionalMember(t *testing.T) {
 	require.Equal(t, `{"__schematest_extra__":false}`, string(marshalFaultTestValue(t, derivative)))
 }
 
+func TestArrayCountFaultsPreserveWholeArrayEnums(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		faultID    string
+		derivative string
+	}{
+		{
+			name: "minimum deletes a non-prefix position",
+			schema: `{"type":"array","minItems":2,"enum":[["a","b"],["b"]],` +
+				`"items":{"type":"string"}}`,
+			faultID:    "|minItems|fault:minItems",
+			derivative: `["b"]`,
+		},
+		{
+			name: "maximum inserts the enum item at its authored position",
+			schema: `{"type":"array","maxItems":1,"enum":[["x"],["x","special"]],` +
+				`"items":{"type":"string"}}`,
+			faultID:    "|maxItems|fault:maxItems",
+			derivative: `["x","special"]`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			requireFaultDerivative(t, test.schema, test.faultID, test.derivative)
+		})
+	}
+}
+
+func TestArrayCountFaultPositionsAdvanceCanonically(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		faultID    string
+		derivative string
+	}{
+		{
+			name: "deletion starts at the first position",
+			schema: `{"type":"array","minItems":2,"maxItems":2,"default":["a","b"],` +
+				`"items":{"type":"string"}}`,
+			faultID:    "|minItems|fault:minItems",
+			derivative: `["b"]`,
+		},
+		{
+			name: "insertion starts at the first position",
+			schema: `{"type":"array","maxItems":1,"default":["x"],` +
+				`"items":{"type":"string"}}`,
+			faultID:    "|maxItems|fault:maxItems",
+			derivative: `["","x"]`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			requireFaultDerivative(t, test.schema, test.faultID, test.derivative)
+		})
+	}
+}
+
+func TestArrayCountFaultCutoffPrecedesEachAtomicAssignment(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{"type":"array","minItems":2,`+
+		`"enum":[["a","b"],["b"]],"items":{"type":"string"}}`)
+	fault := findFaultTarget(t, plan, "|minItems|fault:minItems")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	beforeMutation := searchState.steps
+	searchState.maxSteps = beforeMutation + 3
+	derivative, err := applyFault(parent, fault, searchState)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, derivative)
+	require.Equal(t, searchState.maxSteps, searchState.steps)
+
+	searchState = &search{model: model, maxSteps: 100_000}
+	parent, found, err = regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	beforeMutation = searchState.steps
+	derivative, err = applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `["b"]`, string(marshalFaultTestValue(t, derivative)))
+	require.Equal(t, uint64(4), searchState.steps-beforeMutation)
+}
+
 func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {
 	t.Parallel()
 
@@ -128,19 +224,24 @@ func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-
-			model, plan := compositionFaultModel(t, test.schema)
-			fault := findFaultTarget(t, plan, test.faultID)
-			searchState := &search{model: model, maxSteps: 100_000}
-			parent, found, err := regenerateParent(plan, fault, searchState)
-			require.NoError(t, err)
-			require.True(t, found)
-
-			derivative, err := applyFault(parent, fault, searchState)
-			require.NoError(t, err)
-			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
+			requireFaultDerivative(t, test.schema, test.faultID, test.derivative)
 		})
 	}
+}
+
+func requireFaultDerivative(t *testing.T, schema, faultID, expected string) {
+	t.Helper()
+
+	model, plan := compositionFaultModel(t, schema)
+	fault := findFaultTarget(t, plan, faultID)
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, expected, string(marshalFaultTestValue(t, derivative)))
 }
 
 func TestComposedEnumFaultPreservesSiblingType(t *testing.T) {
