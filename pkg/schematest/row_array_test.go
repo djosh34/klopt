@@ -1,0 +1,223 @@
+package schematest
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// TestRowArrayLengthCursorUsesExactBoundaryOrder pins the lazy cursor's first-occurrence order.
+func TestRowArrayLengthCursorUsesExactBoundaryOrder(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array",
+		"items":{},
+		"minItems":3,
+		"maxItems":5
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	requirements := []requirement{{
+		tag:        requirementExactCount,
+		occurrence: model.root.occurrence,
+		count:      model.root.maxItems,
+	}}
+	view := rowProjectionView{sources: []rowSchemaSource{{
+		node:       model.root,
+		occurrence: model.root.occurrence,
+	}}}
+
+	cursor, err := newRowArrayLengthCursor(view, requirements)
+	require.NoError(t, err)
+
+	var lengths []uint64
+
+	for {
+		length, ok, nextErr := cursor.Next()
+		require.NoError(t, nextErr)
+
+		if !ok {
+			break
+		}
+
+		require.False(t, length.beyond)
+		lengths = append(lengths, length.value)
+	}
+
+	require.Equal(t, []uint64{5, 3, 0, 1, 2, 4}, lengths)
+}
+
+// TestRowArrayOpenLengthCursorHasNoLocalEndpoint proves only the global budget ends an open domain.
+func TestRowArrayOpenLengthCursorHasNoLocalEndpoint(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array",
+		"items":{},
+		"minItems":2
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view := rowProjectionView{sources: []rowSchemaSource{{
+		node:       model.root,
+		occurrence: model.root.occurrence,
+	}}}
+	cursor, err := newRowArrayLengthCursor(view, nil)
+	require.NoError(t, err)
+
+	lengths := make([]uint64, 0, 8)
+
+	for range 8 {
+		length, ok, nextErr := cursor.Next()
+		require.NoError(t, nextErr)
+		require.True(t, ok)
+
+		require.False(t, length.beyond)
+		lengths = append(lengths, length.value)
+	}
+
+	require.Equal(t, []uint64{2, 0, 1, 3, 4, 5, 6, 7}, lengths)
+}
+
+// TestRowArrayLengthCursorKeepsAuthoredWitnessLengthsFirst preserves repair guidance from complete values.
+func TestRowArrayLengthCursorKeepsAuthoredWitnessLengthsFirst(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","enum":[[true,true,true]],"items":{"type":"string"},"minItems":1,"maxItems":4
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view := rowProjectionView{sources: []rowSchemaSource{{node: model.root, occurrence: model.root.occurrence}}}
+	cursor, err := newRowArrayLengthCursor(view, nil)
+	require.NoError(t, err)
+
+	var lengths []uint64
+
+	for range 5 {
+		length, ok, nextErr := cursor.Next()
+		require.NoError(t, nextErr)
+		require.True(t, ok)
+		require.False(t, length.beyond)
+		lengths = append(lengths, length.value)
+	}
+
+	require.Equal(t, []uint64{3, 1, 4, 0, 2}, lengths)
+}
+
+// TestRowArrayLengthCursorPreservesBeyondUint64Counts keeps authored exact counts pending.
+func TestRowArrayLengthCursorPreservesBeyondUint64Counts(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{},"minItems":18446744073709551616
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view := rowProjectionView{sources: []rowSchemaSource{{node: model.root, occurrence: model.root.occurrence}}}
+	cursor, err := newRowArrayLengthCursor(view, nil)
+	require.NoError(t, err)
+
+	length, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, length.beyond)
+	require.Same(t, model.root.minItems, length.exact)
+}
+
+// TestWalkArrayChargesBeforeBeyondUint64Minimum proves exact pending counts allocate incrementally.
+func TestWalkArrayChargesBeforeBeyondUint64Minimum(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{},"minItems":18446744073709551616
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1}
+	emitted := 0
+	_, err = searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(*jsonValue) (bool, error) {
+			emitted++
+
+			return false, nil
+		},
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, uint64(1), searchState.steps)
+	require.Zero(t, emitted)
+}
+
+// TestWalkArrayChargesBeforeHugeMinimumAllocation proves authored bounds do not allocate containers.
+func TestWalkArrayChargesBeforeHugeMinimumAllocation(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array",
+		"items":{},
+		"minItems":1000000000
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1}
+	emitted := 0
+	_, err = searchState.walkArray(
+		model.root,
+		model.root.occurrence,
+		nil,
+		rowSearchContext{},
+		func(*jsonValue) (bool, error) {
+			emitted++
+
+			return false, nil
+		},
+	)
+
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, uint64(1), searchState.steps)
+	require.Zero(t, emitted)
+}
+
+// TestWalkArrayPositionsOwnIndependentValues proves item occurrences never alias authored values.
+func TestWalkArrayPositionsOwnIndependentValues(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array",
+		"items":{"enum":[{"x":true}]},
+		"minItems":2,
+		"maxItems":2
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 10000}
+	itemOccurrence := rebasePlanOccurrence(
+		model.root.items,
+		model.root.occurrence,
+		model.root.occurrence.usePointer+"/items",
+		appendInstanceToken(model.root.occurrence.instanceTemplate, "*"),
+	)
+	requirements := []requirement{kindRequirement(itemOccurrence, jsonObject)}
+
+	var row *jsonValue
+
+	complete, err := searchState.walkArray(
+		model.root,
+		model.root.occurrence,
+		requirements,
+		rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			row = value
+
+			return true, nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Len(t, row.array, 2)
+	require.NotSame(t, row.array[0], row.array[1])
+	require.NotSame(t, row.array[0].object["x"], row.array[1].object["x"])
+}

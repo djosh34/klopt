@@ -176,7 +176,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 			wantCases: []Case{
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("0"), Valid: false},
+				{JSON: []byte("-1"), Valid: false},
 			},
 			covered: []string{
 				"/allOf/0|#|enum|level:member:0",

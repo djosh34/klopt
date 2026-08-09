@@ -26,6 +26,33 @@ import (
 // modulePath is the local module import prefix checked by source guards.
 const modulePath = "github.com/djosh34/klopt"
 
+// TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct locks the ordinal-only frontier shape.
+func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("structural_frontier.go")
+	require.NoError(t, err)
+
+	text := string(source)
+	require.NotContains(t, text, "states :=")
+	require.NotContains(t, text, "arrayProjectionFrontier")
+	require.NotContains(t, text, "objectProjectionFrontier")
+	require.NotContains(t, text, "rowArrayProjectionCandidateAt")
+	require.NotContains(t, text, "rowObjectProjectionCandidateAt")
+	require.NotContains(t, text, "rowArrayLengthAt")
+	require.NotContains(t, text, "rowSourceValueAt")
+	require.NotContains(t, text, "ordinal != wanted")
+	require.NotContains(t, text, "newRowArrayLengthCursor(view, requirements)")
+	require.NotContains(t, text, "rowArrayChildrenAt")
+	require.NotContains(t, text, "rowObjectPresenceAt")
+	require.NotContains(t, text, "rowObjectChildrenAt")
+	require.NotContains(t, text, "advanceArrayRankTuple")
+	require.NotContains(t, text, "ranks := make([]uint64")
+	require.Equal(t, 9, strings.Count(text, "newDirectRankTupleDecoder"))
+	require.Equal(t, 2, strings.Count(text, "newRankProductCursor("))
+	require.Equal(t, 2, strings.Count(text, "newRankProductCursor(5)"))
+}
+
 // TestProductionImportsStayCleanRoom forbids semantic production dependencies in non-test sources.
 func TestProductionImportsStayCleanRoom(t *testing.T) {
 	t.Parallel()

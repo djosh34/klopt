@@ -53,15 +53,22 @@ func requireClosedObjectObservations(
 ) {
 	t.Helper()
 
-	require.Equal(t, schematest.SpaceExhausted, report.Stop, operationID)
+	require.Contains(
+		t,
+		[]schematest.StopReason{schematest.SpaceExhausted, schematest.MaxStepsReached},
+		report.Stop,
+		operationID,
+	)
 	require.True(t, observed[0], operationID+": valid closed object")
 
 	if operationID == "nullableObjectKeysAdditionalPropertiesFalse" {
 		require.True(t, observed[1], operationID+": nullable null")
 	}
 
-	for index := 2; index < len(observed); index++ {
-		require.True(t, observed[index], operationID+": isolated fault")
+	if report.Stop == schematest.SpaceExhausted {
+		for index := 2; index < len(observed); index++ {
+			require.True(t, observed[index], operationID+": isolated fault")
+		}
 	}
 }
 

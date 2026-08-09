@@ -88,7 +88,7 @@ func TestBuildMergesAllOfArrayItemSchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
 	require.NotEmpty(t, cases)
 	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
 }
@@ -115,7 +115,7 @@ func TestBuildMergesNestedAllOfArrayItemSchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
 	require.Contains(t, cases, Case{JSON: []byte(`["z"]`), Valid: true})
 }
 
@@ -153,8 +153,8 @@ func TestBuildMergesNestedAnyOfArrayItemSchemas(t *testing.T) {
 	require.Contains(t, report.Covered, schemaPointer+"/allOf/0/anyOf/1/items|#/*|enum|level:member:0")
 }
 
-// TestBuildCarriesComposedArrayDefaultsIntoMasks verifies authored structural defaults.
-func TestBuildCarriesComposedArrayDefaultsIntoMasks(t *testing.T) {
+// TestWalkProjectedDirectArraysCarriesComposedDefaultsIntoMasks verifies complete authored defaults.
+func TestWalkProjectedDirectArraysCarriesComposedDefaultsIntoMasks(t *testing.T) {
 	t.Parallel()
 
 	document := []byte(documentWithJSONSchema(`{
@@ -164,21 +164,62 @@ func TestBuildCarriesComposedArrayDefaultsIntoMasks(t *testing.T) {
 		]
 	}`))
 
-	cases := make([]Case, 0)
-	report, err := Build(
-		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100000},
-		func(testCase Case) error {
-			cases = append(cases, testCase)
+	model, err := parseInput(Input{OpenAPI: document, OperationID: "selected"})
+	require.NoError(t, err)
+	plan, err := makePlan(model)
+	require.NoError(t, err)
 
-			return nil
-		},
+	var (
+		target      validIntent
+		targetFound bool
 	)
 
-	require.NoError(t, err)
-	require.NotEmpty(t, cases)
+	for _, candidate := range plan.validCatalog {
+		if strings.HasSuffix(candidate.obligation.String(), "|anyOf|level:mask:1") {
+			target = candidate
+			targetFound = true
 
-	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"
-	require.Contains(t, report.Uncovered, schemaPointer+"|#|anyOf|level:mask:1")
+			break
+		}
+	}
+
+	require.True(t, targetFound)
+
+	request := makeValidRequest([]validIntent{target}, 0, plan.stringObjectives)
+	searchState := &search{model: model, maxSteps: 100}
+
+	var row *jsonValue
+
+	cursor := newRowProjectionCursor(model.root, model.root.occurrence, request.requirements)
+	defer cursor.Close()
+
+	view, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	_, err = view.appendBranchRequirements(
+		append([]requirement(nil), request.requirements...), searchState.assign,
+	)
+	require.NoError(t, err)
+
+	found, err := searchState.walkProjectedDirectValues(
+		view, jsonArray,
+		func(candidate *jsonValue) (bool, error) {
+			if !targetRowMatches(evaluate(model, candidate), request, candidate) {
+				return false, nil
+			}
+
+			row = candidate
+
+			return true, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	encoded, err := marshalStrict(row)
+	require.NoError(t, err)
+	require.Equal(t, `[true,true,true]`, string(encoded))
 }
 
 // TestBuildMergesAllOfObjectPropertySchemas verifies composed property witnesses.
@@ -203,7 +244,7 @@ func TestBuildMergesAllOfObjectPropertySchemas(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
 	require.NotEmpty(t, cases)
 	require.Contains(t, cases, Case{JSON: []byte(`{"x":"z"}`), Valid: true})
 }

@@ -1,0 +1,333 @@
+package schematest
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// TestRowProjectionCursorYieldsNestedMasksInCanonicalOrder locks one shared composition order.
+func TestRowProjectionCursorYieldsNestedMasksInCanonicalOrder(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"allOf":[{"anyOf":[{"title":"a"},{"title":"b"}]}],
+		"anyOf":[{"title":"c"},{"title":"d"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	cursor := newRowProjectionCursor(model.root, model.root.occurrence, nil)
+	defer cursor.Close()
+
+	var alternatives [][]string
+
+	for {
+		view, ok, nextErr := cursor.Next()
+		require.NoError(t, nextErr)
+
+		if !ok {
+			break
+		}
+
+		alternatives = append(alternatives, projectionBranchPointers(view))
+	}
+
+	root := model.root.occurrence.usePointer
+	require.Equal(t, [][]string{
+		{root + "/allOf/0/anyOf/0", root + "/anyOf/0"},
+		{root + "/allOf/0/anyOf/0", root + "/anyOf/1"},
+		{root + "/allOf/0/anyOf/0", root + "/anyOf/0", root + "/anyOf/1"},
+		{root + "/allOf/0/anyOf/1", root + "/anyOf/0"},
+		{root + "/allOf/0/anyOf/1", root + "/anyOf/1"},
+		{root + "/allOf/0/anyOf/1", root + "/anyOf/0", root + "/anyOf/1"},
+		{root + "/allOf/0/anyOf/0", root + "/allOf/0/anyOf/1", root + "/anyOf/0"},
+		{root + "/allOf/0/anyOf/0", root + "/allOf/0/anyOf/1", root + "/anyOf/1"},
+		{root + "/allOf/0/anyOf/0", root + "/allOf/0/anyOf/1", root + "/anyOf/0", root + "/anyOf/1"},
+	}, alternatives)
+}
+
+// TestRowProjectionCursorHonorsOnlyExplicitPins keeps false branches out of the active view.
+func TestRowProjectionCursorHonorsOnlyExplicitPins(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"enum":["a"]},{"enum":["b"]},{"enum":["c"]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	requirements := []requirement{
+		branchRequirement(model.root, 0, true),
+		branchRequirement(model.root, 1, false),
+	}
+
+	cursor := newRowProjectionCursor(model.root, model.root.occurrence, requirements)
+	defer cursor.Close()
+
+	var alternatives [][]string
+
+	for {
+		view, ok, nextErr := cursor.Next()
+		require.NoError(t, nextErr)
+
+		if !ok {
+			break
+		}
+
+		alternatives = append(alternatives, projectionBranchPointers(view))
+	}
+
+	root := model.root.occurrence.usePointer
+	require.Equal(t, [][]string{
+		{root + "/anyOf/0"},
+		{root + "/anyOf/0", root + "/anyOf/2"},
+	}, alternatives)
+}
+
+// TestRowProjectionCursorIsArbitraryPrecisionAndLazy proves no fixed-width mask or mask corpus.
+func TestRowProjectionCursorIsArbitraryPrecisionAndLazy(t *testing.T) {
+	t.Parallel()
+
+	branches := make([]*schemaNode, 65)
+	for index := range branches {
+		branches[index] = &schemaNode{schemaShape: &schemaShape{}}
+	}
+
+	root := &schemaNode{
+		schemaShape: &schemaShape{anyOf: branches},
+		occurrence:  schemaOccurrence{usePointer: "#/schema", targetPointer: "#/schema", instanceTemplate: "#"},
+	}
+
+	cursor := newRowProjectionCursor(root, root.occurrence, nil)
+	defer cursor.Close()
+
+	first, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []string{"#/schema/anyOf/0"}, projectionBranchPointers(first))
+
+	second, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []string{"#/schema/anyOf/1"}, projectionBranchPointers(second))
+}
+
+// TestRowProjectionCursorBuildsOnlyPinnedMasks proves excluded numeric masks are never scanned.
+func TestRowProjectionCursorBuildsOnlyPinnedMasks(t *testing.T) {
+	t.Parallel()
+
+	branches := make([]*schemaNode, 129)
+	for index := range branches {
+		branches[index] = &schemaNode{schemaShape: &schemaShape{}}
+	}
+
+	root := &schemaNode{
+		schemaShape: &schemaShape{anyOf: branches},
+		occurrence:  schemaOccurrence{usePointer: "#/schema", targetPointer: "#/schema", instanceTemplate: "#"},
+	}
+
+	requirements := make([]requirement, 0, 128)
+	for index := range 128 {
+		requirements = append(requirements, branchRequirement(root, index, false))
+	}
+
+	requirements = append(requirements, branchRequirement(root, 128, true))
+
+	cursor := newRowProjectionCursor(root, root.occurrence, requirements)
+	defer cursor.Close()
+
+	view, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []string{"#/schema/anyOf/128"}, projectionBranchPointers(view))
+
+	_, ok, err = cursor.Next()
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+// TestStructuralFrontiersChargeBeforeScanningNoWitnessMasks proves projection scans are not free.
+func TestStructuralFrontiersChargeBeforeScanningNoWitnessMasks(t *testing.T) {
+	t.Parallel()
+
+	branches := make([]*schemaNode, 65)
+	for index := range branches {
+		branches[index] = &schemaNode{schemaShape: &schemaShape{}}
+	}
+
+	occurrence := schemaOccurrence{usePointer: "#/schema", targetPointer: "#/schema", instanceTemplate: "#"}
+	for _, kind := range []jsonKind{jsonArray, jsonObject} {
+		root := &schemaNode{schemaShape: &schemaShape{anyOf: branches}, occurrence: occurrence}
+		searchState := &search{model: &schemaModel{root: root}, maxSteps: 1}
+
+		var err error
+		if kind == jsonArray {
+			_, err = searchState.walkArray(root, occurrence, nil, rowSearchContext{}, func(*jsonValue) (bool, error) {
+				return false, nil
+			})
+		} else {
+			_, err = searchState.walkObject(root, occurrence, nil, rowSearchContext{}, func(*jsonValue) (bool, error) {
+				return false, nil
+			})
+		}
+
+		require.ErrorIs(t, err, errMaxSteps)
+		require.Equal(t, uint64(1), searchState.steps)
+	}
+}
+
+// TestScalarSearchConsumesEveryProjectionMask proves the migration seam is live.
+func TestScalarSearchConsumesEveryProjectionMask(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"anyOf":[{"type":"string"},{"type":"string"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 100}
+
+	var masks [][]bool
+
+	complete, err := searchState.walkActiveScalarRequirementAlternatives(
+		model.root,
+		model.root.occurrence,
+		nil,
+		func(requirements []requirement) (bool, error) {
+			states, constrained := rowCompositionTruthStates(
+				requirements, model.root.occurrence, "anyOf", len(model.root.anyOf),
+			)
+			require.True(t, constrained)
+
+			masks = append(masks, states)
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, complete)
+	require.Equal(t, [][]bool{{true, false}, {false, true}, {true, true}}, masks)
+}
+
+// TestRowProjectionViewKeepsCompleteValuesAndOccurrenceIdentity locks the yielded-view contract.
+func TestRowProjectionViewKeepsCompleteValuesAndOccurrenceIdentity(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"allOf":[{"enum":[[true,true,true]]}],
+		"anyOf":[{"default":{"x":1}},{"default":{"x":2}}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	cursor := newRowProjectionCursor(model.root, model.root.occurrence, nil)
+	defer cursor.Close()
+
+	view, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	var values []string
+
+	err = view.eachDirectValue(func(source rowSchemaSource, value *jsonValue) bool {
+		encoded, marshalErr := marshalStrict(value)
+		require.NoError(t, marshalErr)
+
+		values = append(values, source.occurrence.usePointer+"="+string(encoded))
+
+		return true
+	})
+	require.NoError(t, err)
+
+	root := model.root.occurrence.usePointer
+	require.Equal(t, []string{
+		root + "/allOf/0=[true,true,true]",
+		root + `/anyOf/0={"x":1}`,
+	}, values)
+}
+
+// projectionBranchPointers returns active anyOf branch sources for assertions.
+// TestRowProjectionAtDecodesArbitraryPrecisionMask proves high authored bits need no mask corpus.
+func TestRowProjectionAtDecodesArbitraryPrecisionMask(t *testing.T) {
+	t.Parallel()
+
+	child := &schemaNode{schemaShape: &schemaShape{}}
+
+	root := &schemaNode{schemaShape: &schemaShape{anyOf: make([]*schemaNode, 130)}}
+	for index := range root.anyOf {
+		root.anyOf[index] = child
+	}
+
+	occurrence := schemaOccurrence{usePointer: "#/schema", instanceTemplate: "#"}
+	branchOccurrence := schemaOccurrence{usePointer: "#/schema/anyOf/129", instanceTemplate: "#"}
+	view, ok, err := rowProjectionAt(root, occurrence, []requirement{{
+		tag: requirementBranchTruth, occurrence: branchOccurrence,
+		composition: "anyOf", branch: 129, truth: true, hasBranch: true,
+	}}, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Contains(t, projectionBranchPointers(view), branchOccurrence.usePointer)
+}
+
+// TestRowProjectionAtMatchesCursor proves direct ordinal decoding preserves authored mask order.
+func TestRowProjectionAtMatchesCursor(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"allOf":[{"anyOf":[{},{}]}],
+		"anyOf":[{"anyOf":[{},{}]},{},{}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	cursor := newRowProjectionCursor(model.root, model.root.occurrence, nil)
+	defer cursor.Close()
+
+	for ordinal := uint64(0); ; ordinal++ {
+		fromCursor, cursorOK, cursorErr := cursor.Next()
+		require.NoError(t, cursorErr)
+
+		decoded, decodedOK, decodedErr := rowProjectionAt(
+			model.root, model.root.occurrence, nil, ordinal,
+		)
+		require.NoError(t, decodedErr)
+		require.Equal(t, cursorOK, decodedOK)
+
+		if !cursorOK {
+			break
+		}
+
+		require.Equal(t, projectionBranchPointers(fromCursor), projectionBranchPointers(decoded))
+	}
+}
+
+// projectionBranchPointers returns active anyOf occurrence pointers in source order.
+func projectionBranchPointers(view rowProjectionView) []string {
+	var pointers []string
+
+	view.eachSource(func(source rowSchemaSource) bool {
+		if _, nested := rowAnyOfParentUsePointer(source.occurrence.usePointer); nested {
+			pointers = append(pointers, source.occurrence.usePointer)
+		}
+
+		return true
+	})
+
+	return pointers
+}
+
+// branchRequirement creates one explicit root anyOf pin for projection tests.
+func branchRequirement(parent *schemaNode, branch int, truth bool) requirement {
+	child := parent.anyOf[branch]
+
+	return requirement{
+		tag: requirementBranchTruth,
+		occurrence: rebasePlanOccurrence(
+			child,
+			parent.occurrence,
+			parent.occurrence.usePointer+"/anyOf/"+itoa(branch),
+			parent.occurrence.instanceTemplate,
+		),
+		composition: "anyOf",
+		branch:      branch,
+		truth:       truth,
+		hasBranch:   true,
+	}
+}

@@ -33,8 +33,8 @@ func (s *search) walkNode(
 	}
 
 	for _, kind := range kinds {
-		if err := s.assign(); err != nil {
-			return false, err
+		if assignErr := s.assign(); assignErr != nil {
+			return false, assignErr
 		}
 
 		if kindIsScalar(kind) {
@@ -46,9 +46,12 @@ func (s *search) walkNode(
 			continue
 		}
 
-		complete, err := s.walkDirectNodeValues(node, kind, visit)
-		if err != nil || complete {
-			return complete, err
+		var complete bool
+		if kind != jsonArray && kind != jsonObject {
+			complete, err = s.walkDirectNodeValues(node, kind, visit)
+			if err != nil || complete {
+				return complete, err
+			}
 		}
 
 		switch kind {

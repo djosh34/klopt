@@ -150,6 +150,36 @@ func TestNumberIntegerFormatCandidates(t *testing.T) {
 	}
 }
 
+// TestLaterNumberEdgeAddressEvaluatesOnlyItsSelectedSlot locks direct deterministic selection.
+func TestLaterNumberEdgeAddressEvaluatesOnlyItsSelectedSlot(t *testing.T) {
+	t.Parallel()
+
+	first := &schemaNode{schemaShape: &schemaShape{kind: schemaNumber}}
+	later := &schemaNode{schemaShape: &schemaShape{kind: schemaNumber, format: schemaFormatInt32}}
+	schedule, err := newNumberSchedule([]activeNumberRule{{node: first}, {node: later}})
+	require.NoError(t, err)
+
+	var evaluated []numberEdgeAddress
+
+	edge, exists, domain, err := rowNumberEdgeAt(
+		schedule,
+		8,
+		func(address numberEdgeAddress) {
+			evaluated = append(evaluated, address)
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, uint64(9), domain)
+	require.Equal(t, []numberEdgeAddress{{ruleIndex: 1, family: numberEdgeFormat, local: 3}}, evaluated)
+
+	number, err := edge.materialize()
+	require.NoError(t, err)
+	require.Equal(t, "2147483648", marshalNumberCandidates(t, []*jsonValue{{
+		kind: jsonNumber, number: number,
+	}})[0])
+}
+
 // TestNumberFloatFormatCandidates requirements the exact finite-overflow edges without float conversion.
 func TestNumberFloatFormatCandidates(t *testing.T) {
 	t.Parallel()
