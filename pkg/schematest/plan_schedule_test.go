@@ -140,8 +140,7 @@ func TestValidStringObjectiveConsumesExplicitExecutionOrder(t *testing.T) {
 
 	require.NotEqual(t, -1, focus)
 
-	focused, err := makeValidRequest(baseline.targets, focus, plan.stringObjectives)
-	require.NoError(t, err)
+	focused := makeValidRequest(baseline.targets, focus, plan.stringObjectives)
 
 	objective = validStringObjective(&focused, model.root, model.root.occurrence)
 	require.NotNil(t, objective)
@@ -149,7 +148,44 @@ func TestValidStringObjectiveConsumesExplicitExecutionOrder(t *testing.T) {
 	require.Equal(t, oracleRulePattern, focused.stringObjectives[0].rule)
 }
 
-// TestFocusedRequestsReplaceOnlyTheirDirectedDimensions locks complete-vector synthesis.
+// TestFocusedRequestCopiesCompatibleBaselineComponents locks one-radix replacement.
+func TestFocusedRequestCopiesCompatibleBaselineComponents(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"number","enum":[1,2],"minimum":0,"maximum":10
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	baseline := plan.validSchedule[0]
+
+	var focused *validRequest
+
+	for index := range plan.validSchedule[1:] {
+		candidate := &plan.validSchedule[index+1]
+		if candidate.targets[candidate.focus].expected.rule == oracleRuleEnum {
+			focused = candidate
+
+			break
+		}
+	}
+
+	require.NotNil(t, focused)
+
+	for index := range baseline.components {
+		if index == focused.focus {
+			continue
+		}
+
+		require.Equal(t, baseline.components[index], focused.components[index], index)
+	}
+
+	require.NotEqual(t, baseline.components[focused.focus], focused.components[focused.focus])
+}
+
+// TestFocusedRequestsReplaceOnlyTheirDirectedDimensions locks direct-conflict omission.
 func TestFocusedRequestsReplaceOnlyTheirDirectedDimensions(t *testing.T) {
 	t.Parallel()
 

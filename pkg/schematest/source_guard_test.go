@@ -697,6 +697,41 @@ func TestPlannerCallGraphIsDeclarative(t *testing.T) {
 	}
 }
 
+// TestValidScheduleHasNoContradictionPreflight locks the sole charged traversal boundary.
+func TestValidScheduleHasNoContradictionPreflight(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	for _, name := range []string{
+		"requestHasSyntacticKindConflict",
+		"requestHasSyntacticCompositionConflict",
+		"requestPresenceForbiddenByActiveSchema",
+		"validRequirementsConflict",
+		"requirementsForbidObjectMember",
+		"requirementsConflictWithBranchKind",
+		"validTargetConflictsWithSelectedComposition",
+	} {
+		require.Nil(t, guardPackage.pkg.Scope().Lookup(name), name)
+	}
+
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != "findTargetRow" {
+				continue
+			}
+
+			require.True(t, functionCallsAny(function, "walkNode"))
+			require.False(t, functionCallsAny(function,
+				"jsonValidatedSemanticEqual", "nodeAcceptsKindForTarget"))
+
+			return
+		}
+	}
+
+	require.Fail(t, "findTargetRow is missing")
+}
+
 // TestRowAndFaultCandidateSourcesRetainNoCandidateCollections locks the lazy source call graph.
 func TestRowAndFaultCandidateSourcesRetainNoCandidateCollections(t *testing.T) {
 	t.Parallel()

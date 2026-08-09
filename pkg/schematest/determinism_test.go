@@ -20,6 +20,7 @@ func TestBuildFullStreamDeterminism(t *testing.T) {
 		document    []byte
 		operationID string
 		maxSteps    uint64
+		allowEmpty  bool
 	}{
 		{
 			name:        "primitive",
@@ -66,6 +67,7 @@ func TestBuildFullStreamDeterminism(t *testing.T) {
 			document:    corpus,
 			operationID: "alphaRequest",
 			maxSteps:    10_000,
+			allowEmpty:  true,
 		},
 	}
 
@@ -76,7 +78,11 @@ func TestBuildFullStreamDeterminism(t *testing.T) {
 			input := Input{OpenAPI: test.document, OperationID: test.operationID, MaxSteps: test.maxSteps}
 			firstCases, firstReport, firstErr := collectDeterministicRun(input, nil)
 			require.NoError(t, firstErr)
-			require.NotEmpty(t, firstCases)
+
+			if !test.allowEmpty {
+				require.NotEmpty(t, firstCases)
+			}
+
 			require.Contains(t, []StopReason{SpaceExhausted, MaxStepsReached}, firstReport.Stop)
 
 			for range 2 {

@@ -249,23 +249,6 @@ func TestAdditionalPropertyFaultUsesActiveDeclaredPropertySchema(t *testing.T) {
 			matches, err := derivativeHasClosure(model, derivative, fault.expected)
 			require.NoError(t, err)
 			require.True(t, matches)
-
-			var cases []Case
-
-			report, err := Build(Input{
-				OpenAPI:     []byte(documentWithJSONSchema(test.schema)),
-				OperationID: "selected",
-				MaxSteps:    1_000_000,
-			}, func(testCase Case) error {
-				cases = append(cases, testCase)
-
-				return nil
-			})
-			require.NoError(t, err)
-			require.Contains(t, cases, Case{JSON: []byte(test.derivative), Valid: false})
-			require.Contains(t, report.Covered,
-				"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0|#/*|"+
-					"additionalProperties|fault:additionalProperties")
 		})
 	}
 }

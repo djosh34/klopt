@@ -67,23 +67,22 @@ func TestBuildReportsReachedAndUncoveredAnyOfMasks(t *testing.T) {
 			schema: `{"type":"number","enum":[21,0,10],"anyOf":[
 				{"minimum":10},{"maximum":20}
 			]}`,
-			covered: []string{"mask:1", "mask:2", "mask:3"},
+			covered:   []string{"mask:1"},
+			uncovered: []string{"mask:2", "mask:3"},
 		},
 		{
 			name: "identical branches",
 			schema: `{"type":"string","anyOf":[
 				{"pattern":"^z+$"},{"pattern":"^z+$"}
 			]}`,
-			covered:   []string{"mask:3"},
-			uncovered: []string{"mask:1", "mask:2"},
+			uncovered: []string{"mask:1", "mask:2", "mask:3"},
 		},
 		{
 			name: "contradictory branch",
 			schema: `{"type":"number","anyOf":[
 				{"minimum":10,"maximum":0},{"minimum":1}
 			]}`,
-			covered:   []string{"mask:2"},
-			uncovered: []string{"mask:1", "mask:3"},
+			uncovered: []string{"mask:1", "mask:2", "mask:3"},
 		},
 	}
 
@@ -97,6 +96,68 @@ func TestBuildReportsReachedAndUncoveredAnyOfMasks(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, test.covered, anyOfReportMasks(report.Covered))
 			require.Equal(t, test.uncovered, anyOfReportMasks(report.Uncovered))
+		})
+	}
+}
+
+// TestScheduledAnyOfRequestsEnterChargedTraversal locks the absence of contradiction preflights.
+func TestScheduledAnyOfRequestsEnterChargedTraversal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+	}{
+		{name: "identical branches", schema: `{"type":"string","anyOf":[{"pattern":"^z+$"},{"pattern":"^z+$"}]}`},
+		{name: "contradictory bounds", schema: `{"type":"number","anyOf":[{"minimum":10,"maximum":0},{"minimum":1}]}`},
+		{name: "universal false branch", schema: `{"type":"number","anyOf":[{}, {"maximum":0}]}`},
+		{name: "integer implies number", schema: `{"anyOf":[{"type":"integer"},{"type":"number"}]}`},
+		{name: "kind incompatible", schema: `{"type":"string","anyOf":[{"type":"number"},{"type":"string"}]}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, err := parseInput(Input{
+				OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected",
+			})
+			require.NoError(t, err)
+			plan, err := makePlan(model)
+			require.NoError(t, err)
+
+			levels := make([]string, 0, 3)
+
+			for _, request := range plan.validSchedule {
+				selected := request.focus < 0
+
+				var target validIntent
+
+				if selected {
+					for _, candidate := range request.targets {
+						if candidate.expected.rule == oracleRuleAnyOf &&
+							candidate.expected.occurrence == model.root.occurrence {
+							target = candidate
+
+							break
+						}
+					}
+				} else {
+					target = request.targets[request.focus]
+					selected = target.expected.rule == oracleRuleAnyOf && target.expected.occurrence == model.root.occurrence
+				}
+
+				if !selected || target.expected.rule == "" {
+					continue
+				}
+
+				levels = append(levels, target.expected.level)
+
+				_, _, searchErr := findTargetRow(plan, request, &search{model: model, maxSteps: 0})
+				require.ErrorIs(t, searchErr, errMaxSteps)
+			}
+
+			require.Equal(t, []string{"mask:1", "mask:2", "mask:3"}, levels)
 		})
 	}
 }
@@ -171,8 +232,47 @@ func TestBaselineReachesSingletonNestedCanonicalTargets(t *testing.T) {
 	}
 }
 
-// TestBaselineLeavesPropertyConflictingWithMaximumUncovered locks syntactic conflict handling.
-func TestBaselineLeavesPropertyConflictingWithMaximumUncovered(t *testing.T) {
+// TestBaselineSchedulesCanonicalAdditionalPropertyWildcard locks the singleton additive request.
+func TestBaselineSchedulesCanonicalAdditionalPropertyWildcard(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{"type":"object","additionalProperties":{"type":"boolean"}}`))
+	model, err := parseInput(Input{OpenAPI: document, OperationID: "selected"})
+	require.NoError(t, err)
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+	require.Len(t, plan.validSchedule, 1)
+
+	for _, requirement := range plan.validSchedule[0].requirements {
+		require.NotContains(t, requirement.occurrence.instanceTemplate, "__schematest_extra__")
+	}
+
+	cases := make([]Case, 0, 1)
+	report, err := Build(Input{
+		OpenAPI: document, OperationID: "selected", MaxSteps: 10_000,
+	}, func(testCase Case) error {
+		cases = append(cases, testCase)
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.True(t, reportIdentityHasSuffix(report.Covered, "#/*|type|level:boolean"))
+
+	validCases := validCasesOnly(cases)
+	require.Len(t, validCases, 1)
+
+	value, err := parseStrictJSON(validCases[0].JSON)
+	require.NoError(t, err)
+	require.Equal(t, jsonObject, value.kind)
+	require.Len(t, value.object, 1)
+
+	for _, member := range value.object {
+		require.Equal(t, jsonBoolean, member.kind)
+	}
+}
+
+// TestBaselineDoesNotProvePropertyMaximumConflict locks charged runtime ownership.
+func TestBaselineDoesNotProvePropertyMaximumConflict(t *testing.T) {
 	t.Parallel()
 
 	report, err := Build(Input{
@@ -184,7 +284,9 @@ func TestBaselineLeavesPropertyConflictingWithMaximumUncovered(t *testing.T) {
 		MaxSteps:    10_000,
 	}, func(Case) error { return nil })
 	require.NoError(t, err)
-	require.True(t, reportIdentityHasSuffix(report.Covered, "#/id|type|level:string"))
+	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Positive(t, report.Steps)
+	require.True(t, reportIdentityHasSuffix(report.Uncovered, "#/id|type|level:string"))
 	require.True(t, reportIdentityHasSuffix(report.Uncovered, "#/value|type|level:number"))
 }
 
@@ -209,8 +311,8 @@ func TestBuildDirectsCanonicalAndReplacementAnyOfMasks(t *testing.T) {
 		{
 			name:      "unconstrained and maximum",
 			schema:    `{"type":"number","anyOf":[{}, {"maximum":0}]}`,
-			covered:   []string{"mask:1", "mask:3"},
-			uncovered: []string{"mask:2"},
+			covered:   []string{"mask:1"},
+			uncovered: []string{"mask:2", "mask:3"},
 		},
 		{
 			name:      "integer and number",
@@ -223,8 +325,8 @@ func TestBuildDirectsCanonicalAndReplacementAnyOfMasks(t *testing.T) {
 			schema: `{"type":"number","enum":[5,7],"anyOf":[
 				{"enum":[5]},{"enum":[7]}
 			]}`,
-			covered:   []string{"mask:1", "mask:2"},
-			uncovered: []string{"mask:3"},
+			covered:   []string{"mask:1"},
+			uncovered: []string{"mask:2", "mask:3"},
 		},
 	}
 

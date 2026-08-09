@@ -82,6 +82,7 @@ type validIntent struct {
 // later request replaces exactly targets[focus] in that baseline vector.
 type validRequest struct {
 	targets          []validIntent
+	components       [][]requirement
 	requirements     []requirement
 	stringObjectives []levelIdentity
 	focus            int

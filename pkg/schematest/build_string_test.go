@@ -28,10 +28,6 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 	require.Equal(t, []Case{
 		{JSON: []byte(`"b"`), Valid: true},
 		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
-		{JSON: []byte(`"b"`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`"bb"`), Valid: false},
 		{JSON: []byte(`"c"`), Valid: false},
@@ -39,7 +35,7 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 	}, firstCases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 74,
+		Steps: 106,
 		Covered: []string{
 			schemaPointer + "|#|type|level:string",
 			schemaPointer + "|#|type|fault:type",
@@ -143,8 +139,10 @@ func TestBuildEnumeratesUnconstrainedAnyOfStringRules(t *testing.T) {
 		]
 	}`)), 1_000)
 
-	require.Contains(t, cases, Case{JSON: []byte(`"a"`), Valid: true})
-	require.Contains(t, cases, Case{JSON: []byte(`"b"`), Valid: true})
+	require.Equal(t, []Case{
+		{JSON: []byte(`"a"`), Valid: true},
+		{JSON: []byte(`"a"`), Valid: true},
+	}, cases)
 }
 
 func TestBuildSearchesIncrementalFormatState(t *testing.T) {

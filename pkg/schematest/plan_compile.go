@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
-	"strings"
 )
 
 // makePlan compiles every stable valid and isolated-fault obligation without
@@ -157,11 +156,7 @@ func compileValidSchedule(catalog []validIntent, stringObjectives []levelIdentit
 		baselineTargets[index] = group[0]
 	}
 
-	baseline, err := makeValidRequest(baselineTargets, -1, stringObjectives)
-	if err != nil {
-		return nil, err
-	}
-
+	baseline := makeValidRequest(baselineTargets, -1, stringObjectives)
 	schedule := []validRequest{baseline}
 
 	for groupIndex, group := range groups {
@@ -169,11 +164,7 @@ func compileValidSchedule(catalog []validIntent, stringObjectives []levelIdentit
 			targets := append([]validIntent(nil), baselineTargets...)
 			targets[groupIndex] = alternative
 
-			request, err := makeValidRequest(targets, groupIndex, stringObjectives)
-			if err != nil {
-				return nil, err
-			}
-
+			request := makeFocusedValidRequest(baseline, targets, groupIndex, stringObjectives)
 			schedule = append(schedule, request)
 		}
 	}
@@ -181,188 +172,36 @@ func compileValidSchedule(catalog []validIntent, stringObjectives []levelIdentit
 	return schedule, nil
 }
 
-// validRequirementsConflict detects syntactically contradictory assignments.
+// requirementDimensionsConflict detects only contradictory selected constraint dimensions.
 //
-//nolint:cyclop // Each requirement dimension has one explicit conflict rule.
-func validRequirementsConflict(left, right []requirement) (bool, error) {
+//nolint:cyclop // Each declarative requirement dimension has one direct conflict rule.
+func requirementDimensionsConflict(left, right []requirement) bool {
 	for _, existing := range left {
 		for _, candidate := range right {
-			sameInstance := existing.occurrence.instanceTemplate == candidate.occurrence.instanceTemplate
+			sameInstance := instanceTemplateMatches(
+				existing.occurrence.instanceTemplate, candidate.occurrence.instanceTemplate,
+			) || instanceTemplateMatches(
+				candidate.occurrence.instanceTemplate, existing.occurrence.instanceTemplate,
+			)
 			switch {
 			case existing.hasBranch && candidate.hasBranch &&
 				samePlanRequirementOccurrence(existing, candidate) && existing.truth != candidate.truth:
-				return true, nil
+				return true
 			case existing.hasKind && candidate.hasKind && sameInstance && existing.kind != candidate.kind:
-				return true, nil
+				return true
 			case existing.presence != requirementNoPresence && candidate.presence != requirementNoPresence &&
 				sameInstance && existing.presence != candidate.presence && !existing.canonical && !candidate.canonical:
-				return true, nil
+				return true
 			case existing.enumMember != nil && candidate.enumMember != nil && sameInstance &&
 				existing.enumMember != candidate.enumMember:
-				return true, nil
-			}
-		}
-	}
-
-	exceeds, err := requirementsExceedObjectMaximum(left, right)
-	if err != nil || exceeds {
-		return exceeds, err
-	}
-
-	if requirementsForbidObjectMember(left, right) || requirementsConflictWithBranchKind(left, right) {
-		return true, nil
-	}
-
-	return requirementsExceedArrayMaximum(left, right)
-}
-
-// requirementsExceedObjectMaximum rejects a baseline presence vector above an authored maximum.
-//
-//nolint:cyclop // Active schemas, exact bounds, and direct-child presence form one syntactic check.
-func requirementsExceedObjectMaximum(left, right []requirement) (bool, error) {
-	combined := appendPlanRequirements(left, right...)
-	for _, active := range combined {
-		if active.active == nil || active.active.maxProperties == nil {
-			continue
-		}
-
-		maximum, fits, err := exactCountUint64(active.active.maxProperties)
-		if err != nil {
-			return false, err
-		}
-
-		if !fits {
-			continue
-		}
-
-		parentTokens, ok := rowPointerTokens(active.occurrence.instanceTemplate)
-		if !ok {
-			continue
-		}
-
-		present := make(map[string]bool)
-
-		for _, candidate := range combined {
-			childTokens, childOK := rowPointerTokens(candidate.occurrence.instanceTemplate)
-			if candidate.presence == requirementPresent && childOK && len(childTokens) == len(parentTokens)+1 &&
-				pointerFromTokens(childTokens[:len(parentTokens)]) == active.occurrence.instanceTemplate {
-				present[candidate.occurrence.instanceTemplate] = true
-			}
-		}
-
-		if uint64(len(present)) > maximum {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-// requirementsConflictWithBranchKind detects selected branch truth incompatible with a JSON kind.
-//
-//nolint:cyclop // Branch, active-node, and kind dimensions form one syntactic check.
-func requirementsConflictWithBranchKind(left, right []requirement) bool {
-	combined := appendPlanRequirements(left, right...)
-	for _, branch := range combined {
-		if !branch.hasBranch || branch.composition != oracleRuleAnyOf {
-			continue
-		}
-
-		for _, active := range combined {
-			if active.active == nil || active.occurrence.instanceTemplate != branch.occurrence.instanceTemplate ||
-				branch.branch < 0 || branch.branch >= len(active.active.anyOf) {
-				continue
-			}
-
-			selected := active.active.anyOf[branch.branch]
-			for _, kind := range combined {
-				if !kind.hasKind || kind.occurrence.instanceTemplate != branch.occurrence.instanceTemplate {
-					continue
-				}
-
-				if branch.truth != nodeAcceptsKindForTarget(selected, kind.kind) &&
-					(branch.truth || branchAcceptsEveryValueOfKind(selected, kind.kind, true)) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
-// requirementsForbidObjectMember detects a present child rejected by an active closed schema.
-//
-//nolint:cyclop,gocognit // Presence paths and every active schema are checked together.
-func requirementsForbidObjectMember(left, right []requirement) bool {
-	combined := appendPlanRequirements(left, right...)
-	for _, candidate := range combined {
-		if candidate.presence != requirementPresent || candidate.canonical {
-			continue
-		}
-
-		childTokens, childOK := rowPointerTokens(candidate.occurrence.instanceTemplate)
-		if !childOK || len(childTokens) == 0 {
-			continue
-		}
-
-		parent := pointerFromTokens(childTokens[:len(childTokens)-1])
-		name := childTokens[len(childTokens)-1]
-
-		for _, active := range combined {
-			if active.active == nil || active.occurrence.instanceTemplate != parent {
-				continue
-			}
-
-			_, declared := active.active.properties[name]
-			if !declared && active.active.additionalProperties != nil {
-				for _, kind := range combined {
-					if kind.hasKind && kind.occurrence.instanceTemplate == candidate.occurrence.instanceTemplate &&
-						!nodeAcceptsKindForTarget(active.active.additionalProperties, kind.kind) {
-						return true
-					}
-				}
-			}
-
-			if active.active.allowAdditionalProperties || active.active.additionalProperties != nil {
-				continue
-			}
-
-			if name == "*" || !declared {
+				return true
+			case existing.count != nil && candidate.count != nil && sameInstance && existing.count != candidate.count:
 				return true
 			}
 		}
 	}
 
 	return false
-}
-
-// requirementsExceedArrayMaximum rejects item presence when an authored maximum is zero.
-func requirementsExceedArrayMaximum(left, right []requirement) (bool, error) {
-	combined := appendPlanRequirements(left, right...)
-	for _, active := range combined {
-		if active.active == nil || active.active.maxItems == nil {
-			continue
-		}
-
-		maximum, fits, err := exactCountUint64(active.active.maxItems)
-		if err != nil {
-			return false, err
-		}
-
-		if !fits || maximum > 0 {
-			continue
-		}
-
-		for _, candidate := range combined {
-			if candidate.presence == requirementPresent &&
-				candidate.occurrence.instanceTemplate == appendInstanceToken(active.occurrence.instanceTemplate, "*") {
-				return true, nil
-			}
-		}
-	}
-
-	return false, nil
 }
 
 // samePlanRule identifies one radix in the valid catalog.
@@ -374,95 +213,139 @@ func samePlanRule(left, right validIntent) bool {
 		left.expected.occurrence.reference == right.expected.occurrence.reference
 }
 
-// makeValidRequest owns its complete vector and synthesizes every compatible selected component.
-//
-//nolint:cyclop // Composition priority, conflict filtering, and requirement merging form one synthesis pass.
-func makeValidRequest(targets []validIntent, focus int, objectives []levelIdentity) (validRequest, error) {
+// makeValidRequest synthesizes one complete selected vector from declarative dimensions.
+func makeValidRequest(targets []validIntent, focus int, objectives []levelIdentity) validRequest {
+	if focus >= 0 && focus < len(targets) {
+		baseline := makeValidRequest(targets, -1, objectives)
+
+		return makeFocusedValidRequest(baseline, targets, focus, objectives)
+	}
+
 	request := validRequest{
 		targets:          append([]validIntent(nil), targets...),
+		components:       make([][]requirement, len(targets)),
 		stringObjectives: validRequestStringObjectives(targets, focus, objectives),
 		focus:            focus,
 	}
 
-	indexes := make([]int, 0, len(targets))
-	for index, target := range targets {
-		if target.expected.rule == oracleRuleAnyOf || target.expected.rule == oracleRuleAllOf {
-			indexes = append(indexes, index)
+	for _, index := range validRequestTargetOrder(targets, focus) {
+		component := copyPlanRequirements(targets[index].requirements)
+		if requirementDimensionsConflict(request.requirements, component) {
+			component = validTargetActiveRequirements(targets[index])
 		}
+
+		request.components[index] = component
+		request.requirements = appendPlanRequirements(request.requirements, component...)
 	}
 
-	for index, target := range targets {
-		if target.expected.rule != oracleRuleAnyOf && target.expected.rule != oracleRuleAllOf {
-			indexes = append(indexes, index)
-		}
-	}
-
-	for _, index := range indexes {
-		target := targets[index]
-		if focus < 0 && validTargetHasOpenWildcardPresence(target) {
-			request.requirements = appendPlanRequirements(
-				request.requirements, validTargetActiveRequirements(target)...,
-			)
-
-			continue
-		}
-
-		conflictsWithComposition := false
-
-		for selectedIndex, selected := range targets {
-			if selectedIndex != index && selected.expected.rule == oracleRuleAnyOf &&
-				validTargetConflictsWithSelectedComposition(target, selected) {
-				conflictsWithComposition = true
-
-				break
-			}
-		}
-
-		if conflictsWithComposition {
-			request.requirements = appendPlanRequirements(
-				request.requirements, validTargetActiveRequirements(target)...,
-			)
-
-			continue
-		}
-
-		full := focus < 0 || index == focus
-		observe := index == focus || focus < 0 &&
-			(target.expected.rule == oracleRuleAnyOf || target.expected.rule == oracleRuleAllOf)
-		requirements := validTargetExecutionRequirements(target, full, observe)
-
-		conflict, err := validRequirementsConflict(request.requirements, requirements)
-		if err != nil {
-			return validRequest{}, err
-		}
-
-		if conflict {
-			request.requirements = appendPlanRequirements(
-				request.requirements, validTargetActiveRequirements(target)...,
-			)
-
-			continue
-		}
-
-		request.requirements = appendPlanRequirements(request.requirements, requirements...)
-	}
-
-	return request, nil
+	return request
 }
 
-// validTargetHasOpenWildcardPresence reports a non-singleton additional-property target.
-func validTargetHasOpenWildcardPresence(target validIntent) bool {
-	for _, requirement := range target.requirements {
-		if requirement.presence == requirementPresent && !requirement.canonical &&
-			strings.Contains(requirement.occurrence.usePointer, "/additionalProperties") {
-			return true
+// makeFocusedValidRequest copies the baseline and replaces one radix's selected component.
+func makeFocusedValidRequest(
+	baseline validRequest,
+	targets []validIntent,
+	focus int,
+	objectives []levelIdentity,
+) validRequest {
+	components := make([][]requirement, len(baseline.components))
+	for index := range baseline.components {
+		components[index] = copyPlanRequirements(baseline.components[index])
+	}
+
+	oldFocus := components[focus]
+
+	newFocus := copyPlanRequirements(targets[focus].requirements)
+	for index := range components {
+		if index == focus || !requirementDimensionsConflict(oldFocus, targets[index].requirements) ||
+			requirementDimensionsConflict(newFocus, targets[index].requirements) {
+			continue
+		}
+
+		components[index] = copyPlanRequirements(targets[index].requirements)
+	}
+
+	components[focus] = newFocus
+
+	request := validRequest{
+		targets:          append([]validIntent(nil), targets...),
+		components:       make([][]requirement, len(targets)),
+		stringObjectives: validRequestStringObjectives(targets, focus, objectives),
+		focus:            focus,
+	}
+	for _, index := range validRequestTargetOrder(targets, focus) {
+		component := components[index]
+		if requirementDimensionsConflict(request.requirements, component) {
+			component = validTargetActiveRequirements(targets[index])
+		}
+
+		request.components[index] = component
+		request.requirements = appendPlanRequirements(request.requirements, component...)
+	}
+
+	return request
+}
+
+// validRequestTargetOrder gives the focus priority, then its matching branch dimensions.
+//
+//nolint:cyclop // Focus, matching branch components, and composition components have fixed tiers.
+func validRequestTargetOrder(targets []validIntent, focus int) []int {
+	ordered := make([]int, 0, len(targets))
+	if focus < 0 || focus >= len(targets) {
+		for index := range targets {
+			ordered = append(ordered, index)
+		}
+
+		return ordered
+	}
+
+	if focus >= 0 && focus < len(targets) {
+		ordered = append(ordered, focus)
+		for index, target := range targets {
+			if index != focus && target.expected.rule != oracleRuleAnyOf &&
+				target.expected.rule != oracleRuleAllOf &&
+				validTargetSharesSelectedBranch(target, targets[focus]) {
+				ordered = append(ordered, index)
+			}
+		}
+	}
+
+	for index, target := range targets {
+		if index == focus || target.expected.rule == oracleRuleAnyOf || target.expected.rule == oracleRuleAllOf ||
+			containsInt(ordered, index) {
+			continue
+		}
+
+		ordered = append(ordered, index)
+	}
+
+	for index, target := range targets {
+		if index != focus && (target.expected.rule == oracleRuleAnyOf || target.expected.rule == oracleRuleAllOf) {
+			ordered = append(ordered, index)
+		}
+	}
+
+	return ordered
+}
+
+// validTargetSharesSelectedBranch reports a direct matching branch-truth dimension.
+func validTargetSharesSelectedBranch(target, selected validIntent) bool {
+	for _, candidate := range target.requirements {
+		if !candidate.hasBranch {
+			continue
+		}
+
+		for _, branch := range selected.requirements {
+			if branch.hasBranch && samePlanRequirementOccurrence(candidate, branch) && candidate.truth == branch.truth {
+				return true
+			}
 		}
 	}
 
 	return false
 }
 
-// validTargetActiveRequirements preserves neutral schema context from a conflicting component.
+// validTargetActiveRequirements preserves neutral context when direct dimensions conflict.
 func validTargetActiveRequirements(target validIntent) []requirement {
 	result := make([]requirement, 0)
 
@@ -475,87 +358,15 @@ func validTargetActiveRequirements(target validIntent) []requirement {
 	return result
 }
 
-// validTargetConflictsWithSelectedComposition detects presence that makes a selected false branch true.
-//
-//nolint:cyclop // Selected branches, active parents, and candidate presence form one conflict check.
-func validTargetConflictsWithSelectedComposition(target, selected validIntent) bool {
-	for _, branch := range selected.requirements {
-		if !branch.hasBranch || branch.composition != oracleRuleAnyOf || branch.truth {
-			continue
-		}
-
-		for _, active := range selected.requirements {
-			if active.active == nil || active.occurrence.instanceTemplate != branch.occurrence.instanceTemplate ||
-				branch.branch < 0 || branch.branch >= len(active.active.anyOf) {
-				continue
-			}
-
-			falseBranch := active.active.anyOf[branch.branch]
-			for _, candidate := range target.requirements {
-				if candidate.presence != requirementPresent || candidate.canonical ||
-					!directChildInstance(active.occurrence.instanceTemplate, candidate.occurrence.instanceTemplate) {
-					continue
-				}
-
-				tokens, ok := rowPointerTokens(candidate.occurrence.instanceTemplate)
-				if ok && len(tokens) > 0 && nodeRequiresProperty(falseBranch, tokens[len(tokens)-1]) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
-// directChildInstance reports whether child is one concrete member below parent.
-func directChildInstance(parent, child string) bool {
-	parentTokens, parentOK := rowPointerTokens(parent)
-	childTokens, childOK := rowPointerTokens(child)
-
-	return parentOK && childOK && len(childTokens) == len(parentTokens)+1 &&
-		pointerFromTokens(childTokens[:len(parentTokens)]) == parent
-}
-
-// nodeRequiresProperty checks direct and conjunctive required declarations.
-func nodeRequiresProperty(node *schemaNode, name string) bool {
-	if containsString(node.required, name) {
-		return true
-	}
-
-	for _, child := range node.allOf {
-		if nodeRequiresProperty(child, name) {
+// containsInt reports whether a small request-order prefix already contains an index.
+func containsInt(values []int, wanted int) bool {
+	for _, value := range values {
+		if value == wanted {
 			return true
 		}
 	}
 
 	return false
-}
-
-// validTargetExecutionRequirements removes unrelated directed dimensions from focused rows.
-func validTargetExecutionRequirements(target validIntent, full, observe bool) []requirement {
-	result := make([]requirement, 0, len(target.requirements))
-	for _, candidate := range target.requirements {
-		switch candidate.tag {
-		case requirementExactEnumMember, requirementExactCount, requirementBranchTruth:
-			if !full {
-				continue
-			}
-		case requirementJSONKind:
-			if !full && target.expected.rule == oracleRuleType &&
-				rowOccurrenceMatches(candidate.occurrence, target.expected.occurrence) {
-				continue
-			}
-		case requirementTargetLevel:
-			if !observe {
-				continue
-			}
-		}
-
-		result = append(result, candidate)
-	}
-
-	return result
 }
 
 // validRequestStringObjectives puts an applicable focused objective before the independent sequence.
@@ -2010,6 +1821,7 @@ func samePlanRequirementOccurrence(left, right requirement) bool {
 		left.occurrence.usePointer == right.occurrence.usePointer &&
 		left.occurrence.instanceTemplate == right.occurrence.instanceTemplate &&
 		left.composition == right.composition &&
+		(left.tag != requirementTargetLevel || left.target.ruleIdentity == right.target.ruleIdentity) &&
 		left.hasBranch == right.hasBranch &&
 		(!left.hasBranch || left.branch == right.branch)
 }
