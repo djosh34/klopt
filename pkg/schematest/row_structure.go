@@ -1314,20 +1314,26 @@ func (s *search) walkGenericValue(_ []requirement, visit rowVisit) (bool, error)
 			return false, err
 		}
 
-		candidates, err := canonicalKindWitnesses(kind)
+		var (
+			complete bool
+			visitErr error
+		)
+
+		err := walkCanonicalKindWitnesses(kind, func(candidate *jsonValue) bool {
+			if visitErr = s.assign(); visitErr != nil {
+				return false
+			}
+
+			complete, visitErr = visit(candidate)
+
+			return visitErr == nil && !complete
+		})
 		if err != nil {
 			return false, err
 		}
 
-		for _, candidate := range candidates {
-			if err := s.assign(); err != nil {
-				return false, err
-			}
-
-			complete, visitErr := visit(candidate)
-			if visitErr != nil || complete {
-				return complete, visitErr
-			}
+		if visitErr != nil || complete {
+			return complete, visitErr
 		}
 	}
 

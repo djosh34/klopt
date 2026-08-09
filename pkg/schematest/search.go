@@ -55,6 +55,13 @@ func findTargetRow(plan *searchPlan, request validRequest, s *search) (*jsonValu
 		return nil, false, nil
 	}
 
+	conflict, err := requestHasSyntacticCompositionConflict(
+		s.model.root, s.model.root.occurrence, request.requirements,
+	)
+	if err != nil || conflict {
+		return nil, false, err
+	}
+
 	forbidden, err := requestPresenceForbiddenByActiveSchema(s.model.root, request)
 	if err != nil || forbidden {
 		return nil, false, err
@@ -107,6 +114,147 @@ func requestHasSyntacticKindConflict(request validRequest) bool {
 	}
 
 	return false
+}
+
+// requestHasSyntacticCompositionConflict rejects explicit selected-branch contradictions.
+//
+//nolint:cyclop,gocognit,nestif // Kind, bounds, and branch implications are one syntax check.
+func requestHasSyntacticCompositionConflict(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+) (bool, error) {
+	states, constrained := rowCompositionTruthStates(requirements, occurrence, oracleRuleAnyOf, len(node.anyOf))
+	if constrained {
+		kind, hasKind := requestKindAtInstance(requirements, occurrence.instanceTemplate)
+
+		for index, child := range node.anyOf {
+			if states[index] {
+				if hasKind && !nodeAcceptsKindForTarget(child, kind) {
+					return true, nil
+				}
+
+				contradictory, err := nodeHasContradictoryNumericBounds(child)
+				if err != nil || contradictory {
+					return contradictory, err
+				}
+			}
+		}
+
+		for trueIndex, trueBranch := range node.anyOf {
+			if !states[trueIndex] {
+				continue
+			}
+
+			for falseIndex, falseBranch := range node.anyOf {
+				if states[falseIndex] {
+					continue
+				}
+
+				if branchAcceptsEveryValueOfKind(falseBranch, kind, hasKind) ||
+					branchTypeImplies(trueBranch, falseBranch) {
+					return true, nil
+				}
+
+				equal, err := jsonValidatedSemanticEqual(trueBranch.schemaJSON, falseBranch.schemaJSON)
+				if err != nil {
+					return false, err
+				}
+
+				if equal {
+					return true, nil
+				}
+			}
+		}
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+
+		conflict, err := requestHasSyntacticCompositionConflict(child, childOccurrence, requirements)
+		if err != nil || conflict {
+			return conflict, err
+		}
+	}
+
+	for index, child := range node.anyOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence, occurrence.usePointer+"/anyOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+
+		conflict, err := requestHasSyntacticCompositionConflict(child, childOccurrence, requirements)
+		if err != nil || conflict {
+			return conflict, err
+		}
+	}
+
+	return false, nil
+}
+
+// requestKindAtInstance returns the selected JSON kind for one instance.
+func requestKindAtInstance(requirements []requirement, instance string) (jsonKind, bool) {
+	for _, requirement := range requirements {
+		if requirement.hasKind && requirement.occurrence.instanceTemplate == instance {
+			return requirement.kind, true
+		}
+	}
+
+	return jsonNull, false
+}
+
+// nodeHasContradictoryNumericBounds detects a direct empty numeric interval.
+func nodeHasContradictoryNumericBounds(node *schemaNode) (bool, error) {
+	if node.minimum == nil || node.maximum == nil {
+		return false, nil
+	}
+
+	comparison, err := node.minimum.compare(node.maximum)
+
+	return comparison > 0, err
+}
+
+// branchAcceptsEveryValueOfKind detects a branch with no applicable validation constraint.
+//
+//nolint:cyclop,gocyclo // Every schema keyword independently prevents universal acceptance.
+func branchAcceptsEveryValueOfKind(node *schemaNode, kind jsonKind, hasKind bool) bool {
+	if node.enum != nil || len(node.allOf) > 0 || len(node.anyOf) > 0 {
+		return false
+	}
+
+	if !hasKind {
+		return node.kind == schemaAny && node.minimum == nil && node.maximum == nil && node.multipleOf == nil &&
+			node.minLength == nil && node.maxLength == nil && node.pattern == nil && node.format == schemaFormatNone &&
+			node.minItems == nil && node.maxItems == nil && node.items == nil && node.minProperties == nil &&
+			node.maxProperties == nil && len(node.required) == 0 && len(node.properties) == 0 &&
+			node.additionalProperties == nil && node.allowAdditionalProperties
+	}
+
+	if !nodeAcceptsKindForTarget(node, kind) {
+		return false
+	}
+
+	switch kind {
+	case jsonNumber:
+		return node.kind != schemaInteger && node.minimum == nil && node.maximum == nil && node.multipleOf == nil &&
+			!isNumericSchemaFormat(node.format)
+	case jsonString:
+		return node.minLength == nil && node.maxLength == nil && node.pattern == nil && node.format == schemaFormatNone
+	case jsonArray:
+		return node.minItems == nil && node.maxItems == nil && node.items == nil
+	case jsonObject:
+		return node.minProperties == nil && node.maxProperties == nil && len(node.required) == 0 &&
+			len(node.properties) == 0 && node.additionalProperties == nil && node.allowAdditionalProperties
+	default:
+		return true
+	}
+}
+
+// branchTypeImplies detects the direct integer-subset-of-number relation.
+func branchTypeImplies(left, right *schemaNode) bool {
+	return left.kind == schemaInteger && right.kind == schemaNumber &&
+		branchAcceptsEveryValueOfKind(right, jsonNumber, true)
 }
 
 // requestPresenceForbiddenByActiveSchema rejects impossible active member targets.
@@ -317,20 +465,12 @@ func targetRowMatches(result evaluation, request validRequest, value *jsonValue)
 		return false
 	}
 
-	if request.focus >= 0 {
-		if request.focus >= len(request.targets) {
-			return false
-		}
-
-		target := request.targets[request.focus]
-		if !levelWasObserved(result.observedRecords(), target.expected) &&
-			!compositionLevelWasObserved(result, target.expected) {
-			return false
-		}
-	}
-
 	for _, requirement := range request.requirements {
 		switch {
+		case requirement.tag == requirementTargetLevel &&
+			!levelWasObserved(result.observedRecords(), requirement.target) &&
+			!compositionLevelWasObserved(result, requirement.target):
+			return false
 		case requirement.presence != requirementNoPresence && !requirement.canonical &&
 			!presenceRequirementWasSatisfied(value, requirement):
 			return false

@@ -81,6 +81,15 @@ func (s *search) walkActiveStringRules(
 	request *validRequest,
 	visit rowVisit,
 ) (bool, error) {
+	if objective := validFalseStringObjective(node, occurrence, requirements); objective != nil {
+		handled, complete, err := s.walkDirectedStringObjective(
+			node, occurrence, requirements, objective, visit,
+		)
+		if err != nil || handled {
+			return complete, err
+		}
+	}
+
 	rules, err := activeStringRulesFor(node, occurrence, requirements, nil)
 	if err != nil {
 		return false, err
@@ -137,6 +146,58 @@ func (s *search) walkActiveStringRules(
 		searchSeed(seedPointer, canonicalSchemaJSON, rule, level),
 		visit,
 	)
+}
+
+// validFalseStringObjective returns the first selected false-branch pattern direction.
+func validFalseStringObjective(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+) *stringSearchObjective {
+	for _, requirement := range requirements {
+		if !requirement.hasBranch || requirement.composition != oracleRuleAnyOf || requirement.truth {
+			continue
+		}
+
+		branch, found := scalarTargetNode(node, occurrence, requirement.occurrence)
+		if !found {
+			continue
+		}
+
+		patternOccurrence, found := firstStringPatternOccurrence(branch, requirement.occurrence)
+		if found {
+			return &stringSearchObjective{
+				kind:       stringSearchPatternFalse,
+				occurrence: patternOccurrence,
+				rule:       oracleRulePattern,
+				level:      oracleStringValidLevel,
+				closure:    nil,
+			}
+		}
+	}
+
+	return nil
+}
+
+// firstStringPatternOccurrence finds one authored pattern in deterministic composition order.
+func firstStringPatternOccurrence(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+) (schemaOccurrence, bool) {
+	if node.pattern != nil {
+		return occurrence, true
+	}
+
+	for index, child := range node.allOf {
+		childOccurrence := rebasePlanOccurrence(
+			child, occurrence, occurrence.usePointer+"/allOf/"+itoa(index), occurrence.instanceTemplate,
+		)
+		if foundOccurrence, found := firstStringPatternOccurrence(child, childOccurrence); found {
+			return foundOccurrence, true
+		}
+	}
+
+	return schemaOccurrence{}, false
 }
 
 // resolvedScalarObjective reuses one scalar occurrence traversal result.

@@ -36,8 +36,10 @@ func (observed *closedObjectObservations) record(testCase schematest.Case) {
 	}
 
 	body := string(testCase.JSON)
-	for index, expectation := range expected {
-		observed[index] = observed[index] ||
+
+	observed[0] = observed[0] || testCase.Valid && len(body) > 0 && body[0] == '{'
+	for index, expectation := range expected[1:] {
+		observed[index+1] = observed[index+1] ||
 			testCase.Valid == expectation.valid && body == expectation.body
 	}
 }

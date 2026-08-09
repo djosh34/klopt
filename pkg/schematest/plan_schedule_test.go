@@ -51,7 +51,7 @@ func TestMakePlanEmitsAdditiveValidSchedule(t *testing.T) {
 	require.Equal(t, []string{
 		"type|string",
 		"enum|member:0",
-		"anyOf|mask:3",
+		"anyOf|mask:1",
 		"type|string",
 		"type|string",
 	}, validRequestLevels(baseline))
@@ -62,8 +62,8 @@ func TestMakePlanEmitsAdditiveValidSchedule(t *testing.T) {
 
 	require.Equal(t, []string{
 		"enum|member:1",
-		"anyOf|mask:1",
 		"anyOf|mask:2",
+		"anyOf|mask:3",
 	}, validAlternativeLevels(plan.validSchedule[1:]))
 }
 
@@ -147,6 +147,48 @@ func TestValidStringObjectiveConsumesExplicitExecutionOrder(t *testing.T) {
 	require.NotNil(t, objective)
 	require.Equal(t, oracleRulePattern, objective.identity.rule)
 	require.Equal(t, oracleRulePattern, focused.stringObjectives[0].rule)
+}
+
+// TestFocusedRequestsReplaceOnlyTheirDirectedDimensions locks complete-vector synthesis.
+func TestFocusedRequestsReplaceOnlyTheirDirectedDimensions(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"number","enum":[5,7],"anyOf":[{"enum":[5]},{"enum":[7]}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	var enumRequest, maskRequest *validRequest
+
+	for index := range plan.validSchedule {
+		request := &plan.validSchedule[index]
+		if request.focus < 0 {
+			continue
+		}
+
+		target := request.targets[request.focus]
+		switch {
+		case target.expected.rule == oracleRuleEnum && target.expected.occurrence == model.root.occurrence:
+			enumRequest = request
+		case target.expected.rule == oracleRuleAnyOf && target.expected.level == "mask:2":
+			maskRequest = request
+		}
+	}
+
+	require.NotNil(t, enumRequest)
+	requireExactEnumRequirement(t, enumRequest.requirements, &model.root.enum[1])
+	requireNoCompositionRequirements(t, enumRequest.requirements, model.root.occurrence, oracleRuleAnyOf)
+
+	require.NotNil(t, maskRequest)
+	requireCompositionRequirement(t, maskRequest.requirements, oracleRuleAnyOf, 0, false)
+	requireCompositionRequirement(t, maskRequest.requirements, oracleRuleAnyOf, 1, true)
+
+	for _, requirement := range maskRequest.requirements {
+		require.NotEqual(t, requirementExactEnumMember, requirement.tag)
+	}
 }
 
 // TestMakePlanCachesCanonicalObligationOrderKeys proves one-time order parsing.

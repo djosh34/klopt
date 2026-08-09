@@ -136,8 +136,6 @@ func cachePlanOrderKeys(valid []validIntent, faults []faultProgram) error {
 }
 
 // compileValidSchedule emits one baseline and one request per noncanonical level.
-//
-//nolint:cyclop // Grouping, baseline construction, and replacements define the additive schedule.
 func compileValidSchedule(catalog []validIntent, stringObjectives []levelIdentity) ([]validRequest, error) {
 	if len(catalog) == 0 {
 		return nil, nil
@@ -157,9 +155,6 @@ func compileValidSchedule(catalog []validIntent, stringObjectives []levelIdentit
 	baselineTargets := make([]validIntent, len(groups))
 	for index, group := range groups {
 		baselineTargets[index] = group[0]
-		if group[0].expected.rule == oracleRuleAnyOf {
-			baselineTargets[index] = group[len(group)-1]
-		}
 	}
 
 	baseline, err := makeValidRequest(baselineTargets, -1, stringObjectives)
@@ -170,12 +165,7 @@ func compileValidSchedule(catalog []validIntent, stringObjectives []levelIdentit
 	schedule := []validRequest{baseline}
 
 	for groupIndex, group := range groups {
-		alternatives := group[1:]
-		if group[0].expected.rule == oracleRuleAnyOf {
-			alternatives = group[:len(group)-1]
-		}
-
-		for _, alternative := range alternatives {
+		for _, alternative := range group[1:] {
 			targets := append([]validIntent(nil), baselineTargets...)
 			targets[groupIndex] = alternative
 
@@ -217,6 +207,10 @@ func validRequirementsConflict(left, right []requirement) (bool, error) {
 	exceeds, err := requirementsExceedObjectMaximum(left, right)
 	if err != nil || exceeds {
 		return exceeds, err
+	}
+
+	if requirementsForbidObjectMember(left, right) || requirementsConflictWithBranchKind(left, right) {
+		return true, nil
 	}
 
 	return requirementsExceedArrayMaximum(left, right)
@@ -264,6 +258,85 @@ func requirementsExceedObjectMaximum(left, right []requirement) (bool, error) {
 	return false, nil
 }
 
+// requirementsConflictWithBranchKind detects selected branch truth incompatible with a JSON kind.
+//
+//nolint:cyclop // Branch, active-node, and kind dimensions form one syntactic check.
+func requirementsConflictWithBranchKind(left, right []requirement) bool {
+	combined := appendPlanRequirements(left, right...)
+	for _, branch := range combined {
+		if !branch.hasBranch || branch.composition != oracleRuleAnyOf {
+			continue
+		}
+
+		for _, active := range combined {
+			if active.active == nil || active.occurrence.instanceTemplate != branch.occurrence.instanceTemplate ||
+				branch.branch < 0 || branch.branch >= len(active.active.anyOf) {
+				continue
+			}
+
+			selected := active.active.anyOf[branch.branch]
+			for _, kind := range combined {
+				if !kind.hasKind || kind.occurrence.instanceTemplate != branch.occurrence.instanceTemplate {
+					continue
+				}
+
+				if branch.truth != nodeAcceptsKindForTarget(selected, kind.kind) &&
+					(branch.truth || branchAcceptsEveryValueOfKind(selected, kind.kind, true)) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// requirementsForbidObjectMember detects a present child rejected by an active closed schema.
+//
+//nolint:cyclop,gocognit // Presence paths and every active schema are checked together.
+func requirementsForbidObjectMember(left, right []requirement) bool {
+	combined := appendPlanRequirements(left, right...)
+	for _, candidate := range combined {
+		if candidate.presence != requirementPresent || candidate.canonical {
+			continue
+		}
+
+		childTokens, childOK := rowPointerTokens(candidate.occurrence.instanceTemplate)
+		if !childOK || len(childTokens) == 0 {
+			continue
+		}
+
+		parent := pointerFromTokens(childTokens[:len(childTokens)-1])
+		name := childTokens[len(childTokens)-1]
+
+		for _, active := range combined {
+			if active.active == nil || active.occurrence.instanceTemplate != parent {
+				continue
+			}
+
+			_, declared := active.active.properties[name]
+			if !declared && active.active.additionalProperties != nil {
+				for _, kind := range combined {
+					if kind.hasKind && kind.occurrence.instanceTemplate == candidate.occurrence.instanceTemplate &&
+						!nodeAcceptsKindForTarget(active.active.additionalProperties, kind.kind) {
+						return true
+					}
+				}
+			}
+
+			if active.active.allowAdditionalProperties || active.active.additionalProperties != nil {
+				continue
+			}
+
+			if name == "*" || !declared {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // requirementsExceedArrayMaximum rejects item presence when an authored maximum is zero.
 func requirementsExceedArrayMaximum(left, right []requirement) (bool, error) {
 	combined := appendPlanRequirements(left, right...)
@@ -301,9 +374,9 @@ func samePlanRule(left, right validIntent) bool {
 		left.expected.occurrence.reference == right.expected.occurrence.reference
 }
 
-// makeValidRequest owns its complete vector and explicitly synthesizes execution constraints.
+// makeValidRequest owns its complete vector and synthesizes every compatible selected component.
 //
-//nolint:cyclop // Baseline synthesis and focused replacement deliberately use separate paths.
+//nolint:cyclop // Composition priority, conflict filtering, and requirement merging form one synthesis pass.
 func makeValidRequest(targets []validIntent, focus int, objectives []levelIdentity) (validRequest, error) {
 	request := validRequest{
 		targets:          append([]validIntent(nil), targets...),
@@ -311,66 +384,178 @@ func makeValidRequest(targets []validIntent, focus int, objectives []levelIdenti
 		focus:            focus,
 	}
 
-	if focus >= 0 && focus < len(targets) {
-		request.requirements = copyPlanRequirements(targets[focus].requirements)
-
-		return request, nil
+	indexes := make([]int, 0, len(targets))
+	for index, target := range targets {
+		if target.expected.rule == oracleRuleAnyOf || target.expected.rule == oracleRuleAllOf {
+			indexes = append(indexes, index)
+		}
 	}
 
-	request.requirements = copyPlanRequirements(targets[0].requirements)
-	for _, target := range targets[1:] {
-		if !promotableBaselineTarget(target) ||
-			!targetPromotesCanonicalPresence(request.requirements, target.requirements) {
+	for index, target := range targets {
+		if target.expected.rule != oracleRuleAnyOf && target.expected.rule != oracleRuleAllOf {
+			indexes = append(indexes, index)
+		}
+	}
+
+	for _, index := range indexes {
+		target := targets[index]
+		if focus < 0 && validTargetHasOpenWildcardPresence(target) {
+			request.requirements = appendPlanRequirements(
+				request.requirements, validTargetActiveRequirements(target)...,
+			)
+
 			continue
 		}
 
-		additional := make([]requirement, 0, len(target.requirements))
-		for _, candidate := range target.requirements {
-			if candidate.tag == requirementExactEnumMember || candidate.tag == requirementExactCount ||
-				candidate.tag == requirementTargetLevel || candidate.hasBranch {
-				continue
-			}
+		conflictsWithComposition := false
 
-			additional = append(additional, candidate)
+		for selectedIndex, selected := range targets {
+			if selectedIndex != index && selected.expected.rule == oracleRuleAnyOf &&
+				validTargetConflictsWithSelectedComposition(target, selected) {
+				conflictsWithComposition = true
+
+				break
+			}
 		}
 
-		conflict, err := validRequirementsConflict(request.requirements, additional)
+		if conflictsWithComposition {
+			request.requirements = appendPlanRequirements(
+				request.requirements, validTargetActiveRequirements(target)...,
+			)
+
+			continue
+		}
+
+		full := focus < 0 || index == focus
+		observe := index == focus || focus < 0 &&
+			(target.expected.rule == oracleRuleAnyOf || target.expected.rule == oracleRuleAllOf)
+		requirements := validTargetExecutionRequirements(target, full, observe)
+
+		conflict, err := validRequirementsConflict(request.requirements, requirements)
 		if err != nil {
 			return validRequest{}, err
 		}
 
-		if !conflict {
-			request.requirements = appendPlanRequirements(request.requirements, additional...)
+		if conflict {
+			request.requirements = appendPlanRequirements(
+				request.requirements, validTargetActiveRequirements(target)...,
+			)
 
-			break
+			continue
 		}
+
+		request.requirements = appendPlanRequirements(request.requirements, requirements...)
 	}
 
 	return request, nil
 }
 
-// promotableBaselineTarget identifies the direct singleton targets required in the baseline.
-func promotableBaselineTarget(target validIntent) bool {
-	return target.expected.rule == oracleRuleEnum ||
-		(target.expected.rule == oracleRuleType && strings.HasSuffix(target.expected.occurrence.usePointer, "/items"))
+// validTargetHasOpenWildcardPresence reports a non-singleton additional-property target.
+func validTargetHasOpenWildcardPresence(target validIntent) bool {
+	for _, requirement := range target.requirements {
+		if requirement.presence == requirementPresent && !requirement.canonical &&
+			strings.Contains(requirement.occurrence.usePointer, "/additionalProperties") {
+			return true
+		}
+	}
+
+	return false
 }
 
-// targetPromotesCanonicalPresence identifies one reachable optional child for the baseline.
-func targetPromotesCanonicalPresence(existing, candidates []requirement) bool {
-	for _, candidate := range candidates {
-		if candidate.presence != requirementPresent || candidate.canonical {
+// validTargetActiveRequirements preserves neutral schema context from a conflicting component.
+func validTargetActiveRequirements(target validIntent) []requirement {
+	result := make([]requirement, 0)
+
+	for _, candidate := range target.requirements {
+		if candidate.tag == requirementActiveRules {
+			result = append(result, candidate)
+		}
+	}
+
+	return result
+}
+
+// validTargetConflictsWithSelectedComposition detects presence that makes a selected false branch true.
+//
+//nolint:cyclop // Selected branches, active parents, and candidate presence form one conflict check.
+func validTargetConflictsWithSelectedComposition(target, selected validIntent) bool {
+	for _, branch := range selected.requirements {
+		if !branch.hasBranch || branch.composition != oracleRuleAnyOf || branch.truth {
 			continue
 		}
 
-		for _, current := range existing {
-			if current.presence == requirementAbsent && current.canonical &&
-				current.occurrence.instanceTemplate == candidate.occurrence.instanceTemplate {
-				return true
+		for _, active := range selected.requirements {
+			if active.active == nil || active.occurrence.instanceTemplate != branch.occurrence.instanceTemplate ||
+				branch.branch < 0 || branch.branch >= len(active.active.anyOf) {
+				continue
+			}
+
+			falseBranch := active.active.anyOf[branch.branch]
+			for _, candidate := range target.requirements {
+				if candidate.presence != requirementPresent || candidate.canonical ||
+					!directChildInstance(active.occurrence.instanceTemplate, candidate.occurrence.instanceTemplate) {
+					continue
+				}
+
+				tokens, ok := rowPointerTokens(candidate.occurrence.instanceTemplate)
+				if ok && len(tokens) > 0 && nodeRequiresProperty(falseBranch, tokens[len(tokens)-1]) {
+					return true
+				}
 			}
 		}
 	}
 
 	return false
+}
+
+// directChildInstance reports whether child is one concrete member below parent.
+func directChildInstance(parent, child string) bool {
+	parentTokens, parentOK := rowPointerTokens(parent)
+	childTokens, childOK := rowPointerTokens(child)
+
+	return parentOK && childOK && len(childTokens) == len(parentTokens)+1 &&
+		pointerFromTokens(childTokens[:len(parentTokens)]) == parent
+}
+
+// nodeRequiresProperty checks direct and conjunctive required declarations.
+func nodeRequiresProperty(node *schemaNode, name string) bool {
+	if containsString(node.required, name) {
+		return true
+	}
+
+	for _, child := range node.allOf {
+		if nodeRequiresProperty(child, name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// validTargetExecutionRequirements removes unrelated directed dimensions from focused rows.
+func validTargetExecutionRequirements(target validIntent, full, observe bool) []requirement {
+	result := make([]requirement, 0, len(target.requirements))
+	for _, candidate := range target.requirements {
+		switch candidate.tag {
+		case requirementExactEnumMember, requirementExactCount, requirementBranchTruth:
+			if !full {
+				continue
+			}
+		case requirementJSONKind:
+			if !full && target.expected.rule == oracleRuleType &&
+				rowOccurrenceMatches(candidate.occurrence, target.expected.occurrence) {
+				continue
+			}
+		case requirementTargetLevel:
+			if !observe {
+				continue
+			}
+		}
+
+		result = append(result, candidate)
+	}
+
+	return result
 }
 
 // validRequestStringObjectives puts an applicable focused objective before the independent sequence.
@@ -612,8 +797,9 @@ func (builder *planBuilder) compileAnyOfChildren(
 func optionalAnyOfClosure(branches []anyOfBranchPlan, identity ruleIdentity) *faultClosureProgram {
 	preserved := &faultClosureAlternative{}
 	closed := &faultClosureAlternative{
-		expected: failureSet{failureIdentity(identity)},
-		closure:  closureDomainsExcept(branches, -1),
+		requirements: anyOfFaultRequirements(identity.occurrence, len(branches)),
+		expected:     failureSet{failureIdentity(identity)},
+		closure:      closureDomainsExcept(branches, -1),
 	}
 	preserved.next = closed
 

@@ -704,16 +704,77 @@ func TestRowAndFaultCandidateSourcesRetainNoCandidateCollections(t *testing.T) {
 	guardPackage := productionGuardPackage(t)
 
 	functions := guardFunctions(guardPackage)
-	for _, name := range []string{"rowScalarValueSource", "canonicalAnyOfWitnesses", "canonicalEnumFaultWitnesses"} {
-		function, ok := guardPackage.pkg.Scope().Lookup(name).(*types.Func)
-		require.True(t, ok, name)
+	roots := map[string]bool{
+		"rowScalarValueSource":        false,
+		"canonicalAnyOfWitnesses":     false,
+		"canonicalEnumFaultWitnesses": false,
+		"walkDirectNodeValues":        false,
+		"walkGenericValue":            false,
+	}
 
+	for function := range functions {
+		if _, wanted := roots[function.Name()]; !wanted {
+			continue
+		}
+
+		roots[function.Name()] = true
 		for reachable := range reachableGuardFunctions(guardPackage, functions, function) {
 			require.NotContains(t, []string{
-				"canonicalKindWitnesses", "appendUniqueJSONWitness", "rowScalarValues", "collectAnyOfWitnesses",
-			}, reachable.Name(), name)
+				"canonicalKindWitnesses", "appendUniqueJSONWitness", "rowDirectValues", "rowScalarValues",
+				"collectAnyOfWitnesses",
+			}, reachable.Name(), function.Name())
 		}
 	}
+
+	require.Equal(t, map[string]bool{
+		"rowScalarValueSource":        true,
+		"canonicalAnyOfWitnesses":     true,
+		"canonicalEnumFaultWitnesses": true,
+		"walkDirectNodeValues":        true,
+		"walkGenericValue":            true,
+	}, roots)
+}
+
+// TestDirectCompositeValuesStopBeforeScanningTheRemainingEnum locks pull-based authored traversal.
+func TestDirectCompositeValuesStopBeforeScanningTheRemainingEnum(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []jsonKind{jsonArray, jsonObject} {
+		t.Run(jsonKindName(kind), func(t *testing.T) {
+			t.Parallel()
+
+			node := &schemaNode{schemaShape: &schemaShape{enum: make([]enumMember, 10_000)}}
+			node.enum[0].value = &jsonValue{kind: kind}
+			search := &search{maxSteps: 0}
+
+			_, err := search.walkDirectNodeValues(node, kind, func(*jsonValue) (bool, error) {
+				require.Fail(t, "candidate must not reach the visitor after the cutoff")
+
+				return false, nil
+			})
+			require.ErrorIs(t, err, errMaxSteps)
+		})
+	}
+}
+
+// TestGenericValuesAdvanceOneChargedCandidateAtATime locks pull-based canonical traversal.
+func TestGenericValuesAdvanceOneChargedCandidateAtATime(t *testing.T) {
+	t.Parallel()
+
+	search := &search{maxSteps: 2}
+	visits := 0
+	complete, err := search.walkGenericValue(nil, func(value *jsonValue) (bool, error) {
+		visits++
+
+		require.Equal(t, jsonNull, value.kind)
+
+		return true, nil
+	})
+
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, 1, visits)
+	require.Equal(t, uint64(2), search.steps)
 }
 
 // TestR4FaultRuntimeDoesNotConsumeClosurePrograms locks compile-only closure ownership.

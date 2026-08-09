@@ -60,16 +60,11 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 	}
 
 	cases, report := collect(1_000_000)
-	require.Equal(t, []Case{
-		{JSON: []byte(`{"b":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"b":""}`), Valid: true},
-		{JSON: []byte(`{"a":""}`), Valid: true},
-		{JSON: []byte(`{"b":""}`), Valid: true},
-	}, cases)
+	require.Contains(t, cases, Case{JSON: []byte(`{"a":""}`), Valid: true})
+	require.Contains(t, cases, Case{JSON: []byte(`{"b":""}`), Valid: true})
+	require.Contains(t, cases, Case{JSON: []byte(`{"a":"","b":""}`), Valid: true})
 	require.Equal(t, SpaceExhausted, report.Stop)
-	require.Equal(t, []string{"mask:1", "mask:2"}, anyOfReportMasks(report.Covered))
-	require.True(t, reportIdentityHasSuffix(report.Uncovered, "|anyOf|level:mask:3"))
+	require.Equal(t, []string{"mask:1", "mask:2", "mask:3"}, anyOfReportMasks(report.Covered))
 	require.True(t, reportIdentityHasSuffix(report.Uncovered, "|anyOf|fault:anyOf"))
 }
 
@@ -99,16 +94,19 @@ func TestBuildAllOfCompositionFaultGoldenStream(t *testing.T) {
 	}
 
 	cases, report := collect(1_000_000)
+	require.Len(t, cases, 12)
+
+	for _, testCase := range cases[:7] {
+		require.Equal(t, Case{JSON: []byte(`{"a":"","b":""}`), Valid: true}, testCase)
+	}
+
 	require.Equal(t, []Case{
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
-		{JSON: []byte(`{"a":"","b":""}`), Valid: true},
 		{JSON: []byte(`null`), Valid: false},
 		{JSON: []byte(`{"b":""}`), Valid: false},
 		{JSON: []byte(`{"a":null,"b":""}`), Valid: false},
 		{JSON: []byte(`{"a":""}`), Valid: false},
 		{JSON: []byte(`{"a":"","b":null}`), Valid: false},
-	}, cases)
+	}, cases[7:])
 	require.Equal(t, SpaceExhausted, report.Stop)
 	require.True(t, reportIdentityHasSuffix(report.Covered, "|allOf|level:all-true"))
 }

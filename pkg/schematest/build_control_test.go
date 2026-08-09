@@ -129,7 +129,7 @@ func TestBuildChargesNestedCompositionsBeforeAssignment(t *testing.T) {
 		Input{
 			OpenAPI:     []byte(documentWithJSONSchema(`{"allOf":[{"allOf":[{}]}]}`)),
 			OperationID: "selected",
-			MaxSteps:    3,
+			MaxSteps:    4,
 		},
 		func(testCase Case) error {
 			cases = append(cases, testCase)
@@ -140,7 +140,7 @@ func TestBuildChargesNestedCompositionsBeforeAssignment(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, MaxStepsReached, report.Stop)
-	require.Equal(t, uint64(3), report.Steps)
+	require.Equal(t, uint64(4), report.Steps)
 	require.Len(t, cases, 1)
 
 	const schemaPointer = "#/paths/~1/post/requestBody/content/application~1json/schema"

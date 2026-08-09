@@ -71,6 +71,30 @@ func TestMakePlanCompilesNestedAnyOfClosureDomainsWithoutInheritedKindRequiremen
 	require.Nil(t, second.next)
 }
 
+func TestMakePlanCompilesOptionalAnyOfClosureRequirements(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"string",
+		"anyOf":[{"pattern":"^a$"},{"pattern":"^b$"}]
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	plan, err := makePlan(model)
+	require.NoError(t, err)
+
+	typeFault := findFaultTarget(t, plan, "|type|fault:type")
+	require.NotNil(t, typeFault.alternatives)
+	preserved := typeFault.alternatives.alternatives
+	require.NotNil(t, preserved)
+	require.Empty(t, preserved.requirements)
+
+	closed := preserved.next
+	require.NotNil(t, closed)
+	requireCompositionRequirement(t, closed.requirements, "anyOf", 0, false)
+	requireCompositionRequirement(t, closed.requirements, "anyOf", 1, false)
+}
+
 func TestMakePlanKeepsSymbolicAggregateWithEmptyBranchDomain(t *testing.T) {
 	t.Parallel()
 

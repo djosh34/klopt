@@ -132,6 +132,23 @@ func TestBaselineReachesSingletonNestedCanonicalTargets(t *testing.T) {
 			levels: []string{"#/value|type|level:string", "#/value|enum|level:member:0"},
 		},
 		{
+			name:   "plain optional typed property",
+			schema: `{"type":"object","properties":{"value":{"type":"string"}}}`,
+			levels: []string{"#/value|type|level:string"},
+		},
+		{
+			name:   "plain optional typeless property",
+			schema: `{"type":"object","properties":{"value":{}}}`,
+			levels: []string{"#/value|type|level:boolean"},
+		},
+		{
+			name: "two compatible singleton properties",
+			schema: `{"type":"object","properties":{
+				"a":{"type":"string"},"b":{"type":"number"}
+			}}`,
+			levels: []string{"#/a|type|level:string", "#/b|type|level:number"},
+		},
+		{
 			name:   "singleton array item",
 			schema: `{"type":"array","items":{"type":"boolean"}}`,
 			levels: []string{"#/*|type|level:boolean"},
@@ -150,6 +167,77 @@ func TestBaselineReachesSingletonNestedCanonicalTargets(t *testing.T) {
 			for _, suffix := range test.levels {
 				require.Truef(t, reportIdentityHasSuffix(report.Covered, suffix), "%s: %#v", suffix, report)
 			}
+		})
+	}
+}
+
+// TestBaselineLeavesPropertyConflictingWithMaximumUncovered locks syntactic conflict handling.
+func TestBaselineLeavesPropertyConflictingWithMaximumUncovered(t *testing.T) {
+	t.Parallel()
+
+	report, err := Build(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"object","maxProperties":1,"required":["id"],
+			"properties":{"id":{"type":"string"},"value":{"type":"number"}}
+		}`)),
+		OperationID: "selected",
+		MaxSteps:    10_000,
+	}, func(Case) error { return nil })
+	require.NoError(t, err)
+	require.True(t, reportIdentityHasSuffix(report.Covered, "#/id|type|level:string"))
+	require.True(t, reportIdentityHasSuffix(report.Uncovered, "#/value|type|level:number"))
+}
+
+// TestBuildDirectsCanonicalAndReplacementAnyOfMasks locks executable selected vectors.
+func TestBuildDirectsCanonicalAndReplacementAnyOfMasks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		schema    string
+		covered   []string
+		uncovered []string
+	}{
+		{
+			name: "overlapping patterns",
+			schema: `{"type":"string","anyOf":[
+				{"pattern":"^a+$"},{"pattern":"^aa$"}
+			]}`,
+			covered:   []string{"mask:1", "mask:3"},
+			uncovered: []string{"mask:2"},
+		},
+		{
+			name:      "unconstrained and maximum",
+			schema:    `{"type":"number","anyOf":[{}, {"maximum":0}]}`,
+			covered:   []string{"mask:1", "mask:3"},
+			uncovered: []string{"mask:2"},
+		},
+		{
+			name:      "integer and number",
+			schema:    `{"anyOf":[{"type":"integer"},{"type":"number"}]}`,
+			covered:   []string{"mask:2", "mask:3"},
+			uncovered: []string{"mask:1"},
+		},
+		{
+			name: "disjoint enum branches",
+			schema: `{"type":"number","enum":[5,7],"anyOf":[
+				{"enum":[5]},{"enum":[7]}
+			]}`,
+			covered:   []string{"mask:1", "mask:2"},
+			uncovered: []string{"mask:3"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			report, err := Build(Input{
+				OpenAPI: []byte(documentWithJSONSchema(test.schema)), OperationID: "selected", MaxSteps: 10_000,
+			}, func(Case) error { return nil })
+			require.NoError(t, err)
+			require.Equal(t, test.covered, anyOfReportMasks(report.Covered))
+			require.Equal(t, test.uncovered, anyOfReportMasks(report.Uncovered))
 		})
 	}
 }

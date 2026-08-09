@@ -107,7 +107,7 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 		},
 	}
 	expectedCases := []Case{
-		{JSON: []byte(`[0]`), Valid: true},
+		{JSON: []byte(`[""]`), Valid: true},
 		{JSON: []byte(`[0]`), Valid: true},
 		{JSON: []byte(`[""]`), Valid: true},
 	}
@@ -274,6 +274,7 @@ func TestBuildStreamsObjectPresenceAndPropertyTargets(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|maxProperties|level:valid",
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#/id|required|level:present",
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/id|#/id|type|level:string",
+			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/optional|#/optional|type|level:number",
 		},
 		Uncovered: []string{
 			"#/paths/~1/post/requestBody/content/application~1json/schema|#|type|fault:type",
@@ -285,7 +286,7 @@ func TestBuildStreamsObjectPresenceAndPropertyTargets(t *testing.T) {
 			"#/paths/~1/post/requestBody/content/application~1json/schema/properties/optional|#/optional|type|fault:type",
 		},
 	}
-	expectedCases := []Case{{JSON: []byte(`{"id":""}`), Valid: true}}
+	expectedCases := []Case{{JSON: []byte(`{"id":"","optional":0}`), Valid: true}}
 
 	firstReport, firstCases, err := collect()
 	require.NoError(t, err)

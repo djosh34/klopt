@@ -174,57 +174,52 @@ func kindIsScalar(kind jsonKind) bool {
 	}
 }
 
-// walkDirectNodeValues tries enum and default values before structural repair.
+// walkDirectNodeValues tries authored enum or default values before structural repair.
 func (s *search) walkDirectNodeValues(node *schemaNode, kind jsonKind, visit rowVisit) (bool, error) {
-	candidates, err := rowDirectValues(node, kind)
+	var (
+		complete bool
+		visitErr error
+	)
+
+	err := directNodeValueSource(node, kind)(func(candidate *jsonValue) bool {
+		if visitErr = s.assign(); visitErr != nil {
+			return false
+		}
+
+		complete, visitErr = visit(candidate)
+
+		return visitErr == nil && !complete
+	})
 	if err != nil {
 		return false, err
 	}
 
-	for _, candidate := range candidates {
-		if err := s.assign(); err != nil {
-			return false, err
-		}
-
-		complete, visitErr := visit(candidate)
-		if visitErr != nil || complete {
-			return complete, visitErr
-		}
-	}
-
-	return false, nil
+	return complete, visitErr
 }
 
-// rowDirectValues returns authored enum or default values for composite kinds.
-func rowDirectValues(node *schemaNode, kind jsonKind) ([]*jsonValue, error) {
-	candidates := make([]*jsonValue, 0)
+// directNodeValueSource yields authored composite enum or default values in place.
+func directNodeValueSource(node *schemaNode, kind jsonKind) jsonValueSource {
+	return func(yield func(*jsonValue) bool) error {
+		if node.enum != nil {
+			for _, member := range node.enum {
+				if member.value == nil {
+					return errors.New("schematest: nil enum row value")
+				}
 
-	if node.enum != nil {
-		for _, member := range node.enum {
-			if member.value == nil {
-				return nil, errors.New("schematest: nil enum row value")
+				if member.value.kind == kind && !yield(member.value) {
+					return nil
+				}
 			}
 
-			if member.value.kind != kind {
-				continue
-			}
-
-			candidates = append(candidates, member.value)
+			return nil
 		}
 
-		return candidates, nil
-	}
-
-	if node.defaultValue != nil && node.defaultValue.kind == kind {
-		var err error
-
-		candidates, err = appendUniqueJSONWitness(candidates, node.defaultValue)
-		if err != nil {
-			return nil, err
+		if node.defaultValue != nil && node.defaultValue.kind == kind {
+			yield(node.defaultValue)
 		}
-	}
 
-	return candidates, nil
+		return nil
+	}
 }
 
 // rowChildValueUsable prunes locally invalid children unless a constrained anyOf branch must be false.
