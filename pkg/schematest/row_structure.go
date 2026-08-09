@@ -131,7 +131,7 @@ func newRowArrayLengthDomain(view rowProjectionView, requirements []requirement)
 	}
 
 	for _, source := range view.sources {
-		item, exists := rowChildSchemaSource(source.node, source.occurrence, rowChildItems, "")
+		item, exists := rowItemSchemaSource(source.node, source.occurrence)
 		if !exists {
 			continue
 		}
@@ -552,10 +552,10 @@ func rowProjectedArrayItems(view rowProjectionView, requirements []requirement) 
 
 	view.eachSource(func(source rowSchemaSource) bool {
 		if conjunction.fallback.usePointer == "" {
-			conjunction.fallback = rowChildOccurrence(source.node, source.occurrence, rowChildItems, "")
+			conjunction.fallback = rowItemOccurrence(source.node, source.occurrence)
 		}
 
-		if item, exists := rowChildSchemaSource(source.node, source.occurrence, rowChildItems, ""); exists {
+		if item, exists := rowItemSchemaSource(source.node, source.occurrence); exists {
 			conjunction.sources = append(conjunction.sources, item)
 		}
 
@@ -833,7 +833,7 @@ func newRowProjectedObject(
 		var sources []rowSchemaSource
 
 		for _, owner := range owners {
-			if property, exists := rowChildSchemaSource(owner.node, owner.occurrence, rowChildProperty, name); exists {
+			if property, exists := rowPropertySchemaSource(owner.node, owner.occurrence, name); exists {
 				sources = append(sources, property)
 
 				continue
@@ -1097,7 +1097,7 @@ func projectedAdditionalMemberName(declared map[string]bool, values map[string]*
 		}
 	}
 
-	for suffix := 0; ; suffix++ {
+	for suffix := 1; ; suffix++ {
 		candidate := fmt.Sprintf("%s_%d", base, suffix)
 		if declared[candidate] {
 			continue
@@ -1204,9 +1204,7 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, requirement
 		var sources []rowSchemaSource
 
 		view.eachSource(func(owner rowSchemaSource) bool {
-			if property, exists := rowChildSchemaSource(
-				owner.node, owner.occurrence, rowChildProperty, name,
-			); exists {
+			if property, exists := rowPropertySchemaSource(owner.node, owner.occurrence, name); exists {
 				sources = append(sources, property)
 			} else if owner.node.additionalProperties != nil {
 				sources = append(sources, rowSchemaSource{

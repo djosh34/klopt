@@ -16,22 +16,6 @@ func typeFaultCanUseKind(node *schemaNode, kind jsonKind) bool {
 	return !nodeAcceptsKindForTarget(node, kind)
 }
 
-// additionalPropertyWitnessName chooses a stable member absent from authored properties.
-func additionalPropertyWitnessName(node *schemaNode) string {
-	const base = "__schematest_extra__"
-
-	if _, exists := node.properties[base]; !exists {
-		return base
-	}
-
-	for index := 1; ; index++ {
-		candidate := fmt.Sprintf("%s_%d", base, index)
-		if _, exists := node.properties[candidate]; !exists {
-			return candidate
-		}
-	}
-}
-
 // schemaNodeWithoutLocalRule disables one local rule without changing children.
 //
 //nolint:cyclop // Every supported local rule has one explicit clone operation.
@@ -68,6 +52,9 @@ func schemaNodeWithoutLocalRule(node *schemaNode, rule string) *schemaNode {
 		shape.minProperties = nil
 	case oracleRuleMaxProperties:
 		shape.maxProperties = nil
+	case oracleRuleAdditionalProperties:
+		shape.allowAdditionalProperties = true
+		shape.additionalProperties = nil
 	}
 
 	return &schemaNode{schemaShape: &shape, occurrence: node.occurrence}

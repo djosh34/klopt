@@ -8,85 +8,57 @@ type rowSchemaSource struct {
 	occurrence schemaOccurrence
 }
 
-// rowChildKind identifies the structural child selected from a schema node.
-type rowChildKind uint8
+// rowItemSchemaSource returns one direct item schema with its rebased occurrence.
+func rowItemSchemaSource(node *schemaNode, occurrence schemaOccurrence) (rowSchemaSource, bool) {
+	if node == nil || node.schemaShape == nil || node.items == nil {
+		return rowSchemaSource{}, false
+	}
 
-const (
-	// rowChildItems selects an array item schema.
-	rowChildItems rowChildKind = iota
-	// rowChildProperty selects an object property schema.
-	rowChildProperty
-)
+	childOccurrence := rebasePlanOccurrence(
+		node.items,
+		occurrence,
+		occurrence.usePointer+"/items",
+		appendInstanceToken(occurrence.instanceTemplate, "*"),
+	)
 
-// rowChildSchemaSource returns one direct child schema with its rebased occurrence.
-func rowChildSchemaSource(
+	return rowSchemaSource{node: node.items, occurrence: childOccurrence}, true
+}
+
+// rowPropertySchemaSource returns one direct property schema with its rebased occurrence.
+func rowPropertySchemaSource(
 	node *schemaNode,
 	occurrence schemaOccurrence,
-	kind rowChildKind,
 	name string,
 ) (rowSchemaSource, bool) {
 	if node == nil || node.schemaShape == nil {
 		return rowSchemaSource{}, false
 	}
 
-	switch kind {
-	case rowChildItems:
-		if node.items == nil {
-			return rowSchemaSource{}, false
-		}
-
-		childOccurrence := rebasePlanOccurrence(
-			node.items,
-			occurrence,
-			occurrence.usePointer+"/items",
-			appendInstanceToken(occurrence.instanceTemplate, "*"),
-		)
-
-		return rowSchemaSource{node: node.items, occurrence: childOccurrence}, true
-	case rowChildProperty:
-		property, exists := node.properties[name]
-		if !exists || property == nil {
-			return rowSchemaSource{}, false
-		}
-
-		childOccurrence := rebasePlanOccurrence(
-			property,
-			occurrence,
-			occurrence.usePointer+"/properties/"+escapePointerToken(name),
-			appendInstanceToken(occurrence.instanceTemplate, name),
-		)
-
-		return rowSchemaSource{node: property, occurrence: childOccurrence}, true
-	default:
+	property, exists := node.properties[name]
+	if !exists || property == nil {
 		return rowSchemaSource{}, false
 	}
+
+	childOccurrence := rebasePlanOccurrence(
+		property,
+		occurrence,
+		occurrence.usePointer+"/properties/"+escapePointerToken(name),
+		appendInstanceToken(occurrence.instanceTemplate, name),
+	)
+
+	return rowSchemaSource{node: property, occurrence: childOccurrence}, true
 }
 
-// rowChildOccurrence supplies the direct structural child path used by generic values.
-func rowChildOccurrence(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	kind rowChildKind,
-	name string,
-) schemaOccurrence {
-	if node != nil && node.schemaShape != nil {
-		if source, exists := rowChildSchemaSource(node, occurrence, kind, name); exists {
-			return source.occurrence
-		}
-	}
-
-	if kind == rowChildItems {
-		return schemaOccurrence{
-			usePointer:       occurrence.usePointer + "/items",
-			targetPointer:    occurrence.targetPointer,
-			instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
-		}
+// rowItemOccurrence supplies the item path used by generic values.
+func rowItemOccurrence(node *schemaNode, occurrence schemaOccurrence) schemaOccurrence {
+	if source, exists := rowItemSchemaSource(node, occurrence); exists {
+		return source.occurrence
 	}
 
 	return schemaOccurrence{
-		usePointer:       occurrence.usePointer + "/properties/" + escapePointerToken(name),
+		usePointer:       occurrence.usePointer + "/items",
 		targetPointer:    occurrence.targetPointer,
-		instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, name),
+		instanceTemplate: appendInstanceToken(occurrence.instanceTemplate, "*"),
 	}
 }
 

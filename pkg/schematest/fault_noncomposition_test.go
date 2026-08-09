@@ -100,6 +100,48 @@ func TestMaxPropertiesFaultBuildsAValidTypedAdditionalMember(t *testing.T) {
 	require.Equal(t, `{"__schematest_extra__":false}`, string(marshalFaultTestValue(t, derivative)))
 }
 
+func TestObjectFaultRejectsAnImpossibleRootKindBeforeCharging(t *testing.T) {
+	t.Parallel()
+
+	model, _ := compositionFaultModel(t, `{"maxProperties":0,"allOf":[{"type":"string"}]}`)
+	identity := makeRuleIdentity(model.root.occurrence, oracleRuleMaxProperties)
+	fault := faultProgram{
+		obligation: makeFaultObligation(identity, oracleRuleMaxProperties),
+		expected:   failureSet{failureIdentity(identity)},
+	}
+	searchState := &search{model: model, maxSteps: 10}
+
+	derivative, found, err := findNonCompositionDerivative(
+		&jsonValue{kind: jsonString}, fault, searchState,
+	)
+	require.NoError(t, err)
+	require.False(t, found)
+	require.Nil(t, derivative)
+	require.Zero(t, searchState.steps)
+}
+
+func TestMaxPropertiesFaultAdvancesPastAParentKeyCollision(t *testing.T) {
+	t.Parallel()
+
+	requireFaultDerivative(
+		t,
+		`{"type":"object","maxProperties":1,"default":{"__schematest_extra__":false}}`,
+		"|maxProperties|fault:maxProperties",
+		`{"__schematest_extra__":false,"__schematest_extra___1":null}`,
+	)
+}
+
+func TestObjectCountFaultMutatesOnlyOneConcreteOccurrence(t *testing.T) {
+	t.Parallel()
+
+	requireFaultDerivative(
+		t,
+		`{"type":"array","minItems":2,"maxItems":2,"items":{"type":"object","maxProperties":0}}`,
+		"/items|#/*|maxProperties|fault:maxProperties",
+		`[{"__schematest_extra__":null},{}]`,
+	)
+}
+
 func TestArrayCountFaultsPreserveWholeArrayEnums(t *testing.T) {
 	t.Parallel()
 
@@ -301,6 +343,50 @@ func TestBuildTypeFaultUsesActiveSiblingEnumWitness(t *testing.T) {
 				"#/paths/~1/post/requestBody/content/application~1json/schema/allOf/0|#|type|fault:type")
 		})
 	}
+}
+
+func TestAdditionalPropertyFaultSkipsNamesDeclaredByTheTargetOccurrence(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"additionalProperties":{"type":"boolean"},
+		"allOf":[{
+			"properties":{"__schematest_extra__":{"type":"string"}},
+			"additionalProperties":false
+		}]
+	}`)
+	fault := findFaultTarget(t, plan,
+		"/allOf/0|#/*|additionalProperties|fault:additionalProperties")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `{"__schematest_extra___1":false}`, string(marshalFaultTestValue(t, derivative)))
+}
+
+func TestAdditionalPropertyFaultUsesOuterDeclarationOnlyAsAValueWitness(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"properties":{"outer":{"enum":["needed"]}},
+		"additionalProperties":false,
+		"allOf":[{"additionalProperties":false}]
+	}`)
+	fault := findFaultTarget(t, plan,
+		"/allOf/0|#/*|additionalProperties|fault:additionalProperties")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `{"outer":"needed"}`, string(marshalFaultTestValue(t, derivative)))
 }
 
 func TestAdditionalPropertyFaultUsesActiveSiblingValueSchema(t *testing.T) {
