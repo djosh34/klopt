@@ -1,0 +1,354 @@
+package schematest
+
+import (
+	"errors"
+	"iter"
+	"math/big"
+)
+
+// rowProjectionView is one ephemeral same-instance conjunction. Sources stay in
+// authored traversal order and include local siblings, allOf branches, and only
+// the true branches of each anyOf mask.
+type rowProjectionView struct {
+	sources []rowSchemaSource
+}
+
+// eachSource visits the active schemas without exposing retained projection state.
+func (view rowProjectionView) eachSource(yield func(rowSchemaSource) bool) {
+	for _, source := range view.sources {
+		if !yield(source) {
+			return
+		}
+	}
+}
+
+// appendBranchRequirements projects every active anyOf mask back into declarative constraints.
+func (view rowProjectionView) appendBranchRequirements(
+	requirements []requirement,
+	assign func() error,
+) ([]requirement, error) {
+	for _, source := range view.sources {
+		for branch, child := range source.node.anyOf {
+			childOccurrence := rebasePlanOccurrence(
+				child,
+				source.occurrence,
+				source.occurrence.usePointer+"/anyOf/"+itoa(branch),
+				source.occurrence.instanceTemplate,
+			)
+			truth := view.hasSourceOccurrence(childOccurrence)
+
+			pinnedTruth, pinned, err := rowProjectionBranchPin(requirements, source.occurrence, branch)
+			if err != nil {
+				return nil, err
+			}
+
+			if pinned && pinnedTruth != truth {
+				return nil, errors.New("schematest: projection violates composition branch requirement")
+			}
+
+			if !pinned {
+				if err := assign(); err != nil {
+					return nil, err
+				}
+
+				requirements = append(requirements, requirement{
+					tag:         requirementBranchTruth,
+					occurrence:  childOccurrence,
+					composition: "anyOf",
+					branch:      branch,
+					truth:       truth,
+					hasBranch:   true,
+				})
+			}
+		}
+	}
+
+	return requirements, nil
+}
+
+// hasSourceOccurrence reports whether one exact composed source is active.
+func (view rowProjectionView) hasSourceOccurrence(wanted schemaOccurrence) bool {
+	for _, source := range view.sources {
+		if ruleOccurrenceMatches(source.occurrence, wanted) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// eachDirectValue exposes complete authored enum/default witnesses from active sources.
+func (view rowProjectionView) eachDirectValue(yield func(rowSchemaSource, *jsonValue) bool) error {
+	for _, source := range view.sources {
+		if source.node == nil || source.node.schemaShape == nil {
+			return errors.New("schematest: projection source has no shape")
+		}
+
+		if source.node.enum != nil {
+			for _, member := range source.node.enum {
+				if member.value == nil {
+					return errors.New("schematest: nil projected enum value")
+				}
+
+				if !yield(source, member.value) {
+					return nil
+				}
+			}
+
+			continue
+		}
+
+		if source.node.defaultValue != nil && !yield(source, source.node.defaultValue) {
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// rowProjectionCursor pulls one projection at a time and retains no yielded corpus.
+type rowProjectionCursor struct {
+	next func() (rowProjectionView, error, bool)
+	stop func()
+}
+
+// newRowProjectionCursor starts the one shared composition traversal.
+func newRowProjectionCursor(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+) *rowProjectionCursor {
+	sequence := func(yield func(rowProjectionView, error) bool) {
+		walk := rowProjectionWalk{requirements: requirements}
+		if _, err := walk.node(node, occurrence, nil, func(sources []rowSchemaSource) bool {
+			return yield(rowProjectionView{sources: sources}, nil)
+		}); err != nil {
+			yield(rowProjectionView{}, err)
+		}
+	}
+
+	next, stop := iter.Pull2(iter.Seq2[rowProjectionView, error](sequence))
+
+	return &rowProjectionCursor{next: next, stop: stop}
+}
+
+// Next returns a view valid until the next Next or Close call.
+func (cursor *rowProjectionCursor) Next() (rowProjectionView, bool, error) {
+	if cursor == nil || cursor.next == nil {
+		return rowProjectionView{}, false, errors.New("schematest: projection cursor is not initialized")
+	}
+
+	view, err, ok := cursor.next()
+	if err != nil {
+		cursor.stop()
+
+		return rowProjectionView{}, false, err
+	}
+
+	return view, ok, nil
+}
+
+// Close releases a projection traversal stopped before exhaustion.
+func (cursor *rowProjectionCursor) Close() {
+	if cursor != nil && cursor.stop != nil {
+		cursor.stop()
+	}
+}
+
+// rowProjectionWalk is the suspended depth-first traversal behind one cursor.
+type rowProjectionWalk struct {
+	requirements []requirement
+}
+
+// rowProjectionContinuation consumes one transient active-source prefix.
+type rowProjectionContinuation func([]rowSchemaSource) bool
+
+// node adds local rules, then composes allOf children and one complete anyOf mask.
+func (walk rowProjectionWalk) node(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	sources []rowSchemaSource,
+	continueWith rowProjectionContinuation,
+) (bool, error) {
+	if node == nil || node.schemaShape == nil {
+		return false, errors.New("schematest: projected row schema has no shape")
+	}
+
+	sources = append(sources, rowSchemaSource{node: node, occurrence: occurrence})
+
+	var continuationErr error
+
+	continued, err := walk.allOf(node, occurrence, sources, 0, func(active []rowSchemaSource) bool {
+		var keepGoing bool
+
+		keepGoing, continuationErr = walk.anyOf(node, occurrence, active, continueWith)
+
+		return keepGoing && continuationErr == nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return continued, continuationErr
+}
+
+// allOf keeps every branch active and lazily multiplies only requested nested views.
+func (walk rowProjectionWalk) allOf(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	sources []rowSchemaSource,
+	index int,
+	continueWith rowProjectionContinuation,
+) (bool, error) {
+	if index == len(node.allOf) {
+		return continueWith(sources), nil
+	}
+
+	child := node.allOf[index]
+	childOccurrence := rebasePlanOccurrence(
+		child,
+		occurrence,
+		occurrence.usePointer+"/allOf/"+itoa(index),
+		occurrence.instanceTemplate,
+	)
+
+	var continuationErr error
+
+	continued, err := walk.node(child, childOccurrence, sources, func(active []rowSchemaSource) bool {
+		var keepGoing bool
+
+		keepGoing, continuationErr = walk.allOf(node, occurrence, active, index+1, continueWith)
+
+		return keepGoing && continuationErr == nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return continued, continuationErr
+}
+
+// anyOf advances arbitrary-precision nonzero masks in numeric order.
+func (walk rowProjectionWalk) anyOf(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	sources []rowSchemaSource,
+	continueWith rowProjectionContinuation,
+) (bool, error) {
+	if len(node.anyOf) == 0 {
+		return continueWith(sources), nil
+	}
+
+	limit := new(big.Int).Lsh(big.NewInt(1), uint(len(node.anyOf)))
+	for mask := big.NewInt(1); mask.Cmp(limit) < 0; mask.Add(mask, big.NewInt(1)) {
+		matches, err := walk.maskMatchesPins(node, occurrence, mask)
+		if err != nil {
+			return false, err
+		}
+
+		if !matches {
+			continue
+		}
+
+		continued, err := walk.anyOfBranches(node, occurrence, sources, mask, 0, continueWith)
+		if err != nil || !continued {
+			return continued, err
+		}
+	}
+
+	return true, nil
+}
+
+// anyOfBranches conjunctively traverses each true branch of one current mask.
+func (walk rowProjectionWalk) anyOfBranches(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	sources []rowSchemaSource,
+	mask *big.Int,
+	index int,
+	continueWith rowProjectionContinuation,
+) (bool, error) {
+	if index == len(node.anyOf) {
+		return continueWith(sources), nil
+	}
+
+	if mask.Bit(index) == 0 {
+		return walk.anyOfBranches(node, occurrence, sources, mask, index+1, continueWith)
+	}
+
+	child := node.anyOf[index]
+	childOccurrence := rebasePlanOccurrence(
+		child,
+		occurrence,
+		occurrence.usePointer+"/anyOf/"+itoa(index),
+		occurrence.instanceTemplate,
+	)
+
+	var continuationErr error
+
+	continued, err := walk.node(child, childOccurrence, sources, func(active []rowSchemaSource) bool {
+		var keepGoing bool
+
+		keepGoing, continuationErr = walk.anyOfBranches(
+			node, occurrence, active, mask, index+1, continueWith,
+		)
+
+		return keepGoing && continuationErr == nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return continued, continuationErr
+}
+
+// maskMatchesPins applies only exact branch-truth requirements for this occurrence.
+func (walk rowProjectionWalk) maskMatchesPins(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	mask *big.Int,
+) (bool, error) {
+	for index := range node.anyOf {
+		truth, pinned, err := rowProjectionBranchPin(walk.requirements, occurrence, index)
+		if err != nil {
+			return false, err
+		}
+
+		if pinned && truth != (mask.Bit(index) == 1) {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// rowProjectionBranchPin returns one explicit bit constraint without defaulting absent bits.
+func rowProjectionBranchPin(
+	requirements []requirement,
+	occurrence schemaOccurrence,
+	branch int,
+) (bool, bool, error) {
+	branchUsePointer := occurrence.usePointer + "/anyOf/" + itoa(branch)
+
+	var (
+		truth  bool
+		pinned bool
+	)
+
+	for _, requirement := range requirements {
+		if !requirement.hasBranch || requirement.composition != "anyOf" || requirement.branch != branch ||
+			requirement.occurrence.usePointer != branchUsePointer ||
+			!instanceTemplateMatches(requirement.occurrence.instanceTemplate, occurrence.instanceTemplate) {
+			continue
+		}
+
+		if pinned && truth != requirement.truth {
+			return false, false, errors.New("schematest: conflicting composition branch requirements")
+		}
+
+		truth = requirement.truth
+		pinned = true
+	}
+
+	return truth, pinned, nil
+}

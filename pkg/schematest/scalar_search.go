@@ -5,99 +5,47 @@ import (
 	"encoding/binary"
 )
 
-// walkActiveScalarRequirementAlternatives requirements one complete scalar composition view.
+// walkActiveScalarRequirementAlternatives consumes the shared lazy same-instance projection.
 func (s *search) walkActiveScalarRequirementAlternatives(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	requirements []requirement,
 	visit func([]requirement) (bool, error),
 ) (bool, error) {
-	anyOfNode, anyOfOccurrence, found := firstUnconstrainedScalarAnyOf(node, occurrence, requirements)
-	if !found {
-		return visit(requirements)
-	}
+	cursor := newRowProjectionCursor(node, occurrence, requirements)
+	defer cursor.Close()
 
-	for selected := range anyOfNode.anyOf {
-		pathLength := len(requirements)
+	visited := false
 
-		for branch, child := range anyOfNode.anyOf {
-			if err := s.assign(); err != nil {
-				return false, err
-			}
-
-			branchOccurrence := rebasePlanOccurrence(
-				child,
-				anyOfOccurrence,
-				anyOfOccurrence.usePointer+"/anyOf/"+itoa(branch),
-				anyOfOccurrence.instanceTemplate,
-			)
-			requirements = append(requirements, requirement{
-				tag:         requirementBranchTruth,
-				occurrence:  branchOccurrence,
-				composition: "anyOf",
-				branch:      branch,
-				truth:       branch == selected,
-				hasBranch:   true,
-			})
+	for {
+		view, ok, err := cursor.Next()
+		if err != nil {
+			return false, err
 		}
 
-		complete, err := s.walkActiveScalarRequirementAlternatives(node, occurrence, requirements, visit)
-		requirements = requirements[:pathLength]
+		if !ok {
+			if !visited {
+				return visit(requirements)
+			}
 
+			return false, nil
+		}
+
+		visited = true
+
+		activeRequirements, err := view.appendBranchRequirements(
+			append([]requirement(nil), requirements...),
+			s.assign,
+		)
+		if err != nil {
+			return false, err
+		}
+
+		complete, err := visit(activeRequirements)
 		if err != nil || complete {
 			return complete, err
 		}
 	}
-
-	return false, nil
-}
-
-// firstUnconstrainedScalarAnyOf finds the next composition choice in canonical order.
-func firstUnconstrainedScalarAnyOf(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	requirements []requirement,
-) (*schemaNode, schemaOccurrence, bool) {
-	if len(node.anyOf) > 0 {
-		states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
-		if !constrained {
-			return node, occurrence, true
-		}
-
-		for index, child := range node.anyOf {
-			if !states[index] {
-				continue
-			}
-
-			childOccurrence := rebasePlanOccurrence(
-				child,
-				occurrence,
-				occurrence.usePointer+"/anyOf/"+itoa(index),
-				occurrence.instanceTemplate,
-			)
-			if foundNode, foundOccurrence, found := firstUnconstrainedScalarAnyOf(
-				child, childOccurrence, requirements,
-			); found {
-				return foundNode, foundOccurrence, true
-			}
-		}
-	}
-
-	for index, child := range node.allOf {
-		childOccurrence := rebasePlanOccurrence(
-			child,
-			occurrence,
-			occurrence.usePointer+"/allOf/"+itoa(index),
-			occurrence.instanceTemplate,
-		)
-		if foundNode, foundOccurrence, found := firstUnconstrainedScalarAnyOf(
-			child, childOccurrence, requirements,
-		); found {
-			return foundNode, foundOccurrence, true
-		}
-	}
-
-	return nil, schemaOccurrence{}, false
 }
 
 // searchSeed derives the private deterministic scalar-search seed.
