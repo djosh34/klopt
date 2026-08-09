@@ -153,8 +153,8 @@ func TestBuildMergesNestedAnyOfArrayItemSchemas(t *testing.T) {
 	require.Contains(t, report.Covered, schemaPointer+"/allOf/0/anyOf/1/items|#/*|enum|level:member:0")
 }
 
-// TestBuildCarriesComposedArrayDefaultsIntoMasks verifies complete authored structural defaults.
-func TestBuildCarriesComposedArrayDefaultsIntoMasks(t *testing.T) {
+// TestWalkProjectedDirectArraysCarriesComposedDefaultsIntoMasks verifies complete authored defaults.
+func TestWalkProjectedDirectArraysCarriesComposedDefaultsIntoMasks(t *testing.T) {
 	t.Parallel()
 
 	document := []byte(documentWithJSONSchema(`{
@@ -169,17 +169,21 @@ func TestBuildCarriesComposedArrayDefaultsIntoMasks(t *testing.T) {
 	plan, err := makePlan(model)
 	require.NoError(t, err)
 
-	var target validIntent
+	var (
+		target      validIntent
+		targetFound bool
+	)
 
 	for _, candidate := range plan.validCatalog {
 		if strings.HasSuffix(candidate.obligation.String(), "|anyOf|level:mask:1") {
 			target = candidate
+			targetFound = true
 
 			break
 		}
 	}
 
-	require.NotEmpty(t, target.obligation.String())
+	require.True(t, targetFound)
 
 	request := makeValidRequest([]validIntent{target}, 0, plan.stringObjectives)
 	searchState := &search{model: model, maxSteps: 100}

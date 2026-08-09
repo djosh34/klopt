@@ -62,8 +62,9 @@ func newRowArrayLengthCursor(
 		}
 
 		if item, exists := rowChildSchemaSource(source.node, source.occurrence, rowChildItems, ""); exists {
-			presence, constrained := rowPresenceRequirementDetails(requirements, item.occurrence)
-			if constrained && !presence.canonical && presence.presence == requirementPresent && cursor.minimum < 1 {
+			presenceRequirement, found := rowPresenceRequirementDetails(requirements, item.occurrence)
+			if found && !presenceRequirement.canonical &&
+				presenceRequirement.presence == requirementPresent && cursor.minimum < 1 {
 				cursor.minimum = 1
 			}
 		}
@@ -904,10 +905,12 @@ func (s *search) walkProjectedObjectMembers(
 		nextRequired--
 	}
 
-	constrained, constrainedPresence := rowPresenceRequirementDetails(requirements, member.occurrence)
+	presenceRequirement, presenceRequirementFound := rowPresenceRequirementDetails(
+		requirements, member.occurrence,
+	)
 
 	choices := projectedMemberPresenceChoices(
-		shape, member, constrained, constrainedPresence, present, nextRequired,
+		shape, member, presenceRequirement, presenceRequirementFound, present, nextRequired,
 	)
 	for _, choice := range choices {
 		if err := s.assign(); err != nil {

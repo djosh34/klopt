@@ -111,6 +111,40 @@ func TestRowProjectionCursorIsArbitraryPrecisionAndLazy(t *testing.T) {
 	require.Equal(t, []string{"#/schema/anyOf/1"}, projectionBranchPointers(second))
 }
 
+// TestRowProjectionCursorBuildsOnlyPinnedMasks proves excluded numeric masks are never scanned.
+func TestRowProjectionCursorBuildsOnlyPinnedMasks(t *testing.T) {
+	t.Parallel()
+
+	branches := make([]*schemaNode, 129)
+	for index := range branches {
+		branches[index] = &schemaNode{schemaShape: &schemaShape{}}
+	}
+
+	root := &schemaNode{
+		schemaShape: &schemaShape{anyOf: branches},
+		occurrence:  schemaOccurrence{usePointer: "#/schema", targetPointer: "#/schema", instanceTemplate: "#"},
+	}
+
+	requirements := make([]requirement, 0, 128)
+	for index := range 128 {
+		requirements = append(requirements, branchRequirement(root, index, false))
+	}
+
+	requirements = append(requirements, branchRequirement(root, 128, true))
+
+	cursor := newRowProjectionCursor(root, root.occurrence, requirements)
+	defer cursor.Close()
+
+	view, ok, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []string{"#/schema/anyOf/128"}, projectionBranchPointers(view))
+
+	_, ok, err = cursor.Next()
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
 // TestScalarSearchConsumesEveryProjectionMask proves the migration seam is live.
 func TestScalarSearchConsumesEveryProjectionMask(t *testing.T) {
 	t.Parallel()

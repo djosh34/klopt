@@ -228,7 +228,9 @@ func (walk rowProjectionWalk) allOf(
 	return continued, continuationErr
 }
 
-// anyOf advances arbitrary-precision nonzero masks in numeric order.
+// anyOf advances a compressed arbitrary-precision counter over only unpinned bits.
+//
+//nolint:cyclop // Fixed pins and compressed bit placement form one mask operation.
 func (walk rowProjectionWalk) anyOf(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -239,14 +241,30 @@ func (walk rowProjectionWalk) anyOf(
 		return continueWith(sources), nil
 	}
 
-	limit := new(big.Int).Lsh(big.NewInt(1), uint(len(node.anyOf)))
-	for mask := big.NewInt(1); mask.Cmp(limit) < 0; mask.Add(mask, big.NewInt(1)) {
-		matches, err := walk.maskMatchesPins(node, occurrence, mask)
+	fixed := new(big.Int)
+
+	unpinned := make([]int, 0, len(node.anyOf))
+	for index := range node.anyOf {
+		truth, pinned, err := rowProjectionBranchPin(walk.requirements, occurrence, index)
 		if err != nil {
 			return false, err
 		}
 
-		if !matches {
+		if !pinned {
+			unpinned = append(unpinned, index)
+		} else if truth {
+			fixed.SetBit(fixed, index, 1)
+		}
+	}
+
+	limit := new(big.Int).Lsh(big.NewInt(1), uint(len(unpinned)))
+	for compressed := new(big.Int); compressed.Cmp(limit) < 0; compressed.Add(compressed, big.NewInt(1)) {
+		mask := new(big.Int).Set(fixed)
+		for compressedBit, branch := range unpinned {
+			mask.SetBit(mask, branch, compressed.Bit(compressedBit))
+		}
+
+		if mask.Sign() == 0 {
 			continue
 		}
 
@@ -300,26 +318,6 @@ func (walk rowProjectionWalk) anyOfBranches(
 	}
 
 	return continued, continuationErr
-}
-
-// maskMatchesPins applies only exact branch-truth requirements for this occurrence.
-func (walk rowProjectionWalk) maskMatchesPins(
-	node *schemaNode,
-	occurrence schemaOccurrence,
-	mask *big.Int,
-) (bool, error) {
-	for index := range node.anyOf {
-		truth, pinned, err := rowProjectionBranchPin(walk.requirements, occurrence, index)
-		if err != nil {
-			return false, err
-		}
-
-		if pinned && truth != (mask.Bit(index) == 1) {
-			return false, nil
-		}
-	}
-
-	return true, nil
 }
 
 // rowProjectionBranchPin returns one explicit bit constraint without defaulting absent bits.
