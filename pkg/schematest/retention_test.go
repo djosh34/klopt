@@ -77,7 +77,7 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	require.Equal(t, 2, short.cases, diagnostic, short, long)
 	require.Equal(t, 20, long.cases, diagnostic, short, long)
 	require.Equal(t, uint64(100), short.steps, diagnostic, short, long)
-	require.Equal(t, uint64(2_467), long.steps, diagnostic, short, long)
+	require.Equal(t, uint64(4_122), long.steps, diagnostic, short, long)
 	require.Equal(t, MaxStepsReached, short.stop, diagnostic, short, long)
 	require.Equal(t, SpaceExhausted, long.stop, diagnostic, short, long)
 	require.NotZero(t, short.preRunHeap, diagnostic, short, long)

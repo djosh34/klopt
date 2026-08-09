@@ -442,6 +442,10 @@ func (s *search) walkArrayElements(
 	}
 
 	walkValue := func(value *jsonValue) (bool, error) {
+		if err := s.assign(); err != nil {
+			return false, err
+		}
+
 		owned, err := cloneJSONValue(value)
 		if err != nil {
 			return false, err
@@ -454,6 +458,10 @@ func (s *search) walkArrayElements(
 		elements = elements[:len(elements)-1]
 
 		return complete, err
+	}
+
+	if err := s.assign(); err != nil {
+		return false, err
 	}
 
 	if item == nil {
@@ -914,6 +922,10 @@ func (s *search) walkProjectedObjectMembers(
 
 	member := shape.members[index]
 
+	if err := s.assign(); err != nil {
+		return false, err
+	}
+
 	nextRequired := remainingRequired
 	if member.required {
 		nextRequired--
@@ -949,6 +961,10 @@ func (s *search) walkProjectedObjectMembers(
 		}
 
 		walkValue := func(value *jsonValue) (bool, error) {
+			if err := s.assign(); err != nil {
+				return false, err
+			}
+
 			values[member.name] = value
 
 			complete, err := s.walkProjectedObjectMembers(
@@ -1068,7 +1084,15 @@ func (s *search) walkProjectedObjectExtras(
 		return false, err
 	}
 
+	if err := s.assign(); err != nil {
+		return false, err
+	}
+
 	walkValue := func(value *jsonValue) (bool, error) {
+		if err := s.assign(); err != nil {
+			return false, err
+		}
+
 		values[name] = value
 
 		complete, err := s.walkProjectedObjectExtras(
