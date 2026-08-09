@@ -35,39 +35,45 @@ type rowArrayCount struct {
 	beyond bool
 }
 
-// rowArrayLengthCursor lazily enumerates authored lengths, objectives, bounds, and numeric counts.
-type rowArrayLengthCursor struct {
+// rowArrayLengthDomain is the directly addressable authored and numeric length domain.
+type rowArrayLengthDomain struct {
 	view       rowProjectionView
 	exact      rowArrayCount
 	minimum    rowArrayCount
 	maximum    rowArrayCount
-	directRank uint64
-	remaining  uint64
-	phase      uint8
 	hasExact   bool
 	hasMaximum bool
-	finiteEnd  bool
 	infeasible bool
 }
 
-// newRowArrayLengthCursor intersects active counts without narrowing authored values.
+// rowArrayLengthCursor lazily enumerates authored lengths, objectives, bounds, and numeric counts.
+type rowArrayLengthCursor struct {
+	rowArrayLengthDomain
+
+	directRank uint64
+	remaining  uint64
+	phase      uint8
+	finiteEnd  bool
+}
+
+// newRowArrayLengthDomain intersects active counts without narrowing authored values.
 //
-//nolint:cyclop,gocognit,gocyclo // Count intersection and directed objectives form one cursor.
-func newRowArrayLengthCursor(view rowProjectionView, requirements []requirement) (*rowArrayLengthCursor, error) {
-	cursor := &rowArrayLengthCursor{view: view}
+//nolint:cyclop,gocognit,gocyclo // Count intersection and directed objectives form one domain.
+func newRowArrayLengthDomain(view rowProjectionView, requirements []requirement) (rowArrayLengthDomain, error) {
+	domain := rowArrayLengthDomain{view: view}
 
 	var minimum, maximum *exactCount
 
 	for _, source := range view.sources {
 		if source.node == nil || source.node.schemaShape == nil {
-			return nil, errors.New("schematest: projected array source has no shape")
+			return rowArrayLengthDomain{}, errors.New("schematest: projected array source has no shape")
 		}
 
 		if source.node.minItems != nil {
 			if minimum == nil {
 				minimum = source.node.minItems
 			} else if comparison, err := source.node.minItems.number.compare(minimum.number); err != nil {
-				return nil, err
+				return rowArrayLengthDomain{}, err
 			} else if comparison > 0 {
 				minimum = source.node.minItems
 			}
@@ -77,7 +83,7 @@ func newRowArrayLengthCursor(view rowProjectionView, requirements []requirement)
 			if maximum == nil {
 				maximum = source.node.maxItems
 			} else if comparison, err := source.node.maxItems.number.compare(maximum.number); err != nil {
-				return nil, err
+				return rowArrayLengthDomain{}, err
 			} else if comparison < 0 {
 				maximum = source.node.maxItems
 			}
@@ -91,36 +97,36 @@ func newRowArrayLengthCursor(view rowProjectionView, requirements []requirement)
 
 			candidate, err := rowArrayCountFromExact(requirement.count)
 			if err != nil {
-				return nil, err
+				return rowArrayLengthDomain{}, err
 			}
 
-			if cursor.hasExact {
-				equal, equalErr := rowArrayCountsEqual(cursor.exact, candidate)
+			if domain.hasExact {
+				equal, equalErr := rowArrayCountsEqual(domain.exact, candidate)
 				if equalErr != nil {
-					return nil, equalErr
+					return rowArrayLengthDomain{}, equalErr
 				}
 
-				cursor.infeasible = cursor.infeasible || !equal
+				domain.infeasible = domain.infeasible || !equal
 			} else {
-				cursor.exact, cursor.hasExact = candidate, true
+				domain.exact, domain.hasExact = candidate, true
 			}
 		}
 	}
 
 	var err error
 
-	cursor.minimum, err = rowArrayCountFromExact(minimum)
+	domain.minimum, err = rowArrayCountFromExact(minimum)
 	if err != nil {
-		return nil, err
+		return rowArrayLengthDomain{}, err
 	}
 
 	if maximum != nil {
-		cursor.maximum, err = rowArrayCountFromExact(maximum)
+		domain.maximum, err = rowArrayCountFromExact(maximum)
 		if err != nil {
-			return nil, err
+			return rowArrayLengthDomain{}, err
 		}
 
-		cursor.hasMaximum = true
+		domain.hasMaximum = true
 	}
 
 	for _, source := range view.sources {
@@ -131,38 +137,51 @@ func newRowArrayLengthCursor(view rowProjectionView, requirements []requirement)
 
 		presence, found := rowPresenceRequirementDetails(requirements, item.occurrence)
 		if found && !presence.canonical && presence.presence == requirementPresent &&
-			!cursor.minimum.beyond && cursor.minimum.value < 1 {
-			cursor.minimum = rowArrayCount{value: 1}
+			!domain.minimum.beyond && domain.minimum.value < 1 {
+			domain.minimum = rowArrayCount{value: 1}
 		}
 	}
 
-	if cursor.hasMaximum {
-		comparison, compareErr := rowArrayCountsCompare(cursor.minimum, cursor.maximum)
+	if domain.hasMaximum {
+		comparison, compareErr := rowArrayCountsCompare(domain.minimum, domain.maximum)
 		if compareErr != nil {
-			return nil, compareErr
+			return rowArrayLengthDomain{}, compareErr
 		}
 
-		cursor.infeasible = cursor.infeasible || comparison > 0
+		domain.infeasible = domain.infeasible || comparison > 0
 	}
 
-	if cursor.hasExact {
-		comparison, compareErr := rowArrayCountsCompare(cursor.exact, cursor.minimum)
+	if domain.hasExact {
+		comparison, compareErr := rowArrayCountsCompare(domain.exact, domain.minimum)
 		if compareErr != nil {
-			return nil, compareErr
+			return rowArrayLengthDomain{}, compareErr
 		}
 
-		cursor.infeasible = cursor.infeasible || comparison < 0
-		if cursor.hasMaximum {
-			comparison, compareErr = rowArrayCountsCompare(cursor.exact, cursor.maximum)
+		domain.infeasible = domain.infeasible || comparison < 0
+		if domain.hasMaximum {
+			comparison, compareErr = rowArrayCountsCompare(domain.exact, domain.maximum)
 			if compareErr != nil {
-				return nil, compareErr
+				return rowArrayLengthDomain{}, compareErr
 			}
 
-			cursor.infeasible = cursor.infeasible || comparison > 0
+			domain.infeasible = domain.infeasible || comparison > 0
 		}
 	}
 
-	return cursor, nil
+	return domain, nil
+}
+
+// newRowArrayLengthCursor creates the standalone cursor used by length-cursor callers.
+func newRowArrayLengthCursor(
+	view rowProjectionView,
+	requirements []requirement,
+) (*rowArrayLengthCursor, error) {
+	domain, err := newRowArrayLengthDomain(view, requirements)
+	if err != nil {
+		return nil, err
+	}
+
+	return &rowArrayLengthCursor{rowArrayLengthDomain: domain}, nil
 }
 
 // rowArrayCountFromExact preserves one admitted exact count without narrowing.
@@ -236,7 +255,9 @@ func (cursor *rowArrayLengthCursor) Next() (rowArrayCount, bool, error) {
 			cursor.remaining++
 		}
 
-		seen, err := cursor.seenBefore(candidate, arrayLengthRemaining)
+		seen, err := cursor.seenBefore(
+			candidate, arrayLengthRemaining, cursor.directRank,
+		)
 		if err != nil {
 			return rowArrayCount{}, false, err
 		}
@@ -265,7 +286,9 @@ func (cursor *rowArrayLengthCursor) nextNamed() (rowArrayCount, bool, error) {
 			if ok {
 				cursor.directRank++
 
-				seen, seenErr := cursor.seenBefore(candidate, phase)
+				seen, seenErr := cursor.seenBefore(
+					candidate, phase, cursor.directRank,
+				)
 				if seenErr != nil || !seen {
 					return candidate, !seen, seenErr
 				}
@@ -277,19 +300,25 @@ func (cursor *rowArrayLengthCursor) nextNamed() (rowArrayCount, bool, error) {
 		case arrayLengthExact:
 			cursor.phase++
 			if cursor.hasExact {
-				seen, err := cursor.seenBefore(cursor.exact, phase)
+				seen, err := cursor.seenBefore(
+					cursor.exact, phase, cursor.directRank,
+				)
 
 				return cursor.exact, !seen, err
 			}
 		case arrayLengthMinimum:
 			cursor.phase++
-			seen, err := cursor.seenBefore(cursor.minimum, phase)
+			seen, err := cursor.seenBefore(
+				cursor.minimum, phase, cursor.directRank,
+			)
 
 			return cursor.minimum, !seen, err
 		case arrayLengthMaximum:
 			cursor.phase++
 			if cursor.hasMaximum {
-				seen, err := cursor.seenBefore(cursor.maximum, phase)
+				seen, err := cursor.seenBefore(
+					cursor.maximum, phase, cursor.directRank,
+				)
 
 				return cursor.maximum, !seen, err
 			}
@@ -302,28 +331,21 @@ func (cursor *rowArrayLengthCursor) nextNamed() (rowArrayCount, bool, error) {
 // seenBefore reports whether an earlier named rank yielded the exact count.
 //
 //nolint:cyclop // Direct and fixed named ranks share exact deduplication.
-func (cursor *rowArrayLengthCursor) seenBefore(candidate rowArrayCount, phase uint8) (bool, error) {
-	limit := cursor.directRank
+func (domain rowArrayLengthDomain) seenBefore(
+	candidate rowArrayCount,
+	phase uint8,
+	directRank uint64,
+) (bool, error) {
+	limit := directRank
 	if phase == arrayLengthDirect && limit > 0 {
 		limit--
 	} else if phase > arrayLengthDirect {
 		limit = ^uint64(0)
 	}
 
-	for rank := uint64(0); rank < limit; rank++ {
-		direct, ok, err := rowDirectArrayLengthAt(cursor.view, rank)
-		if err != nil {
-			return false, err
-		}
-
-		if !ok {
-			break
-		}
-
-		equal, equalErr := rowArrayCountsEqual(candidate, direct)
-		if equalErr != nil || equal {
-			return equal, equalErr
-		}
+	seen, err := rowDirectArrayLengthSeenBefore(domain.view, candidate, limit)
+	if err != nil || seen {
+		return seen, err
 	}
 
 	fixed := []struct {
@@ -331,9 +353,9 @@ func (cursor *rowArrayLengthCursor) seenBefore(candidate rowArrayCount, phase ui
 		count rowArrayCount
 		set   bool
 	}{
-		{arrayLengthExact, cursor.exact, cursor.hasExact},
-		{arrayLengthMinimum, cursor.minimum, true},
-		{arrayLengthMaximum, cursor.maximum, cursor.hasMaximum},
+		{arrayLengthExact, domain.exact, domain.hasExact},
+		{arrayLengthMinimum, domain.minimum, true},
+		{arrayLengthMaximum, domain.maximum, domain.hasMaximum},
 	}
 	for _, prior := range fixed {
 		if phase <= prior.phase || !prior.set {
@@ -343,6 +365,53 @@ func (cursor *rowArrayLengthCursor) seenBefore(candidate rowArrayCount, phase ui
 		equal, err := rowArrayCountsEqual(candidate, prior.count)
 		if err != nil || equal {
 			return equal, err
+		}
+	}
+
+	return false, nil
+}
+
+// rowDirectArrayLengthSeenBefore checks authored occurrences in one model pass.
+//
+//nolint:cyclop // Enum/default sources share one authored-occurrence scan.
+func rowDirectArrayLengthSeenBefore(
+	view rowProjectionView,
+	candidate rowArrayCount,
+	limit uint64,
+) (bool, error) {
+	var occurrence uint64
+
+	for _, source := range view.sources {
+		if source.node == nil || source.node.schemaShape == nil {
+			return false, errors.New("schematest: projected array source has no shape")
+		}
+
+		check := func(value *jsonValue) (bool, error) {
+			if value == nil {
+				return false, errors.New("schematest: nil projected enum value")
+			}
+
+			if value.kind != jsonArray || occurrence >= limit {
+				return false, nil
+			}
+
+			occurrence++
+
+			return rowArrayCountsEqual(candidate, rowArrayCount{value: uint64(len(value.array))})
+		}
+
+		if source.node.enum != nil {
+			for _, member := range source.node.enum {
+				seen, err := check(member.value)
+				if err != nil || seen {
+					return seen, err
+				}
+			}
+		} else if source.node.defaultValue != nil {
+			seen, err := check(source.node.defaultValue)
+			if err != nil || seen {
+				return seen, err
+			}
 		}
 	}
 

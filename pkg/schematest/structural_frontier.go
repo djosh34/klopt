@@ -256,151 +256,222 @@ func saturatedSourceValueTupleCount(sourceCount uint64, diagonal uint64) uint64 
 	return base + extra*sourceCount
 }
 
-// rowArrayLengthForOrdinal directly decodes one emitted length rank from finite named guidance.
+// rowArrayLengthForOrdinal directly addresses one raw named occurrence or numeric offset.
+// Duplicate named and numeric occurrences are holes, so no earlier emitted rank is replayed.
 //
-//nolint:cyclop,gocognit,gocyclo // Named guidance deduplication and numeric unranking form one decoder.
+//nolint:cyclop // Direct, fixed, and numeric phases form one address decoder.
 func rowArrayLengthForOrdinal(
 	view rowProjectionView,
 	requirements []requirement,
 	wanted uint64,
 ) (rowArrayCount, bool, uint64, error) {
-	cursor, err := newRowArrayLengthCursor(view, requirements)
-	if err != nil || cursor.infeasible {
+	domain, err := newRowArrayLengthDomain(view, requirements)
+	if err != nil || domain.infeasible {
 		return rowArrayCount{}, false, 0, err
 	}
 
-	emitted := uint64(0)
-	namedCount := uint64(0)
-
-	visitNamed := func(candidate rowArrayCount, phase uint8, directRank uint64) (bool, error) {
-		cursor.directRank = directRank
-
-		seen, seenErr := cursor.seenBefore(candidate, phase)
-		if seenErr != nil || seen {
-			return false, seenErr
-		}
-
-		namedCount++
-
-		if emitted == wanted {
-			return true, nil
-		}
-
-		emitted++
-
-		return false, nil
+	directCount, err := rowDirectArrayLengthCount(view)
+	if err != nil {
+		return rowArrayCount{}, false, 0, err
 	}
 
-	for rank := uint64(0); ; rank++ {
-		candidate, exists, directErr := rowDirectArrayLengthAt(view, rank)
-		if directErr != nil {
+	if wanted < directCount {
+		candidate, exists, directErr := rowDirectArrayLengthAt(view, wanted)
+		if directErr != nil || !exists {
 			return rowArrayCount{}, false, 0, directErr
 		}
 
-		if !exists {
-			break
-		}
+		seen, seenErr := domain.seenBefore(candidate, arrayLengthDirect, wanted+1)
 
-		selected, visitErr := visitNamed(candidate, arrayLengthDirect, rank+1)
-		if visitErr != nil {
-			return rowArrayCount{}, false, 0, visitErr
-		}
-
-		if selected {
-			return candidate, true, 0, nil
-		}
+		return candidate, !seen, 0, seenErr
 	}
 
-	fixed := []struct {
+	fixed := [...]struct {
 		phase uint8
 		count rowArrayCount
 		set   bool
 	}{
-		{arrayLengthExact, cursor.exact, cursor.hasExact},
-		{arrayLengthMinimum, cursor.minimum, true},
-		{arrayLengthMaximum, cursor.maximum, cursor.hasMaximum},
+		{arrayLengthExact, domain.exact, domain.hasExact},
+		{arrayLengthMinimum, domain.minimum, true},
+		{arrayLengthMaximum, domain.maximum, domain.hasMaximum},
 	}
+	fixedRank := wanted - directCount
+	fixedCount := uint64(0)
+
 	for _, candidate := range fixed {
 		if !candidate.set {
 			continue
 		}
 
-		selected, visitErr := visitNamed(candidate.count, candidate.phase, ^uint64(0))
-		if visitErr != nil {
-			return rowArrayCount{}, false, 0, visitErr
+		seen, seenErr := domain.seenBefore(candidate.count, candidate.phase, directCount)
+		if seenErr != nil {
+			return rowArrayCount{}, false, 0, seenErr
 		}
 
-		if selected {
+		if seen {
+			continue
+		}
+
+		if fixedRank == fixedCount {
 			return candidate.count, true, 0, nil
 		}
+
+		fixedCount++
 	}
 
-	numericRank := wanted - emitted
-	candidateValue := numericRank
+	numericRank := fixedRank - fixedCount
 
-	for iteration := uint64(0); iteration <= namedCount; iteration++ {
-		beforeOrEqual := uint64(0)
-		countNamed := func(candidate rowArrayCount, phase uint8, directRank uint64) error {
-			cursor.directRank = directRank
+	candidateValue, numericSize, exists, err := rowArrayNumericValueForRank(domain, numericRank)
+	if err != nil || !exists {
+		return rowArrayCount{}, false, directCount + fixedCount + numericSize, err
+	}
 
-			seen, seenErr := cursor.seenBefore(candidate, phase)
-			if seenErr != nil || seen || candidate.beyond || candidate.value > candidateValue {
-				return seenErr
-			}
+	return rowArrayCount{value: candidateValue}, true, 0, nil
+}
 
-			beforeOrEqual++
-
-			return nil
+// rowArrayNumericValueForRank directly unranks the numeric domain around finite named exclusions.
+//
+//nolint:mnd // Binary search halves the directly addressed numeric domain.
+func rowArrayNumericValueForRank(
+	domain rowArrayLengthDomain,
+	wanted uint64,
+) (uint64, uint64, bool, error) {
+	if domain.hasMaximum && !domain.maximum.beyond {
+		excluded, err := rowArrayNamedCountAtMost(domain, domain.maximum.value)
+		if err != nil {
+			return 0, 0, false, err
 		}
 
-		for rank := uint64(0); ; rank++ {
-			direct, exists, directErr := rowDirectArrayLengthAt(view, rank)
-			if directErr != nil {
-				return rowArrayCount{}, false, 0, directErr
-			}
+		size := domain.maximum.value + 1 - excluded
+		if wanted >= size {
+			return 0, size, false, nil
+		}
+	}
 
-			if !exists {
-				break
-			}
+	namedCount, err := rowArrayNamedCountAtMost(domain, ^uint64(0))
+	if err != nil {
+		return 0, 0, false, err
+	}
 
-			if countErr := countNamed(direct, arrayLengthDirect, rank+1); countErr != nil {
-				return rowArrayCount{}, false, 0, countErr
-			}
+	high := wanted + namedCount
+	if high < wanted {
+		return 0, 0, false, errors.New("schematest: array length rank overflow")
+	}
+
+	low := wanted
+	for low < high {
+		middle := low + (high-low)/2
+
+		excluded, countErr := rowArrayNamedCountAtMost(domain, middle)
+		if countErr != nil {
+			return 0, 0, false, countErr
 		}
 
-		for _, named := range fixed {
-			if named.set {
-				if countErr := countNamed(named.count, named.phase, ^uint64(0)); countErr != nil {
-					return rowArrayCount{}, false, 0, countErr
+		if middle+1-excluded > wanted {
+			high = middle
+		} else {
+			low = middle + 1
+		}
+	}
+
+	return low, 0, true, nil
+}
+
+// rowArrayNamedCountAtMost counts unique finite named values without retaining them.
+//
+//nolint:cyclop,gocognit,nestif // Authored and fixed phases share one first-occurrence model pass.
+func rowArrayNamedCountAtMost(domain rowArrayLengthDomain, maximum uint64) (uint64, error) {
+	var (
+		count      uint64
+		directRank uint64
+	)
+
+	visit := func(candidate rowArrayCount, phase uint8, limit uint64) error {
+		seen, err := domain.seenBefore(candidate, phase, limit)
+		if err != nil || seen || candidate.beyond || candidate.value > maximum {
+			return err
+		}
+
+		count++
+
+		return nil
+	}
+
+	for _, source := range domain.view.sources {
+		if source.node.enum != nil {
+			for _, member := range source.node.enum {
+				if member.value == nil {
+					return 0, errors.New("schematest: nil projected enum value")
+				}
+
+				if member.value.kind != jsonArray {
+					continue
+				}
+
+				directRank++
+				if err := visit(
+					rowArrayCount{value: uint64(len(member.value.array))}, arrayLengthDirect, directRank,
+				); err != nil {
+					return 0, err
 				}
 			}
-		}
-
-		if ^uint64(0)-numericRank < beforeOrEqual {
-			return rowArrayCount{}, false, 0, errors.New("schematest: array length rank overflow")
-		}
-
-		next := numericRank + beforeOrEqual
-		if next == candidateValue {
-			break
-		}
-
-		candidateValue = next
-	}
-
-	candidate := rowArrayCount{value: candidateValue}
-	if cursor.hasMaximum {
-		comparison, compareErr := rowArrayCountsCompare(candidate, cursor.maximum)
-		if compareErr != nil {
-			return rowArrayCount{}, false, 0, compareErr
-		}
-
-		if comparison > 0 {
-			return rowArrayCount{}, false, wanted, nil
+		} else if source.node.defaultValue != nil && source.node.defaultValue.kind == jsonArray {
+			directRank++
+			if err := visit(
+				rowArrayCount{value: uint64(len(source.node.defaultValue.array))},
+				arrayLengthDirect,
+				directRank,
+			); err != nil {
+				return 0, err
+			}
 		}
 	}
 
-	return candidate, true, 0, nil
+	fixed := [...]struct {
+		phase uint8
+		count rowArrayCount
+		set   bool
+	}{
+		{arrayLengthExact, domain.exact, domain.hasExact},
+		{arrayLengthMinimum, domain.minimum, true},
+		{arrayLengthMaximum, domain.maximum, domain.hasMaximum},
+	}
+	for _, candidate := range fixed {
+		if candidate.set {
+			if err := visit(candidate.count, candidate.phase, directRank); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	return count, nil
+}
+
+// rowDirectArrayLengthCount returns the finite authored occurrence count without decoding candidates.
+func rowDirectArrayLengthCount(view rowProjectionView) (uint64, error) {
+	var count uint64
+
+	for _, source := range view.sources {
+		if source.node == nil || source.node.schemaShape == nil {
+			return 0, errors.New("schematest: projected array source has no shape")
+		}
+
+		if source.node.enum != nil {
+			for _, member := range source.node.enum {
+				if member.value == nil {
+					return 0, errors.New("schematest: nil projected enum value")
+				}
+
+				if member.value.kind == jsonArray {
+					count++
+				}
+			}
+		} else if source.node.defaultValue != nil && source.node.defaultValue.kind == jsonArray {
+			count++
+		}
+	}
+
+	return count, nil
 }
 
 // rowProjectionHasExactCount reports whether this view has directed array count guidance.
@@ -435,27 +506,76 @@ func rowProjectionRequirementsAcceptKind(
 	return true
 }
 
-// rowSourceValueAt returns one raw source candidate before conjunction validation.
+// rowSourceValueForRank directly decodes one primitive kind/value choice.
+// Generated rule searches occupy one rank and are entered once without discarding a prefix.
 //
-//nolint:cyclop // Generic, scalar-priority, and structural sources share one adapter.
-func (s *search) rowSourceValueAt(
+//nolint:cyclop // Scalar and recursive structural kinds share one direct decoder.
+func (s *search) rowSourceValueForRank(
 	source *rowSchemaSource,
 	requirements []requirement,
 	context rowSearchContext,
 	wanted uint64,
 ) (*jsonValue, bool, uint64, error) {
-	var (
-		ordinal  uint64
-		selected *jsonValue
-	)
+	if wanted == 0 && (source == nil || source.node.kind != schemaString || len(source.node.allOf) == 0) {
+		return s.rowSourceFirstValue(source, requirements, context)
+	}
+
+	if wanted > 0 {
+		wanted--
+	}
+
+	if source == nil {
+		return canonicalGenericValueAt(wanted)
+	}
+
+	if source.node == nil || source.node.schemaShape == nil {
+		return nil, false, 0, errors.New("schematest: structural child source has no shape")
+	}
+
+	kinds, err := rowKindChoices(source.node, source.occurrence, requirements)
+	if err != nil || len(kinds) == 0 {
+		return nil, false, 0, err
+	}
+
+	kindRank, valueRank, ok := rowSourceValueRanksAtOrdinal(uint64(len(kinds)), wanted)
+	if !ok {
+		return nil, false, 0, nil
+	}
+
+	if err := s.chargeNodeCompositions(source.node, source.occurrence, requirements); err != nil {
+		return nil, false, 0, err
+	}
+
+	if err := s.assign(); err != nil {
+		return nil, false, 0, err
+	}
+
+	kind := kinds[kindRank]
+	if kindIsScalar(kind) {
+		return s.rowScalarValueForRank(source, requirements, context, kind, valueRank)
+	}
+
+	switch kind {
+	case jsonArray:
+		return s.rowArrayValueForRank(source, requirements, context, valueRank)
+	case jsonObject:
+		return s.rowObjectValueForRank(source, requirements, context, valueRank)
+	default:
+		return nil, false, 0, errors.New("schematest: unsupported structural child kind")
+	}
+}
+
+// rowSourceFirstValue resumes one source traversal only for its first value choice.
+//
+//nolint:cyclop // Generic, scalar-rule, and node sources share one first-choice boundary.
+func (s *search) rowSourceFirstValue(
+	source *rowSchemaSource,
+	requirements []requirement,
+	context rowSearchContext,
+) (*jsonValue, bool, uint64, error) {
+	var selected *jsonValue
 
 	visit := func(value *jsonValue) (bool, error) {
-		if ordinal != wanted {
-			ordinal++
-
-			return false, nil
-		}
-
 		var err error
 
 		selected, err = cloneJSONValue(value)
@@ -467,14 +587,17 @@ func (s *search) rowSourceValueAt(
 		complete bool
 		err      error
 	)
-	if source != nil && source.node.kind == schemaString && source.node.enum == nil && wanted == 0 &&
+
+	switch {
+	case source == nil:
+		complete, err = s.walkGenericValue(requirements, visit)
+	case source.node.kind == schemaString && source.node.enum == nil &&
 		(source.node.format != schemaFormatNone || source.node.minLength != nil ||
-			source.node.maxLength != nil || source.node.pattern != nil) {
+			source.node.maxLength != nil || source.node.pattern != nil):
 		complete, err = s.walkActiveStringRules(
 			source.node, source.occurrence, requirements, context.validRequest, visit,
 		)
-	} else if source != nil && wanted == 0 &&
-		(source.node.kind != schemaString || len(source.node.allOf) <= 0) {
+	default:
 		complete, err = s.walkNode(
 			source.node, source.occurrence, requirements, context,
 			func(value *jsonValue) (bool, error) {
@@ -488,80 +611,230 @@ func (s *search) rowSourceValueAt(
 				return visit(value)
 			},
 		)
-	} else if source == nil {
-		complete, err = s.walkGenericValue(requirements, visit)
-	} else {
-		complete, err = s.walkNode(source.node, source.occurrence, requirements, context, visit)
 	}
 
 	if err != nil {
 		return nil, false, 0, err
 	}
 
-	if complete {
-		return selected, true, 0, nil
-	}
-
-	return nil, false, ordinal, nil
+	return selected, complete, 0, nil
 }
 
-// rowConjunctionValueAt returns one raw source/value rank and validates it for free.
+// rowScalarValueForRank directly selects a canonical scalar or one generated-rule search.
+func (s *search) rowScalarValueForRank(
+	source *rowSchemaSource,
+	requirements []requirement,
+	context rowSearchContext,
+	kind jsonKind,
+	wanted uint64,
+) (*jsonValue, bool, uint64, error) {
+	candidate, exists, finiteSize, err := canonicalKindValueAt(kind, wanted)
+	if err != nil {
+		return nil, false, 0, err
+	}
+
+	if exists {
+		usable, usableErr := rowScalarValueUsable(candidate, source.node, kind)
+		if usableErr != nil || !usable {
+			return nil, false, finiteSize, usableErr
+		}
+
+		owned, cloneErr := cloneJSONValue(candidate)
+
+		return owned, cloneErr == nil, finiteSize, cloneErr
+	}
+
+	if wanted != finiteSize || kind != jsonString && kind != jsonNumber {
+		return nil, false, finiteSize, nil
+	}
+
+	var selected *jsonValue
+
+	visit := func(value *jsonValue) (bool, error) {
+		var cloneErr error
+
+		selected, cloneErr = cloneJSONValue(value)
+
+		return cloneErr == nil, cloneErr
+	}
+
+	var complete bool
+	if kind == jsonString {
+		complete, err = s.walkActiveStringRules(
+			source.node, source.occurrence, requirements, context.validRequest, visit,
+		)
+	} else {
+		complete, err = s.walkActiveNumberRules(
+			source.node, source.occurrence, requirements, context.validRequest, visit,
+		)
+	}
+
+	if err != nil {
+		return nil, false, 0, err
+	}
+
+	return selected, complete, finiteSize + 1, nil
+}
+
+// canonicalGenericValueAt directly decodes the finite generic kind/witness product.
+func canonicalGenericValueAt(wanted uint64) (*jsonValue, bool, uint64, error) {
+	kinds := canonicalJSONKinds()
+
+	kindRank, valueRank, ok := rowSourceValueRanksAtOrdinal(uint64(len(kinds)), wanted)
+	if !ok {
+		return nil, false, 0, nil
+	}
+
+	return canonicalKindValueAt(kinds[kindRank], valueRank)
+}
+
+// canonicalKindValueAt directly addresses one locked primitive alternative.
 //
-//nolint:cyclop,gocognit,nestif // Enum and generated sources share one rank-addressable adapter.
+//nolint:cyclop,mnd // Locked witness counts and indices define this direct decoder.
+func canonicalKindValueAt(kind jsonKind, wanted uint64) (*jsonValue, bool, uint64, error) {
+	var (
+		candidate *jsonValue
+		size      uint64
+	)
+
+	switch kind {
+	case jsonNull:
+		size = 1
+
+		if wanted == 0 {
+			candidate = &jsonValue{kind: jsonNull}
+		}
+	case jsonBoolean:
+		size = 2
+		if wanted < size {
+			candidate = &jsonValue{kind: jsonBoolean, boolean: wanted == 1}
+		}
+	case jsonNumber:
+		numbers := [...]string{"-1", "0", "0.5", "1", "2", "3"}
+
+		size = uint64(len(numbers))
+		if wanted < size {
+			number, err := parseExactNumber(numbers[wanted])
+			if err != nil {
+				return nil, false, 0, err
+			}
+
+			candidate = &jsonValue{kind: jsonNumber, number: number}
+		}
+	case jsonString:
+		strings := [...]string{"", "a", "b", "text"}
+
+		size = uint64(len(strings))
+		if wanted < size {
+			candidate = &jsonValue{kind: jsonString, text: strings[wanted]}
+		}
+	case jsonArray:
+		size = 4
+		if wanted < size {
+			candidate = &jsonValue{kind: jsonArray, array: []*jsonValue{}}
+
+			switch wanted {
+			case 1:
+				candidate.array = []*jsonValue{{kind: jsonBoolean}}
+			case 2:
+				candidate.array = []*jsonValue{{kind: jsonString, text: "a"}}
+			case 3:
+				number, err := parseExactNumber("0")
+				if err != nil {
+					return nil, false, 0, err
+				}
+
+				candidate.array = []*jsonValue{{kind: jsonNumber, number: number}}
+			}
+		}
+	case jsonObject:
+		size = 2
+		if wanted < size {
+			candidate = &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
+			if wanted == 1 {
+				candidate.object["a"] = &jsonValue{kind: jsonString, text: "a"}
+			}
+		}
+	default:
+		return nil, false, 0, errors.New("schematest: unknown canonical child kind")
+	}
+
+	return candidate, candidate != nil, size, nil
+}
+
+// rowConjunctionValueAt directly decodes authored source/member indices or a primitive source rank.
+//
+//nolint:cyclop,gocognit,nestif // Finite enum and generated sources share one selection boundary.
 func (s *search) rowConjunctionValueAt(
 	conjunction rowSchemaConjunction,
 	requirements []requirement,
 	context rowSearchContext,
 	wanted uint64,
 ) (*jsonValue, bool, bool, uint64, error) {
-	hasEnum := false
+	enumSources := uint64(0)
+
 	for _, source := range conjunction.sources {
-		hasEnum = hasEnum || source.node.enum != nil
+		if source.node == nil || source.node.schemaShape == nil {
+			return nil, false, false, 0, errors.New("schematest: structural child source has no shape")
+		}
+
+		if source.node.enum != nil {
+			enumSources++
+		}
 	}
 
-	if hasEnum {
-		ordinal := uint64(0)
+	if enumSources > 0 {
+		sourceRank, memberRank, ok := rowSourceValueRanksAtOrdinal(enumSources, wanted)
+		if !ok {
+			return nil, false, false, 0, nil
+		}
 
-		for _, source := range conjunction.sources {
-			if source.node.enum == nil {
+		var selected *rowSchemaSource
+
+		for index := range conjunction.sources {
+			if conjunction.sources[index].node.enum == nil {
 				continue
 			}
 
-			for _, member := range source.node.enum {
-				if member.value == nil {
-					return nil, false, false, 0, errors.New("schematest: nil structural child enum value")
-				}
+			if sourceRank == 0 {
+				selected = &conjunction.sources[index]
 
-				if ordinal != wanted {
-					ordinal++
-
-					continue
-				}
-
-				if err := s.assign(); err != nil {
-					return nil, false, false, 0, err
-				}
-
-				value, err := cloneJSONValue(member.value)
-				if err != nil {
-					return nil, false, false, 0, err
-				}
-
-				usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
-				if err != nil {
-					return nil, false, false, 0, err
-				}
-
-				return value, true, usable, 0, nil
+				break
 			}
+
+			sourceRank--
 		}
 
-		return nil, false, false, ordinal, nil
+		if selected == nil {
+			return nil, false, false, 0, errors.New("schematest: enum source rank is out of range")
+		}
+
+		if memberRank >= uint64(len(selected.node.enum)) {
+			return nil, false, false, uint64(len(selected.node.enum)), nil
+		}
+
+		member := selected.node.enum[memberRank]
+		if member.value == nil {
+			return nil, false, false, 0, errors.New("schematest: nil structural child enum value")
+		}
+
+		if err := s.assign(); err != nil {
+			return nil, false, false, 0, err
+		}
+
+		value, err := cloneJSONValue(member.value)
+		if err != nil {
+			return nil, false, false, 0, err
+		}
+
+		usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
+
+		return value, true, usable, uint64(len(selected.node.enum)), err
 	}
 
 	if wanted == 0 {
 		for index := range conjunction.sources {
-			value, exists, _, err := s.rowSourceValueAt(
+			value, exists, _, err := s.rowSourceValueForRank(
 				&conjunction.sources[index], requirements, context, 0,
 			)
 			if err != nil {
@@ -590,7 +863,7 @@ func (s *search) rowConjunctionValueAt(
 
 	sourceRank, valueRank, ok := rowSourceValueRanksAtOrdinal(uint64(sourceCount), wanted)
 	if !ok {
-		return nil, false, false, wanted, nil
+		return nil, false, false, 0, nil
 	}
 
 	if err := s.assign(); err != nil {
@@ -602,19 +875,162 @@ func (s *search) rowConjunctionValueAt(
 		source = &conjunction.sources[sourceRank]
 	}
 
-	value, exists, finiteSize, valueErr := s.rowSourceValueAt(
+	value, exists, finiteSize, err := s.rowSourceValueForRank(
 		source, requirements, context, valueRank,
 	)
-	if valueErr != nil || !exists {
-		return nil, false, false, finiteSize, valueErr
+	if err != nil || !exists {
+		return nil, false, false, finiteSize, err
 	}
 
-	usable, usableErr := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
-	if usableErr != nil {
-		return nil, false, false, 0, usableErr
+	if value == nil {
+		return nil, false, false, 0, errors.New("schematest: direct structural child rank returned nil")
 	}
 
-	return value, true, usable, 0, nil
+	usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
+
+	return value, true, usable, finiteSize, err
+}
+
+// rowArrayValueForRank directly evaluates one nested array frontier tuple.
+//
+//nolint:cyclop,mnd // Three primitive ranks and charged decoding form one operation.
+func (s *search) rowArrayValueForRank(
+	source *rowSchemaSource,
+	requirements []requirement,
+	context rowSearchContext,
+	wanted uint64,
+) (*jsonValue, bool, uint64, error) {
+	if source.node.defaultValue != nil && source.node.defaultValue.kind == jsonArray {
+		if wanted == 0 {
+			if err := s.assign(); err != nil {
+				return nil, false, 0, err
+			}
+
+			owned, err := cloneJSONValue(source.node.defaultValue)
+
+			return owned, err == nil, 0, err
+		}
+
+		wanted--
+	}
+
+	decoder, ok := newDirectRankTupleDecoder(3, wanted)
+	if !ok {
+		return nil, false, 0, nil
+	}
+
+	projectionRank, exists := decoder.Next()
+	if !exists {
+		return nil, false, 0, errors.New("schematest: nested array projection rank ended early")
+	}
+
+	lengthRank, exists := decoder.Next()
+	if !exists {
+		return nil, false, 0, errors.New("schematest: nested array length rank ended early")
+	}
+
+	childRank, exists := decoder.Next()
+	if !exists {
+		return nil, false, 0, errors.New("schematest: nested array child rank ended early")
+	}
+
+	view, exists, err := rowProjectionAt(source.node, source.occurrence, requirements, projectionRank)
+	if err != nil || !exists {
+		return nil, false, 0, err
+	}
+
+	active, err := view.appendBranchRequirements(append([]requirement(nil), requirements...), s.assign)
+	if err != nil {
+		return nil, false, 0, err
+	}
+
+	if !rowProjectionAcceptsKind(view, jsonArray) ||
+		!rowProjectionRequirementsAcceptKind(view, requirements, jsonArray) ||
+		rowProjectionHasExactCount(view, active) && (childRank != 0 || lengthRank != 0) {
+		return nil, false, 0, nil
+	}
+
+	candidate, candidateExists, _, err := s.rowArrayProjectionCandidate(
+		view, active, context, childRank, lengthRank,
+	)
+	if err != nil || !candidateExists {
+		return nil, false, 0, err
+	}
+
+	return candidate, true, 0, nil
+}
+
+// rowObjectValueForRank directly evaluates one nested object frontier tuple.
+//
+//nolint:cyclop,mnd // Three primitive ranks and charged decoding form one operation.
+func (s *search) rowObjectValueForRank(
+	source *rowSchemaSource,
+	requirements []requirement,
+	context rowSearchContext,
+	wanted uint64,
+) (*jsonValue, bool, uint64, error) {
+	if source.node.defaultValue != nil && source.node.defaultValue.kind == jsonObject {
+		if wanted == 0 {
+			if err := s.assign(); err != nil {
+				return nil, false, 0, err
+			}
+
+			owned, err := cloneJSONValue(source.node.defaultValue)
+
+			return owned, err == nil, 0, err
+		}
+
+		wanted--
+	}
+
+	decoder, ok := newDirectRankTupleDecoder(3, wanted)
+	if !ok {
+		return nil, false, 0, nil
+	}
+
+	projectionRank, exists := decoder.Next()
+	if !exists {
+		return nil, false, 0, errors.New("schematest: nested object projection rank ended early")
+	}
+
+	presenceRank, exists := decoder.Next()
+	if !exists {
+		return nil, false, 0, errors.New("schematest: nested object presence rank ended early")
+	}
+
+	childRank, exists := decoder.Next()
+	if !exists {
+		return nil, false, 0, errors.New("schematest: nested object child rank ended early")
+	}
+
+	view, exists, err := rowProjectionAt(source.node, source.occurrence, requirements, projectionRank)
+	if err != nil || !exists {
+		return nil, false, 0, err
+	}
+
+	active, err := view.appendBranchRequirements(append([]requirement(nil), requirements...), s.assign)
+	if err != nil {
+		return nil, false, 0, err
+	}
+
+	if !rowProjectionAcceptsKind(view, jsonObject) ||
+		!rowProjectionRequirementsAcceptKind(view, requirements, jsonObject) {
+		return nil, false, 0, nil
+	}
+
+	shape, err := newRowProjectedObject(view, active, source.occurrence)
+	if err != nil || !shape.feasible() {
+		return nil, false, 0, err
+	}
+
+	candidate, candidateExists, _, err := s.rowObjectProjectionCandidate(
+		view, shape, active, context, childRank, presenceRank,
+	)
+	if err != nil || !candidateExists {
+		return nil, false, 0, err
+	}
+
+	return candidate, true, 0, nil
 }
 
 // rowArrayChildrenForOrdinal rebuilds one diagonal tuple while extending position state only after charge.
@@ -745,12 +1161,6 @@ func (s *search) rowArrayProjectionCandidate(
 		return nil, false, false, err
 	}
 
-	if !usable {
-		clear(values)
-
-		return nil, true, false, nil
-	}
-
 	array := &jsonValue{kind: jsonArray, array: make([]*jsonValue, 0)}
 
 	for _, value := range values {
@@ -761,7 +1171,7 @@ func (s *search) rowArrayProjectionCandidate(
 		array.array = append(array.array, value)
 	}
 
-	return array, true, true, nil
+	return array, true, usable, nil
 }
 
 // walkArrayFrontier decodes one ephemeral projection for each shared structural rank tuple.
@@ -1149,12 +1559,6 @@ func (s *search) rowObjectProjectionCandidate(
 		return nil, false, false, err
 	}
 
-	if !usable {
-		clear(values)
-
-		return nil, true, false, nil
-	}
-
 	object := &jsonValue{kind: jsonObject, object: make(map[string]*jsonValue)}
 
 	for index, member := range members {
@@ -1165,7 +1569,7 @@ func (s *search) rowObjectProjectionCandidate(
 		object.object[member.name] = values[index]
 	}
 
-	return object, true, true, nil
+	return object, true, usable, nil
 }
 
 // walkObjectFrontier decodes one ephemeral projection for each shared structural rank tuple.
@@ -1289,11 +1693,13 @@ func (s *search) walkObjectFrontier(
 				return false, candidateErr
 			}
 
+			if candidateExists {
+				diagonalLive = true
+			}
+
 			if !candidateExists {
 				continue
 			}
-
-			diagonalLive = true
 
 			if !usable {
 				continue

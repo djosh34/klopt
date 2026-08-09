@@ -181,6 +181,66 @@ func TestObjectComponentRanksAdvanceDiagonally(t *testing.T) {
 	require.Equal(t, [][]bool{{false, false}, {false, true}, {true, false}}, tuples)
 }
 
+// TestNestedChildRanksHaveConstantDirectSelectionCost proves later enum members do not replay a prefix.
+func TestNestedChildRanksHaveConstantDirectSelectionCost(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{"enum":[false,true]},"minItems":2,"maxItems":2
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	view := rowProjectionView{sources: []rowSchemaSource{{
+		node: model.root, occurrence: model.root.occurrence,
+	}}}
+	structure := rankedArrayStructure{view: view, length: rowArrayCount{value: 2}}
+
+	firstSearch := &search{model: model, maxSteps: 1000}
+	first, exists, usable, _, err := firstSearch.rowArrayChildrenForOrdinal(
+		structure, nil, rowSearchContext{}, 0,
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, usable)
+	require.Equal(t, []bool{false, false}, []bool{first[0].boolean, first[1].boolean})
+
+	laterSearch := &search{model: model, maxSteps: 1000}
+	later, exists, usable, _, err := laterSearch.rowArrayChildrenForOrdinal(
+		structure, nil, rowSearchContext{}, 2,
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, usable)
+	require.Equal(t, []bool{true, false}, []bool{later[0].boolean, later[1].boolean})
+	require.Equal(t, firstSearch.steps, laterSearch.steps)
+}
+
+// TestNestedStructuralChildRankStartsWithoutPrefixReplay proves rank zero directly constructs a child.
+func TestNestedStructuralChildRankStartsWithoutPrefixReplay(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","minItems":1,"maxItems":1,
+		"items":{"type":"array","minItems":0,"maxItems":0,"items":{}}
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 1000}
+	found := false
+	complete, err := searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(value *jsonValue) (bool, error) {
+			found = len(value.array) == 1 && value.array[0].kind == jsonArray &&
+				len(value.array[0].array) == 0
+
+			return found, nil
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, found)
+}
+
 // TestUnsatisfiableWildcardDoesNotStarveLaterProjection proves mask fairness.
 func TestUnsatisfiableWildcardDoesNotStarveLaterProjection(t *testing.T) {
 	t.Parallel()
