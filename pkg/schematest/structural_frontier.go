@@ -964,7 +964,7 @@ func (s *search) rowGeneratedNumberValueAt(
 
 	schedule.seeded = schedule.seeded || falseBranchObjective && !schedule.hasEnum
 
-	edge, exists, edgeCount, err := rowNumberEdgeAt(schedule, wanted)
+	edge, exists, edgeCount, err := rowNumberEdgeAt(schedule, wanted, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1022,35 +1022,28 @@ func (s *search) rowGeneratedNumberValueAt(
 	return candidate, true, nil
 }
 
-// rowNumberEdgeAt selects one first-occurrence deterministic edge without materializing a prefix.
-func rowNumberEdgeAt(schedule numberSchedule, wanted uint64) (numberEdge, bool, uint64, error) {
-	var (
-		selected numberEdge
-		unique   uint64
-		index    uint64
-	)
+// rowNumberEdgeAt directly selects one first-occurrence deterministic address.
+func rowNumberEdgeAt(
+	schedule numberSchedule,
+	wanted uint64,
+	evaluate func(numberEdgeAddress),
+) (numberEdge, bool, uint64, error) {
+	address, addressed, domain, err := schedule.edgeAddressAt(wanted)
+	if err != nil || !addressed {
+		return numberEdge{}, false, domain, err
+	}
 
-	err := schedule.eachEdge(func(edge numberEdge) (bool, error) {
-		duplicate, err := schedule.edgeDuplicate(edge, index)
-		index++
+	selected, exists, err := schedule.edgeAtAddress(address, evaluate)
+	if err != nil || !exists {
+		return numberEdge{}, false, domain, err
+	}
 
-		if err != nil || duplicate {
-			return false, err
-		}
+	duplicate, err := schedule.edgeAddressDuplicate(selected, wanted)
+	if err != nil || duplicate {
+		return numberEdge{}, false, domain, err
+	}
 
-		if unique == wanted {
-			selected = edge
-			unique++
-
-			return true, nil
-		}
-
-		unique++
-
-		return false, nil
-	})
-
-	return selected, unique > wanted, unique, err
+	return selected, true, domain, nil
 }
 
 // rowSeededNumberValueAt directly decodes length, exponent, signs, and coefficient digits.

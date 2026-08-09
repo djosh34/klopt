@@ -1,3 +1,4 @@
+//nolint:godoclint // Private numeric address types are documented at their search seams.
 package schematest
 
 import (
@@ -11,10 +12,24 @@ const (
 	numberRuleValueCount = 3
 	// numberEdgeTermCount is the maximum compact terms in one edge comparison.
 	numberEdgeTermCount = 4
+
+	numberBoundaryEdgeCount  = 3
+	numberMultipleEdgeCount  = 4
+	numberFormatEdgeCount    = 4
+	numberRuleEdgeCount      = numberBoundaryEdgeCount*2 + numberMultipleEdgeCount + numberFormatEdgeCount
+	numberSecondDirectedEdge = 2
 )
 
-// errNumberEdgeStop ends metadata replay without exposing a search error.
-var errNumberEdgeStop = errors.New("schematest: stop numeric edge metadata")
+type numberEdgeFamily uint8
+
+const (
+	numberEdgeEnum numberEdgeFamily = iota
+	numberEdgeMinimum
+	numberEdgeMaximum
+	numberEdgeZero
+	numberEdgeMultiple
+	numberEdgeFormat
+)
 
 // numberSchedule is the exact numeric conjunction for one constrained composition view.
 type numberSchedule struct {
@@ -29,6 +44,13 @@ type numberEdge struct {
 	base      *exactNumber
 	increment *exactNumber
 	sign      int64
+}
+
+// numberEdgeAddress directly identifies one deterministic schedule slot.
+type numberEdgeAddress struct {
+	ruleIndex uint64
+	family    numberEdgeFamily
+	local     uint64
 }
 
 // newNumberSchedule compiles one active conjunction and its shared quantum.
@@ -188,101 +210,193 @@ func exactDecimalTermsSumToZero(terms []exactDecimalTerm) bool {
 	return coefficient.Sign() == 0
 }
 
-// eachEdge streams schedule metadata in exact required order.
+// edgeAddressAt decodes one finite deterministic slot in schedule order.
 //
-//nolint:cyclop,gocognit // Enum and the five deterministic phases are deliberately explicit.
-func (schedule numberSchedule) eachEdge(visit func(numberEdge) (bool, error)) error {
+//nolint:cyclop,gocognit // The enum and five ordered edge families have explicit address blocks.
+func (schedule numberSchedule) edgeAddressAt(wanted uint64) (numberEdgeAddress, bool, uint64, error) {
+	ruleCount := uint64(len(schedule.rules))
+
 	if schedule.hasEnum {
+		maxMembers := uint64(0)
 		for _, rule := range schedule.rules {
-			for _, member := range rule.node.enum {
-				if member.value == nil {
-					return errors.New("schematest: nil numeric enum member")
-				}
-
-				if member.value.kind != jsonNumber {
-					continue
-				}
-
-				stop, err := visit(numberEdge{base: member.value.number})
-				if err != nil || stop {
-					return err
-				}
+			if uint64(len(rule.node.enum)) > maxMembers {
+				maxMembers = uint64(len(rule.node.enum))
 			}
 		}
 
-		return nil
+		if maxMembers != 0 && ruleCount > ^uint64(0)/maxMembers {
+			return numberEdgeAddress{}, false, 0, errors.New("schematest: numeric enum edge domain overflows")
+		}
+
+		domain := ruleCount * maxMembers
+		if wanted >= domain || maxMembers == 0 {
+			return numberEdgeAddress{}, false, domain, nil
+		}
+
+		return numberEdgeAddress{
+			ruleIndex: wanted / maxMembers,
+			family:    numberEdgeEnum,
+			local:     wanted % maxMembers,
+		}, true, domain, nil
 	}
 
+	if ruleCount > (^uint64(0)-1)/numberRuleEdgeCount {
+		return numberEdgeAddress{}, false, 0, errors.New("schematest: numeric edge domain overflows")
+	}
+
+	var hasMinimum, hasMaximum, hasMultiple, hasFormat bool
 	for _, rule := range schedule.rules {
-		err := eachNumberBoundaryEdge(rule.node.minimum, schedule.quantum, true, visit)
-		if errors.Is(err, errNumberEdgeStop) {
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
+		hasMinimum = hasMinimum || rule.node.minimum != nil
+		hasMaximum = hasMaximum || rule.node.maximum != nil
+		hasMultiple = hasMultiple || rule.node.multipleOf != nil
+		hasFormat = hasFormat || numberFormatHasEdges(rule.node.format)
 	}
 
-	for _, rule := range schedule.rules {
-		err := eachNumberBoundaryEdge(rule.node.maximum, schedule.quantum, false, visit)
-		if errors.Is(err, errNumberEdgeStop) {
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
+	domain := uint64(1)
+	if hasMinimum {
+		domain += ruleCount * numberBoundaryEdgeCount
 	}
 
-	zero, err := parseExactNumber("0")
-	if err != nil {
-		return err
+	if hasMaximum {
+		domain += ruleCount * numberBoundaryEdgeCount
 	}
 
-	if stop, visitErr := visit(numberEdge{base: zero}); visitErr != nil || stop {
-		return visitErr
+	if hasMultiple {
+		domain += ruleCount * numberMultipleEdgeCount
 	}
 
-	for _, rule := range schedule.rules {
-		err := eachNumberMultipleEdge(rule.node.multipleOf, schedule.quantum, visit)
-		if errors.Is(err, errNumberEdgeStop) {
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
+	if hasFormat {
+		domain += ruleCount * numberFormatEdgeCount
 	}
 
-	for _, rule := range schedule.rules {
-		err := eachNumberFormatEdge(rule.node.format, visit)
-		if errors.Is(err, errNumberEdgeStop) {
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
+	if wanted >= domain {
+		return numberEdgeAddress{}, false, domain, nil
 	}
 
-	return nil
+	minimumSize := ruleCount * numberBoundaryEdgeCount
+	if hasMinimum {
+		if wanted < minimumSize {
+			return numberEdgeAddress{
+				ruleIndex: wanted / numberBoundaryEdgeCount,
+				family:    numberEdgeMinimum,
+				local:     wanted % numberBoundaryEdgeCount,
+			}, true, domain, nil
+		}
+
+		wanted -= minimumSize
+	}
+
+	if hasMaximum {
+		if wanted < minimumSize {
+			return numberEdgeAddress{
+				ruleIndex: wanted / numberBoundaryEdgeCount,
+				family:    numberEdgeMaximum,
+				local:     wanted % numberBoundaryEdgeCount,
+			}, true, domain, nil
+		}
+
+		wanted -= minimumSize
+	}
+
+	if wanted == 0 {
+		return numberEdgeAddress{family: numberEdgeZero}, true, domain, nil
+	}
+
+	wanted--
+
+	multipleSize := ruleCount * numberMultipleEdgeCount
+	if hasMultiple {
+		if wanted < multipleSize {
+			return numberEdgeAddress{
+				ruleIndex: wanted / numberMultipleEdgeCount,
+				family:    numberEdgeMultiple,
+				local:     wanted % numberMultipleEdgeCount,
+			}, true, domain, nil
+		}
+
+		wanted -= multipleSize
+	}
+
+	return numberEdgeAddress{
+		ruleIndex: wanted / numberFormatEdgeCount,
+		family:    numberEdgeFormat,
+		local:     wanted % numberFormatEdgeCount,
+	}, true, domain, nil
 }
 
-// eachNumberBoundaryEdge streams one bound and its directed neighbors as metadata.
-func eachNumberBoundaryEdge(
-	bound, quantum *exactNumber,
-	minimum bool,
-	visit func(numberEdge) (bool, error),
-) error {
-	if bound == nil {
-		return nil
+func numberFormatHasEdges(format schemaFormat) bool {
+	switch format {
+	case schemaFormatInt32, schemaFormatInt64, schemaFormatFloat, schemaFormatDouble:
+		return true
+	default:
+		return false
+	}
+}
+
+// edgeAtAddress evaluates only the selected deterministic schedule slot.
+// evaluate is test instrumentation and is never called while inspecting deduplication metadata.
+//
+//nolint:cyclop // Each explicit edge family delegates to its direct local lookup.
+func (schedule numberSchedule) edgeAtAddress(
+	address numberEdgeAddress,
+	evaluate func(numberEdgeAddress),
+) (numberEdge, bool, error) {
+	if evaluate != nil {
+		evaluate(address)
 	}
 
-	if stop, err := visit(numberEdge{base: bound}); err != nil {
-		return err
-	} else if stop {
-		return errNumberEdgeStop
+	if address.family == numberEdgeZero {
+		zero, err := parseExactNumber("0")
+
+		return numberEdge{base: zero}, err == nil, err
+	}
+
+	if address.ruleIndex >= uint64(len(schedule.rules)) {
+		return numberEdge{}, false, nil
+	}
+
+	rule := schedule.rules[address.ruleIndex]
+
+	switch address.family {
+	case numberEdgeEnum:
+		if address.local >= uint64(len(rule.node.enum)) {
+			return numberEdge{}, false, nil
+		}
+
+		member := rule.node.enum[address.local]
+		if member.value == nil {
+			return numberEdge{}, false, errors.New("schematest: nil numeric enum member")
+		}
+
+		if member.value.kind != jsonNumber {
+			return numberEdge{}, false, nil
+		}
+
+		return numberEdge{base: member.value.number}, true, nil
+	case numberEdgeMinimum:
+		return numberBoundaryEdgeAt(rule.node.minimum, schedule.quantum, true, address.local)
+	case numberEdgeMaximum:
+		return numberBoundaryEdgeAt(rule.node.maximum, schedule.quantum, false, address.local)
+	case numberEdgeMultiple:
+		return numberMultipleEdgeAt(rule.node.multipleOf, schedule.quantum, address.local)
+	case numberEdgeFormat:
+		return numberFormatEdgeAt(rule.node.format, address.local)
+	default:
+		return numberEdge{}, false, errors.New("schematest: unknown numeric edge family")
+	}
+}
+
+func numberBoundaryEdgeAt(
+	bound, quantum *exactNumber,
+	minimum bool,
+	local uint64,
+) (numberEdge, bool, error) {
+	if bound == nil || local >= numberBoundaryEdgeCount {
+		return numberEdge{}, false, nil
+	}
+
+	if local == 0 {
+		return numberEdge{base: bound}, true, nil
 	}
 
 	firstSign := int64(1)
@@ -290,56 +404,40 @@ func eachNumberBoundaryEdge(
 		firstSign = -1
 	}
 
-	for _, sign := range []int64{firstSign, -firstSign} {
-		stop, err := visit(numberEdge{base: bound, increment: quantum, sign: sign})
-		if err != nil {
-			return err
-		}
-
-		if stop {
-			return errNumberEdgeStop
-		}
+	if local == numberSecondDirectedEdge {
+		firstSign = -firstSign
 	}
 
-	return nil
+	return numberEdge{base: bound, increment: quantum, sign: firstSign}, true, nil
 }
 
-// eachNumberMultipleEdge streams the divisor and its directed edges as metadata.
-func eachNumberMultipleEdge(
+func numberMultipleEdgeAt(
 	divisor, quantum *exactNumber,
-	visit func(numberEdge) (bool, error),
-) error {
-	if divisor == nil {
-		return nil
+	local uint64,
+) (numberEdge, bool, error) {
+	if divisor == nil || local >= numberMultipleEdgeCount {
+		return numberEdge{}, false, nil
 	}
 
-	negative, err := negateExactNumber(divisor)
-	if err != nil {
-		return err
-	}
+	switch local {
+	case 0:
+		return numberEdge{base: divisor}, true, nil
+	case 1:
+		negative, err := negateExactNumber(divisor)
 
-	edges := []numberEdge{
-		{base: divisor},
-		{base: negative},
-		{base: divisor, increment: quantum, sign: 1},
-		{base: divisor, increment: quantum, sign: -1},
+		return numberEdge{base: negative}, err == nil, err
+	case numberSecondDirectedEdge:
+		return numberEdge{base: divisor, increment: quantum, sign: 1}, true, nil
+	default:
+		return numberEdge{base: divisor, increment: quantum, sign: -1}, true, nil
 	}
-	for _, edge := range edges {
-		stop, visitErr := visit(edge)
-		if visitErr != nil {
-			return visitErr
-		}
-
-		if stop {
-			return errNumberEdgeStop
-		}
-	}
-
-	return nil
 }
 
-// eachNumberFormatEdge streams exact format-edge metadata.
-func eachNumberFormatEdge(format schemaFormat, visit func(numberEdge) (bool, error)) error {
+func numberFormatEdgeAt(format schemaFormat, local uint64) (numberEdge, bool, error) {
+	if local >= numberFormatEdgeCount {
+		return numberEdge{}, false, nil
+	}
+
 	var sources []string
 
 	switch format {
@@ -351,61 +449,101 @@ func eachNumberFormatEdge(format schemaFormat, visit func(numberEdge) (bool, err
 			"9223372036854775807", "9223372036854775808",
 		}
 	case schemaFormatFloat, schemaFormatDouble:
-		return eachNumberFloatFormatEdge(format, visit)
-	default:
-		return nil
-	}
-
-	for _, source := range sources {
-		number, err := parseExactNumber(source)
+		limit, err := exactBinaryFloatOverflowLimit(format)
 		if err != nil {
-			return err
+			return numberEdge{}, false, err
 		}
 
-		if stop, visitErr := visit(numberEdge{base: number}); visitErr != nil {
-			return visitErr
-		} else if stop {
-			return errNumberEdgeStop
+		negativeLimit, err := negateExactNumber(limit)
+		if err != nil {
+			return numberEdge{}, false, err
 		}
+
+		one, err := parseExactNumber("1")
+		if err != nil {
+			return numberEdge{}, false, err
+		}
+
+		edges := []numberEdge{
+			{base: negativeLimit, increment: one, sign: 1},
+			{base: negativeLimit},
+			{base: limit, increment: one, sign: -1},
+			{base: limit},
+		}
+
+		return edges[local], true, nil
+	default:
+		return numberEdge{}, false, nil
 	}
 
-	return nil
+	number, err := parseExactNumber(sources[local])
+
+	return numberEdge{base: number}, err == nil, err
 }
 
-// eachNumberFloatFormatEdge streams exact finite-overflow metadata.
-func eachNumberFloatFormatEdge(
-	format schemaFormat,
-	visit func(numberEdge) (bool, error),
-) error {
-	limit, err := exactBinaryFloatOverflowLimit(format)
-	if err != nil {
-		return err
-	}
-
-	negativeLimit, err := negateExactNumber(limit)
-	if err != nil {
-		return err
-	}
-
-	one, err := parseExactNumber("1")
-	if err != nil {
-		return err
-	}
-
-	edges := []numberEdge{
-		{base: negativeLimit, increment: one, sign: 1},
-		{base: negativeLimit},
-		{base: limit, increment: one, sign: -1},
-		{base: limit},
-	}
-	for _, edge := range edges {
-		stop, visitErr := visit(edge)
-		if visitErr != nil {
-			return visitErr
+// edgeAddressDuplicate separately checks first-occurrence metadata before one selected address.
+func (schedule numberSchedule) edgeAddressDuplicate(current numberEdge, wanted uint64) (bool, error) {
+	for earlierOrdinal := uint64(0); earlierOrdinal < wanted; earlierOrdinal++ {
+		address, addressed, _, err := schedule.edgeAddressAt(earlierOrdinal)
+		if err != nil {
+			return false, err
 		}
 
-		if stop {
-			return errNumberEdgeStop
+		if !addressed {
+			break
+		}
+
+		earlier, exists, err := schedule.edgeAtAddress(address, nil)
+		if err != nil {
+			return false, err
+		}
+
+		if !exists {
+			continue
+		}
+
+		equal, err := numberEdgesEqual(current, earlier)
+		if err != nil {
+			return false, err
+		}
+
+		if equal {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// eachEdge streams schedule metadata in exact address order.
+func (schedule numberSchedule) eachEdge(visit func(numberEdge) (bool, error)) error {
+	_, _, domain, err := schedule.edgeAddressAt(0)
+	if err != nil {
+		return err
+	}
+
+	for ordinal := uint64(0); ordinal < domain; ordinal++ {
+		address, addressed, _, addressErr := schedule.edgeAddressAt(ordinal)
+		if addressErr != nil {
+			return addressErr
+		}
+
+		if !addressed {
+			return errors.New("schematest: numeric edge address is outside its domain")
+		}
+
+		edge, exists, edgeErr := schedule.edgeAtAddress(address, nil)
+		if edgeErr != nil {
+			return edgeErr
+		}
+
+		if !exists {
+			continue
+		}
+
+		stop, visitErr := visit(edge)
+		if visitErr != nil || stop {
+			return visitErr
 		}
 	}
 
