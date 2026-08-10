@@ -54,6 +54,18 @@ func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T)
 	require.Equal(t, 2, strings.Count(text, "newRankProductCursor(5)"))
 }
 
+// TestArrayFrontierHasNoSyntheticCutoffLoop locks oversized counts to real incremental assignments.
+func TestArrayFrontierHasNoSyntheticCutoffLoop(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("structural_frontier.go")
+	require.NoError(t, err)
+
+	text := string(source)
+	require.NotContains(t, text, "if structure.length.beyond {\n\t\tfor {")
+	require.NotContains(t, text, "array item rank dimension overflow")
+}
+
 // TestFaultRowMachinesNeverRestartWalkNode locks direct row addressing into the outer continuation.
 //
 //nolint:cyclop // Three receiver declarations share one AST guard.

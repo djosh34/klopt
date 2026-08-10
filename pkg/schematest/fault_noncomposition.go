@@ -1062,7 +1062,7 @@ func objectGrowthFaultAttemptAtRank(
 	projectionRank := rank % projectionCount
 
 	decoder, ok := newDirectRankTupleDecoder(
-		additions*objectGrowthRanksPerAddition, rank/projectionCount,
+		uint64(additions*objectGrowthRanksPerAddition), rank/projectionCount,
 	)
 	if !ok {
 		return nil, false, true, nil
