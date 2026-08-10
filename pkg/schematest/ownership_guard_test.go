@@ -861,8 +861,9 @@ func TestCurrentOwnershipAnalyzesNonMapAttemptAndCallDeadlines(t *testing.T) {
 	for _, lifetime := range []ownershipLifetime{ownershipAttemptLifetime, ownershipCallLifetime} {
 		source := `package schematest
 			type jsonValue struct{}; type Case struct{}; type state struct { current *jsonValue }
+			func makeCurrent() *state { return &state{current: new(jsonValue)} }
 			func consume(*state) {}
-			func Build(yield func(Case)) { active := &state{current: new(jsonValue)}; yield(Case{}); consume(active) }
+			func Build(yield func(Case)) { active := makeCurrent(); yield(Case{}); consume(active) }
 		`
 		allowed := map[string]ownershipAllowance{
 			prefix + "state.current": {typeName: "*jsonValue", form: ownershipCurrentValue, lifetime: lifetime},
@@ -1270,19 +1271,18 @@ func currentValueLifecycleCoverage(
 	prefix := guardPackage.pkg.Path() + "."
 
 	for key, allowance := range allowed {
-		field := discovered[key]
-		if allowance.form != ownershipCurrentValue || field == nil {
+		if allowance.form != ownershipCurrentValue || discovered[key] == nil || build == nil {
+			continue
+		}
+
+		owner, _, ownerField := strings.Cut(strings.TrimPrefix(key, prefix), ".")
+		if !ownerField || owner == "" {
 			continue
 		}
 
 		switch allowance.lifetime {
-		case ownershipBeforeContinuation:
+		case ownershipBeforeContinuation, ownershipAttemptLifetime, ownershipCallLifetime:
 			covered[key] = allowance.lifetime
-		case ownershipAttemptLifetime, ownershipCallLifetime:
-			owner, _, ownerField := strings.Cut(strings.TrimPrefix(key, prefix), ".")
-			if build != nil && ownerField && owner != "" {
-				covered[key] = allowance.lifetime
-			}
 		}
 	}
 
@@ -1340,34 +1340,37 @@ func currentValueLifecycleViolations(
 	return violations
 }
 
-//nolint:cyclop // Exact holder discovery and return-shape traversal form one deadline check.
+//nolint:cyclop,gocognit,gocyclo,nestif // Exact row enrollment, return traversal, and continuation flow form one deadline check.
 func currentValueDeadlineViolations(
 	guardPackage *sourceGuardPackage,
 	allowed map[string]ownershipAllowance,
 ) []string {
-	callOwners := make(map[string]string)
+	owners := make(map[string]map[string]ownershipLifetime)
+	ownerFields := make(map[string]map[*types.Var]string)
 	prefix := guardPackage.pkg.Path() + "."
 	discovered := buildOwnershipFields(guardPackage)
 
 	for key, allowance := range allowed {
-		if allowance.form != ownershipCurrentValue || allowance.lifetime != ownershipCallLifetime ||
+		if allowance.form != ownershipCurrentValue || discovered[key] == nil ||
+			(allowance.lifetime != ownershipAttemptLifetime && allowance.lifetime != ownershipCallLifetime) ||
 			!strings.HasPrefix(key, prefix) {
 			continue
 		}
 
-		field := discovered[key]
-		if field == nil {
-			continue
-		}
-
-		if _, mapHolder := types.Unalias(field.Type()).Underlying().(*types.Map); !mapHolder {
-			continue
-		}
-
 		owner, _, found := strings.Cut(strings.TrimPrefix(key, prefix), ".")
-		if found && owner != "jsonValue" {
-			callOwners[owner] = key
+		if found && owner != "" {
+			if owners[owner] == nil {
+				owners[owner] = make(map[string]ownershipLifetime)
+				ownerFields[owner] = make(map[*types.Var]string)
+			}
+
+			owners[owner][key] = allowance.lifetime
+			ownerFields[owner][discovered[key]] = key
 		}
+	}
+
+	if len(owners) == 0 {
+		return nil
 	}
 
 	var violations []string
@@ -1380,9 +1383,15 @@ func currentValueDeadlineViolations(
 			}
 
 			for _, result := range returned.Results {
-				for owner, key := range callOwners {
-					if ownershipTypeContainsNamed(guardPackage.info.TypeOf(result), guardPackage.pkg, owner, make(map[types.Type]bool)) {
-						violations = append(violations, "current value escapes call lifetime: "+key)
+				for owner, rows := range owners {
+					if owner == "jsonValue" || !ownershipTypeContainsNamed(guardPackage.info.TypeOf(result), guardPackage.pkg, owner, make(map[types.Type]bool)) {
+						continue
+					}
+
+					for key, lifetime := range rows {
+						if lifetime == ownershipCallLifetime {
+							violations = append(violations, "current value escapes call lifetime: "+key)
+						}
 					}
 				}
 			}
@@ -1391,7 +1400,120 @@ func currentValueDeadlineViolations(
 		})
 	}
 
+	ssaPackage := buildGuardSSA(guardPackage)
+
+	build := ssaPackage.Func("Build")
+	if build == nil {
+		return violations
+	}
+
+	functions := ownershipRuntimeFunctions(build)
+	callbacks := generatedCallbackValues(functions, guardPackage.pkg)
+	callbackInvokers := generatedCallbackInvokers(functions, callbacks)
+	cleared := generatedCallbackResultValues(functions, callbacks)
+
+	for function := range functions {
+		callbackAtEntry := generatedCallbackEntryState(function, callbacks, callbackInvokers)
+		for _, block := range function.Blocks {
+			callbackSeen := callbackAtEntry[block]
+			for _, instruction := range block.Instrs {
+				if callbackSeen {
+					for _, operand := range instruction.Operands(nil) {
+						if operand == nil || *operand == nil || cleared[*operand] || generatedValueRefreshedBeforeUse(*operand, instruction) {
+							continue
+						}
+
+						for owner, rows := range owners {
+							if owner == "jsonValue" {
+								field := ownershipSSAField(*operand)
+								if key := ownerFields[owner][field]; key != "" {
+									violations = append(violations, "current value survives declared deadline: "+key)
+								}
+
+								continue
+							}
+
+							if !ownershipTypeContainsNamed((*operand).Type(), guardPackage.pkg, owner, make(map[types.Type]bool)) {
+								continue
+							}
+
+							for key := range rows {
+								violations = append(violations, "current value survives declared deadline: "+key)
+							}
+						}
+					}
+				}
+
+				call, ok := instruction.(ssa.CallInstruction)
+				if ok && generatedCallInvokesCallback(call.Common(), callbacks, callbackInvokers, function.Pkg) {
+					callbackSeen = true
+				}
+			}
+		}
+	}
+
 	return violations
+}
+
+//nolint:cyclop // SSA exposes value and address field access as separate instruction shapes.
+func ownershipSSAField(value ssa.Value) *types.Var {
+	switch typed := value.(type) {
+	case *ssa.Field:
+		structure, ok := types.Unalias(typed.X.Type()).Underlying().(*types.Struct)
+		if ok && typed.Field < structure.NumFields() {
+			return structure.Field(typed.Field)
+		}
+	case *ssa.FieldAddr:
+		pointer, ok := types.Unalias(typed.X.Type()).Underlying().(*types.Pointer)
+		if !ok {
+			return nil
+		}
+
+		structure, ok := types.Unalias(pointer.Elem()).Underlying().(*types.Struct)
+		if ok && typed.Field < structure.NumFields() {
+			return structure.Field(typed.Field)
+		}
+	case *ssa.UnOp:
+		return ownershipSSAField(typed.X)
+	case *ssa.ChangeType:
+		return ownershipSSAField(typed.X)
+	case *ssa.Convert:
+		return ownershipSSAField(typed.X)
+	}
+
+	return nil
+}
+
+func ownershipRuntimeFunctions(build *ssa.Function) map[*ssa.Function]bool {
+	functions := make(map[*ssa.Function]bool)
+	pending := []*ssa.Function{build}
+
+	for len(pending) > 0 {
+		function := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+
+		if function == nil || functions[function] {
+			continue
+		}
+
+		functions[function] = true
+
+		pending = append(pending, function.AnonFuncs...)
+		for _, block := range function.Blocks {
+			for _, instruction := range block.Instrs {
+				call, ok := instruction.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+
+				for callee := range possibleLocalCallees(call.Common(), build.Pkg) {
+					pending = append(pending, callee)
+				}
+			}
+		}
+	}
+
+	return functions
 }
 
 //nolint:cyclop // Every aggregate carrier is traversed explicitly.

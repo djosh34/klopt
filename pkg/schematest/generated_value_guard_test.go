@@ -201,6 +201,11 @@ func TestGeneratedValueGuardRejectsRuntimeJSONAndLoopBackedgeRetention(t *testin
 			type jsonValue struct { text string }; type Case struct{}
 			func consume(map[string][]any) {}
 			func Build(yield func(Case)) { current := new(jsonValue); archive := map[string][]any{"saved": {current}}; yield(Case{}); consume(archive) }`,
+		"helper-returned runtime JSON archive": `package schematest
+			type jsonValue struct { text string }; type Case struct{}
+			func makeCandidate() *jsonValue { return new(jsonValue) }
+			func consume([]any) {}
+			func Build(yield func(Case)) { archive := []any{makeCandidate()}; yield(Case{}); consume(archive) }`,
 		"later loop iteration": `package schematest
 			type Case struct { JSON []byte }
 			func consume([]byte) {}
@@ -1031,6 +1036,10 @@ func generatedUnanalyzedCall(common *ssa.CallCommon, currentPackage *ssa.Package
 		return false
 	}
 
+	if currentPackage != nil && generatedCallbackType(common.Value.Type(), currentPackage.Pkg) {
+		return false
+	}
+
 	callee := common.StaticCallee()
 	if callee != nil {
 		return localSSAPackage(callee) != currentPackage
@@ -1109,7 +1118,14 @@ func generatedCallbackType(valueType types.Type, currentPackage *types.Package) 
 		return false
 	}
 
-	return sameGuardType(signature.Params().At(0).Type(), packageObjectTypeFromTypes(currentPackage, "Case"))
+	parameterType := signature.Params().At(0).Type()
+	if sameGuardType(parameterType, packageObjectTypeFromTypes(currentPackage, "Case")) {
+		return true
+	}
+
+	jsonValueType := packageObjectTypeFromTypes(currentPackage, "jsonValue")
+
+	return jsonValueType != nil && sameGuardType(parameterType, types.NewPointer(jsonValueType))
 }
 
 func packageObjectTypeFromTypes(currentPackage *types.Package, name string) types.Type {
@@ -1123,13 +1139,43 @@ func packageObjectTypeFromTypes(currentPackage *types.Package, name string) type
 
 func generatedRuntimeJSONRoot(value ssa.Value, currentPackage *types.Package) bool {
 	allocation, ok := value.(*ssa.Alloc)
-	if !ok || allocation.Parent() == nil || allocation.Parent().Name() != "Build" {
+	if !ok || allocation.Parent() == nil ||
+		(allocation.Parent().Name() != "Build" && !generatedAllocationReturned(allocation, make(map[ssa.Value]bool))) {
 		return false
 	}
 
 	pointer, ok := types.Unalias(allocation.Type()).Underlying().(*types.Pointer)
 
 	return ok && sameGuardType(pointer.Elem(), packageObjectTypeFromTypes(currentPackage, "jsonValue"))
+}
+
+func generatedAllocationReturned(value ssa.Value, seen map[ssa.Value]bool) bool {
+	if value == nil || seen[value] {
+		return false
+	}
+
+	seen[value] = true
+
+	referrers := value.Referrers()
+	if referrers == nil {
+		return false
+	}
+
+	for _, instruction := range *referrers {
+		if returned, ok := instruction.(*ssa.Return); ok {
+			for _, result := range returned.Results {
+				if result == value {
+					return true
+				}
+			}
+		}
+
+		if derived, ok := instruction.(ssa.Value); ok && generatedAllocationReturned(derived, seen) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func generatedValueRootType(valueType types.Type, currentPackage *types.Package) bool {
