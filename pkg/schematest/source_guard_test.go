@@ -1264,7 +1264,7 @@ func receiverIsPublicType(receivers *ast.FieldList) bool {
 
 // copiedAnswerViolations finds package-wide fixture constants and generated table construction.
 func copiedAnswerViolations(guardPackage *sourceGuardPackage, operationIDs map[string]bool) []string {
-	var violations []string
+	violations := copiedSemanticGraphViolations(guardPackage)
 
 	for _, file := range guardPackage.files {
 		ast.Inspect(file, func(node ast.Node) bool {
@@ -1313,7 +1313,7 @@ func containsGeneratedGraphFingerprint(file *ast.File) bool {
 			return true
 		}
 
-		if generatedGraphIIFE(function) {
+		if generatedGraphBody(function.Body) {
 			found = true
 
 			return false
@@ -1323,30 +1323,6 @@ func containsGeneratedGraphFingerprint(file *ast.File) bool {
 	})
 
 	return found
-}
-
-// generatedGraphIIFE requires the generated table's fixed allocation, initialization, links, and return.
-//
-//nolint:cyclop // Allocation discovery and the four-part graph fingerprint form one structural check.
-func generatedGraphIIFE(function *ast.FuncLit) bool {
-	for _, statement := range function.Body.List {
-		assignment, ok := statement.(*ast.AssignStmt)
-		if !ok || len(assignment.Lhs) != 1 || len(assignment.Rhs) != 1 {
-			continue
-		}
-
-		name, ok := assignment.Lhs[0].(*ast.Ident)
-		if !ok || !isFixedPointerSliceMake(assignment.Rhs[0]) {
-			continue
-		}
-
-		allocated, filled, linked, returned := generatedGraphOperations(function.Body, name.Name)
-		if allocated && filled && linked && returned {
-			return true
-		}
-	}
-
-	return false
 }
 
 // isFixedPointerSliceMake identifies make([]*T, N), the generated graph's indexed storage.
