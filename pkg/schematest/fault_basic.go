@@ -111,10 +111,6 @@ func streamFault(
 		}
 
 		if exhausted {
-			if !diagonalLive && ranks[faultParentDimension] > 0 {
-				return nil
-			}
-
 			continue
 		}
 
@@ -189,7 +185,7 @@ func faultClosureAtRank(
 	remaining := new(big.Int).SetUint64(rank)
 
 	found, err := selectFaultClosure(
-		[]*faultClosureProgram{fault.alternatives}, remaining, &selected, s,
+		fault.alternatives, remaining, &selected, s,
 	)
 	if err != nil {
 		return faultProgram{}, false, false, err
@@ -198,26 +194,39 @@ func faultClosureAtRank(
 	return selected, found, !found, nil
 }
 
-// selectFaultClosure decodes one rank without replaying preceding closure tuples.
+// selectFaultClosure decodes one rank from compositional subtree sizes. Counting
+// visits each authored program once and never enumerates completed tuples.
 func selectFaultClosure(
-	programs []*faultClosureProgram,
+	program *faultClosureProgram,
 	rank *big.Int,
 	selected *faultProgram,
 	s *search,
 ) (bool, error) {
-	for len(programs) > 0 && programs[0] == nil {
-		programs = programs[1:]
+	counts := make(map[*faultClosureProgram]*big.Int)
+	if rank.Cmp(faultClosureProgramCount(program, counts)) >= 0 {
+		return false, nil
 	}
 
-	if len(programs) == 0 {
+	return decodeFaultClosureProgram(program, rank, selected, s, counts)
+}
+
+// decodeFaultClosureProgram selects only the requested declarative path.
+func decodeFaultClosureProgram(
+	program *faultClosureProgram,
+	rank *big.Int,
+	selected *faultProgram,
+	s *search,
+	counts map[*faultClosureProgram]*big.Int,
+) (bool, error) {
+	if program == nil {
 		return rank.Sign() == 0, nil
 	}
 
-	program := programs[0]
+	nextCount := faultClosureProgramCount(program.next, counts)
 	for alternative := program.alternatives; alternative != nil; alternative = alternative.next {
-		nextPrograms := faultClosureSuccessors(programs, program, alternative)
+		closureCount := faultClosureProgramCount(alternative.closure, counts)
 
-		block := faultClosureCompletionCount(nextPrograms)
+		block := new(big.Int).Mul(closureCount, nextCount)
 		if rank.Cmp(block) >= 0 {
 			rank.Sub(rank, block)
 
@@ -233,49 +242,42 @@ func selectFaultClosure(
 		)
 		selected.expected = append(selected.expected, alternative.expected...)
 
-		return selectFaultClosure(nextPrograms, rank, selected, s)
+		closureRank := new(big.Int).Quo(new(big.Int).Set(rank), nextCount)
+		nextRank := new(big.Int).Mod(new(big.Int).Set(rank), nextCount)
+
+		found, err := decodeFaultClosureProgram(
+			alternative.closure, closureRank, selected, s, counts,
+		)
+		if err != nil || !found {
+			return found, err
+		}
+
+		return decodeFaultClosureProgram(program.next, nextRank, selected, s, counts)
 	}
 
 	return false, nil
 }
 
-// faultClosureSuccessors returns the domains following one selected alternative.
-func faultClosureSuccessors(
-	programs []*faultClosureProgram,
+// faultClosureProgramCount computes a bounded compositional cardinality.
+func faultClosureProgramCount(
 	program *faultClosureProgram,
-	alternative *faultClosureAlternative,
-) []*faultClosureProgram {
-	next := make([]*faultClosureProgram, 0, len(programs)+1)
-	if alternative.closure != nil {
-		next = append(next, alternative.closure)
-	}
-
-	if program.next != nil {
-		next = append(next, program.next)
-	}
-
-	return append(next, programs[1:]...)
-}
-
-// faultClosureCompletionCount counts complete tuples below the current domains.
-func faultClosureCompletionCount(programs []*faultClosureProgram) *big.Int {
-	for len(programs) > 0 && programs[0] == nil {
-		programs = programs[1:]
-	}
-
-	if len(programs) == 0 {
+	counts map[*faultClosureProgram]*big.Int,
+) *big.Int {
+	if program == nil {
 		return big.NewInt(1)
 	}
 
-	program := programs[0]
-
-	count := new(big.Int)
-	for alternative := program.alternatives; alternative != nil; alternative = alternative.next {
-		count.Add(
-			count,
-			faultClosureCompletionCount(faultClosureSuccessors(programs, program, alternative)),
-		)
+	if count, exists := counts[program]; exists {
+		return count
 	}
+
+	alternatives := new(big.Int)
+	for alternative := program.alternatives; alternative != nil; alternative = alternative.next {
+		alternatives.Add(alternatives, faultClosureProgramCount(alternative.closure, counts))
+	}
+
+	count := new(big.Int).Mul(alternatives, faultClosureProgramCount(program.next, counts))
+	counts[program] = count
 
 	return count
 }
@@ -531,7 +533,9 @@ func parentReplayRequirementsAt(
 	}
 
 	for groupIndex, group := range groups {
-		mask, exists := parentReplayMaskAtRank(group.count, maskRanks[groupIndex])
+		mask, exists := parentReplayMaskAtOrdinal(
+			group.count, new(big.Int).SetUint64(maskRanks[groupIndex]),
+		)
 		if !exists {
 			continue
 		}
@@ -663,15 +667,50 @@ func advanceParentReplayMask(cursor *parentReplayMaskCursor) bool {
 	return true
 }
 
-// parentReplayMaskAtRank is the uint64-addressed compatibility seam for the fault product.
-func parentReplayMaskAtRank(branches int, rank uint64) (*big.Int, bool) {
-	cursor := newParentReplayMaskCursor(branches)
-	for current := uint64(0); ; current++ {
-		mask, exists := cursor.Next()
-		if !exists || current == rank {
-			return mask, exists
+// parentReplayMaskAtOrdinal directly decodes an arbitrary-precision mask
+// ordinal in cardinality and authored-branch order.
+func parentReplayMaskAtOrdinal(branches int, ordinal *big.Int) (*big.Int, bool) {
+	if branches <= 0 || ordinal == nil || ordinal.Sign() < 0 {
+		return nil, false
+	}
+
+	remaining := new(big.Int).Set(ordinal)
+
+	selected := 1
+	for ; selected <= branches; selected++ {
+		block := new(big.Int).Binomial(int64(branches), int64(selected))
+		if remaining.Cmp(block) < 0 {
+			break
+		}
+
+		remaining.Sub(remaining, block)
+	}
+
+	if selected > branches {
+		return nil, false
+	}
+
+	mask := new(big.Int)
+	next := 0
+
+	for needed := selected; needed > 0; needed-- {
+		maximum := branches - needed
+		for candidate := next; candidate <= maximum; candidate++ {
+			block := new(big.Int).Binomial(
+				int64(branches-candidate-1), int64(needed-1),
+			)
+			if remaining.Cmp(block) < 0 {
+				mask.SetBit(mask, candidate, 1)
+				next = candidate + 1
+
+				break
+			}
+
+			remaining.Sub(remaining, block)
 		}
 	}
+
+	return mask, true
 }
 
 // applyFault copies the current parent, charges one fault choice, and applies one fault.
@@ -723,7 +762,10 @@ func applyFaultAtRank(
 	return derivative, attempted, false, exhausted, err
 }
 
-// faultAtOccurrenceRank resolves and charges one concrete parent occurrence.
+// faultAtOccurrenceRank resolves every closure-local path before mutation.
+// Expected identities are never selected from oracle output.
+//
+//nolint:cyclop // Obligation and closure-local occurrence dimensions meet here.
 func faultAtOccurrenceRank(
 	parent *jsonValue,
 	fault faultProgram,
@@ -743,26 +785,84 @@ func faultAtOccurrenceRank(
 		appendRequiredName = fault.obligation.rule == oracleRuleRequired
 	}
 
-	for path := range matchingValuePathSequence(parent, template) {
-		if rank > 0 {
-			rank--
+	count := matchingValuePathCount(parent, template)
+	if count == 0 {
+		return faultProgram{}, false, nil
+	}
 
+	selectors := []string{template}
+	selectedTemplates := map[string]bool{template: true}
+
+	for _, expected := range fault.expected {
+		projected := expected.project()
+		if selectedTemplates[projected.occurrence.instanceTemplate] ||
+			projected.occurrence.instanceTemplate == fault.obligation.occurrence.instanceTemplate ||
+			!strings.Contains(projected.occurrence.instanceTemplate, "*") {
 			continue
+		}
+
+		if matchingValuePathCount(parent, projected.occurrence.instanceTemplate) > 0 {
+			selectors = append(selectors, projected.occurrence.instanceTemplate)
+			selectedTemplates[projected.occurrence.instanceTemplate] = true
+		}
+	}
+
+	ordinals := make([]uint64, len(selectors))
+	for index := len(selectors) - 1; index >= 0; index-- {
+		size := matchingValuePathCount(parent, selectors[index])
+		if size == 0 {
+			return faultProgram{}, false, nil
+		}
+
+		ordinals[index] = rank % size
+		rank /= size
+	}
+
+	if rank > 0 {
+		return faultProgram{}, false, nil
+	}
+
+	path, exists := matchingValuePathAt(parent, selectors[0], ordinals[0])
+	if !exists {
+		return faultProgram{}, false, errors.New("schematest: fault occurrence rank disappeared")
+	}
+
+	if err := s.assign(); err != nil {
+		return faultProgram{}, false, err
+	}
+
+	tokens, _ := rowPointerTokens(fault.obligation.occurrence.instanceTemplate)
+	if appendRequiredName {
+		path = append(pathCopy(path), tokens[len(tokens)-1])
+	} else if fault.obligation.rule == oracleRuleAdditionalProperties {
+		path = append(pathCopy(path), "*")
+	}
+
+	selected := concretizeFaultAtPath(fault, path)
+
+	for selectorIndex := 1; selectorIndex < len(selectors); selectorIndex++ {
+		selectedPath, selectedExists := matchingValuePathAt(
+			parent, selectors[selectorIndex], ordinals[selectorIndex],
+		)
+		if !selectedExists {
+			return faultProgram{}, false, errors.New("schematest: closure occurrence rank disappeared")
 		}
 
 		if err := s.assign(); err != nil {
 			return faultProgram{}, false, err
 		}
 
-		tokens, _ := rowPointerTokens(fault.obligation.occurrence.instanceTemplate)
-		if appendRequiredName {
-			path = append(pathCopy(path), tokens[len(tokens)-1])
-		} else if fault.obligation.rule == oracleRuleAdditionalProperties {
-			path = append(pathCopy(path), "*")
-		}
+		for expectedIndex := range selected.expected {
+			projected := selected.expected[expectedIndex].project()
+			if projected.occurrence.instanceTemplate != selectors[selectorIndex] {
+				continue
+			}
 
-		return concretizeFaultAtPath(fault, path), true, nil
+			identity := cloneEvaluationRecordIdentity(selected.expected[expectedIndex])
+			identity.occurrence.instance.tokens = pathCopy(selectedPath)
+			selected.expected[expectedIndex] = identity
+		}
 	}
 
-	return faultProgram{}, false, nil
+	return selected, true, nil
 }

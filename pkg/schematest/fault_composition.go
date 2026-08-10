@@ -53,7 +53,7 @@ func findCompositionFaultDerivative(
 
 	visit := func(value *jsonValue) (bool, error) {
 		return visitCompositionEditSizes(
-			compositionDifference(parent, value, nil),
+			compositionDifference(parent, value, nil), s,
 			func(selected []compositionEdit) (bool, error) {
 				candidate, matched, candidateErr := tryCompositionEdits(parent, fault, selected, s)
 				if candidateErr != nil || !matched {
@@ -119,7 +119,7 @@ func compositionFaultAttemptAtRank(
 
 	directEdits := compositionDirectEdits(parent, fault.requirements)
 
-	stopped, err := visitCompositionEditSizes(directEdits, attempt)
+	stopped, err := visitCompositionEditSizes(directEdits, s, attempt)
 	if err != nil || stopped {
 		return derivative, attempted, false, err
 	}
@@ -129,7 +129,7 @@ func compositionFaultAttemptAtRank(
 		s.model.root.occurrence,
 		fault.requirements,
 		rowSearchContext{},
-		compositionAssignmentEditVisitor(parent, attempt),
+		compositionAssignmentEditVisitor(parent, s, attempt),
 	)
 	if err != nil {
 		return nil, false, false, err
@@ -145,13 +145,30 @@ func compositionFaultAttemptAtRank(
 // visitCompositionEditSizes traverses edit subsets in increasing size and source order.
 func visitCompositionEditSizes(
 	edits compositionEditSource,
+	s *search,
 	visit func([]compositionEdit) (bool, error),
 ) (bool, error) {
-	count := compositionEditCount(edits)
+	count, err := edits.Count(s)
+	if err != nil {
+		return false, err
+	}
+
 	for size := 1; size <= count; size++ {
-		stopped, err := visitCompositionEditSubsets(edits, count, size, visit)
-		if err != nil || stopped {
-			return stopped, err
+		cursor := newCompositionEditSubsetCursor(edits, count, size, s)
+		for {
+			selected, exists, cursorErr := cursor.Next()
+			if cursorErr != nil || !exists {
+				if cursorErr != nil {
+					return false, cursorErr
+				}
+
+				break
+			}
+
+			stopped, visitErr := visit(selected)
+			if visitErr != nil || stopped {
+				return stopped, visitErr
+			}
 		}
 	}
 
@@ -161,34 +178,89 @@ func visitCompositionEditSizes(
 // compositionAssignmentEditVisitor converts each complete assignment to parent-relative edits.
 func compositionAssignmentEditVisitor(
 	parent *jsonValue,
+	s *search,
 	visit func([]compositionEdit) (bool, error),
 ) rowVisit {
 	return func(value *jsonValue) (bool, error) {
-		return visitCompositionEditSizes(compositionDifference(parent, value, nil), visit)
+		return visitCompositionEditSizes(compositionDifference(parent, value, nil), s, visit)
 	}
 }
 
-// compositionEditSource yields transient edits in canonical order.
-type compositionEditSource func(func(compositionEdit) bool)
+// compositionEditSource directly addresses edits without retaining an edit corpus.
+type compositionEditSource struct {
+	count func() int
+	at    func(int) (compositionEdit, bool)
+}
 
-// compositionDirectEdits yields the current parent's directly represented removals.
+// Count charges each discovered source coordinate once.
+func (source compositionEditSource) Count(s *search) (int, error) {
+	count := source.count()
+	for range count {
+		if err := s.assign(); err != nil {
+			return 0, err
+		}
+	}
+
+	return count, nil
+}
+
+// At charges immediately before selecting one edit coordinate.
+func (source compositionEditSource) At(index int, s *search) (compositionEdit, bool, error) {
+	edit, exists := source.at(index)
+	if !exists {
+		return compositionEdit{}, false, nil
+	}
+
+	if err := s.assign(); err != nil {
+		return compositionEdit{}, false, err
+	}
+
+	return edit, true, nil
+}
+
+// compositionDirectEdits addresses the current parent's represented removals.
 func compositionDirectEdits(parent *jsonValue, requirements []requirement) compositionEditSource {
-	return func(yield func(compositionEdit) bool) {
-		for _, requirement := range requirements {
-			if requirement.canonical || requirement.presence != requirementAbsent {
-				continue
+	eligible := func(requirement requirement) bool {
+		return !requirement.canonical && requirement.presence == requirementAbsent
+	}
+
+	return compositionEditSource{
+		count: func() int {
+			total := 0
+
+			for _, requirement := range requirements {
+				if eligible(requirement) {
+					total += int(matchingValuePathCount(parent, requirement.occurrence.instanceTemplate))
+				}
 			}
 
-			for path := range matchingValuePathSequence(parent, requirement.occurrence.instanceTemplate) {
-				if len(path) == 0 || valueAtPath(parent, path) == nil {
+			return total
+		},
+		at: func(wanted int) (compositionEdit, bool) {
+			for _, requirement := range requirements {
+				if !eligible(requirement) {
 					continue
 				}
 
-				if !yield(compositionEdit{path: pathCopy(path), remove: true}) {
-					return
+				paths := matchingValuePathCount(parent, requirement.occurrence.instanceTemplate)
+				if wanted >= int(paths) {
+					wanted -= int(paths)
+
+					continue
 				}
+
+				path, exists := matchingValuePathAt(
+					parent, requirement.occurrence.instanceTemplate, uint64(wanted),
+				)
+				if !exists || len(path) == 0 || valueAtPath(parent, path) == nil {
+					return compositionEdit{}, false
+				}
+
+				return compositionEdit{path: pathCopy(path), remove: true}, true
 			}
-		}
+
+			return compositionEdit{}, false
+		},
 	}
 }
 
@@ -198,13 +270,11 @@ func applyCompositionRequirementEdits(
 	fault faultProgram,
 	s *search,
 ) (*jsonValue, bool, error) {
-	edits := compositionDirectEdits(parent, fault.requirements)
+	var derivative *jsonValue
 
-	count := compositionEditCount(edits)
-	for size := 1; size <= count; size++ {
-		var derivative *jsonValue
-
-		found, err := visitCompositionEditSubsets(edits, count, size, func(selected []compositionEdit) (bool, error) {
+	found, err := visitCompositionEditSizes(
+		compositionDirectEdits(parent, fault.requirements), s,
+		func(selected []compositionEdit) (bool, error) {
 			candidate, matched, candidateErr := tryCompositionEdits(parent, fault, selected, s)
 			if candidateErr != nil || !matched {
 				return false, candidateErr
@@ -213,13 +283,10 @@ func applyCompositionRequirementEdits(
 			derivative = candidate
 
 			return true, nil
-		})
-		if err != nil || found {
-			return derivative, found, err
-		}
-	}
+		},
+	)
 
-	return nil, false, nil
+	return derivative, found, err
 }
 
 // tryCompositionEdits charges and verifies one transient edit set.
@@ -259,12 +326,7 @@ func tryCompositionEdits(
 		return nil, false, fmt.Errorf("evaluate composition fault derivative: %w", result.err)
 	}
 
-	concreteFault, concretizeErr := concretizeCompositionFaultClosure(result, fault, s)
-	if concretizeErr != nil {
-		return nil, false, concretizeErr
-	}
-
-	matches, matchErr := faultFailureClosureMatches(result, concreteFault)
+	matches, matchErr := faultFailureClosureMatches(result, fault)
 	if matchErr != nil {
 		return nil, false, fmt.Errorf("compare composition fault expected: %w", matchErr)
 	}
@@ -274,57 +336,6 @@ func tryCompositionEdits(
 	}
 
 	return candidate, true, nil
-}
-
-// concretizeCompositionFaultClosure selects every repeated closure-local occurrence.
-//
-//nolint:cyclop // Structured wildcard selection checks every identity coordinate.
-func concretizeCompositionFaultClosure(
-	result evaluation,
-	fault faultProgram,
-	s *search,
-) (faultProgram, error) {
-	fault.expected = append(faultClosure(nil), fault.expected...)
-	for index, expected := range fault.expected {
-		repeated := false
-		for _, token := range expected.occurrence.instance.tokens {
-			repeated = repeated || token == "*"
-		}
-
-		if !repeated {
-			continue
-		}
-
-		projected := expected.project()
-		selected := false
-
-		for actual := range result.failureRecords() {
-			if actual.rule != projected.rule ||
-				actual.occurrence.usePointer != projected.occurrence.usePointer ||
-				actual.occurrence.targetPointer != projected.occurrence.targetPointer ||
-				actual.occurrence.reference != projected.occurrence.reference ||
-				!instanceTemplateMatches(
-					projected.occurrence.instanceTemplate, actual.occurrence.instanceTemplate,
-				) {
-				continue
-			}
-
-			if err := s.assign(); err != nil {
-				return faultProgram{}, err
-			}
-
-			fault.expected[index] = newEvaluationRecordIdentity(actual)
-			selected = true
-
-			break
-		}
-
-		if !selected {
-			return fault, nil
-		}
-	}
-
-	return fault, nil
 }
 
 // chargeCompositionEdit charges every atomic part of one selected edit.
@@ -365,23 +376,74 @@ func chargeCompositionEdit(candidate *jsonValue, edit compositionEdit, s *search
 	return nil
 }
 
-// compositionDifference lazily yields deterministic leaf edits between two values.
+// compositionDifference exposes deterministic leaf edits by direct ordinal.
 func compositionDifference(parent, assignment *jsonValue, path []string) compositionEditSource {
-	return func(yield func(compositionEdit) bool) {
-		yieldCompositionDifference(parent, assignment, path, yield)
+	return compositionEditSource{
+		count: func() int {
+			return compositionDifferenceCount(parent, assignment)
+		},
+		at: func(index int) (compositionEdit, bool) {
+			return compositionDifferenceAt(parent, assignment, path, index)
+		},
 	}
 }
 
-// yieldCompositionDifference emits recursive object, array, and scalar edits.
+// compositionDifferenceCount returns the number of leaf edits without enumerating subsets.
 //
-//nolint:cyclop,gocognit // Object, array, and scalar differences are one recursive operation.
-func yieldCompositionDifference(
+//nolint:cyclop // Object, array, and scalar cardinalities share one recursion.
+func compositionDifferenceCount(parent, assignment *jsonValue) int {
+	if parent == nil || assignment == nil || parent.kind != assignment.kind {
+		return 1
+	}
+
+	count := 0
+
+	switch parent.kind {
+	case jsonObject:
+		for _, name := range sortedObjectNames(parent.object) {
+			assigned, exists := assignment.object[name]
+			if !exists {
+				count++
+			} else {
+				count += compositionDifferenceCount(parent.object[name], assigned)
+			}
+		}
+
+		for _, name := range sortedObjectNames(assignment.object) {
+			if _, exists := parent.object[name]; !exists {
+				count++
+			}
+		}
+	case jsonArray:
+		common := min(len(parent.array), len(assignment.array))
+		for index := range common {
+			count += compositionDifferenceCount(parent.array[index], assignment.array[index])
+		}
+
+		count += max(len(parent.array), len(assignment.array)) - common
+	default:
+		if !jsonValuesEqual(parent, assignment) {
+			count = 1
+		}
+	}
+
+	return count
+}
+
+// compositionDifferenceAt decodes one edit by subtree cardinalities.
+//
+//nolint:cyclop,gocognit // Containers share one canonical ordinal decoder.
+func compositionDifferenceAt(
 	parent, assignment *jsonValue,
 	path []string,
-	yield func(compositionEdit) bool,
-) bool {
+	wanted int,
+) (compositionEdit, bool) {
+	if wanted < 0 {
+		return compositionEdit{}, false
+	}
+
 	if parent == nil || assignment == nil || parent.kind != assignment.kind {
-		return yield(compositionEdit{path: pathCopy(path), replacement: assignment})
+		return compositionEdit{path: pathCopy(path), replacement: assignment}, wanted == 0
 	}
 
 	switch parent.kind {
@@ -389,109 +451,118 @@ func yieldCompositionDifference(
 		for _, name := range sortedObjectNames(parent.object) {
 			assigned, exists := assignment.object[name]
 			if !exists {
-				if !yield(compositionEdit{path: append(pathCopy(path), name), remove: true}) {
-					return false
+				if wanted == 0 {
+					return compositionEdit{path: append(pathCopy(path), name), remove: true}, true
 				}
+
+				wanted--
 
 				continue
 			}
 
-			if !yieldCompositionDifference(
-				parent.object[name], assigned, append(pathCopy(path), name), yield,
-			) {
-				return false
+			count := compositionDifferenceCount(parent.object[name], assigned)
+			if wanted < count {
+				return compositionDifferenceAt(
+					parent.object[name], assigned, append(pathCopy(path), name), wanted,
+				)
 			}
+
+			wanted -= count
 		}
 
 		for _, name := range sortedObjectNames(assignment.object) {
-			if _, exists := parent.object[name]; !exists && !yield(compositionEdit{
-				path: append(pathCopy(path), name), replacement: assignment.object[name],
-			}) {
-				return false
+			if _, exists := parent.object[name]; exists {
+				continue
 			}
+
+			if wanted == 0 {
+				return compositionEdit{
+					path: append(pathCopy(path), name), replacement: assignment.object[name],
+				}, true
+			}
+
+			wanted--
 		}
 	case jsonArray:
 		common := min(len(parent.array), len(assignment.array))
-		for index := 0; index < common; index++ {
-			if !yieldCompositionDifference(
-				parent.array[index],
-				assignment.array[index],
-				append(pathCopy(path), strconv.Itoa(index)),
-				yield,
-			) {
-				return false
+		for index := range common {
+			count := compositionDifferenceCount(parent.array[index], assignment.array[index])
+			if wanted < count {
+				return compositionDifferenceAt(
+					parent.array[index], assignment.array[index],
+					append(pathCopy(path), strconv.Itoa(index)), wanted,
+				)
 			}
+
+			wanted -= count
 		}
 
 		for index := len(parent.array) - 1; index >= len(assignment.array); index-- {
-			if !yield(compositionEdit{
-				path: append(pathCopy(path), strconv.Itoa(index)), remove: true,
-			}) {
-				return false
+			if wanted == 0 {
+				return compositionEdit{
+					path: append(pathCopy(path), strconv.Itoa(index)), remove: true,
+				}, true
 			}
+
+			wanted--
 		}
 
 		for index := len(parent.array); index < len(assignment.array); index++ {
-			if !yield(compositionEdit{
-				path:        append(pathCopy(path), strconv.Itoa(index)),
-				replacement: assignment.array[index], append: true,
-			}) {
-				return false
+			if wanted == 0 {
+				return compositionEdit{
+					path:        append(pathCopy(path), strconv.Itoa(index)),
+					replacement: assignment.array[index], append: true,
+				}, true
 			}
+
+			wanted--
 		}
 	default:
-		if !jsonValuesEqual(parent, assignment) {
-			return yield(compositionEdit{path: pathCopy(path), replacement: assignment})
+		if wanted == 0 && !jsonValuesEqual(parent, assignment) {
+			return compositionEdit{path: pathCopy(path), replacement: assignment}, true
 		}
 	}
 
-	return true
+	return compositionEdit{}, false
 }
 
-// compositionEditCount counts a lazy source without retaining its edits.
-func compositionEditCount(edits compositionEditSource) int {
-	count := 0
-
-	edits(func(compositionEdit) bool {
-		count++
-
-		return true
-	})
-
-	return count
+// compositionEditSubsetCursor retains only the current subset indexes and edits.
+type compositionEditSubsetCursor struct {
+	edits        compositionEditSource
+	combinations *arrayCombinationCursor
+	s            *search
 }
 
-// visitCompositionEditSubsets visits one current fixed-size edit tuple at a time.
-func visitCompositionEditSubsets(
+// newCompositionEditSubsetCursor starts one fixed-size subset traversal.
+func newCompositionEditSubsetCursor(
 	edits compositionEditSource,
 	count int,
 	size int,
-	visit func([]compositionEdit) (bool, error),
-) (bool, error) {
-	cursor := newArrayCombinationCursor(count, size)
-	for indexes, exists := cursor.Next(); exists; indexes, exists = cursor.Next() {
-		selected := make([]compositionEdit, 0, size)
-		wanted := 0
-		position := 0
+	s *search,
+) *compositionEditSubsetCursor {
+	return &compositionEditSubsetCursor{
+		edits: edits, combinations: newArrayCombinationCursor(count, size), s: s,
+	}
+}
 
-		edits(func(edit compositionEdit) bool {
-			if wanted < len(indexes) && indexes[wanted] == position {
-				selected = append(selected, edit)
-				wanted++
-			}
-
-			position++
-
-			return wanted < len(indexes)
-		})
-
-		found, err := visit(selected)
-		if err != nil || found {
-			return found, err
-		}
+// Next selects one subset without recounting or replaying the source prefix.
+func (cursor *compositionEditSubsetCursor) Next() ([]compositionEdit, bool, error) {
+	indexes, exists := cursor.combinations.Next()
+	if !exists {
+		return nil, false, nil
 	}
 
-	return false, nil
+	selected := make([]compositionEdit, 0, len(indexes))
+	for _, index := range indexes {
+		edit, editExists, err := cursor.edits.At(index, cursor.s)
+		if err != nil || !editExists {
+			return nil, false, err
+		}
+
+		selected = append(selected, edit)
+	}
+
+	return selected, true, nil
 }
 
 // errCompositionEditInapplicable rejects a structurally incomplete edit subset.

@@ -13,6 +13,7 @@ import (
 const (
 	objectFaultProductDimensions = 4
 	arrayFaultProductDimensions  = 3
+	directRowRankDimensions      = 2
 )
 
 // applyNonCompositionFault builds one isolated non-composition derivative.
@@ -252,7 +253,7 @@ func scalarFaultAttemptAtRank(
 
 // objectCountFaultAttemptAtRank attempts one complete directed object replacement.
 //
-//nolint:cyclop,gocognit // Exact count decoding and one row attempt share this boundary.
+//nolint:cyclop,nestif // Exact count decoding and one row attempt share this boundary.
 func objectCountFaultAttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
@@ -292,21 +293,35 @@ func objectCountFaultAttemptAtRank(
 		return nil, false, true, nil
 	}
 
-	if count, fits, countErr := exactCountUint64(&exactCount{number: desired}); countErr != nil {
-		return nil, false, false, countErr
-	} else if !fits || count > uint64(^uint(0)>>1) {
-		for range 3 {
-			if assignErr := s.assign(); assignErr != nil {
-				return nil, false, false, assignErr
-			}
-		}
-
-		return nil, false, false, nil
+	count, fits, err := exactCountUint64(&exactCount{number: desired})
+	if err != nil {
+		return nil, false, false, err
 	}
 
 	root := cloneWithoutFaultRule(
 		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, fault.obligation.rule,
 	)
+	if !fits || count > uint64(^uint(0)>>1) {
+		return oversizedObjectFaultAttempt(parent, fault, root, desired, rank, s)
+	}
+
+	if fault.obligation.rule == oracleRuleMaxProperties {
+		path, exists := matchingValuePathAt(parent, fault.obligation.occurrence.instanceTemplate, 0)
+		if exists {
+			current := valueAtPath(parent, path)
+			if current != nil && current.kind == jsonObject && uint64(len(current.object))+1 == count {
+				container, occurrence, containerFound := resolveFaultContainer(
+					root, s.model.root.occurrence, fault.obligation.occurrence, jsonObject,
+				)
+				if containerFound {
+					return objectGrowthFaultAttemptAtRank(
+						parent, path, current, fault, container, occurrence, nil, rank, s,
+					)
+				}
+			}
+		}
+	}
+
 	directed := fault
 	directed.requirements = appendPlanRequirements(
 		copyPlanRequirements(fault.requirements),
@@ -316,66 +331,162 @@ func objectCountFaultAttemptAtRank(
 		},
 	)
 
-	var (
-		derivative *jsonValue
-		attempted  bool
-		observed   uint64
-	)
+	decoder, ok := newDirectRankTupleDecoder(directRowRankDimensions, rank)
+	if !ok {
+		return nil, false, true, nil
+	}
 
-	stopped, err := s.walkNode(
-		root,
-		s.model.root.occurrence,
-		directed.requirements,
-		rowSearchContext{},
-		func(row *jsonValue) (bool, error) {
-			for path := range matchingValuePathSequence(
-				row, fault.obligation.occurrence.instanceTemplate,
-			) {
-				replacement := valueAtPath(row, path)
+	rowRank, _ := decoder.Next()
+	pathRank, _ := decoder.Next()
+	conjunction := rowSchemaConjunction{sources: []rowSchemaSource{{
+		node: root, occurrence: s.model.root.occurrence,
+	}}}
 
-				current := valueAtPath(parent, path)
-				if replacement == nil || replacement.kind != jsonObject ||
-					current == nil || current.kind != jsonObject {
-					continue
-				}
-
-				if observed < rank {
-					observed++
-
-					continue
-				}
-
-				candidate, matched, candidateErr := tryObjectReplacement(
-					parent, path, current, replacement, fault, s,
-				)
-				if candidateErr != nil {
-					return false, candidateErr
-				}
-
-				attempted = true
-
-				if matched {
-					derivative = candidate
-				}
-
-				return true, nil
-			}
-
-			return false, nil
-		},
+	row, exists, usable, finiteSize, err := s.rowConjunctionValueAt(
+		conjunction, directed.requirements, rowSearchContext{}, rowRank,
 	)
 	if err != nil {
 		return nil, false, false, err
 	}
 
-	if stopped {
-		return derivative, attempted, false, nil
+	if !exists || !usable || row == nil {
+		return nil, false, finiteSize > 0 && rowRank >= finiteSize && pathRank == 0, nil
 	}
 
-	return nil, false, true, nil
+	path, exists := matchingValuePathAt(row, fault.obligation.occurrence.instanceTemplate, pathRank)
+	if !exists {
+		return nil, false, false, nil
+	}
+
+	replacement := valueAtPath(row, path)
+
+	current := valueAtPath(parent, path)
+	if replacement == nil || replacement.kind != jsonObject || current == nil || current.kind != jsonObject {
+		return nil, false, false, nil
+	}
+
+	candidate, _, err := tryObjectReplacement(parent, path, current, replacement, fault, s)
+
+	return candidate, true, false, err
 }
 
-// arrayCountFaultAttemptAtRank keeps unrepresentable exact edits open and charged.
+// oversizedObjectFaultAttempt retains an exact monotonic member cursor. It
+// shares the projected member/value decoder used by ordinary object growth.
+//
+//nolint:cyclop,gocognit // Exact count, member, name, and value state form one machine.
+func oversizedObjectFaultAttempt(
+	parent *jsonValue,
+	fault faultProgram,
+	root *schemaNode,
+	desired *exactNumber,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	container, occurrence, found := resolveFaultContainer(
+		root, s.model.root.occurrence, fault.obligation.occurrence, jsonObject,
+	)
+	if !found {
+		return nil, false, true, nil
+	}
+
+	path, exists := matchingValuePathAt(parent, fault.obligation.occurrence.instanceTemplate, 0)
+	if !exists {
+		return nil, false, true, nil
+	}
+
+	current := valueAtPath(parent, path)
+	if current == nil || current.kind != jsonObject {
+		return nil, false, true, nil
+	}
+
+	view, exists, err := rowProjectionAt(container, occurrence, fault.requirements, 0)
+	if err != nil || !exists {
+		return nil, false, !exists, err
+	}
+
+	active, err := view.appendBranchRequirements(copyPlanRequirements(fault.requirements), s.assign)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	shape, err := newRowProjectedObject(view, active, occurrence)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	working, err := cloneJSONValue(current)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if assignErr := s.assign(); assignErr != nil { // exact member count
+		return nil, false, false, assignErr
+	}
+
+	currentCount, err := parseExactNumber(strconv.Itoa(len(current.object)))
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	one, err := parseExactNumber("1")
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	memberRank := rank
+
+	for {
+		comparison, compareErr := currentCount.compare(desired)
+		if compareErr != nil {
+			return nil, false, false, compareErr
+		}
+
+		if comparison >= 0 {
+			return nil, false, false, errors.New("schematest: oversized object unexpectedly materialized")
+		}
+
+		member, memberExists, memberErr := objectMutationMemberAtRank(
+			shape, working, nil, active, memberRank,
+		)
+		if memberErr != nil {
+			return nil, false, false, memberErr
+		}
+
+		if memberRank == ^uint64(0) {
+			return nil, false, false, errors.New("schematest: object member rank overflow")
+		}
+
+		memberRank++
+
+		if !memberExists {
+			continue
+		}
+
+		if assignErr := s.assign(); assignErr != nil { // selected name
+			return nil, false, false, assignErr
+		}
+
+		value, valueExists, usable, _, valueErr := s.rowConjunctionValueAt(
+			member.schemas, active, rowSearchContext{}, rank,
+		)
+		if valueErr != nil {
+			return nil, false, false, valueErr
+		}
+
+		if !valueExists || !usable {
+			return nil, false, false, nil
+		}
+
+		working.object[member.name] = value
+
+		currentCount, err = addExactNumbers(currentCount, one)
+		if err != nil {
+			return nil, false, false, err
+		}
+	}
+}
+
+// arrayCountFaultAttemptAtRank preserves exact authored counts through a lazy edit cursor.
 //
 //nolint:cyclop // Exact count decoding and host-safe dispatch share this boundary.
 func arrayCountFaultAttemptAtRank(
@@ -392,34 +503,127 @@ func arrayCountFaultAttemptAtRank(
 	}
 
 	bound := node.minItems
+	direction := int64(-1)
+
 	if fault.obligation.rule == oracleRuleMaxItems {
 		bound = node.maxItems
+		direction = 1
 	}
 
-	count, fits, err := exactCountUint64(bound)
+	if bound == nil || bound.number == nil {
+		return nil, false, false, errors.New("schematest: array count fault has no bound")
+	}
+
+	one, err := parseExactNumber("1")
 	if err != nil {
 		return nil, false, false, err
 	}
 
-	if fits && fault.obligation.rule == oracleRuleMinItems && count > 0 {
-		count--
-	} else if fits && fault.obligation.rule == oracleRuleMaxItems && count < ^uint64(0) {
-		count++
-	} else {
-		fits = false
+	desired, err := addSignedExactNumbers(bound.number, one, direction)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if desired.numerator.Sign() < 0 {
+		return nil, false, true, nil
+	}
+
+	count, fits, err := exactCountUint64(&exactCount{number: desired})
+	if err != nil {
+		return nil, false, false, err
 	}
 
 	if !fits || count > uint64(^uint(0)>>1) {
-		for range 3 {
-			if assignErr := s.assign(); assignErr != nil {
-				return nil, false, false, assignErr
-			}
-		}
-
-		return nil, false, false, nil
+		return oversizedArrayFaultAttempt(parent, fault, desired, rank, s)
 	}
 
 	return representableArrayFaultAttemptAtRank(parent, fault, int(count), rank, s)
+}
+
+// oversizedArrayFaultAttempt retains an exact monotonic length cursor. Every
+// charged step precedes a selected length, index, or item-value assignment.
+//
+//nolint:cyclop // Exact count, index, and item-value state form one machine.
+func oversizedArrayFaultAttempt(
+	parent *jsonValue,
+	fault faultProgram,
+	desired *exactNumber,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	container, occurrence, found := resolveFaultContainer(
+		s.model.root, s.model.root.occurrence, fault.obligation.occurrence, jsonArray,
+	)
+	if !found {
+		return nil, false, true, nil
+	}
+
+	path, exists := matchingValuePathAt(parent, fault.obligation.occurrence.instanceTemplate, 0)
+	if !exists {
+		return nil, false, true, nil
+	}
+
+	current := valueAtPath(parent, path)
+	if current == nil || current.kind != jsonArray {
+		return nil, false, true, nil
+	}
+
+	view, exists, err := rowProjectionAt(container, occurrence, fault.requirements, 0)
+	if err != nil || !exists {
+		return nil, false, !exists, err
+	}
+
+	active, err := view.appendBranchRequirements(copyPlanRequirements(fault.requirements), s.assign)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if assignErr := s.assign(); assignErr != nil { // exact length
+		return nil, false, false, assignErr
+	}
+
+	currentCount, err := parseExactNumber(strconv.Itoa(len(current.array)))
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	items := rowProjectedArrayItems(view, active)
+
+	one, err := parseExactNumber("1")
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	for {
+		comparison, compareErr := currentCount.compare(desired)
+		if compareErr != nil {
+			return nil, false, false, compareErr
+		}
+
+		if comparison >= 0 {
+			return nil, false, false, errors.New("schematest: oversized array unexpectedly materialized")
+		}
+
+		if assignErr := s.assign(); assignErr != nil { // selected index
+			return nil, false, false, assignErr
+		}
+
+		_, valueExists, usable, _, valueErr := s.rowConjunctionValueAt(
+			items, active, rowSearchContext{}, rank,
+		)
+		if valueErr != nil {
+			return nil, false, false, valueErr
+		}
+
+		if !valueExists || !usable {
+			return nil, false, false, nil
+		}
+
+		currentCount, err = addExactNumbers(currentCount, one)
+		if err != nil {
+			return nil, false, false, err
+		}
+	}
 }
 
 // representableArrayFaultAttemptAtRank attempts one authored or parent-relative array edit.
@@ -721,7 +925,7 @@ func arrayInsertionFaultAttemptAtRank(
 
 // additionalPropertyFaultAttemptAtRank attempts one projection/name/value tuple.
 //
-//nolint:cyclop // Target, projection, member, and value decoding share one attempt.
+
 func additionalPropertyFaultAttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
@@ -765,20 +969,45 @@ func additionalPropertyFaultAttemptAtRank(
 		return nil, false, true, nil
 	}
 
-	ranks, err := rankProductTupleAt(arrayFaultProductDimensions, rank)
-	if err != nil {
-		return nil, false, false, err
-	}
+	return objectGrowthFaultAttemptAtRank(
+		parent, path, object, fault, container, containerOccurrence, target, rank, s,
+	)
+}
 
-	view, exists, err := rowProjectionAt(
-		container, containerOccurrence, fault.requirements, ranks[0],
+// objectGrowthFaultAttemptAtRank is the shared projection/key/value decoder for
+// max-properties and additional-properties mutations.
+//
+//nolint:cyclop // Projection, key, and value are one atomic growth attempt.
+func objectGrowthFaultAttemptAtRank(
+	parent *jsonValue,
+	path []string,
+	object *jsonValue,
+	fault faultProgram,
+	container *schemaNode,
+	containerOccurrence schemaOccurrence,
+	target *schemaNode,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, bool, error) {
+	projectionCount, err := rowProjectionNodeCount(
+		container, containerOccurrence, fault.requirements,
 	)
 	if err != nil {
 		return nil, false, false, err
 	}
 
-	if !exists {
-		return nil, false, true, nil
+	ranks, exists, err := finiteFirstRankProductTupleAt(
+		arrayFaultProductDimensions, projectionCount, rank,
+	)
+	if err != nil || !exists {
+		return nil, false, !exists, err
+	}
+
+	view, exists, err := rowProjectionAt(
+		container, containerOccurrence, fault.requirements, ranks[0],
+	)
+	if err != nil || !exists {
+		return nil, false, false, err
 	}
 
 	active, err := view.appendBranchRequirements(copyPlanRequirements(fault.requirements), s.assign)
@@ -796,38 +1025,58 @@ func additionalPropertyFaultAttemptAtRank(
 	}
 
 	member, exists, err := objectMutationMemberAtRank(shape, object, target, active, ranks[1])
-	if err != nil {
+	if err != nil || !exists {
 		return nil, false, false, err
 	}
 
-	if !exists {
-		return nil, false, false, nil
+	if target != nil {
+		candidate, _, candidateErr := tryAdditionalPropertyName(
+			parent, path, object, fault, target, member, active, ranks[2], s,
+		)
+
+		return candidate, true, false, candidateErr
 	}
 
-	candidate, matched, err := tryAdditionalPropertyName(
-		parent, path, object, fault, target, member, active, ranks[2], s,
+	value, valueExists, usable, _, err := s.rowConjunctionValueAt(
+		member.schemas, active, rowSearchContext{}, ranks[2],
 	)
+	if err != nil || !valueExists || !usable {
+		return nil, false, false, err
+	}
+
+	replacement, err := cloneJSONValue(object)
 	if err != nil {
 		return nil, false, false, err
 	}
 
-	return candidate, matched, false, nil
+	replacement.object[member.name] = value
+	candidate, _, err := tryObjectReplacement(parent, path, object, replacement, fault, s)
+
+	return candidate, true, false, err
 }
 
-func rankProductTupleAt(dimensions int, rank uint64) ([]uint64, error) {
+func finiteFirstRankProductTupleAt(
+	dimensions int,
+	firstSize uint64,
+	rank uint64,
+) ([]uint64, bool, error) {
 	cursor, err := newRankProductCursor(dimensions)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+
+	if err := cursor.SetFinite(0, firstSize); err != nil {
+		return nil, false, err
 	}
 
 	for current := uint64(0); ; current++ {
 		tuple, exists := cursor.Next()
 		if !exists {
-			return nil, errors.New("schematest: open rank product exhausted")
+			return nil, false, nil
 		}
 
 		if current == rank {
-			return append([]uint64(nil), tuple...), nil
+			return append([]uint64(nil), tuple...), true, nil
 		}
 	}
 }

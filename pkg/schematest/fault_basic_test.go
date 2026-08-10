@@ -2,6 +2,7 @@
 package schematest
 
 import (
+	"math/big"
 	"strings"
 	"testing"
 
@@ -97,7 +98,7 @@ func TestParentReplayMaskAtRankReachesBranchesBeyondUint64Bits(t *testing.T) {
 	t.Parallel()
 
 	for rank := uint64(0); rank <= 64; rank++ {
-		mask, exists := parentReplayMaskAtRank(65, rank)
+		mask, exists := parentReplayMaskAtOrdinal(65, new(big.Int).SetUint64(rank))
 		require.True(t, exists)
 		require.Equal(t, 1, mask.BitLen()-int(rank))
 		require.Equal(t, uint(1), mask.Bit(int(rank)))
@@ -106,13 +107,18 @@ func TestParentReplayMaskAtRankReachesBranchesBeyondUint64Bits(t *testing.T) {
 	_, finite := parentReplayMaskFiniteSize(65)
 	require.False(t, finite)
 
+	beyondUint64 := new(big.Int).Lsh(big.NewInt(1), 64)
+	mask, exists := parentReplayMaskAtOrdinal(65, beyondUint64)
+	require.True(t, exists)
+	require.Positive(t, mask.BitLen())
+
 	cursor := &parentReplayMaskCursor{
 		branches: 65,
 		selected: 64,
 		indexes:  append([]int(nil), integerRange(1, 65)...),
 		started:  true,
 	}
-	mask, exists := cursor.Next()
+	mask, exists = cursor.Next()
 	require.True(t, exists)
 	require.Equal(t, strings.Repeat("1", 65), mask.Text(2))
 }
@@ -177,6 +183,28 @@ func TestFaultClosureAtRankEnumeratesNestedAlternativesWithoutTuples(t *testing.
 		{"#|#|anyOf", "#/a|#|maximum", "#/b|#|pattern"},
 		{"#|#|anyOf", "#/a|#|maximum", "#/b|#|format"},
 	}, got)
+}
+
+func TestFaultClosureWideRankZeroHonorsTinyCutoff(t *testing.T) {
+	t.Parallel()
+
+	var first *faultClosureProgram
+
+	for index := 63; index >= 0; index-- {
+		left := &faultClosureAlternative{}
+		left.next = &faultClosureAlternative{}
+		first = &faultClosureProgram{alternatives: left, next: first}
+	}
+
+	searchState := &search{maxSteps: 1}
+	selected, exists, exhausted, err := faultClosureAtRank(
+		faultProgram{alternatives: first}, 0, searchState,
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, faultProgram{}, selected)
+	require.False(t, exists)
+	require.False(t, exhausted)
+	require.Equal(t, uint64(1), searchState.steps)
 }
 
 func TestStreamAggregateFaultAdvancesPastImpossibleFirstClosure(t *testing.T) {

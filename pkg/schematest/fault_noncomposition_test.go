@@ -157,6 +157,27 @@ func TestOversizedArrayFaultStopsOnRealLazyEditCharge(t *testing.T) {
 	require.Equal(t, uint64(2), searchState.steps)
 }
 
+func TestOversizedObjectFaultStopsOnRealLazyEditCharge(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"maxProperties":18446744073709551616,
+		"additionalProperties":{}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxProperties|fault:maxProperties")
+	searchState := &search{model: model, maxSteps: 2}
+
+	derivative, attempted, exhausted, err := objectCountFaultAttemptAtRank(
+		&jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}, fault, 0, searchState,
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, derivative)
+	require.False(t, attempted)
+	require.False(t, exhausted)
+	require.Equal(t, uint64(2), searchState.steps)
+}
+
 func TestObjectFaultRejectsAnImpossibleRootKindBeforeCharging(t *testing.T) {
 	t.Parallel()
 
@@ -185,6 +206,19 @@ func TestMaxPropertiesFaultAdvancesPastAParentKeyCollision(t *testing.T) {
 		`{"type":"object","maxProperties":1,"default":{"__schematest_extra__":false}}`,
 		"|maxProperties|fault:maxProperties",
 		`{"__schematest_extra__":false,"__schematest_extra___1":null}`,
+	)
+}
+
+func TestAdditionalPropertyFaultAdvancesPastDeclaredAndOccupiedNames(t *testing.T) {
+	t.Parallel()
+
+	requireFaultDerivative(
+		t,
+		`{"type":"object","required":["__schematest_extra__","__schematest_extra___1"],`+
+			`"properties":{"__schematest_extra__":{},"__schematest_extra___1":{}},`+
+			`"additionalProperties":false}`,
+		"|#/*|additionalProperties|fault:additionalProperties",
+		`{"__schematest_extra__":false,"__schematest_extra___1":false,"__schematest_extra___2":null}`,
 	)
 }
 
