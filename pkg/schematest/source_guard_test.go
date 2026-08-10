@@ -1,6 +1,7 @@
 package schematest
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/constant"
@@ -15,7 +16,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -119,39 +119,146 @@ func TestCompositionFaultCursorsDoNotReplayOrdinalPrefixes(t *testing.T) {
 	require.NotContains(t, text, "observed := uint64(0)")
 }
 
-// TestProductionImportsStayCleanRoom forbids semantic production dependencies in non-test sources.
+// TestProductionImportsStayCleanRoom forbids semantic production dependencies in the non-test import closure.
 func TestProductionImportsStayCleanRoom(t *testing.T) {
 	t.Parallel()
 
-	forbidden := []string{
-		"regexp",
-		modulePath + "/pkg/internal/oas",
-		modulePath + "/pkg/validation",
-		modulePath + "/pkg/jsonvalue",
-		modulePath + "/pkg/patternvalidator",
-		modulePath + "/pkg/internal/patternsyntax",
-		modulePath + "/pkg/internal/stringlanguage",
-	}
+	require.Empty(t, cleanRoomLocalAllowlist)
 
-	for _, file := range productionGoFiles(t) {
-		for _, imported := range parseGoFile(t, file).Imports {
-			path, err := strconv.Unquote(imported.Path.Value)
-			require.NoError(t, err)
-			requireCleanRoomImport(t, file, path, forbidden)
-		}
-	}
+	packages := loadCleanRoomPackages(t, ".")
+	require.Empty(t, cleanRoomDependencyViolations(modulePath+"/pkg/schematest", packages))
 }
 
-// requireCleanRoomImport fails for a forbidden semantic or generated local package.
-func requireCleanRoomImport(t *testing.T, file, path string, forbidden []string) {
+// TestCleanRoomDependencyGuardRejectsLocalBridge proves local wrappers expose their complete dependency path.
+func TestCleanRoomDependencyGuardRejectsLocalBridge(t *testing.T) {
+	t.Parallel()
+
+	const root = modulePath + "/pkg/schematest/testdata/cleanroombridge/root"
+
+	packages := loadCleanRoomPackages(t, "./testdata/cleanroombridge/root")
+	violations := cleanRoomDependencyViolations(root, packages)
+
+	require.Contains(t, violations,
+		root+" -> "+modulePath+"/pkg/schematest/testdata/cleanroombridge/bridge"+
+			" -> "+modulePath+"/pkg/validation")
+}
+
+// cleanRoomPackage is the import information needed to inspect one non-test package closure.
+type cleanRoomPackage struct {
+	ImportPath string
+	Imports    []string
+	Standard   bool
+}
+
+// cleanRoomLocalAllowlist names reviewed local generic primitives; it is intentionally empty.
+var cleanRoomLocalAllowlist = map[string]bool{}
+
+// cleanRoomExternalAllowlist names the exact external generic primitives used by production.
+var cleanRoomExternalAllowlist = map[string]bool{
+	"github.com/goccy/go-yaml/ast":    true,
+	"github.com/goccy/go-yaml/parser": true,
+	"github.com/goccy/go-yaml/token":  true,
+}
+
+// forbiddenCleanRoomImports retains the explicit semantic and regexp bans.
+var forbiddenCleanRoomImports = []string{
+	"regexp",
+	modulePath + "/pkg/internal/oas",
+	modulePath + "/pkg/validation",
+	modulePath + "/pkg/jsonvalue",
+	modulePath + "/pkg/patternvalidator",
+	modulePath + "/pkg/internal/patternsyntax",
+	modulePath + "/pkg/internal/stringlanguage",
+}
+
+// loadCleanRoomPackages loads the production-only dependency graph selected by go list.
+func loadCleanRoomPackages(t *testing.T, pattern string) map[string]cleanRoomPackage {
 	t.Helper()
 
-	for _, blocked := range forbidden {
-		blockedImport := path == blocked || strings.HasPrefix(path, blocked+"/")
-		require.Falsef(t, blockedImport, "%s imports forbidden production package %s", file, path)
+	command := exec.Command("go", "list", "-deps", "-json", pattern)
+	output, err := command.Output()
+	require.NoError(t, err)
+
+	packages := make(map[string]cleanRoomPackage)
+	decoder := json.NewDecoder(strings.NewReader(string(output)))
+
+	for {
+		var loaded cleanRoomPackage
+
+		err := decoder.Decode(&loaded)
+		if err == io.EOF {
+			break
+		}
+
+		require.NoError(t, err)
+
+		packages[loaded.ImportPath] = loaded
 	}
 
-	require.Falsef(t, isGeneratedImport(path), "%s imports generated package %s", file, path)
+	return packages
+}
+
+// cleanRoomDependencyViolations reports forbidden edges with their complete path from root.
+func cleanRoomDependencyViolations(root string, packages map[string]cleanRoomPackage) []string {
+	violations := make(map[string]bool)
+	visiting := make(map[string]bool)
+
+	var walk func(string, []string)
+
+	walk = func(current string, path []string) {
+		if visiting[current] {
+			return
+		}
+
+		visiting[current] = true
+		defer delete(visiting, current)
+
+		imports := slices.Clone(packages[current].Imports)
+		slices.Sort(imports)
+
+		for _, imported := range imports {
+			dependencyPath := append(slices.Clone(path), imported)
+			joinedPath := strings.Join(dependencyPath, " -> ")
+
+			if forbiddenCleanRoomImport(imported) || isGeneratedImport(imported) {
+				violations[joinedPath] = true
+			}
+
+			if imported == modulePath || strings.HasPrefix(imported, modulePath+"/") {
+				if !cleanRoomLocalAllowlist[imported] {
+					violations[joinedPath] = true
+				}
+
+				walk(imported, dependencyPath)
+
+				continue
+			}
+
+			if packages[imported].Standard || cleanRoomExternalAllowlist[imported] {
+				continue
+			}
+
+			violations[joinedPath] = true
+		}
+	}
+
+	walk(root, []string{root})
+
+	result := slices.Collect(maps.Keys(violations))
+	slices.Sort(result)
+
+	return result
+}
+
+// forbiddenCleanRoomImport reports direct semantic dependencies retained from the original guard.
+func forbiddenCleanRoomImport(path string) bool {
+	for _, blocked := range forbiddenCleanRoomImports {
+		if path == blocked || strings.HasPrefix(path, blocked+"/") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isGeneratedImport reports whether a local import names a generator or generated package.
