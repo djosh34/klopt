@@ -603,7 +603,8 @@ func (s *search) rowSourceFirstValue(
 		return canonicalGenericValueAt(0)
 	case source.node.kind == schemaString && source.node.enum == nil &&
 		(source.node.format != schemaFormatNone || source.node.minLength != nil ||
-			source.node.maxLength != nil || source.node.pattern != nil):
+			source.node.maxLength != nil || source.node.pattern != nil ||
+			scalarFaultDirectsEnum(context.scalarFault, source.node, source.occurrence)):
 		direct, exists, directErr := s.rowGeneratedStringValueAt(source, requirements, context, 0)
 
 		return direct, exists, 0, directErr
@@ -644,7 +645,9 @@ func (s *search) rowScalarValueForRank(
 	kind jsonKind,
 	wanted uint64,
 ) (*jsonValue, bool, uint64, error) {
-	if kind == jsonString && source.node.enum == nil && nodeHasStringSearchRules(source.node) {
+	if kind == jsonString && source.node.enum == nil &&
+		(nodeHasStringSearchRules(source.node) ||
+			scalarFaultDirectsEnum(context.scalarFault, source.node, source.occurrence)) {
 		candidate, exists, err := s.rowGeneratedStringValueAt(
 			source, requirements, context, wanted,
 		)
@@ -672,7 +675,8 @@ func (s *search) rowScalarValueForRank(
 		return nil, false, finiteSize, nil
 	}
 
-	if kind == jsonString && !nodeHasStringSearchRules(source.node) ||
+	if kind == jsonString && !nodeHasStringSearchRules(source.node) &&
+		!scalarFaultDirectsEnum(context.scalarFault, source.node, source.occurrence) ||
 		kind == jsonNumber && !nodeHasNumberObjective(source.node) {
 		return nil, false, finiteSize, nil
 	}
@@ -738,13 +742,111 @@ func validRequestFormatBoundary(request *validRequest) *formatBoundaryObjective 
 
 // rowGeneratedStringValueAt advances one transient charged cursor to the requested result.
 //
-//nolint:cyclop // Rule compilation and one suspended cursor traversal form one adapter.
+//nolint:cyclop,gocognit // Directed and valid programs share one directly addressed adapter.
 func (s *search) rowGeneratedStringValueAt(
 	source *rowSchemaSource,
 	requirements []requirement,
 	context rowSearchContext,
 	wanted uint64,
 ) (*jsonValue, bool, error) {
+	if scalarFaultDirectsEnum(context.scalarFault, source.node, source.occurrence) {
+		var (
+			selected *jsonValue
+			observed uint64
+		)
+
+		_, err := s.walkStringEnumFault(
+			source.node,
+			source.occurrence,
+			requirements,
+			context.scalarFault,
+			func(candidate *jsonValue) (bool, error) {
+				if observed != wanted {
+					observed++
+
+					return false, nil
+				}
+
+				var cloneErr error
+
+				selected, cloneErr = cloneJSONValue(candidate)
+
+				return cloneErr == nil, cloneErr
+			},
+		)
+		if err != nil {
+			return nil, false, err
+		}
+
+		return selected, selected != nil, nil
+	}
+
+	if objective := scalarFaultStringObjective(
+		context.scalarFault, source.node, source.occurrence,
+	); objective != nil {
+		var (
+			selected *jsonValue
+			observed uint64
+		)
+
+		handled, _, err := s.walkDirectedStringObjective(
+			source.node,
+			source.occurrence,
+			requirements,
+			objective,
+			func(candidate *jsonValue) (bool, error) {
+				if observed != wanted {
+					observed++
+
+					return false, nil
+				}
+
+				var cloneErr error
+
+				selected, cloneErr = cloneJSONValue(candidate)
+
+				return cloneErr == nil, cloneErr
+			},
+		)
+		if err != nil || !handled {
+			return nil, false, err
+		}
+
+		return selected, selected != nil, nil
+	}
+
+	if objective := validFalseStringObjective(source.node, source.occurrence, requirements); objective != nil {
+		var (
+			selected *jsonValue
+			observed uint64
+		)
+
+		handled, _, err := s.walkDirectedStringObjective(
+			source.node,
+			source.occurrence,
+			requirements,
+			objective,
+			func(candidate *jsonValue) (bool, error) {
+				if observed != wanted {
+					observed++
+
+					return false, nil
+				}
+
+				var cloneErr error
+
+				selected, cloneErr = cloneJSONValue(candidate)
+
+				return cloneErr == nil, cloneErr
+			},
+		)
+		if err != nil || !handled {
+			return nil, false, err
+		}
+
+		return selected, selected != nil, nil
+	}
+
 	rules, err := activeStringRulesFor(source.node, source.occurrence, requirements, nil)
 	if err != nil || !rules.supported {
 		return nil, false, err
@@ -844,7 +946,7 @@ func (s *search) rowGeneratedNumberValueAt(
 
 	falseBranchObjective := false
 	if err := collectActiveNumberRules(
-		source.node, source.occurrence, requirements, &rules, &falseBranchObjective,
+		source.node, source.occurrence, requirements, context.scalarFault, &rules, &falseBranchObjective,
 	); err != nil {
 		return nil, false, err
 	}
@@ -854,7 +956,9 @@ func (s *search) rowGeneratedNumberValueAt(
 		return nil, false, err
 	}
 
-	schedule.seeded = schedule.seeded || falseBranchObjective && !schedule.hasEnum
+	directedEnum := context.scalarFault != nil && context.scalarFault.obligation.rule == oracleRuleEnum &&
+		scalarTargetNodeMatches(source.node, source.occurrence, context.scalarFault.obligation.occurrence)
+	schedule.seeded = schedule.seeded || falseBranchObjective && !schedule.hasEnum || directedEnum
 
 	edge, exists, edgeCount, err := rowNumberEdgeAt(schedule, wanted, nil)
 	if err != nil {
@@ -888,6 +992,17 @@ func (s *search) rowGeneratedNumberValueAt(
 		seedPointer = target.identity.occurrence.usePointer
 		rule = target.identity.rule
 		level = target.identity.level
+	}
+
+	if context.scalarFault != nil {
+		if target, found := scalarTargetNode(
+			source.node, source.occurrence, context.scalarFault.obligation.occurrence,
+		); found {
+			seedNode = target
+			seedPointer = context.scalarFault.obligation.occurrence.usePointer
+			rule = context.scalarFault.obligation.rule
+			level = context.scalarFault.obligation.component
+		}
 	}
 
 	if seedNode.schemaJSON == nil {
@@ -1167,7 +1282,9 @@ func (s *search) rowConjunctionValueAt(
 			return nil, false, false, 0, err
 		}
 
-		usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
+		usable, err := s.rowConjunctionValueUsable(
+			conjunction.sources, requirements, context, value,
+		)
 
 		return value, true, usable, uint64(len(selected.node.enum)), err
 	}
@@ -1185,7 +1302,9 @@ func (s *search) rowConjunctionValueAt(
 				continue
 			}
 
-			usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
+			usable, err := s.rowConjunctionValueUsable(
+				conjunction.sources, requirements, context, value,
+			)
 			if err != nil {
 				return nil, false, false, 0, err
 			}
@@ -1230,7 +1349,9 @@ func (s *search) rowConjunctionValueAt(
 		return nil, false, false, 0, errors.New("schematest: direct structural child rank returned nil")
 	}
 
-	usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, value)
+	usable, err := s.rowConjunctionValueUsable(
+		conjunction.sources, requirements, context, value,
+	)
 
 	return value, true, usable, finiteSize, err
 }

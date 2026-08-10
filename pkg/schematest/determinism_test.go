@@ -153,12 +153,12 @@ func TestBuildCutoffsChargeBeforeEveryAssignmentPhase(t *testing.T) {
 	boolean := Input{
 		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"boolean"}`)),
 		OperationID: "selected",
-		MaxSteps:    5,
+		MaxSteps:    11,
 	}
 	cases, report, err := collectDeterministicRun(boolean, nil)
 	require.NoError(t, err)
 	require.Equal(t, SpaceExhausted, report.Stop)
-	require.Equal(t, uint64(5), report.Steps)
+	require.Equal(t, uint64(6), report.Steps)
 	require.Equal(t, []Case{
 		{JSON: []byte("false"), Valid: true},
 		{JSON: []byte("null"), Valid: false},

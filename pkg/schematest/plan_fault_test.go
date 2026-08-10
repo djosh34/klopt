@@ -25,13 +25,17 @@ func TestMakePlanCompilesTypedObjectFaultRolesWithoutWitnesses(t *testing.T) {
 	requireRequirement(t, required.requirements, "#/id", requirementAbsent)
 	requireRequirement(t, required.requirements, "#/name", requirementPresent)
 	requireKindRequirement(t, required.requirements, model.root.occurrence, jsonObject)
-	require.Equal(t, failureSet{failureIdentity(required.obligation.ruleIdentity)}, required.expected)
+	require.Equal(t, faultClosure{
+		newEvaluationRecordIdentity(required.obligation.ruleIdentity),
+	}, required.expected)
 	require.Nil(t, required.alternatives)
 
 	additional := findFaultTarget(t, plan, "|#/*|additionalProperties|fault:additionalProperties")
 	requireRequirement(t, additional.requirements, "#/*", requirementPresent)
 	requireKindRequirement(t, additional.requirements, model.root.occurrence, jsonObject)
-	require.Equal(t, failureSet{failureIdentity(additional.obligation.ruleIdentity)}, additional.expected)
+	require.Equal(t, faultClosure{
+		newEvaluationRecordIdentity(additional.obligation.ruleIdentity),
+	}, additional.expected)
 	require.Nil(t, additional.alternatives)
 }
 
@@ -51,7 +55,9 @@ func TestMakePlanCompilesNestedAnyOfClosureDomainsWithoutInheritedKindRequiremen
 	require.NoError(t, err)
 
 	aggregate := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
-	require.Equal(t, failureSet{failureIdentity(aggregate.obligation.ruleIdentity)}, aggregate.expected)
+	require.Equal(t, faultClosure{
+		newEvaluationRecordIdentity(aggregate.obligation.ruleIdentity),
+	}, aggregate.expected)
 	requireNoKindRequirement(t, aggregate.requirements, aggregate.obligation.occurrence)
 	requireCompositionRequirement(t, aggregate.requirements, "anyOf", 0, false)
 	requireCompositionRequirement(t, aggregate.requirements, "anyOf", 1, false)

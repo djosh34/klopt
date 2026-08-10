@@ -131,7 +131,7 @@ func newRowArrayLengthDomain(view rowProjectionView, requirements []requirement)
 	}
 
 	for _, source := range view.sources {
-		item, exists := rowChildSchemaSource(source.node, source.occurrence, rowChildItems, "")
+		item, exists := rowItemSchemaSource(source.node, source.occurrence)
 		if !exists {
 			continue
 		}
@@ -552,10 +552,10 @@ func rowProjectedArrayItems(view rowProjectionView, requirements []requirement) 
 
 	view.eachSource(func(source rowSchemaSource) bool {
 		if conjunction.fallback.usePointer == "" {
-			conjunction.fallback = rowChildOccurrence(source.node, source.occurrence, rowChildItems, "")
+			conjunction.fallback = rowItemOccurrence(source.node, source.occurrence)
 		}
 
-		if item, exists := rowChildSchemaSource(source.node, source.occurrence, rowChildItems, ""); exists {
+		if item, exists := rowItemSchemaSource(source.node, source.occurrence); exists {
 			conjunction.sources = append(conjunction.sources, item)
 		}
 
@@ -611,7 +611,9 @@ func (s *search) walkRowSchemaConjunction(
 					return false, err
 				}
 
-				usable, err := s.rowConjunctionValueUsable(conjunction.sources, requirements, member.value)
+				usable, err := s.rowConjunctionValueUsable(
+					conjunction.sources, requirements, context, member.value,
+				)
 				if err != nil {
 					return false, err
 				}
@@ -641,7 +643,7 @@ func (s *search) walkRowSchemaConjunction(
 			source.node, source.occurrence, requirements, context,
 			func(value *jsonValue) (bool, error) {
 				usable, usableErr := s.rowConjunctionValueUsable(
-					conjunction.sources, requirements, value,
+					conjunction.sources, requirements, context, value,
 				)
 				if usableErr != nil || !usable {
 					return false, usableErr
@@ -662,12 +664,32 @@ func (s *search) walkRowSchemaConjunction(
 func (s *search) rowConjunctionValueUsable(
 	sources []rowSchemaSource,
 	requirements []requirement,
+	context rowSearchContext,
 	value *jsonValue,
 ) (bool, error) {
 	for _, source := range sources {
 		usable, err := s.rowChildValueUsable(source.node, source.occurrence, requirements, value)
-		if err != nil || !usable {
+		if err != nil {
 			return false, err
+		}
+
+		if usable {
+			continue
+		}
+
+		if context.scalarFault == nil ||
+			!scalarFaultWithin(context.scalarFault, source.occurrence) {
+			return false, nil
+		}
+
+		result := evaluateNode(source.node, value, source.occurrence)
+		if result.err != nil {
+			return false, result.err
+		}
+
+		matches, matchErr := exactEvaluationFailureClosure(result, context.scalarFault.expected)
+		if matchErr != nil || !matches {
+			return false, matchErr
 		}
 	}
 
@@ -809,7 +831,7 @@ func newRowProjectedObject(
 		var sources []rowSchemaSource
 
 		for _, owner := range owners {
-			if property, exists := rowChildSchemaSource(owner.node, owner.occurrence, rowChildProperty, name); exists {
+			if property, exists := rowPropertySchemaSource(owner.node, owner.occurrence, name); exists {
 				sources = append(sources, property)
 
 				continue
@@ -1073,7 +1095,7 @@ func projectedAdditionalMemberName(declared map[string]bool, values map[string]*
 		}
 	}
 
-	for suffix := 0; ; suffix++ {
+	for suffix := 1; ; suffix++ {
 		candidate := fmt.Sprintf("%s_%d", base, suffix)
 		if declared[candidate] {
 			continue
@@ -1180,9 +1202,7 @@ func rowObjectMembers(node *schemaNode, occurrence schemaOccurrence, requirement
 		var sources []rowSchemaSource
 
 		view.eachSource(func(owner rowSchemaSource) bool {
-			if property, exists := rowChildSchemaSource(
-				owner.node, owner.occurrence, rowChildProperty, name,
-			); exists {
+			if property, exists := rowPropertySchemaSource(owner.node, owner.occurrence, name); exists {
 				sources = append(sources, property)
 			} else if owner.node.additionalProperties != nil {
 				sources = append(sources, rowSchemaSource{

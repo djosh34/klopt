@@ -165,6 +165,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 		name      string
 		schema    string
 		wantCases []Case
+		wantStop  StopReason
 		covered   []string
 	}{
 		{
@@ -176,8 +177,9 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 			wantCases: []Case{
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
-				{JSON: []byte("-1"), Valid: false},
+				{JSON: []byte("0"), Valid: false},
 			},
+			wantStop: SpaceExhausted,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:0",
 			},
@@ -193,6 +195,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				{JSON: []byte("6"), Valid: false},
 				{JSON: []byte("4"), Valid: false},
 			},
+			wantStop: SpaceExhausted,
 			covered: []string{
 				"/allOf/0|#|enum|level:member:1",
 				"/allOf/1|#|minimum|level:valid",
@@ -207,7 +210,12 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 			wantCases: []Case{
 				{JSON: []byte("5"), Valid: true},
 				{JSON: []byte("5"), Valid: true},
+				{JSON: []byte("null"), Valid: false},
+				{JSON: []byte("0"), Valid: false},
+				{JSON: []byte("0"), Valid: false},
+				{JSON: []byte("0"), Valid: false},
 			},
+			wantStop: SpaceExhausted,
 			covered: []string{
 				"|#|anyOf|level:mask:1",
 				"/anyOf/0|#|enum|level:member:0",
@@ -235,7 +243,7 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 				},
 			)
 			require.NoError(t, err)
-			require.Equal(t, SpaceExhausted, report.Stop)
+			require.Equal(t, test.wantStop, report.Stop)
 			require.Equal(t, test.wantCases, cases)
 			require.Positive(t, report.Steps)
 
@@ -247,6 +255,8 @@ func TestBuildPreservesComposedNumericEnums(t *testing.T) {
 }
 
 // TestBuildSearchesNumericFalseBranchObjectives verifies reached exact anyOf masks.
+//
+//nolint:dupl // Numeric and integer tables intentionally lock the same public determinism contract.
 func TestBuildSearchesNumericFalseBranchObjectives(t *testing.T) {
 	t.Parallel()
 
@@ -309,11 +319,7 @@ func TestBuildSearchesNumericFalseBranchObjectives(t *testing.T) {
 			require.Equal(t, firstReport, secondReport)
 			require.Equal(t, test.wantStop, firstReport.Stop)
 
-			if test.wantSteps > 0 {
-				require.Equal(t, test.wantSteps, firstReport.Steps)
-			} else {
-				require.Positive(t, firstReport.Steps)
-			}
+			require.Equal(t, test.wantSteps, firstReport.Steps)
 
 			for _, mask := range test.masks {
 				require.Contains(
@@ -325,6 +331,8 @@ func TestBuildSearchesNumericFalseBranchObjectives(t *testing.T) {
 }
 
 // TestBuildSearchesIntegerFalseBranchObjectives verifies integer-only skipped branches.
+//
+//nolint:dupl // Numeric and integer tables intentionally lock the same public determinism contract.
 func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 	t.Parallel()
 
@@ -354,9 +362,12 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 				{JSON: []byte("0"), Valid: true},
 				{JSON: []byte("0.2"), Valid: true},
 				{JSON: []byte("0"), Valid: true},
+				{JSON: []byte("false"), Valid: false},
+				{JSON: []byte("null"), Valid: false},
+				{JSON: []byte("null"), Valid: false},
 			},
 			wantStop:  SpaceExhausted,
-			wantSteps: 595,
+			wantSteps: 1_633,
 			masks:     []string{"2", "3"},
 		},
 		{
@@ -401,7 +412,7 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 			require.Equal(t, firstCases, secondCases)
 			require.Equal(t, firstReport, secondReport)
 			require.Equal(t, test.wantStop, firstReport.Stop)
-			require.Positive(t, firstReport.Steps)
+			require.Equal(t, test.wantSteps, firstReport.Steps)
 
 			for _, mask := range test.masks {
 				require.Contains(

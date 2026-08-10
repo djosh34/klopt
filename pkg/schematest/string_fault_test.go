@@ -8,15 +8,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExactFailureClosureConsumesExpectedIdentitiesOnce(t *testing.T) {
+func TestExactFailureClosureUsesCanonicalCompleteIdentitySets(t *testing.T) {
 	t.Parallel()
 
 	first := makeRuleIdentity(
-		schemaOccurrence{usePointer: "#/a", targetPointer: "#/a", instanceTemplate: "#"},
+		schemaOccurrence{usePointer: "#/a", targetPointer: "#/target", instanceTemplate: "#/0", reference: true},
 		oracleRuleType,
 	)
 	second := makeRuleIdentity(
-		schemaOccurrence{usePointer: "#/b", targetPointer: "#/b", instanceTemplate: "#"},
+		schemaOccurrence{usePointer: "#/b", targetPointer: "#/target", instanceTemplate: "#/0", reference: true},
 		oracleRuleType,
 	)
 	sequence := func(values ...failureIdentity) iter.Seq[failureIdentity] {
@@ -29,18 +29,38 @@ func TestExactFailureClosureConsumesExpectedIdentitiesOnce(t *testing.T) {
 		}
 	}
 
-	matches, err := exactFailureClosure(sequence(first, first), []failureIdentity{first, second})
+	matches, err := exactFailureClosure(sequence(second, first, first), []failureIdentity{first, second, second})
+	require.NoError(t, err)
+	require.True(t, matches, "sequence order and repeated full identities do not affect set equality")
+
+	result := evaluation{records: newEvaluationRecords()}
+	result.records.append(makeEvaluationRecord(evaluationRecordFailure, second))
+	result.records.append(makeEvaluationRecord(evaluationRecordFailure, first))
+	result.records.append(makeEvaluationRecord(evaluationRecordFailure, first))
+	matches, err = exactEvaluationFailureClosure(result, faultClosure{
+		newEvaluationRecordIdentity(first),
+		newEvaluationRecordIdentity(second),
+		newEvaluationRecordIdentity(second),
+	})
+	require.NoError(t, err)
+	require.True(t, matches, "the authoritative record API removes only identical full identities")
+
+	differentTarget := first
+	differentTarget.occurrence.targetPointer = "#/other"
+	matches, err = exactFailureClosure(sequence(first), []failureIdentity{differentTarget})
 	require.NoError(t, err)
 	require.False(t, matches)
-	matches, err = exactFailureClosure(sequence(second, first), []failureIdentity{first, second})
-	require.NoError(t, err)
-	require.True(t, matches)
 
-	malformed := makeRuleIdentity(schemaOccurrence{
-		usePointer: "not-a-pointer", targetPointer: "#", instanceTemplate: "#",
-	}, oracleRuleType)
-	matches, err = exactFailureClosure(sequence(malformed), []failureIdentity{first})
-	require.Error(t, err)
+	differentReference := first
+	differentReference.occurrence.reference = false
+	matches, err = exactFailureClosure(sequence(first), []failureIdentity{differentReference})
+	require.NoError(t, err)
+	require.False(t, matches)
+
+	differentOccurrence := first
+	differentOccurrence.occurrence.instanceTemplate = "#/1"
+	matches, err = exactFailureClosure(sequence(first), []failureIdentity{differentOccurrence})
+	require.NoError(t, err)
 	require.False(t, matches)
 }
 
@@ -205,7 +225,7 @@ func TestFindStringFaultRowResolvesNestedScalarTargets(t *testing.T) {
 			require.True(t, resolved)
 
 			result := evaluateNode(node, row, occurrence)
-			matches, err := exactFailureClosure(result.failureRecords(), target.expected)
+			matches, err := exactEvaluationFailureClosure(result, target.expected)
 			require.NoError(t, err)
 			require.True(t, matches)
 		})

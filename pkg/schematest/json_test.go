@@ -187,6 +187,10 @@ func TestCloneJSONValueRejectsCyclesAndExpandsSharedOccurrences(t *testing.T) {
 	require.NotSame(t, clone.array[0], clone.array[1])
 	require.NotSame(t, clone.array[0].array[0], clone.array[1].array[0])
 
+	clone.array[0].array[0].text = "changed"
+	require.Equal(t, "value", clone.array[1].array[0].text)
+	require.Equal(t, "value", shared.array[0].text)
+
 	cycle := &jsonValue{kind: jsonArray, array: make([]*jsonValue, 1)}
 	cycle.array[0] = cycle
 	clone, err = cloneJSONValue(cycle)

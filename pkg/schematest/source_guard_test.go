@@ -53,6 +53,72 @@ func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T)
 	require.Equal(t, 2, strings.Count(text, "newRankProductCursor(5)"))
 }
 
+// TestFaultRowMachinesNeverRestartWalkNode locks direct row addressing into the outer continuation.
+//
+//nolint:cyclop // Three receiver declarations share one AST guard.
+func TestFaultRowMachinesNeverRestartWalkNode(t *testing.T) {
+	t.Parallel()
+
+	targets := map[string]bool{
+		"parentRowMachine":             false,
+		"scalarCandidateMachine":       false,
+		"compositionAssignmentMachine": false,
+	}
+
+	for _, file := range []string{"fault_basic.go", "fault_noncomposition.go", "fault_composition.go"} {
+		parsed := parseGoFile(t, file)
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Recv == nil || len(function.Recv.List) != 1 || function.Body == nil {
+				continue
+			}
+
+			receiverType := function.Recv.List[0].Type
+			if pointer, isPointer := receiverType.(*ast.StarExpr); isPointer {
+				receiverType = pointer.X
+			}
+
+			receiver, ok := receiverType.(*ast.Ident)
+			if !ok {
+				continue
+			}
+
+			if _, targeted := targets[receiver.Name]; !targeted {
+				continue
+			}
+
+			targets[receiver.Name] = true
+
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				selector, selectorOK := node.(*ast.SelectorExpr)
+				if selectorOK {
+					require.NotEqual(t, "walkNode", selector.Sel.Name, receiver.Name)
+				}
+
+				return true
+			})
+		}
+	}
+
+	for machine, found := range targets {
+		require.True(t, found, machine)
+	}
+}
+
+// TestCompositionFaultCursorsDoNotReplayOrdinalPrefixes locks resumable difference/subset traversal.
+func TestCompositionFaultCursorsDoNotReplayOrdinalPrefixes(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("fault_composition.go")
+	require.NoError(t, err)
+
+	text := string(source)
+	require.NotContains(t, text, "compositionDifferenceAt")
+	require.NotContains(t, text, "countCompositionDifferences")
+	require.NotContains(t, text, "remaining := index")
+	require.NotContains(t, text, "observed := uint64(0)")
+}
+
 // TestProductionImportsStayCleanRoom forbids semantic production dependencies in non-test sources.
 func TestProductionImportsStayCleanRoom(t *testing.T) {
 	t.Parallel()
@@ -839,20 +905,28 @@ func TestGenericValuesAdvanceOneChargedCandidateAtATime(t *testing.T) {
 	require.Equal(t, uint64(2), search.steps)
 }
 
-// TestR4FaultRuntimeDoesNotConsumeClosurePrograms locks compile-only closure ownership.
-func TestR4FaultRuntimeDoesNotConsumeClosurePrograms(t *testing.T) {
+// TestFaultRuntimeHasOneAccuratelyNamedContinuation rejects the obsolete basic-fault seam.
+func TestFaultRuntimeHasOneAccuratelyNamedContinuation(t *testing.T) {
 	t.Parallel()
 
 	guardPackage := productionGuardPackage(t)
-	functions := guardFunctions(guardPackage)
-	stream, ok := guardPackage.pkg.Scope().Lookup("streamBasicFault").(*types.Func)
-	require.True(t, ok)
+	_, obsolete := guardPackage.pkg.Scope().Lookup("streamBasicFault").(*types.Func)
+	require.False(t, obsolete)
 
-	for function := range reachableGuardFunctions(guardPackage, functions, stream) {
-		name := strings.ToLower(function.Name())
-		require.NotContains(t, name, "closureprogram")
-		require.NotContains(t, name, "syntacticallyunreachable")
-	}
+	_, exists := guardPackage.pkg.Scope().Lookup("streamFault").(*types.Func)
+	require.True(t, exists)
+}
+
+// TestFaultRuntimeUsesTheSoleJSONClone rejects a second fault-local copy seam.
+func TestFaultRuntimeUsesTheSoleJSONClone(t *testing.T) {
+	t.Parallel()
+
+	guardPackage := productionGuardPackage(t)
+	_, obsolete := guardPackage.pkg.Scope().Lookup("copyJSONValue").(*types.Func)
+	require.False(t, obsolete)
+
+	_, exists := guardPackage.pkg.Scope().Lookup("cloneJSONValue").(*types.Func)
+	require.True(t, exists)
 }
 
 // TestProductionSourceDoesNotEmbedFixtureAnswers rejects source-specific oracle paths.
@@ -1714,7 +1788,10 @@ func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]
 	for _, root := range []string{
 		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext",
 		"jsonActivePath", "jsonValuePair", "jsonValidationFrame", "jsonCloneFrame", "jsonMarshalFrame",
-		"strictJSONContainerFrame",
+		"strictJSONContainerFrame", "faultSearchMachines", "faultProductExhaustion",
+		"compositionAssignmentMachine", "compositionRankedSubsetCursor",
+		"compositionEditSubsetMachine", "compositionEditSubsetCursor",
+		"compositionDifferenceCursor", "compositionDirectEditCursor",
 	} {
 		collectNamedOwnerTypes(packageObjectType(guardPackage, root), authorized)
 	}

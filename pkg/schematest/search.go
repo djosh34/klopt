@@ -22,6 +22,7 @@ type search struct {
 // rowSearchContext explicitly carries private directed and valid-target search inputs.
 type rowSearchContext struct {
 	validRequest *validRequest
+	scalarFault  *faultProgram
 }
 
 // assign charges one structural, kind, composition, enum, or scalar choice.
@@ -81,14 +82,17 @@ func findTargetRow(plan *searchPlan, request validRequest, s *search) (*jsonValu
 }
 
 // targetRowMatches requires a complete valid value and the target's exact requirements.
-//
-//nolint:cyclop // Validity, levels, and the three requirement dimensions are one acceptance pass.
 func targetRowMatches(result evaluation, request validRequest, value *jsonValue) bool {
-	if !result.valid || !formatBoundaryWasSatisfied(value, request.formatBoundary) {
-		return false
-	}
+	return result.valid && formatBoundaryWasSatisfied(value, request.formatBoundary) &&
+		requirementsMatch(result, value, request.requirements)
+}
 
-	for _, requirement := range request.requirements {
+// requirementsMatch is the sole complete-row applicability matcher used by
+// focused valid rows and fault-parent replay.
+//
+//nolint:cyclop // Levels, presence, kind, and composition are the four requirement dimensions.
+func requirementsMatch(result evaluation, value *jsonValue, requirements []requirement) bool {
+	for _, requirement := range requirements {
 		switch {
 		case requirement.tag == requirementTargetLevel &&
 			!levelWasObserved(result.observedRecords(), requirement.target) &&
@@ -120,7 +124,7 @@ func formatBoundaryWasSatisfied(value *jsonValue, objective *formatBoundaryObjec
 		return false
 	}
 
-	for _, path := range matchingValuePaths(value, objective.identity.occurrence.instanceTemplate) {
+	for path := range matchingValuePathSequence(value, objective.identity.occurrence.instanceTemplate) {
 		candidate := valueAtPath(value, path)
 		if candidate == nil || candidate.kind != jsonString {
 			continue
@@ -331,7 +335,8 @@ func ruleOccurrenceMatches(actual, expected schemaOccurrence) bool {
 	return actual.usePointer == expected.usePointer &&
 		actual.targetPointer == expected.targetPointer &&
 		actual.reference == expected.reference &&
-		instanceTemplateMatches(expected.instanceTemplate, actual.instanceTemplate)
+		(instanceTemplateMatches(expected.instanceTemplate, actual.instanceTemplate) ||
+			instanceTemplateMatches(actual.instanceTemplate, expected.instanceTemplate))
 }
 
 // rowOccurrenceMatches compares planner requirements, which intentionally omit target identity.

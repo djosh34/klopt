@@ -3,9 +3,12 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // walkScalar tries deterministic primitive witnesses for one assigned kind.
+//
+//nolint:cyclop // Number, directed-string, finite, and generated phases share one scalar boundary.
 func (s *search) walkScalar(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -21,10 +24,27 @@ func (s *search) walkScalar(
 			append([]requirement(nil), requirements...),
 			func(activeRequirements []requirement) (bool, error) {
 				return s.walkActiveNumberRules(
-					node, occurrence, activeRequirements, context.validRequest, visit,
+					node, occurrence, activeRequirements, context.validRequest, context.scalarFault, visit,
 				)
 			},
 		)
+	}
+
+	if kind == jsonString {
+		if scalarFaultDirectsEnum(context.scalarFault, node, occurrence) {
+			return s.walkStringEnumFault(
+				node, occurrence, requirements, context.scalarFault, visit,
+			)
+		}
+
+		if objective := scalarFaultStringObjective(context.scalarFault, node, occurrence); objective != nil {
+			handled, complete, err := s.walkDirectedStringObjective(
+				node, occurrence, requirements, objective, visit,
+			)
+			if err != nil || handled {
+				return complete, err
+			}
+		}
 	}
 
 	complete := false
@@ -245,7 +265,120 @@ func validStringObjective(
 	return nil
 }
 
-// scalarTargetNode resolves the valid target occurrence used to lock a scalar seed.
+// walkStringEnumFault searches outside one enum while retaining active string siblings.
+func (s *search) walkStringEnumFault(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	fault *faultProgram,
+	visit rowVisit,
+) (bool, error) {
+	rules, err := activeStringRulesFor(node, occurrence, requirements, nil)
+	if err != nil {
+		return false, err
+	}
+
+	patterns := make([]*patternAST, 0, len(rules.patterns))
+	for _, pattern := range rules.patterns {
+		patterns = append(patterns, pattern.pattern)
+	}
+
+	lengths, err := basicStringLengthsFromActive(rules.lengths)
+	if err != nil {
+		return false, err
+	}
+
+	product, err := newBasicStringProduct(patterns)
+	if err != nil {
+		return false, err
+	}
+
+	if formatErr := product.addFormats(rules.formats, -1); formatErr != nil {
+		return false, formatErr
+	}
+
+	target, found := scalarTargetNode(node, occurrence, fault.obligation.occurrence)
+	if !found || target.schemaJSON == nil {
+		return false, errors.New("schematest: string enum fault target has no canonical schema")
+	}
+
+	canonicalSchemaJSON, err := marshalStrict(target.schemaJSON)
+	if err != nil {
+		return false, fmt.Errorf("schematest: canonicalize string enum fault schema: %w", err)
+	}
+
+	return s.walkBasicStringProductForLengths(
+		product,
+		lengths,
+		basicStringLengthObjective{},
+		searchSeed(
+			fault.obligation.occurrence.usePointer,
+			canonicalSchemaJSON,
+			oracleRuleEnum,
+			fault.obligation.component,
+		),
+		visit,
+	)
+}
+
+// scalarFaultDirectsEnum reports whether this scalar owns the directed enum rule.
+func scalarFaultDirectsEnum(
+	fault *faultProgram,
+	node *schemaNode,
+	occurrence schemaOccurrence,
+) bool {
+	return fault != nil && fault.obligation.rule == oracleRuleEnum &&
+		scalarTargetNodeMatches(node, occurrence, fault.obligation.occurrence)
+}
+
+// scalarFaultStringObjective resolves one directed string-rule program.
+func scalarFaultStringObjective(
+	fault *faultProgram,
+	node *schemaNode,
+	occurrence schemaOccurrence,
+) *stringSearchObjective {
+	if fault == nil {
+		return nil
+	}
+
+	kind, ok := stringFaultObjectiveKind(fault.obligation.rule)
+	if !ok || !scalarTargetNodeMatches(node, occurrence, fault.obligation.occurrence) {
+		return nil
+	}
+
+	return &stringSearchObjective{
+		kind:       kind,
+		occurrence: fault.obligation.occurrence,
+		closure:    append(faultClosure(nil), fault.expected...),
+		rule:       fault.obligation.rule,
+		level:      fault.obligation.component,
+	}
+}
+
+// scalarTargetNodeMatches reports whether a scalar subtree contains the target.
+func scalarTargetNodeMatches(
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	target schemaOccurrence,
+) bool {
+	_, found := scalarTargetNode(node, occurrence, target)
+
+	return found
+}
+
+// scalarFaultWithin reports whether an occurrence contains the directed target.
+func scalarFaultWithin(fault *faultProgram, occurrence schemaOccurrence) bool {
+	if fault == nil {
+		return false
+	}
+
+	target := fault.obligation.occurrence
+
+	return rowInstancePrefixMatches(occurrence.instanceTemplate, target.instanceTemplate) &&
+		(target.usePointer == occurrence.usePointer || strings.HasPrefix(target.usePointer, occurrence.usePointer+"/"))
+}
+
+// scalarTargetNode resolves the target occurrence used to lock a scalar seed.
 func scalarTargetNode(
 	node *schemaNode,
 	occurrence schemaOccurrence,

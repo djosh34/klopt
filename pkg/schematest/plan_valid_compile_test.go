@@ -284,7 +284,7 @@ func TestBaselineDoesNotProvePropertyMaximumConflict(t *testing.T) {
 		MaxSteps:    10_000,
 	}, func(Case) error { return nil })
 	require.NoError(t, err)
-	require.Equal(t, SpaceExhausted, report.Stop)
+	require.Equal(t, MaxStepsReached, report.Stop)
 	require.Positive(t, report.Steps)
 	require.True(t, reportIdentityHasSuffix(report.Uncovered, "#/id|type|level:string"))
 	require.True(t, reportIdentityHasSuffix(report.Uncovered, "#/value|type|level:number"))

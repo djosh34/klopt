@@ -52,13 +52,14 @@ func (s *search) walkActiveNumberRules(
 	occurrence schemaOccurrence,
 	requirements []requirement,
 	request *validRequest,
+	fault *faultProgram,
 	visit rowVisit,
 ) (bool, error) {
 	rules := make([]activeNumberRule, 0)
 
 	falseBranchObjective := false
 	if err := collectActiveNumberRules(
-		node, occurrence, requirements, &rules, &falseBranchObjective,
+		node, occurrence, requirements, fault, &rules, &falseBranchObjective,
 	); err != nil {
 		return false, err
 	}
@@ -68,7 +69,9 @@ func (s *search) walkActiveNumberRules(
 		return false, err
 	}
 
-	schedule.seeded = schedule.seeded || falseBranchObjective && !schedule.hasEnum
+	directedFault := fault != nil && fault.obligation.rule != oracleRuleType &&
+		scalarTargetNodeMatches(node, occurrence, fault.obligation.occurrence)
+	schedule.seeded = schedule.seeded || falseBranchObjective && !schedule.hasEnum || directedFault
 
 	complete, err := s.walkNumberDeterministic(schedule, visit)
 	if err != nil || complete || !schedule.seeded {
@@ -89,6 +92,15 @@ func (s *search) walkActiveNumberRules(
 		seedPointer = target.identity.occurrence.usePointer
 		rule = target.identity.rule
 		level = target.identity.level
+	}
+
+	if fault != nil {
+		if target, found := scalarTargetNode(node, occurrence, fault.obligation.occurrence); found {
+			seedNode = target
+			seedPointer = fault.obligation.occurrence.usePointer
+			rule = fault.obligation.rule
+			level = fault.obligation.component
+		}
 	}
 
 	if seedNode.schemaJSON == nil {
@@ -147,10 +159,13 @@ func nodeHasNumberObjective(node *schemaNode) bool {
 }
 
 // collectActiveNumberRules follows allOf and the selected anyOf truth view.
+//
+//nolint:cyclop // Local rules and both composition families share one applicability traversal.
 func collectActiveNumberRules(
 	node *schemaNode,
 	occurrence schemaOccurrence,
 	requirements []requirement,
+	fault *faultProgram,
 	rules *[]activeNumberRule,
 	falseBranchObjective *bool,
 ) error {
@@ -168,7 +183,7 @@ func collectActiveNumberRules(
 			occurrence.instanceTemplate,
 		)
 		if err := collectActiveNumberRules(
-			child, childOccurrence, requirements, rules, falseBranchObjective,
+			child, childOccurrence, requirements, fault, rules, falseBranchObjective,
 		); err != nil {
 			return err
 		}
@@ -176,20 +191,20 @@ func collectActiveNumberRules(
 
 	states, constrained := rowCompositionTruthStates(requirements, occurrence, "anyOf", len(node.anyOf))
 	for index, child := range node.anyOf {
-		if constrained && !states[index] {
-			*falseBranchObjective = *falseBranchObjective || nodeHasNumberObjective(child)
-
-			continue
-		}
-
 		childOccurrence := rebasePlanOccurrence(
 			child,
 			occurrence,
 			occurrence.usePointer+"/anyOf/"+itoa(index),
 			occurrence.instanceTemplate,
 		)
+		if constrained && !states[index] && !scalarFaultWithin(fault, childOccurrence) {
+			*falseBranchObjective = *falseBranchObjective || nodeHasNumberObjective(child)
+
+			continue
+		}
+
 		if err := collectActiveNumberRules(
-			child, childOccurrence, requirements, rules, falseBranchObjective,
+			child, childOccurrence, requirements, fault, rules, falseBranchObjective,
 		); err != nil {
 			return err
 		}

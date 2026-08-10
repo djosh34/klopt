@@ -699,7 +699,7 @@ func (builder *planBuilder) compileAnyOfChildren(
 		result,
 		anyOfIdentity,
 		appendPlanRequirements(faultInherited, parentFaultRequirements...),
-		failureSet{failureIdentity(anyOfIdentity)},
+		faultClosure{newEvaluationRecordIdentity(anyOfIdentity)},
 		closureDomainsExcept(branches, -1),
 		planRuleRank(anyOfIdentity.rule),
 	)
@@ -713,7 +713,7 @@ func optionalAnyOfClosure(branches []anyOfBranchPlan, identity ruleIdentity) *fa
 	preserved := &faultClosureAlternative{}
 	closed := &faultClosureAlternative{
 		requirements: anyOfFaultRequirements(identity.occurrence, len(branches)),
-		expected:     failureSet{failureIdentity(identity)},
+		expected:     faultClosure{newEvaluationRecordIdentity(identity)},
 		closure:      closureDomainsExcept(branches, -1),
 	}
 	preserved.next = closed
@@ -792,10 +792,10 @@ func appendClosurePrograms(left, right *faultClosureProgram) *faultClosureProgra
 }
 
 // appendFailureIdentity returns an independently owned identity set.
-func appendFailureIdentity(expected failureSet, identity failureIdentity) failureSet {
-	result := append(failureSet(nil), expected...)
+func appendFailureIdentity(expected faultClosure, identity failureIdentity) faultClosure {
+	result := append(faultClosure(nil), expected...)
 
-	return append(result, identity)
+	return append(result, newEvaluationRecordIdentity(identity))
 }
 
 // compileChildren compiles items, properties, additional schemas, and allOf branches.
@@ -965,7 +965,9 @@ func (builder *planBuilder) compileTypeRules(
 	}
 
 	if node.kind != schemaAny {
-		builder.addFault(result, identity, faultInherited, failureSet{failureIdentity(identity)})
+		builder.addFault(
+			result, identity, faultInherited, faultClosure{newEvaluationRecordIdentity(identity)},
+		)
 	}
 
 	return nil
@@ -1007,7 +1009,9 @@ func (builder *planBuilder) compileEnumRules(
 	}
 
 	requirements := builder.faultRequirementsForEnum(faultInherited)
-	builder.addFault(result, identity, requirements, []failureIdentity{identity})
+	builder.addFault(
+		result, identity, requirements, faultClosure{newEvaluationRecordIdentity(identity)},
+	)
 
 	return nil
 }
@@ -1222,7 +1226,7 @@ func (builder *planBuilder) compileObjectRules(
 			result,
 			identity,
 			appendPlanRequirements(faultRequirements, presenceRequirement(presenceOccurrence, requirementAbsent)),
-			[]failureIdentity{identity},
+			faultClosure{newEvaluationRecordIdentity(identity)},
 		)
 	}
 
@@ -1237,7 +1241,7 @@ func (builder *planBuilder) compileObjectRules(
 			result,
 			identity,
 			appendPlanRequirements(requirements, presenceRequirement(identity.occurrence, requirementPresent)),
-			[]failureIdentity{identity},
+			faultClosure{newEvaluationRecordIdentity(identity)},
 		)
 	}
 
@@ -1279,7 +1283,13 @@ func (builder *planBuilder) addScalarRule(
 		faultRequirements = appendPlanRequirements(faultRequirements, *count)
 	}
 
-	builder.addFaultAtRank(result, identity, faultRequirements, []failureIdentity{identity}, ruleRank)
+	builder.addFaultAtRank(
+		result,
+		identity,
+		faultRequirements,
+		faultClosure{newEvaluationRecordIdentity(identity)},
+		ruleRank,
+	)
 
 	return nil
 }
@@ -1358,7 +1368,7 @@ func (builder *planBuilder) addFault(
 	result *compiledNodePlan,
 	identity ruleIdentity,
 	requirements []requirement,
-	expected failureSet,
+	expected faultClosure,
 ) {
 	builder.addCompiledFault(result, identity, requirements, expected, nil, planRuleRank(identity.rule))
 }
@@ -1368,7 +1378,7 @@ func (builder *planBuilder) addFaultAtRank(
 	result *compiledNodePlan,
 	identity ruleIdentity,
 	requirements []requirement,
-	expected failureSet,
+	expected faultClosure,
 	ruleRank int,
 ) {
 	builder.addCompiledFault(result, identity, requirements, expected, nil, ruleRank)
@@ -1379,7 +1389,7 @@ func (builder *planBuilder) addCompiledFault(
 	result *compiledNodePlan,
 	identity ruleIdentity,
 	requirements []requirement,
-	expected failureSet,
+	expected faultClosure,
 	alternatives *faultClosureProgram,
 	ruleRank int,
 ) {
@@ -1391,7 +1401,7 @@ func (builder *planBuilder) addCompiledFault(
 	result.faults = append(result.faults, faultProgram{
 		obligation:   faultObligation,
 		requirements: copyPlanRequirements(requirements),
-		expected:     append(failureSet(nil), expected...),
+		expected:     append(faultClosure(nil), expected...),
 		alternatives: alternatives,
 	})
 }
@@ -2050,7 +2060,7 @@ func validatePlanOccurrences(plan compiledNodePlan) error {
 		}
 
 		for _, failure := range target.expected {
-			if err := validate(failure.occurrence); err != nil {
+			if err := validate(failure.project().occurrence); err != nil {
 				return err
 			}
 		}

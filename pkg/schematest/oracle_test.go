@@ -912,6 +912,10 @@ func mapRuleIdentitiesForTest(identities any, convert func(ruleIdentity) string)
 		for identity := range values {
 			result = append(result, convert(identity))
 		}
+	case []evaluationRecordIdentity:
+		for _, identity := range values {
+			result = append(result, convert(identity.project()))
+		}
 	default:
 		panic("unsupported rule identity collection")
 	}

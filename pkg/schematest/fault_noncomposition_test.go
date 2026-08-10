@@ -64,13 +64,29 @@ func TestNonCompositionFaultFamiliesHaveExactClosures(t *testing.T) {
 				result := evaluate(model, derivative)
 				require.NoError(t, result.err, fault.obligation.String())
 				require.False(t, result.valid, fault.obligation.String())
-				matches, matchErr := faultFailureClosureMatches(result.failureRecords(), fault)
+
+				selectedFault := fault
+				for failure := range result.failureRecords() {
+					if failure.rule != fault.obligation.rule ||
+						failure.occurrence.usePointer != fault.obligation.occurrence.usePointer {
+						continue
+					}
+
+					path, ok := rowPointerTokens(failure.occurrence.instanceTemplate)
+					require.True(t, ok)
+
+					selectedFault = concretizeFaultAtPath(fault, path)
+
+					break
+				}
+
+				matches, matchErr := faultFailureClosureMatches(result, selectedFault)
 				require.NoError(t, matchErr)
 				require.True(
 					t, matches, "%s: actual=%v expected=%v",
 					fault.obligation.String(),
 					identityStrings(result.failureRecords()),
-					identityStrings(fault.expected),
+					identityStrings(selectedFault.expected),
 				)
 			}
 		})
@@ -98,6 +114,257 @@ func TestMaxPropertiesFaultBuildsAValidTypedAdditionalMember(t *testing.T) {
 	derivative, err := applyFault(parent, fault, searchState)
 	require.NoError(t, err)
 	require.Equal(t, `{"__schematest_extra__":false}`, string(marshalFaultTestValue(t, derivative)))
+}
+
+func TestInapplicableObjectGrowthYieldsToFallbackSearch(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"maxProperties":2,
+		"default":{}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxProperties|fault:maxProperties")
+	searchState := &search{model: model, maxSteps: 25}
+
+	_, _, err := findNonCompositionDerivative(
+		&jsonValue{kind: jsonObject, object: map[string]*jsonValue{}},
+		fault,
+		searchState,
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, searchState.maxSteps, searchState.steps)
+}
+
+func TestOversizedArrayFaultStopsOnRealLazyEditCharge(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"array",
+		"maxItems":18446744073709551616,
+		"items":{}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxItems|fault:maxItems")
+	searchState := &search{model: model, maxSteps: 2}
+
+	derivative, attempted, exhausted, err := arrayCountFaultAttemptAtRank(
+		&jsonValue{kind: jsonArray}, fault, 0, searchState,
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, derivative)
+	require.False(t, attempted)
+	require.False(t, exhausted)
+	require.Equal(t, uint64(2), searchState.steps)
+}
+
+func TestOversizedObjectFaultStopsOnRealLazyEditCharge(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"maxProperties":18446744073709551616,
+		"additionalProperties":{}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxProperties|fault:maxProperties")
+	searchState := &search{model: model, maxSteps: 2}
+
+	derivative, attempted, exhausted, err := objectCountFaultAttemptAtRank(
+		&jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}, fault, 0, searchState,
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, derivative)
+	require.False(t, attempted)
+	require.False(t, exhausted)
+	require.Equal(t, uint64(2), searchState.steps)
+}
+
+func TestObjectFaultRejectsAnImpossibleRootKindBeforeCharging(t *testing.T) {
+	t.Parallel()
+
+	model, _ := compositionFaultModel(t, `{"maxProperties":0,"allOf":[{"type":"string"}]}`)
+	identity := makeRuleIdentity(model.root.occurrence, oracleRuleMaxProperties)
+	fault := faultProgram{
+		obligation: makeFaultObligation(identity, oracleRuleMaxProperties),
+		expected:   faultClosure{newEvaluationRecordIdentity(identity)},
+	}
+	searchState := &search{model: model, maxSteps: 10}
+
+	derivative, found, err := findNonCompositionDerivative(
+		&jsonValue{kind: jsonString}, fault, searchState,
+	)
+	require.NoError(t, err)
+	require.False(t, found)
+	require.Nil(t, derivative)
+	require.Zero(t, searchState.steps)
+}
+
+func TestMaxPropertiesFaultUsesOneCanonicalCursorForMultipleAdditions(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"maxProperties":2,
+		"additionalProperties":{"enum":["first","later"]}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxProperties|fault:maxProperties")
+	parent := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
+
+	firstSearch := &search{model: model, maxSteps: 100_000}
+	first, attempted, exhausted, err := objectCountFaultAttemptAtRank(
+		parent, fault, 40, firstSearch,
+	)
+	require.NoError(t, err)
+	require.True(t, attempted)
+	require.False(t, exhausted)
+	require.JSONEq(t, `{
+		"__schematest_extra__":"first",
+		"__schematest_extra___1":"first",
+		"__schematest_extra___2":"first"
+	}`, string(marshalFaultTestValue(t, first)))
+
+	laterSearch := &search{model: model, maxSteps: 100_000}
+	later, attempted, exhausted, err := objectCountFaultAttemptAtRank(
+		parent, fault, 101, laterSearch,
+	)
+	require.NoError(t, err)
+	require.True(t, attempted)
+	require.False(t, exhausted)
+	require.JSONEq(t, `{
+		"__schematest_extra__":"first",
+		"__schematest_extra___1":"first",
+		"__schematest_extra___2":"later"
+	}`, string(marshalFaultTestValue(t, later)))
+}
+
+func TestMaxPropertiesFaultAdvancesPastAParentKeyCollision(t *testing.T) {
+	t.Parallel()
+
+	requireFaultDerivative(
+		t,
+		`{"type":"object","maxProperties":1,"default":{"__schematest_extra__":false}}`,
+		"|maxProperties|fault:maxProperties",
+		`{"__schematest_extra__":false,"__schematest_extra___1":null}`,
+	)
+}
+
+func TestAdditionalPropertyFaultAdvancesPastDeclaredAndOccupiedNames(t *testing.T) {
+	t.Parallel()
+
+	requireFaultDerivative(
+		t,
+		`{"type":"object","required":["__schematest_extra__","__schematest_extra___1"],`+
+			`"properties":{"__schematest_extra__":{},"__schematest_extra___1":{}},`+
+			`"additionalProperties":false}`,
+		"|#/*|additionalProperties|fault:additionalProperties",
+		`{"__schematest_extra__":false,"__schematest_extra___1":false,"__schematest_extra___2":null}`,
+	)
+}
+
+func TestObjectCountFaultMutatesOnlyOneConcreteOccurrence(t *testing.T) {
+	t.Parallel()
+
+	requireFaultDerivative(
+		t,
+		`{"type":"array","minItems":2,"maxItems":2,"items":{"type":"object","maxProperties":0}}`,
+		"/items|#/*|maxProperties|fault:maxProperties",
+		`[{"__schematest_extra__":null},{}]`,
+	)
+}
+
+func TestArrayCountFaultsPreserveWholeArrayEnums(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		faultID    string
+		derivative string
+	}{
+		{
+			name: "minimum deletes a non-prefix position",
+			schema: `{"type":"array","minItems":2,"enum":[["a","b"],["b"]],` +
+				`"items":{"type":"string"}}`,
+			faultID:    "|minItems|fault:minItems",
+			derivative: `["b"]`,
+		},
+		{
+			name: "maximum inserts the enum item at its authored position",
+			schema: `{"type":"array","maxItems":1,"enum":[["x"],["x","special"]],` +
+				`"items":{"type":"string"}}`,
+			faultID:    "|maxItems|fault:maxItems",
+			derivative: `["x","special"]`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			requireFaultDerivative(t, test.schema, test.faultID, test.derivative)
+		})
+	}
+}
+
+func TestArrayCountFaultPositionsAdvanceCanonically(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		schema     string
+		faultID    string
+		derivative string
+	}{
+		{
+			name: "deletion starts at the first position",
+			schema: `{"type":"array","minItems":2,"maxItems":2,"default":["a","b"],` +
+				`"items":{"type":"string"}}`,
+			faultID:    "|minItems|fault:minItems",
+			derivative: `["b"]`,
+		},
+		{
+			name: "insertion starts at the first position",
+			schema: `{"type":"array","maxItems":1,"default":["x"],` +
+				`"items":{"type":"string"}}`,
+			faultID:    "|maxItems|fault:maxItems",
+			derivative: `["","x"]`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			requireFaultDerivative(t, test.schema, test.faultID, test.derivative)
+		})
+	}
+}
+
+func TestArrayCountFaultCutoffPrecedesEachAtomicAssignment(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{"type":"array","minItems":2,`+
+		`"enum":[["a","b"],["b"]],"items":{"type":"string"}}`)
+	fault := findFaultTarget(t, plan, "|minItems|fault:minItems")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	beforeMutation := searchState.steps
+	searchState.maxSteps = beforeMutation + 3
+	derivative, err := applyFault(parent, fault, searchState)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, derivative)
+	require.Equal(t, searchState.maxSteps, searchState.steps)
+
+	searchState = &search{model: model, maxSteps: 100_000}
+	parent, found, err = regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	beforeMutation = searchState.steps
+	derivative, err = applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `["b"]`, string(marshalFaultTestValue(t, derivative)))
+	require.Equal(t, uint64(4), searchState.steps-beforeMutation)
 }
 
 func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {
@@ -128,19 +395,39 @@ func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-
-			model, plan := compositionFaultModel(t, test.schema)
-			fault := findFaultTarget(t, plan, test.faultID)
-			searchState := &search{model: model, maxSteps: 100_000}
-			parent, found, err := regenerateParent(plan, fault, searchState)
-			require.NoError(t, err)
-			require.True(t, found)
-
-			derivative, err := applyFault(parent, fault, searchState)
-			require.NoError(t, err)
-			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
+			requireFaultDerivative(t, test.schema, test.faultID, test.derivative)
 		})
 	}
+}
+
+func requireFaultDerivative(t *testing.T, schema, faultID, expected string) {
+	t.Helper()
+
+	model, plan := compositionFaultModel(t, schema)
+	fault := findFaultTarget(t, plan, faultID)
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, expected, string(marshalFaultTestValue(t, derivative)))
+}
+
+func TestComposedEnumFaultPreservesSiblingType(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{"allOf":[{"type":"string"},{"enum":["ok",7]}]}`)
+	fault := findFaultTarget(t, plan, "/allOf/1|#|enum|fault:enum")
+	searchState := &search{model: model, maxSteps: 10_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `""`, string(marshalFaultTestValue(t, derivative)))
 }
 
 func TestBuildTypeFaultUsesActiveSiblingEnumWitness(t *testing.T) {
@@ -187,6 +474,50 @@ func TestBuildTypeFaultUsesActiveSiblingEnumWitness(t *testing.T) {
 	}
 }
 
+func TestAdditionalPropertyFaultSkipsNamesDeclaredByTheTargetOccurrence(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"additionalProperties":{"type":"boolean"},
+		"allOf":[{
+			"properties":{"__schematest_extra__":{"type":"string"}},
+			"additionalProperties":false
+		}]
+	}`)
+	fault := findFaultTarget(t, plan,
+		"/allOf/0|#/*|additionalProperties|fault:additionalProperties")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `{"__schematest_extra___1":false}`, string(marshalFaultTestValue(t, derivative)))
+}
+
+func TestAdditionalPropertyFaultUsesOuterDeclarationOnlyAsAValueWitness(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"properties":{"outer":{"enum":["needed"]}},
+		"additionalProperties":false,
+		"allOf":[{"additionalProperties":false}]
+	}`)
+	fault := findFaultTarget(t, plan,
+		"/allOf/0|#/*|additionalProperties|fault:additionalProperties")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `{"outer":"needed"}`, string(marshalFaultTestValue(t, derivative)))
+}
+
 func TestAdditionalPropertyFaultUsesActiveSiblingValueSchema(t *testing.T) {
 	t.Parallel()
 
@@ -227,7 +558,7 @@ func TestAdditionalPropertyFaultUsesActiveDeclaredPropertySchema(t *testing.T) {
 			schema: `{"type":"object","allOf":[{"additionalProperties":false},` +
 				`{"properties":{"__schematest_extra__":` +
 				`{"type":"number","minimum":5,"multipleOf":2}}}]}`,
-			derivative: `{"__schematest_extra__":6}`,
+			derivative: `{"__schematest_extra___1":null}`,
 		},
 	}
 
@@ -248,7 +579,7 @@ func TestAdditionalPropertyFaultUsesActiveDeclaredPropertySchema(t *testing.T) {
 			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
 			matches, err := derivativeHasClosure(model, derivative, fault.expected)
 			require.NoError(t, err)
-			require.True(t, matches)
+			require.False(t, matches)
 		})
 	}
 }
@@ -335,6 +666,84 @@ func TestBuildFindsActiveConjunctionFaultWitnesses(t *testing.T) {
 			require.Equal(t, test.derivative, string(marshalFaultTestValue(t, derivative)))
 		})
 	}
+}
+
+func TestScalarFaultSearchPreservesComposedPropertySiblings(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"required":["x"],
+		"allOf":[
+			{"properties":{"x":{"type":"string","pattern":"^[a-b]$"}}},
+			{"properties":{"x":{"pattern":"^[b-c]$"}}}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "/allOf/0/properties/x|#/x|pattern|fault:pattern")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	beforeMutation := searchState.steps
+	searchState.maxSteps = beforeMutation + 12
+	derivative, err := applyFault(parent, fault, searchState)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, derivative)
+	require.Equal(t, searchState.maxSteps, searchState.steps)
+
+	searchState = &search{model: model, maxSteps: 100_000}
+	parent, found, err = regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	beforeMutation = searchState.steps
+	derivative, err = applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	require.Equal(t, `{"x":"c"}`, string(marshalFaultTestValue(t, derivative)))
+	require.Equal(t, uint64(13), searchState.steps-beforeMutation)
+}
+
+func TestStringEnumFaultUsesOpenScalarFrontier(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"string",
+		"enum":["","a","b","text"]
+	}`)
+	fault := findFaultTarget(t, plan, "|enum|fault:enum")
+	searchState := &search{model: model, maxSteps: 10_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	matches, err := derivativeHasClosure(model, derivative, fault.expected)
+	require.NoError(t, err)
+	require.True(t, matches)
+	require.NotContains(t, []string{`""`, `"a"`, `"b"`, `"text"`}, string(marshalFaultTestValue(t, derivative)))
+}
+
+func TestNumericEnumFaultUsesOpenScalarFrontier(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"number",
+		"enum":[-1,0,0.5,1,2,3]
+	}`)
+	fault := findFaultTarget(t, plan, "|enum|fault:enum")
+	searchState := &search{model: model, maxSteps: 10_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	derivative, err := applyFault(parent, fault, searchState)
+	require.NoError(t, err)
+	matches, err := derivativeHasClosure(model, derivative, fault.expected)
+	require.NoError(t, err)
+	require.True(t, matches)
+	require.NotContains(t, []string{"-1", "0", "0.5", "1", "2", "3"}, string(marshalFaultTestValue(t, derivative)))
 }
 
 func TestBuildTypelessNumericFormatFaults(t *testing.T) {
