@@ -153,6 +153,72 @@ func TestAggregateFaultConcretizesFailureAtInsertedProperty(t *testing.T) {
 	}
 }
 
+//nolint:cyclop // Closure selection and the complete aggregate assertion belong together.
+func TestAggregateFaultCombinesProspectiveCoordinates(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object","required":["a","b"],
+		"properties":{"a":{"type":"array","items":{}},"b":{"type":"array","items":{}}},
+		"anyOf":[
+			{"properties":{"a":{"maxItems":0}}},
+			{"properties":{"a":{"items":{"type":"string"}}}},
+			{"properties":{"b":{"items":{"type":"string"}}}}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	searchState := &search{model: model, maxSteps: 1_000_000}
+
+	var selected faultProgram
+
+	for rank := uint64(0); ; rank++ {
+		candidate, exists, exhausted, err := faultClosureAtRank(fault, rank, searchState)
+		require.NoError(t, err)
+
+		if exhausted {
+			break
+		}
+
+		if !exists {
+			continue
+		}
+
+		hasA := false
+		hasB := false
+
+		for _, expected := range candidate.expected {
+			template := expected.project().occurrence.instanceTemplate
+			hasA = hasA || template == "#/a/*"
+			hasB = hasB || template == "#/b/*"
+		}
+
+		if hasA && hasB {
+			selected = candidate
+
+			break
+		}
+	}
+
+	require.NotEmpty(t, selected.expected)
+
+	parent := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{
+		"a": {kind: jsonArray, array: []*jsonValue{}},
+		"b": {kind: jsonArray, array: []*jsonValue{}},
+	}}
+	selected, exists, err := faultAtOccurrenceRank(parent, selected, 0, searchState)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	var derivative *jsonValue
+	for rank := uint64(0); rank < 20 && derivative == nil; rank++ {
+		derivative, _, _, err = compositionFaultAttemptAtRank(parent, selected, rank, searchState)
+		require.NoError(t, err)
+	}
+
+	require.NotNil(t, derivative)
+	require.JSONEq(t, `{"a":[null],"b":[null]}`, string(marshalFaultTestValue(t, derivative)))
+}
+
 func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 	t.Parallel()
 

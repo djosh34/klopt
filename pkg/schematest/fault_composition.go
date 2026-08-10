@@ -3,6 +3,7 @@ package schematest
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"reflect"
 	"strconv"
 	"strings"
@@ -92,22 +93,16 @@ func compositionFaultAttemptAtRank(
 		return nil, false, false, errors.New("schematest: nil composition fault parent")
 	}
 
-	prospective, prospectiveSource, prospectiveErr := prospectiveCompositionEditAtRank(parent, fault, rank)
+	createdEdits, prospectiveSource, prospectiveErr := prospectiveCompositionEditsAtRank(parent, fault, rank)
 	if prospectiveErr != nil {
 		return nil, false, false, prospectiveErr
 	}
 
-	if prospectiveSource {
-		if prospective == nil {
-			return nil, false, false, nil
+	if prospectiveSource && len(createdEdits) > 0 {
+		candidate, matched, err := tryCompositionEdits(parent, fault, createdEdits, s)
+		if err != nil || matched {
+			return candidate, true, false, err
 		}
-
-		candidate, _, err := tryCompositionEdits(parent, fault, []compositionEdit{*prospective}, s)
-		if err != nil {
-			return nil, false, false, err
-		}
-
-		return candidate, true, false, nil
 	}
 
 	var (
@@ -162,92 +157,200 @@ func compositionFaultAttemptAtRank(
 	return nil, false, true, nil
 }
 
-// prospectiveCompositionEditAtRank addresses a path created by an aggregate mutation.
+// prospectiveCompositionSource identifies one missing wildcard container.
+type prospectiveCompositionSource struct {
+	path      []string
+	container *jsonValue
+}
+
+// prospectiveCompositionEditsAtRank addresses canonical subsets of mutation-created paths.
 //
-//nolint:cyclop,gocognit // Array and object prospective coordinates share one decoder.
-func prospectiveCompositionEditAtRank(
+//nolint:cyclop // Source discovery and direct subset decoding share one boundary.
+func prospectiveCompositionEditsAtRank(
 	parent *jsonValue,
 	fault faultProgram,
 	rank uint64,
-) (*compositionEdit, bool, error) {
-	for _, expected := range fault.expected {
-		projected := expected.project()
-		if projected.rule != oracleRuleType ||
-			!strings.Contains(projected.occurrence.instanceTemplate, "*") ||
-			matchingValuePathCount(parent, projected.occurrence.instanceTemplate) > 0 {
+) ([]compositionEdit, bool, error) {
+	sourceCount, err := prospectiveCompositionSourceCount(parent, fault)
+	if err != nil || sourceCount == 0 {
+		return nil, false, err
+	}
+
+	subsets, finite := parentReplayMaskFiniteSize(sourceCount)
+	if !finite {
+		return nil, true, nil
+	}
+
+	subsetRank, tupleRank, addressed := rowSourceValueRanksAtOrdinal(subsets, rank)
+	if !addressed {
+		return nil, true, nil
+	}
+
+	mask, exists := parentReplayMaskAtOrdinal(sourceCount, new(big.Int).SetUint64(subsetRank))
+	if !exists {
+		return nil, true, nil
+	}
+
+	selected := 0
+
+	for index := range sourceCount {
+		if mask.Bit(index) == 1 {
+			selected++
+		}
+	}
+
+	decoder, ok := newDirectRankTupleDecoder(selected*directRowRankDimensions, tupleRank)
+	if !ok {
+		return nil, true, nil
+	}
+
+	edits := make([]compositionEdit, 0, selected)
+
+	for index := range sourceCount {
+		if mask.Bit(index) == 0 {
 			continue
 		}
 
-		tokens, ok := rowPointerTokens(projected.occurrence.instanceTemplate)
-		if !ok {
-			return nil, true, errors.New("schematest: invalid prospective composition path")
-		}
-
-		wildcard := -1
-
-		for index, token := range tokens {
-			if token == "*" {
-				wildcard = index
-
-				break
-			}
-		}
-
-		if wildcard < 0 || wildcard+1 != len(tokens) {
-			return nil, false, nil
-		}
-
-		containerPath, exists := matchingValuePathAt(
-			parent, pointerFromTokens(tokens[:wildcard]), 0,
-		)
-		if !exists {
-			return nil, true, nil
-		}
-
-		container := valueAtPath(parent, containerPath)
-		if container == nil {
-			return nil, true, nil
-		}
-
-		decoder, ok := newDirectRankTupleDecoder(directRowRankDimensions, rank)
-		if !ok {
-			return nil, true, nil
+		source, sourceExists, sourceErr := prospectiveCompositionSourceAt(parent, fault, index)
+		if sourceErr != nil || !sourceExists {
+			return nil, true, sourceErr
 		}
 
 		coordinateRank, _ := decoder.Next()
 		valueRank, _ := decoder.Next()
 
-		value, exists, _, err := canonicalGenericValueAt(valueRank)
-		if err != nil || !exists {
-			return nil, true, err
+		value, valueExists, _, valueErr := canonicalGenericValueAt(valueRank)
+		if valueErr != nil || !valueExists {
+			return nil, true, valueErr
 		}
 
-		switch container.kind {
-		case jsonArray:
-			if coordinateRank > 0 {
-				return nil, true, nil
-			}
-
-			return &compositionEdit{
-				path:        append(pathCopy(containerPath), strconv.Itoa(len(container.array))),
-				replacement: value,
-				append:      true,
-			}, true, nil
-		case jsonObject:
-			name := freshObjectMutationName(coordinateRank)
-			if _, collision := container.object[name]; collision {
-				return nil, true, nil
-			}
-
-			return &compositionEdit{
-				path: append(pathCopy(containerPath), name), replacement: value,
-			}, true, nil
-		default:
+		edit, editExists := prospectiveCompositionEdit(source, coordinateRank, value)
+		if !editExists {
 			return nil, true, nil
+		}
+
+		edits = append(edits, edit)
+	}
+
+	return edits, true, nil
+}
+
+// prospectiveCompositionSourceCount counts eligible identities without retaining coordinates.
+func prospectiveCompositionSourceCount(parent *jsonValue, fault faultProgram) (int, error) {
+	count := 0
+
+	for index := range fault.expected {
+		_, exists, err := prospectiveCompositionSourceForIdentity(parent, fault.expected[index])
+		if err != nil {
+			return 0, err
+		}
+
+		if exists {
+			count++
 		}
 	}
 
-	return nil, false, nil
+	return count, nil
+}
+
+// prospectiveCompositionSourceAt directly addresses one eligible identity.
+func prospectiveCompositionSourceAt(
+	parent *jsonValue,
+	fault faultProgram,
+	wanted int,
+) (prospectiveCompositionSource, bool, error) {
+	for index := range fault.expected {
+		source, exists, err := prospectiveCompositionSourceForIdentity(parent, fault.expected[index])
+		if err != nil {
+			return prospectiveCompositionSource{}, false, err
+		}
+
+		if !exists {
+			continue
+		}
+
+		if wanted == 0 {
+			return source, true, nil
+		}
+
+		wanted--
+	}
+
+	return prospectiveCompositionSource{}, false, nil
+}
+
+// prospectiveCompositionSourceForIdentity resolves one missing wildcard container.
+//
+//nolint:cyclop // Identity filtering and wildcard resolution are one direct lookup.
+func prospectiveCompositionSourceForIdentity(
+	parent *jsonValue,
+	expected evaluationRecordIdentity,
+) (prospectiveCompositionSource, bool, error) {
+	projected := expected.project()
+	if projected.rule != oracleRuleType ||
+		!strings.Contains(projected.occurrence.instanceTemplate, "*") ||
+		matchingValuePathCount(parent, projected.occurrence.instanceTemplate) > 0 {
+		return prospectiveCompositionSource{}, false, nil
+	}
+
+	tokens, ok := rowPointerTokens(projected.occurrence.instanceTemplate)
+	if !ok {
+		return prospectiveCompositionSource{}, false, errors.New("schematest: invalid prospective composition path")
+	}
+
+	wildcard := -1
+
+	for index, token := range tokens {
+		if token == "*" {
+			wildcard = index
+
+			break
+		}
+	}
+
+	if wildcard < 0 || wildcard+1 != len(tokens) {
+		return prospectiveCompositionSource{}, false, nil
+	}
+
+	path, exists := matchingValuePathAt(parent, pointerFromTokens(tokens[:wildcard]), 0)
+	if !exists {
+		return prospectiveCompositionSource{}, false, nil
+	}
+
+	container := valueAtPath(parent, path)
+	if container == nil || container.kind != jsonArray && container.kind != jsonObject {
+		return prospectiveCompositionSource{}, false, nil
+	}
+
+	return prospectiveCompositionSource{path: pathCopy(path), container: container}, true, nil
+}
+
+// prospectiveCompositionEdit creates one addressed insertion.
+func prospectiveCompositionEdit(
+	source prospectiveCompositionSource,
+	coordinateRank uint64,
+	value *jsonValue,
+) (compositionEdit, bool) {
+	switch source.container.kind {
+	case jsonArray:
+		if coordinateRank > 0 {
+			return compositionEdit{}, false
+		}
+
+		return compositionEdit{
+			path:        append(pathCopy(source.path), strconv.Itoa(len(source.container.array))),
+			replacement: value, append: true,
+		}, true
+	case jsonObject:
+		name := freshObjectMutationName(coordinateRank)
+		if _, collision := source.container.object[name]; collision {
+			return compositionEdit{}, false
+		}
+
+		return compositionEdit{path: append(pathCopy(source.path), name), replacement: value}, true
+	default:
+		return compositionEdit{}, false
+	}
 }
 
 // visitCompositionEditSizes traverses edit subsets in increasing size and source order.
@@ -469,18 +572,18 @@ func concretizeProspectiveCompositionOccurrences(
 			continue
 		}
 
-		var prospective []string
+		var createdPath []string
 
 		for _, edit := range edits {
 			path, exists := prospectiveCompositionPath(edit, template)
 			if exists {
-				prospective = path
+				createdPath = path
 
 				break
 			}
 		}
 
-		if prospective == nil {
+		if createdPath == nil {
 			continue
 		}
 
@@ -489,7 +592,7 @@ func concretizeProspectiveCompositionOccurrences(
 		}
 
 		identity := cloneEvaluationRecordIdentity(selected.expected[index])
-		identity.occurrence.instance.tokens = pathCopy(prospective)
+		identity.occurrence.instance.tokens = pathCopy(createdPath)
 		selected.expected[index] = identity
 	}
 
