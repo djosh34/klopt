@@ -758,7 +758,8 @@ func TestBeyondArrayCursorAdvancesPastUnusableFirstChildRank(t *testing.T) {
 
 	model, err := parseInput(Input{
 		OpenAPI: []byte(documentWithJSONSchema(`{
-			"type":"array","items":{"type":"string","enum":[false,"ok"]}
+			"type":"array","items":{"type":"string"},
+			"allOf":[{"items":{"type":"string","enum":[false,"ok"]}}]
 		}`)),
 		OperationID: "selected",
 	})
@@ -770,9 +771,28 @@ func TestBeyondArrayCursorAdvancesPastUnusableFirstChildRank(t *testing.T) {
 	active, err := view.appendBranchRequirements(nil, func() error { return nil })
 	require.NoError(t, err)
 
+	items := rowProjectedArrayItems(view, active)
+
+	domainSearch := &search{model: model, maxSteps: 100}
+	_, exists, usable, finiteSize, err := domainSearch.rowConjunctionValueAt(
+		items, active, rowSearchContext{}, 2,
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.False(t, usable)
+	require.Equal(t, uint64(5), finiteSize)
+	value, exists, usable, finiteSize, err := domainSearch.rowConjunctionValueAt(
+		items, active, rowSearchContext{}, 4,
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, usable)
+	require.Equal(t, "ok", value.text)
+	require.Equal(t, uint64(5), finiteSize)
+
 	searchState := &search{model: model, maxSteps: 100}
 	cursor, err := searchState.newBeyondArrayCursor(
-		rowProjectedArrayItems(view, active), active, rowSearchContext{}, 0,
+		items, active, rowSearchContext{}, 0,
 	)
 	require.NoError(t, err)
 
@@ -782,8 +802,8 @@ func TestBeyondArrayCursorAdvancesPastUnusableFirstChildRank(t *testing.T) {
 		require.True(t, live)
 	}
 
-	require.Equal(t, uint64(1), cursor.childRank)
-	require.Equal(t, uint64(5), searchState.steps)
+	require.Equal(t, uint64(4), cursor.childRank)
+	require.Equal(t, uint64(8), searchState.steps)
 }
 
 // TestConjunctionEnumRankUsesActualSourceIndex locks non-enum source holes.

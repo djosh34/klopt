@@ -59,6 +59,10 @@ func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T)
 func TestArrayFrontierHasNoSyntheticCutoffLoop(t *testing.T) {
 	t.Parallel()
 
+	source, err := os.ReadFile("structural_frontier.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(source), "return value, true, usable, uint64(len(selected.node.enum))")
+
 	parsed := parseGoFile(t, "structural_frontier.go")
 	children := findGuardFunction(t, parsed, "rowArrayChildrenForOrdinal", "search")
 	advance := findGuardFunction(t, parsed, "advance", "beyondArrayCursor")

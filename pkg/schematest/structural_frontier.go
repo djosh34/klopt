@@ -1323,12 +1323,12 @@ func (s *search) rowConjunctionValueAt(
 			maximumMembers = max(maximumMembers, uint64(len(conjunction.sources[index].node.enum)))
 		}
 
-		if selected.node.enum == nil || memberRank >= uint64(len(selected.node.enum)) {
-			lastDiagonal := uint64(len(conjunction.sources)) - 1 + maximumMembers - 1
+		lastDiagonal := uint64(len(conjunction.sources)) - 1 + maximumMembers - 1
+		finiteSize := saturatedSourceValueTupleCount(
+			uint64(len(conjunction.sources)), lastDiagonal,
+		)
 
-			finiteSize := saturatedSourceValueTupleCount(
-				uint64(len(conjunction.sources)), lastDiagonal,
-			)
+		if selected.node.enum == nil || memberRank >= uint64(len(selected.node.enum)) {
 			if wanted < finiteSize {
 				return &jsonValue{kind: jsonNull}, true, false, finiteSize, nil
 			}
@@ -1354,7 +1354,7 @@ func (s *search) rowConjunctionValueAt(
 			conjunction.sources, requirements, context, value,
 		)
 
-		return value, true, usable, uint64(len(selected.node.enum)), err
+		return value, true, usable, finiteSize, err
 	}
 
 	if wanted == 0 {

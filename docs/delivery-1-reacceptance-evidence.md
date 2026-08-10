@@ -10,7 +10,7 @@ This document records the D1R9 acceptance audit and the exact focused campaigns 
 | #169 (D1R2) | iterative YAML/strict-value frames, `cloneJSONValue`, exact-number lexical normalization, and shared URI syntax | No recursive admitted-value walk or depth cap; no one-zero-at-a-time arithmetic normalization; one URI/IP-literal scanner; occurrence-owned clones | **Pass.** Deep-value, number, URI, and ownership evidence passed; no correction required. |
 | #173 (D1R3) | `evaluationRecords`, evaluation cache rebasing, enum-member metadata, and record consumers | One heterogeneous ordered record sequence is authoritative; no parallel semantic slices or string-projected identities; cached and uncached complete identities agree | **Pass.** Oracle identity/failure-closure evidence passed; no correction required. |
 | #178 (D1R4) | `planBuilder`, requirement sets, valid schedule, fault descriptors, and order keys | Planning is declarative; no candidate evaluation, witness cap/corpus, fixed-width mask, or materialized candidate product; report and execution orders remain separate | **Pass.** Plan and additive-schedule evidence passed; no correction required. |
-| #183 (D1R5) | `rowProjectionCursor`, array/object structural frontiers, and active projected members/items | One same-instance projection interpretation; no eager branch/size product or authored-capacity allocation; each structural assignment is charged immediately | **Pass after localized correction.** The beyond-`uint64` branch retains only a scalar `beyondArrayCursor`. It charges length once, advances child ranks to their genuine finite endpoint, and discards each attempt-local child before yielding; only natural exhaustion marks the projection unavailable. Retention, AST, and exact public-Build regressions lock the seam. |
+| #183 (D1R5) | `rowProjectionCursor`, array/object structural frontiers, and active projected members/items | One same-instance projection interpretation; no eager branch/size product or authored-capacity allocation; each structural assignment is charged immediately | **Pass after localized correction.** The beyond-`uint64` branch retains only a scalar `beyondArrayCursor`. It charges length once, advances child ranks to the genuine complete multi-source conjunction endpoint, and discards each attempt-local child before yielding; only natural exhaustion marks the projection unavailable. Retention, AST, and exact public-Build regressions lock the seam. |
 | #188 (D1R6) | compact pattern machines, `basicStringProduct`, declarative format programs, and directed objective schedule | No counted-machine expansion, sample/post-filter approximation, hidden search cap, visited witness corpus, or coupling to production validation | **Pass.** Exact string-product/format evidence passed; no correction required. |
 | #193 (D1R7) | fault product continuation, parent replay, array/object/scalar mutation machines, and closure comparison | One fair continuation; no first-parent commitment, rank-prefix replay, delayed batch charging, alias-preserving copies, or non-identity closure comparison | **Pass after localized correction.** Ranked array insertion is directly addressed, and each ranked combination is decoded once through an attempt-local scalar cursor with one monotonic advance per charged coordinate. Array derivatives grow one coordinate only after its charge. Oversized object/array attempts perform one ranked edit before yielding to the outer fault product. |
 | #200 (D1R8) | callback lifetime, transitive dependency guard, ownership allowlist, generated-value and source-provenance analyses | Callback bytes are borrowed; local dependency closure stays clean; ownership is role-specific; no generated corpus or source-specific semantic switch survives | **Pass.** Callback, clean-room, ownership/no-corpus, and retention campaigns passed; no beyond-count generated row survives an attempt boundary. |
@@ -19,7 +19,7 @@ No blocking grand architectural failure was found in this audit.
 
 ## D1R9.2 integrated public-seam evidence
 
-`pkg/schematest/build_integration_acceptance_test.go` records exact ordered `[]Case` and complete `Report` values for a compact compound matrix crossing repeated references, request direction, allOf/anyOf, exact numbers, directed pattern/format/length strings, arrays, and objects. Every sufficient matrix run reaches `space_exhausted` with an empty uncovered set; a separate exact cutoff remains pinned. The file also covers genuinely open alternatives, beyond-`uint64` fairness and exhaustion, billion-count cutoffs, mutation-name collision, and supplementary public 65-branch **allOf** cutoff evidence. The arbitrary-width **anyOf** mask proof is the source/unit audit sanctioned by #208: `parentReplayMaskAtOrdinal` and `parentReplayMaskCursor` cover bit 64 and an ordinal beyond `uint64`, while source assertions forbid fixed-width narrowing. Private helpers are the intended behavioral seam because a public 65-branch anyOf exact report would require `2^65-1` canonical mask obligations.
+`pkg/schematest/build_integration_acceptance_test.go` records exact ordered `[]Case` and complete `Report` values for one unchanged crossed document combining repeated references, request direction, allOf composition, an exact numeric bound, directed pattern/format/length strings, and array/object child search. Its repeated sufficient run reaches `space_exhausted` with an empty uncovered set at exactly 700,917 steps; a separate 100-step run against the same document pins the exact cutoff stream and report. The file also covers genuinely open alternatives, beyond-`uint64` fairness and exhaustion, billion-count cutoffs, mutation-name collision, and supplementary public 65-branch **allOf** cutoff evidence. The arbitrary-width **anyOf** mask proof is the source/unit audit sanctioned by #208: `parentReplayMaskAtOrdinal` and `parentReplayMaskCursor` cover bit 64 and an ordinal beyond `uint64`, while source assertions forbid fixed-width narrowing. Private helpers are the intended behavioral seam because a public 65-branch anyOf exact report would require `2^65-1` canonical mask obligations.
 
 ## D1R9.3 campaigns
 
@@ -153,7 +153,7 @@ go test ./pkg/schematest -run '^(TestBuildCallbackBytesRequireCallerCopyAndAreNo
 
 **Outcome:** PASS.
 
-#### Integrated public Build matrix
+#### Integrated crossed public Build document
 
 ```sh
 go test ./pkg/schematest -run '^TestBuildGenuinelyCompoundMatrixIsExact$' -count=1
@@ -180,13 +180,13 @@ The benchmark command passed.
 
 ## Final repository commands
 
-The Cycle 3 completion phase recorded documentation, line-length, maintainability, and generated matrix-literal findings together, corrected them in consolidated batches, and reran the complete boundary. The final boundary passed:
+The resolution completion phase recorded exact-stream line-length and source-guard findings together, corrected them as one batch, and reran the complete boundary. The final boundary passed:
 
 | Command | Outcome |
 |---|---|
 | `make fmt` | PASS; `gofumpt -w .` plus `golangci-lint run --fix`, 0 issues. |
 | `make lint` | PASS; 0 issues. |
-| `make test` | PASS; `go test ./...`, including `pkg/schematest` in 142.702s. |
+| `make test` | PASS; `go test ./...`, including `pkg/schematest` in 145.601s. |
 | `git diff --check` | PASS. |
 
 `.golangci.yml` is unchanged.
