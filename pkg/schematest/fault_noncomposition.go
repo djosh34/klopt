@@ -12,7 +12,6 @@ import (
 
 const (
 	objectFaultProductDimensions = 4
-	arrayFaultProductDimensions  = 3
 	directRowRankDimensions      = 2
 	faultCandidateRankDimensions = 3
 	objectGrowthRanksPerAddition = 2
@@ -738,21 +737,8 @@ func representableArrayFaultAttemptAtRank(
 			return nil, false, false, errors.New("schematest: array deletion rank disappeared")
 		}
 
-		values := make([]*jsonValue, 0, desired)
-
-		removedIndex := 0
-		for index, value := range current.array {
-			if removedIndex < len(indexes) && indexes[removedIndex] == index {
-				removedIndex++
-
-				continue
-			}
-
-			values = append(values, value)
-		}
-
-		candidate, matched, err := tryArrayCountCandidate(
-			parent, path, values, arrayEditCharges{indexes: pathCopyInts(indexes)}, fault, s,
+		candidate, matched, err := tryArrayDeletionCandidate(
+			parent, path, indexes, fault, s,
 		)
 
 		return candidate, matched, false, err
@@ -860,25 +846,14 @@ func authoredArrayFaultAttemptAtRank(
 			continue
 		}
 
-		indexes := make([]int, len(selected.array))
-		for index := range indexes {
-			indexes[index] = index
-		}
-
-		candidate, matched, err := tryArrayCountCandidate(
-			parent,
-			path,
-			selected.array,
-			arrayEditCharges{indexes: indexes, itemValues: len(indexes)},
-			fault,
-			s,
+		candidate, matched, err := tryArrayReplacementCandidate(
+			parent, path, selected.array, fault, s,
 		)
 
 		return candidate, matched, false, err
 	}
 }
 
-//nolint:cyclop // Projection, layout, and item ranks form one insertion attempt.
 func arrayInsertionFaultAttemptAtRank(
 	parent *jsonValue,
 	path []string,
@@ -899,28 +874,9 @@ func arrayInsertionFaultAttemptAtRank(
 
 	layoutCount := saturatedBinomial(uint64(desired), uint64(insertions))
 
-	frontier, err := newRankProductCursor(arrayFaultProductDimensions)
-	if err != nil {
-		return nil, false, false, err
-	}
-
-	if setErr := frontier.SetFinite(0, projectionCount); setErr != nil {
-		return nil, false, false, setErr
-	}
-
-	if setErr := frontier.SetFinite(1, layoutCount); setErr != nil {
-		return nil, false, false, setErr
-	}
-
-	var ranks []uint64
-
-	for currentRank := uint64(0); currentRank <= rank; currentRank++ {
-		var exists bool
-
-		ranks, exists = frontier.Next()
-		if !exists {
-			return nil, false, true, nil
-		}
+	ranks, exists := arrayInsertionRanksAtOrdinal(projectionCount, layoutCount, rank)
+	if !exists {
+		return nil, false, true, nil
 	}
 
 	view, exists, err := rowProjectionAt(container, occurrence, fault.requirements, ranks[0])
@@ -952,29 +908,8 @@ func arrayInsertionFaultAttemptAtRank(
 		return nil, false, false, errors.New("schematest: array insertion layout rank disappeared")
 	}
 
-	values := make([]*jsonValue, 0, desired)
-	parentIndex := 0
-
-	insertedIndex := 0
-	for index := 0; index < desired; index++ {
-		if insertedIndex < len(indexes) && indexes[insertedIndex] == index {
-			values = append(values, tupleValues[insertedIndex])
-			insertedIndex++
-
-			continue
-		}
-
-		values = append(values, current.array[parentIndex])
-		parentIndex++
-	}
-
-	candidate, matched, err := tryArrayCountCandidate(
-		parent,
-		path,
-		values,
-		arrayEditCharges{indexes: pathCopyInts(indexes), itemValues: len(indexes)},
-		fault,
-		s,
+	candidate, matched, err := tryArrayInsertionCandidate(
+		parent, path, indexes, tupleValues, fault, s,
 	)
 
 	return candidate, matched, false, err
@@ -1938,13 +1873,8 @@ func findAuthoredArrayCountDerivative(
 				return true
 			}
 
-			indexes := make([]int, len(value.array))
-			for index := range indexes {
-				indexes[index] = index
-			}
-
-			derivative, _, candidateErr = tryArrayCountCandidate(
-				parent, path, value.array, arrayEditCharges{indexes: indexes, itemValues: len(indexes)}, fault, s,
+			derivative, _, candidateErr = tryArrayReplacementCandidate(
+				parent, path, value.array, fault, s,
 			)
 
 			return candidateErr == nil && derivative == nil
@@ -1971,21 +1901,8 @@ func findArrayDeletionDerivative(
 	cursor := newArrayCombinationCursor(len(array.array), removed)
 
 	for indexes, ok := cursor.Next(); ok; indexes, ok = cursor.Next() {
-		values := make([]*jsonValue, 0, desired)
-		removedIndex := 0
-
-		for index, value := range array.array {
-			if removedIndex < len(indexes) && indexes[removedIndex] == index {
-				removedIndex++
-
-				continue
-			}
-
-			values = append(values, value)
-		}
-
-		derivative, matched, err := tryArrayCountCandidate(
-			parent, path, values, arrayEditCharges{indexes: pathCopyInts(indexes)}, fault, s,
+		derivative, matched, err := tryArrayDeletionCandidate(
+			parent, path, indexes, fault, s,
 		)
 		if err != nil || matched {
 			return derivative, matched, err
@@ -2095,29 +2012,8 @@ func findArrayInsertionDerivative(
 			return nil, false, errors.New("schematest: array insertion layout rank disappeared")
 		}
 
-		values := make([]*jsonValue, 0, desired)
-		parentIndex := 0
-		insertedIndex := 0
-
-		for index := 0; index < desired; index++ {
-			if insertedIndex < len(indexes) && indexes[insertedIndex] == index {
-				values = append(values, tupleValues[insertedIndex])
-				insertedIndex++
-
-				continue
-			}
-
-			values = append(values, array.array[parentIndex])
-			parentIndex++
-		}
-
-		derivative, matched, err := tryArrayCountCandidate(
-			parent,
-			path,
-			values,
-			arrayEditCharges{indexes: pathCopyInts(indexes), itemValues: len(indexes)},
-			fault,
-			s,
+		derivative, matched, err := tryArrayInsertionCandidate(
+			parent, path, indexes, tupleValues, fault, s,
 		)
 		if err != nil || matched {
 			return derivative, matched, err
@@ -2125,68 +2021,36 @@ func findArrayInsertionDerivative(
 	}
 }
 
-// arrayEditCharges identifies the selected atomic coordinates and item witnesses.
-type arrayEditCharges struct {
-	indexes    []int
-	itemValues int
-}
-
-// tryArrayCountCandidate charges the retry, length edit, selected indexes, and
-// item values before installing one independently cloned complete array.
-//
-//nolint:cyclop // Each atomic assignment remains explicit at the apply boundary.
-func tryArrayCountCandidate(
+// beginArrayCountCandidate creates the independently owned current derivative
+// immediately after charging the retry assignment.
+func beginArrayCountCandidate(
 	parent *jsonValue,
 	path []string,
-	values []*jsonValue,
-	charges arrayEditCharges,
-	fault faultProgram,
 	s *search,
-) (*jsonValue, bool, error) {
+) (*jsonValue, *jsonValue, error) {
 	if err := s.assign(); err != nil {
-		return nil, false, err
-	}
-
-	current := valueAtPath(parent, path)
-	if current == nil || current.kind != jsonArray {
-		return nil, false, errors.New("schematest: array fault path is not an array")
-	}
-
-	if err := s.assign(); err != nil {
-		return nil, false, err
-	}
-
-	for range charges.indexes {
-		if err := s.assign(); err != nil {
-			return nil, false, err
-		}
-	}
-
-	for range charges.itemValues {
-		if err := s.assign(); err != nil {
-			return nil, false, err
-		}
+		return nil, nil, err
 	}
 
 	candidate, err := cloneJSONValue(parent)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, err
 	}
 
-	owned := &jsonValue{kind: jsonArray, array: make([]*jsonValue, 0, len(values))}
-	for _, value := range values {
-		item, cloneErr := cloneJSONValue(value)
-		if cloneErr != nil {
-			return nil, false, cloneErr
-		}
-
-		owned.array = append(owned.array, item)
+	current := valueAtPath(candidate, path)
+	if current == nil || current.kind != jsonArray {
+		return nil, nil, errors.New("schematest: array fault path is not an array")
 	}
 
-	if !replaceValueAtPath(candidate, path, owned) {
-		return nil, false, errors.New("schematest: array fault path disappeared")
-	}
+	return candidate, current, nil
+}
 
+func finishArrayCountCandidate(
+	candidate *jsonValue,
+	path []string,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
 	matched, err := derivativeMatchesFault(s.model, candidate, concretizeFaultAtPath(fault, path))
 	if err != nil || !matched {
 		return nil, false, err
@@ -2195,8 +2059,136 @@ func tryArrayCountCandidate(
 	return candidate, true, nil
 }
 
-func pathCopyInts(values []int) []int {
-	return append([]int(nil), values...)
+// tryArrayReplacementCandidate incrementally installs one authored array.
+func tryArrayReplacementCandidate(
+	parent *jsonValue,
+	path []string,
+	values []*jsonValue,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
+	candidate, current, beginErr := beginArrayCountCandidate(parent, path, s)
+	if beginErr != nil {
+		return nil, false, beginErr
+	}
+
+	if assignErr := s.assign(); assignErr != nil {
+		return nil, false, assignErr
+	}
+
+	current.array = make([]*jsonValue, len(values))
+	for index, value := range values {
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
+		}
+
+		current.array[index] = nil
+
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
+		}
+
+		item, cloneErr := cloneJSONValue(value)
+		if cloneErr != nil {
+			return nil, false, cloneErr
+		}
+
+		current.array[index] = item
+	}
+
+	return finishArrayCountCandidate(candidate, path, fault, s)
+}
+
+// tryArrayDeletionCandidate removes selected coordinates from high to low and
+// charges immediately before every index and length mutation.
+func tryArrayDeletionCandidate(
+	parent *jsonValue,
+	path []string,
+	indexes []int,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
+	candidate, current, beginErr := beginArrayCountCandidate(parent, path, s)
+	if beginErr != nil {
+		return nil, false, beginErr
+	}
+
+	for offset := len(indexes) - 1; offset >= 0; offset-- {
+		index := indexes[offset]
+		if index < 0 || index >= len(current.array) {
+			return nil, false, errors.New("schematest: array deletion index is out of range")
+		}
+
+		if err := s.assign(); err != nil {
+			return nil, false, err
+		}
+
+		copy(current.array[index:], current.array[index+1:])
+		current.array[len(current.array)-1] = nil
+
+		if err := s.assign(); err != nil {
+			return nil, false, err
+		}
+
+		current.array = current.array[:len(current.array)-1]
+	}
+
+	return finishArrayCountCandidate(candidate, path, fault, s)
+}
+
+// tryArrayInsertionCandidate grows the owned array and applies each insertion
+// directly, charging its index and item assignment at the mutation boundary.
+func tryArrayInsertionCandidate(
+	parent *jsonValue,
+	path []string,
+	indexes []int,
+	values []*jsonValue,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
+	if len(indexes) != len(values) {
+		return nil, false, errors.New("schematest: array insertion coordinates and values differ")
+	}
+
+	candidate, current, beginErr := beginArrayCountCandidate(parent, path, s)
+	if beginErr != nil {
+		return nil, false, beginErr
+	}
+
+	if assignErr := s.assign(); assignErr != nil {
+		return nil, false, assignErr
+	}
+
+	originalLength := len(current.array)
+	current.array = append(current.array, make([]*jsonValue, len(indexes))...)
+	used := originalLength
+
+	for offset, index := range indexes {
+		if index < 0 || index > used {
+			return nil, false, errors.New("schematest: array insertion index is out of range")
+		}
+
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
+		}
+
+		copy(current.array[index+1:used+1], current.array[index:used])
+		current.array[index] = nil
+		used++
+
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
+		}
+
+		item, cloneErr := cloneJSONValue(values[offset])
+		if cloneErr != nil {
+			return nil, false, cloneErr
+		}
+
+		current.array[index] = item
+	}
+
+	return finishArrayCountCandidate(candidate, path, fault, s)
 }
 
 type arrayCombinationCursor struct {
@@ -2240,6 +2232,104 @@ func (cursor *arrayCombinationCursor) Next() ([]int, bool) {
 	}
 
 	return nil, false
+}
+
+// arrayInsertionRanksAtOrdinal directly addresses one tuple with finite
+// projection/layout prefixes and one open item rank; it never replays tuples
+// 0 through wanted-1.
+//
+//nolint:cyclop,mnd // Saturating direct diagonal decoding keeps all arithmetic explicit.
+func arrayInsertionRanksAtOrdinal(
+	projectionCount uint64,
+	layoutCount uint64,
+	wanted uint64,
+) ([3]uint64, bool) {
+	if projectionCount == 0 || layoutCount == 0 {
+		return [3]uint64{}, false
+	}
+
+	saturatedAdd := func(left uint64, right uint64) uint64 {
+		if left > ^uint64(0)-right {
+			return ^uint64(0)
+		}
+
+		return left + right
+	}
+	saturatedMultiply := func(left uint64, right uint64) uint64 {
+		if left != 0 && right > ^uint64(0)/left {
+			return ^uint64(0)
+		}
+
+		return left * right
+	}
+	countThrough := func(diagonal uint64) uint64 {
+		var count uint64
+
+		projectionLimit := min(projectionCount-1, diagonal)
+		for projection := uint64(0); projection <= projectionLimit; projection++ {
+			remaining := diagonal - projection
+
+			terms := min(layoutCount, remaining+1)
+			if remaining == ^uint64(0) {
+				return ^uint64(0)
+			}
+
+			lowest := remaining - (terms - 1)
+			if lowest == ^uint64(0) {
+				return ^uint64(0)
+			}
+
+			linear := saturatedMultiply(terms, lowest+1)
+			triangular := saturatedBinomial(terms, 2)
+			count = saturatedAdd(count, saturatedAdd(linear, triangular))
+		}
+
+		return count
+	}
+
+	low, high := uint64(0), uint64(1)
+	for countThrough(high) <= wanted && high < ^uint64(0) {
+		low = high + 1
+		if high > (^uint64(0)-1)/2 {
+			high = ^uint64(0)
+		} else {
+			high = high*2 + 1
+		}
+	}
+
+	diagonal := high
+	for low <= high {
+		middle := low + (high-low)/2
+		if countThrough(middle) <= wanted {
+			low = middle + 1
+		} else {
+			diagonal = middle
+			if middle == 0 {
+				break
+			}
+
+			high = middle - 1
+		}
+	}
+
+	before := uint64(0)
+	if diagonal > 0 {
+		before = countThrough(diagonal - 1)
+	}
+
+	ordinal := wanted - before
+
+	projectionLimit := min(projectionCount-1, diagonal)
+	for projection := uint64(0); projection <= projectionLimit; projection++ {
+		layoutCountOnDiagonal := min(layoutCount-1, diagonal-projection) + 1
+		if ordinal < layoutCountOnDiagonal {
+			return [3]uint64{projection, ordinal, diagonal - projection - ordinal}, true
+		}
+
+		ordinal -= layoutCountOnDiagonal
+	}
+
+	return [3]uint64{}, false
 }
 
 func arrayCombinationAt(length, selected int, rank uint64) ([]int, bool) {

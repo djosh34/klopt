@@ -304,6 +304,24 @@ func TestArrayCountFaultsPreserveWholeArrayEnums(t *testing.T) {
 	}
 }
 
+func TestArrayInsertionRanksAddressWithoutPrefixReplay(t *testing.T) {
+	t.Parallel()
+
+	cursor, err := newRankProductCursor(3)
+	require.NoError(t, err)
+	require.NoError(t, cursor.SetFinite(0, 3))
+	require.NoError(t, cursor.SetFinite(1, 5))
+
+	for rank := uint64(0); rank < 128; rank++ {
+		want, exists := cursor.Next()
+		require.True(t, exists)
+
+		got, exists := arrayInsertionRanksAtOrdinal(3, 5, rank)
+		require.True(t, exists)
+		require.Equal(t, [3]uint64{want[0], want[1], want[2]}, got)
+	}
+}
+
 func TestArrayCountFaultPositionsAdvanceCanonically(t *testing.T) {
 	t.Parallel()
 

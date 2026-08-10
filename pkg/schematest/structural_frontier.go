@@ -12,6 +12,48 @@ type rankedArrayStructure struct {
 	length rowArrayCount
 }
 
+// beyondArrayRow is the sole transient current row for an exact count outside uint64.
+// It advances one concrete position between shared-frontier alternatives and can
+// never emit until every authored position has been assigned.
+type beyondArrayRow struct {
+	items        rowSchemaConjunction
+	requirements []requirement
+	context      rowSearchContext
+	current      *jsonValue
+	position     uint64
+}
+
+// advance assigns one current-row position and then yields to the shared frontier.
+func (row *beyondArrayRow) advance(s *search) error {
+	if row == nil || row.current == nil || row.current.kind != jsonArray {
+		return errors.New("schematest: beyond-count array row is not initialized")
+	}
+
+	if err := s.assign(); err != nil {
+		return err
+	}
+
+	value, exists, _, _, err := s.rowConjunctionValueAt(
+		row.items, row.requirements, row.context, 0,
+	)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return errors.New("schematest: beyond-count array item has no first witness")
+	}
+
+	row.current.array = append(row.current.array, value)
+	if row.position == ^uint64(0) {
+		return errors.New("schematest: beyond-count array position overflow")
+	}
+
+	row.position++
+
+	return nil
+}
+
 // liveProjectionFrontier owns the one resumable projection traversal for a structural search.
 type liveProjectionFrontier struct {
 	cursor     *rowProjectionCursor
@@ -1522,20 +1564,7 @@ func (s *search) rowArrayChildrenForOrdinal(
 	wanted uint64,
 ) ([]*jsonValue, bool, bool, uint64, error) {
 	if structure.length.beyond {
-		items := rowProjectedArrayItems(structure.view, requirements)
-
-		for {
-			if err := s.assign(); err != nil {
-				return nil, false, false, 0, err
-			}
-
-			_, exists, _, size, err := s.rowConjunctionValueAt(
-				items, requirements, context, 0,
-			)
-			if err != nil || !exists {
-				return nil, false, false, size, err
-			}
-		}
+		return nil, false, false, 0, nil
 	}
 
 	if structure.length.value == 0 {
@@ -1771,7 +1800,7 @@ func rowPackedArrayFrontierCeiling(view rowProjectionView, requirements []requir
 
 // walkArrayFrontier decodes one ephemeral projection for each shared structural rank tuple.
 //
-//nolint:cyclop,gocognit,gocyclo,mnd // One frontier owns projection, source, length, and child ranks.
+//nolint:cyclop,gocognit,gocyclo,maintidx,mnd // One frontier owns projection, source, length, and child ranks.
 func (s *search) walkArrayFrontier(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -1796,9 +1825,21 @@ func (s *search) walkArrayFrontier(
 
 	diagonalLive := true
 
+	var currentBeyond *beyondArrayRow
+
 	for {
+		if currentBeyond != nil {
+			if err := currentBeyond.advance(s); err != nil {
+				return false, err
+			}
+		}
+
 		ranks, ok := frontier.Next()
 		if !ok {
+			if currentBeyond != nil {
+				continue
+			}
+
 			return false, nil
 		}
 
@@ -1886,6 +1927,30 @@ func (s *search) walkArrayFrontier(
 			itemsHaveEnum := rowArrayItemsHaveEnum(view, active)
 			if ranks[2] != 0 || rowProjectionHasExactCount(view, active) &&
 				(ranks[1] != 0 || ranks[0] != 0 && !itemsHaveEnum) {
+				continue
+			}
+
+			length, lengthExists, _, lengthErr := rowArrayLengthForOrdinal(view, active, ranks[1])
+			if lengthErr != nil {
+				return false, lengthErr
+			}
+
+			if lengthExists && length.beyond {
+				if currentBeyond == nil {
+					if err := s.assign(); err != nil {
+						return false, err
+					}
+
+					currentBeyond = &beyondArrayRow{
+						items:        rowProjectedArrayItems(view, active),
+						requirements: active,
+						context:      context,
+						current:      &jsonValue{kind: jsonArray},
+					}
+				}
+
+				diagonalLive = true
+
 				continue
 			}
 

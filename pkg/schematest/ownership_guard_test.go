@@ -373,6 +373,10 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.basicStringProduct.objective|*stringFormatBoundary",
 		"github.com/djosh34/klopt/pkg/schematest.basicStringProduct.surrogatePadding|bool",
 		"github.com/djosh34/klopt/pkg/schematest.basicStringProduct.unbounded|bool",
+		"github.com/djosh34/klopt/pkg/schematest.beyondArrayRow.context|rowSearchContext",
+		"github.com/djosh34/klopt/pkg/schematest.beyondArrayRow.items|rowSchemaConjunction",
+		"github.com/djosh34/klopt/pkg/schematest.beyondArrayRow.position|uint64",
+		"github.com/djosh34/klopt/pkg/schematest.beyondArrayRow.requirements|[]requirement",
 		"github.com/djosh34/klopt/pkg/schematest.basicStringProductState.formats|[]stringFormatProgramState",
 		"github.com/djosh34/klopt/pkg/schematest.basicStringProductState.length|int",
 		"github.com/djosh34/klopt/pkg/schematest.basicStringProductState.patterns|[]basicStringPatternState",
@@ -532,8 +536,6 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.search.steps|uint64",
 	}},
 	ownershipRowGroup{form: ownershipMachineState, lifetime: ownershipCallLifetime, rows: []string{
-		"github.com/djosh34/klopt/pkg/schematest.arrayEditCharges.indexes|[]int",
-		"github.com/djosh34/klopt/pkg/schematest.arrayEditCharges.itemValues|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.arrayIndex|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.entered|bool",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.hasLastName|bool",
@@ -558,6 +560,7 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.prospectiveCompositionSource.container|*jsonValue",
 	}},
 	ownershipRowGroup{form: ownershipCurrentValue, lifetime: ownershipCallLifetime, rows: []string{
+		"github.com/djosh34/klopt/pkg/schematest.beyondArrayRow.current|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceCursor.stack|[]compositionDifferenceFrame",
 		"github.com/djosh34/klopt/pkg/schematest.evaluationContext.cache|map[evaluationCacheKey]evaluationCacheEntry",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.assignment|*jsonValue",

@@ -54,16 +54,142 @@ func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T)
 	require.Equal(t, 2, strings.Count(text, "newRankProductCursor(5)"))
 }
 
-// TestArrayFrontierHasNoSyntheticCutoffLoop locks oversized counts to real incremental assignments.
+// TestArrayFrontierHasNoSyntheticCutoffLoop locks oversized counts to one
+// resumable assignment between shared-frontier alternatives.
 func TestArrayFrontierHasNoSyntheticCutoffLoop(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("structural_frontier.go")
-	require.NoError(t, err)
+	parsed := parseGoFile(t, "structural_frontier.go")
+	children := findGuardFunction(t, parsed, "rowArrayChildrenForOrdinal")
+	advance := findGuardFunction(t, parsed, "advance")
+	walker := findGuardFunction(t, parsed, "walkArrayFrontier")
 
-	text := string(source)
-	require.NotContains(t, text, "if structure.length.beyond {\n\t\tfor {")
-	require.NotContains(t, text, "array item rank dimension overflow")
+	require.Zero(t, countGuardBeyondBranchLoops(children.Body))
+	require.Zero(t, countGuardLoops(advance.Body))
+	require.True(t, guardCallsSelector(walker.Body, "currentBeyond", "advance"))
+}
+
+// TestArrayInsertionRankSelectionHasNoPrefixReplay locks direct addressing at
+// the ranked adapter while the owning unranked search retains its live cursor.
+func TestArrayInsertionRankSelectionHasNoPrefixReplay(t *testing.T) {
+	t.Parallel()
+
+	parsed := parseGoFile(t, "fault_noncomposition.go")
+	function := findGuardFunction(t, parsed, "arrayInsertionFaultAttemptAtRank")
+
+	require.Zero(t, countGuardLoops(function.Body))
+	require.False(t, guardCalls(function.Body, "newRankProductCursor"))
+	require.True(t, guardCalls(function.Body, "arrayInsertionRanksAtOrdinal"))
+}
+
+// findGuardFunction returns one named declaration from a parsed guard target.
+func findGuardFunction(t *testing.T, parsed *ast.File, name string) *ast.FuncDecl {
+	t.Helper()
+
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Name.Name == name {
+			return function
+		}
+	}
+
+	require.FailNow(t, "guarded function does not exist", name)
+
+	return nil
+}
+
+// countGuardBeyondBranchLoops counts loops inside the exact beyond-count branch.
+func countGuardBeyondBranchLoops(node ast.Node) int {
+	count := 0
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		statement, ok := child.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+
+		selector, ok := statement.Cond.(*ast.SelectorExpr)
+		if ok && selector.Sel.Name == "beyond" {
+			count += countGuardLoops(statement.Body)
+
+			return false
+		}
+
+		return true
+	})
+
+	return count
+}
+
+// countGuardLoops counts loop statements below one syntax node.
+func countGuardLoops(node ast.Node) int {
+	count := 0
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		switch child.(type) {
+		case *ast.ForStmt, *ast.RangeStmt:
+			count++
+		}
+
+		return true
+	})
+
+	return count
+}
+
+// guardCalls reports whether a syntax node calls one package function.
+func guardCalls(node ast.Node, name string) bool {
+	found := false
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		call, ok := child.(*ast.CallExpr)
+
+		identifier, identifierOK := callFunIdentifier(call, ok)
+		if identifierOK && identifier.Name == name {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+// guardCallsSelector reports whether a syntax node invokes one receiver method.
+func guardCallsSelector(node ast.Node, receiver string, name string) bool {
+	found := false
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		call, ok := child.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+
+		identifier, identifierOK := selector.X.(*ast.Ident)
+		if identifierOK && identifier.Name == receiver && selector.Sel.Name == name {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+// callFunIdentifier returns the direct function identifier for a call.
+func callFunIdentifier(call *ast.CallExpr, ok bool) (*ast.Ident, bool) {
+	if !ok {
+		return nil, false
+	}
+
+	identifier, identifierOK := call.Fun.(*ast.Ident)
+
+	return identifier, identifierOK
 }
 
 // TestFaultRowMachinesNeverRestartWalkNode locks direct row addressing into the outer continuation.
