@@ -7,6 +7,77 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestParentRowMachineYieldsPastAnUnproductiveFirstMask(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"anyOf":[
+			{"type":"string","minLength":2,"maxLength":1},
+			{"enum":[0]}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	searchState := &search{model: model, maxSteps: 1_000}
+	machines := newFaultSearchMachines(searchState)
+
+	var parent *jsonValue
+
+	for rank := uint64(0); rank < 128; rank++ {
+		candidate, found, _, err := machines.parentAtRank(plan, fault, rank)
+		require.NoError(t, err)
+
+		if found {
+			parent = candidate
+
+			break
+		}
+	}
+
+	require.NotNil(t, parent)
+	require.Equal(t, `0`, string(marshalFaultTestValue(t, parent)))
+	require.Less(t, searchState.steps, searchState.maxSteps)
+}
+
+func TestScalarCandidateMachineYieldsBetweenDirectAddresses(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"string",
+		"minLength":2,
+		"maxLength":4
+	}`)
+	fault := findFaultTarget(t, plan, "|minLength|fault:minLength")
+	searchState := &search{model: model, maxSteps: 10_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	machine := scalarCandidateMachine{search: searchState}
+
+	var derivative *jsonValue
+
+	for rank := uint64(0); rank < 128; rank++ {
+		candidate, attempted, exhausted, attemptErr := machine.AttemptAtRank(parent, fault, rank)
+		require.NoError(t, attemptErr)
+		require.False(t, exhausted)
+
+		if attempted && candidate != nil {
+			derivative = candidate
+
+			break
+		}
+	}
+
+	require.NotNil(t, derivative)
+	result := evaluate(model, derivative)
+	require.NoError(t, result.err)
+	require.False(t, result.valid)
+	matches, err := faultFailureClosureMatches(result, fault)
+	require.NoError(t, err)
+	require.True(t, matches)
+	require.Less(t, searchState.steps, searchState.maxSteps)
+}
+
 func TestBuildFaultProductContinuesPastUnsuitableRequiredParent(t *testing.T) {
 	t.Parallel()
 

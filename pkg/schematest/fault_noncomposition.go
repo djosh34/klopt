@@ -14,6 +14,7 @@ const (
 	objectFaultProductDimensions = 4
 	arrayFaultProductDimensions  = 3
 	directRowRankDimensions      = 2
+	faultCandidateRankDimensions = 3
 	objectGrowthRanksPerAddition = 2
 )
 
@@ -127,20 +128,33 @@ func nonCompositionFaultAttemptAtRank(
 	}
 }
 
-// scalarFaultAttemptAtRank obtains one replacement from the complete row conjunction.
-//
-//nolint:cyclop // Scalar families share one complete-row adapter.
+// scalarCandidateMachine directly addresses one complete-row candidate coordinate.
+type scalarCandidateMachine struct {
+	search *search
+}
+
+// scalarFaultAttemptAtRank is the standalone scalar-candidate machine adapter.
 func scalarFaultAttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
 	rank uint64,
 	s *search,
 ) (*jsonValue, bool, bool, error) {
-	var (
-		derivative *jsonValue
-		attempted  bool
-		observed   uint64
-	)
+	return (scalarCandidateMachine{search: s}).AttemptAtRank(parent, fault, rank)
+}
+
+// AttemptAtRank advances one row/path coordinate and yields to the outer continuation.
+//
+//nolint:cyclop // Scalar families share one complete-row adapter.
+func (machine scalarCandidateMachine) AttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+) (*jsonValue, bool, bool, error) {
+	s := machine.search
+	if s == nil || s.model == nil || s.model.root == nil {
+		return nil, false, false, errors.New("schematest: scalar candidate machine has no model")
+	}
 
 	root := s.model.root
 	requirements := copyPlanRequirements(fault.requirements)
@@ -202,54 +216,89 @@ func scalarFaultAttemptAtRank(
 		context.scalarFault = nil
 	}
 
-	stopped, err := s.walkNode(
-		root,
-		s.model.root.occurrence,
-		requirements,
-		context,
-		func(row *jsonValue) (bool, error) {
-			for path := range matchingValuePathSequence(
-				row, fault.obligation.occurrence.instanceTemplate,
-			) {
-				candidate := valueAtPath(row, path)
-				if candidate == nil {
-					continue
-				}
+	projectionRank, rowRank, pathRank, ok := faultCandidateRanksAtOrdinal(rank)
+	if !ok {
+		return nil, false, true, nil
+	}
 
-				if observed < rank {
-					observed++
-
-					continue
-				}
-
-				selected, matched, selectErr := firstReplacementDerivative(
-					parent, fault, singleJSONValueSource(candidate), s.model, s,
-				)
-				if selectErr != nil {
-					return false, selectErr
-				}
-
-				attempted = true
-
-				if matched {
-					derivative = selected
-				}
-
-				return true, nil
-			}
-
-			return false, nil
-		},
+	row, exists, _, finiteSize, err := faultRowAt(
+		s, root, s.model.root.occurrence, requirements, context, projectionRank, rowRank,
 	)
 	if err != nil {
 		return nil, false, false, err
 	}
 
-	if stopped {
-		return derivative, attempted, false, nil
+	if !exists || row == nil {
+		exhausted := finiteSize > 0 && rowRank >= finiteSize && pathRank == 0
+		if !exhausted && projectionRank == 0 && pathRank == 0 {
+			exhausted, err = finiteScalarFaultRows(root, s.model.root.occurrence, requirements)
+			if err != nil {
+				return nil, false, false, err
+			}
+		}
+
+		return nil, false, exhausted, nil
 	}
 
-	return nil, false, true, nil
+	path, exists := matchingValuePathAt(
+		row, fault.obligation.occurrence.instanceTemplate, pathRank,
+	)
+	if !exists {
+		return nil, false, false, nil
+	}
+
+	candidate := valueAtPath(row, path)
+	if candidate == nil {
+		return nil, false, false, nil
+	}
+
+	derivative, _, err := firstReplacementDerivative(
+		parent, fault, singleJSONValueSource(candidate), s.model, s,
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	return derivative, true, false, nil
+}
+
+// finiteScalarFaultRows reports only proven finite string candidate programs.
+//
+//nolint:cyclop // Active lengths, patterns, and formats establish one finite endpoint.
+func finiteScalarFaultRows(
+	root *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+) (bool, error) {
+	if _, err := rowProjectionNodeCount(root, occurrence, requirements); err != nil {
+		return false, err
+	}
+
+	rules, err := activeStringRulesFor(root, occurrence, requirements, nil)
+	if err != nil || !rules.supported {
+		return false, err
+	}
+
+	lengths, err := basicStringLengthsFromActive(rules.lengths)
+	if err != nil {
+		return false, err
+	}
+
+	patterns := make([]*patternAST, 0, len(rules.patterns))
+	for _, pattern := range rules.patterns {
+		patterns = append(patterns, pattern.pattern)
+	}
+
+	product, err := newBasicStringProduct(patterns)
+	if err != nil {
+		return false, err
+	}
+
+	if err := product.addFormats(rules.formats, -1); err != nil {
+		return false, err
+	}
+
+	return lengths.hasMaximum || lengths.minimumTooLarge || len(rules.formats) > 1 || !product.unbounded, nil
 }
 
 // objectCountFaultAttemptAtRank attempts one complete directed object replacement.

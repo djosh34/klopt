@@ -53,6 +53,53 @@ func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T)
 	require.Equal(t, 2, strings.Count(text, "newRankProductCursor(5)"))
 }
 
+// TestFaultRowMachinesNeverRestartWalkNode locks direct row addressing into the outer continuation.
+//
+//nolint:cyclop // Three receiver declarations share one AST guard.
+func TestFaultRowMachinesNeverRestartWalkNode(t *testing.T) {
+	t.Parallel()
+
+	targets := map[string]bool{
+		"parentRowMachine":             false,
+		"scalarCandidateMachine":       false,
+		"compositionAssignmentMachine": false,
+	}
+
+	for _, file := range []string{"fault_basic.go", "fault_noncomposition.go", "fault_composition.go"} {
+		parsed := parseGoFile(t, file)
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Recv == nil || len(function.Recv.List) != 1 || function.Body == nil {
+				continue
+			}
+
+			receiver, ok := function.Recv.List[0].Type.(*ast.Ident)
+			if !ok {
+				continue
+			}
+
+			if _, targeted := targets[receiver.Name]; !targeted {
+				continue
+			}
+
+			targets[receiver.Name] = true
+
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				selector, selectorOK := node.(*ast.SelectorExpr)
+				if selectorOK {
+					require.NotEqual(t, "walkNode", selector.Sel.Name, receiver.Name)
+				}
+
+				return true
+			})
+		}
+	}
+
+	for machine, found := range targets {
+		require.True(t, found, machine)
+	}
+}
+
 // TestProductionImportsStayCleanRoom forbids semantic production dependencies in non-test sources.
 func TestProductionImportsStayCleanRoom(t *testing.T) {
 	t.Parallel()

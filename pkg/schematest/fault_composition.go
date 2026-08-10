@@ -80,17 +80,38 @@ func findCompositionFaultDerivative(
 	return derivative, found, err
 }
 
-// compositionFaultAttemptAtRank advances one bounded direct or assignment coordinate.
-//
-//nolint:cyclop // Prospective and existing aggregate sources meet at one ranked attempt.
+// compositionAssignmentMachine directly addresses one complete assignment and edit subset.
+type compositionAssignmentMachine struct {
+	search *search
+}
+
+// compositionFaultAttemptAtRank is the standalone composition-assignment adapter.
 func compositionFaultAttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
 	rank uint64,
 	s *search,
 ) (*jsonValue, bool, bool, error) {
+	return compositionFaultAttemptWithMachine(
+		parent, fault, rank, compositionAssignmentMachine{search: s},
+	)
+}
+
+// compositionFaultAttemptWithMachine advances one bounded direct or assignment coordinate.
+//
+//nolint:cyclop // Prospective, direct, and assignment sources meet at one ranked attempt.
+func compositionFaultAttemptWithMachine(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+	assignments compositionAssignmentMachine,
+) (*jsonValue, bool, bool, error) {
 	if parent == nil {
 		return nil, false, false, errors.New("schematest: nil composition fault parent")
+	}
+
+	if assignments.search == nil || assignments.search.model == nil || assignments.search.model.root == nil {
+		return nil, false, false, errors.New("schematest: composition assignment machine has no model")
 	}
 
 	createdEdits, prospectiveSource, prospectiveErr := prospectiveCompositionEditsAtRank(parent, fault, rank)
@@ -99,62 +120,68 @@ func compositionFaultAttemptAtRank(
 	}
 
 	if prospectiveSource && len(createdEdits) > 0 {
-		candidate, matched, err := tryCompositionEdits(parent, fault, createdEdits, s)
+		candidate, matched, err := tryCompositionEdits(
+			parent, fault, createdEdits, assignments.search,
+		)
 		if err != nil || matched {
 			return candidate, true, false, err
 		}
 	}
 
-	var (
-		observed   uint64
-		derivative *jsonValue
-		attempted  bool
+	candidate, attempted, err := compositionEditSourceAttemptAtRank(
+		parent,
+		fault,
+		compositionDirectEdits(parent, fault.requirements),
+		rank,
+		assignments.search,
 	)
-
-	attempt := func(edits []compositionEdit) (bool, error) {
-		if observed != rank {
-			observed++
-
-			return false, nil
-		}
-
-		candidate, matched, err := tryCompositionEdits(parent, fault, edits, s)
-		if err != nil {
-			return false, err
-		}
-
-		attempted = true
-
-		if matched {
-			derivative = candidate
-		}
-
-		return true, nil
+	if err != nil || attempted {
+		return candidate, attempted, false, err
 	}
 
-	directEdits := compositionDirectEdits(parent, fault.requirements)
+	return assignments.AttemptAtRank(parent, fault, rank)
+}
 
-	stopped, err := visitCompositionEditSizes(directEdits, s, attempt)
-	if err != nil || stopped {
-		return derivative, attempted, false, err
+// AttemptAtRank evaluates one assignment-row/subset coordinate and yields.
+func (machine compositionAssignmentMachine) AttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	rank uint64,
+) (*jsonValue, bool, bool, error) {
+	projectionRank, rowRank, subsetRank, ok := faultCandidateRanksAtOrdinal(rank)
+	if !ok {
+		return nil, false, true, nil
 	}
 
-	stopped, err = s.walkNode(
-		s.model.root,
-		s.model.root.occurrence,
+	assignment, exists, _, finiteSize, err := faultRowAt(
+		machine.search,
+		machine.search.model.root,
+		machine.search.model.root.occurrence,
 		fault.requirements,
 		rowSearchContext{},
-		compositionAssignmentEditVisitor(parent, s, attempt),
+		projectionRank,
+		rowRank,
 	)
 	if err != nil {
 		return nil, false, false, err
 	}
 
-	if stopped {
-		return derivative, attempted, false, nil
+	if !exists || assignment == nil {
+		exhausted := subsetRank == 0 && (projectionRank == 0 ||
+			finiteSize > 0 && rowRank >= finiteSize)
+
+		return nil, false, exhausted, nil
 	}
 
-	return nil, false, true, nil
+	candidate, attempted, err := compositionEditSourceAttemptAtRank(
+		parent,
+		fault,
+		compositionDifference(parent, assignment, nil),
+		subsetRank,
+		machine.search,
+	)
+
+	return candidate, attempted, false, err
 }
 
 // prospectiveCompositionSource identifies one missing wildcard container.
@@ -351,6 +378,43 @@ func prospectiveCompositionEdit(
 	default:
 		return compositionEdit{}, false
 	}
+}
+
+// compositionEditSourceAttemptAtRank selects one existing subset without changing its cursor policy.
+func compositionEditSourceAttemptAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	edits compositionEditSource,
+	rank uint64,
+	s *search,
+) (*jsonValue, bool, error) {
+	observed := uint64(0)
+	attempted := false
+
+	var derivative *jsonValue
+
+	_, err := visitCompositionEditSizes(edits, s, func(selected []compositionEdit) (bool, error) {
+		if observed != rank {
+			observed++
+
+			return false, nil
+		}
+
+		candidate, matched, attemptErr := tryCompositionEdits(parent, fault, selected, s)
+		if attemptErr != nil {
+			return false, attemptErr
+		}
+
+		attempted = true
+
+		if matched {
+			derivative = candidate
+		}
+
+		return true, nil
+	})
+
+	return derivative, attempted, err
 }
 
 // visitCompositionEditSizes traverses edit subsets in increasing size and source order.

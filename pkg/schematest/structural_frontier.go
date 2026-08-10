@@ -815,6 +815,38 @@ func (s *search) rowGeneratedStringValueAt(
 		return selected, selected != nil, nil
 	}
 
+	if objective := validFalseStringObjective(source.node, source.occurrence, requirements); objective != nil {
+		var (
+			selected *jsonValue
+			observed uint64
+		)
+
+		handled, _, err := s.walkDirectedStringObjective(
+			source.node,
+			source.occurrence,
+			requirements,
+			objective,
+			func(candidate *jsonValue) (bool, error) {
+				if observed != wanted {
+					observed++
+
+					return false, nil
+				}
+
+				var cloneErr error
+
+				selected, cloneErr = cloneJSONValue(candidate)
+
+				return cloneErr == nil, cloneErr
+			},
+		)
+		if err != nil || !handled {
+			return nil, false, err
+		}
+
+		return selected, selected != nil, nil
+	}
+
 	rules, err := activeStringRulesFor(source.node, source.occurrence, requirements, nil)
 	if err != nil || !rules.supported {
 		return nil, false, err

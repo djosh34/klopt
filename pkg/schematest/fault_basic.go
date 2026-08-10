@@ -47,6 +47,102 @@ func streamFaults(
 	return SpaceExhausted, nil
 }
 
+// faultSearchMachines owns the directly addressed row machines used by the sole fault continuation.
+type faultSearchMachines struct {
+	search                 *search
+	parentRows             parentRowMachine
+	scalarCandidates       scalarCandidateMachine
+	compositionAssignments compositionAssignmentMachine
+}
+
+// newFaultSearchMachines gives the outer continuation sole ownership of its live row machines.
+func newFaultSearchMachines(s *search) *faultSearchMachines {
+	return &faultSearchMachines{
+		search:                 s,
+		parentRows:             parentRowMachine{search: s},
+		scalarCandidates:       scalarCandidateMachine{search: s},
+		compositionAssignments: compositionAssignmentMachine{search: s},
+	}
+}
+
+// parentAtRank resumes parent replay through the row machine owned by the continuation.
+func (machines faultSearchMachines) parentAtRank(
+	plan *searchPlan,
+	fault faultProgram,
+	rank uint64,
+) (*jsonValue, bool, bool, error) {
+	return machines.directParentAtRank(plan, fault, rank)
+}
+
+// directParentAtRank decodes one aggregate mask/row coordinate without a nested replay.
+//
+//nolint:cyclop // Mask, enum, and finite scalar endpoints share one coordinate advance.
+func (machines faultSearchMachines) directParentAtRank(
+	plan *searchPlan,
+	fault faultProgram,
+	rank uint64,
+) (*jsonValue, bool, bool, error) {
+	if plan == nil {
+		return nil, false, false, errors.New("schematest: nil search plan")
+	}
+
+	if machines.search == nil || machines.search.model == nil || machines.search.model.root == nil {
+		return nil, false, false, errors.New("schematest: parent replay has no model")
+	}
+
+	groups := parentReplayGroups(fault.requirements)
+
+	decoder, ok := newDirectRankTupleDecoder(len(groups)+1, rank)
+	if !ok {
+		return nil, false, false, nil
+	}
+
+	maskRanks := make([]uint64, len(groups))
+	for index, group := range groups {
+		maskRank, exists := decoder.Next()
+		if !exists {
+			return nil, false, false, errors.New("schematest: parent mask rank ended early")
+		}
+
+		if _, maskExists := parentReplayMaskAtOrdinal(
+			group.count, new(big.Int).SetUint64(maskRank),
+		); !maskExists {
+			return nil, false, false, nil
+		}
+
+		maskRanks[index] = maskRank
+	}
+
+	rowRank, exists := decoder.Next()
+	if !exists {
+		return nil, false, false, errors.New("schematest: parent row rank ended early")
+	}
+
+	requirements := parentReplayRequirementsAt(fault, groups, maskRanks)
+
+	parent, found, err := machines.parentRows.CandidateAtRank(requirements, rowRank)
+	if err != nil || found || parent != nil {
+		return parent, found, false, err
+	}
+
+	if _, hasEnum := activeEnumValueAtRank(
+		machines.search.model.root,
+		machines.search.model.root.occurrence,
+		requirements,
+		new(uint64),
+	); hasEnum {
+		return nil, false, true, nil
+	}
+
+	exhausted, err := finiteScalarFaultRows(
+		machines.search.model.root,
+		machines.search.model.root.occurrence,
+		requirements,
+	)
+
+	return nil, false, exhausted, err
+}
+
 // streamFault is the sole continuation over parent, closure, occurrence, and mutation ranks.
 //
 //nolint:cyclop,gocognit // Product exhaustion, exact verification, and callback errors meet here.
@@ -61,6 +157,8 @@ func streamFault(
 	if err != nil {
 		return err
 	}
+
+	machines := newFaultSearchMachines(s)
 
 	var (
 		diagonal        uint64
@@ -103,8 +201,8 @@ func streamFault(
 			continue
 		}
 
-		parent, found, exhausted, replayErr := regenerateParentAtRank(
-			plan, selectedFault, ranks[faultParentDimension], s,
+		parent, found, exhausted, replayErr := machines.parentAtRank(
+			plan, selectedFault, ranks[faultParentDimension],
 		)
 		if replayErr != nil {
 			return replayErr
@@ -120,12 +218,11 @@ func streamFault(
 			continue
 		}
 
-		derivative, attempted, occurrenceExhausted, mutationExhausted, faultErr := applyFaultAtRank(
+		derivative, attempted, occurrenceExhausted, mutationExhausted, faultErr := machines.applyFaultAtRank(
 			parent,
 			selectedFault,
 			ranks[faultOccurrenceDimension],
 			ranks[faultMutationDimension],
-			s,
 		)
 		if occurrenceExhausted || mutationExhausted {
 			continue
@@ -290,21 +387,44 @@ type parentReplayGroup struct {
 
 // regenerateParent replays the first fresh, complete oracle-valid parent.
 func regenerateParent(plan *searchPlan, fault faultProgram, s *search) (*jsonValue, bool, error) {
-	parent, found, _, err := regenerateParentAtRank(plan, fault, 0, s)
+	machines := newFaultSearchMachines(s)
 
-	return parent, found, err
+	for rank := uint64(0); ; rank++ {
+		parent, found, _, err := machines.directParentAtRank(plan, fault, rank)
+		if err != nil || found {
+			return parent, found, err
+		}
+
+		if rank == ^uint64(0) {
+			return nil, false, errors.New("schematest: parent rank overflow")
+		}
+	}
 }
 
 // regenerateParentAtRank fairly addresses one valid parent across nonempty
 // anyOf masks and complete-row ranks. It retains no generated parent corpus.
-//
-//nolint:cyclop // Finite mask setup and diagonal exhaustion share the replay cursor boundary.
 func regenerateParentAtRank(
 	plan *searchPlan,
 	fault faultProgram,
 	rank uint64,
 	s *search,
 ) (*jsonValue, bool, bool, error) {
+	return regenerateParentAtRankWithMachine(
+		plan, fault, rank, parentRowMachine{search: s},
+	)
+}
+
+// regenerateParentAtRankWithMachine addresses one valid parent through an owned row machine.
+//
+//nolint:cyclop // Finite mask setup and diagonal exhaustion share the replay cursor boundary.
+func regenerateParentAtRankWithMachine(
+	plan *searchPlan,
+	fault faultProgram,
+	rank uint64,
+	rows parentRowMachine,
+) (*jsonValue, bool, bool, error) {
+	s := rows.search
+
 	if plan == nil {
 		return nil, false, false, errors.New("schematest: nil search plan")
 	}
@@ -368,8 +488,8 @@ func regenerateParentAtRank(
 
 		requirements := parentReplayRequirementsAt(fault, groups, ranks[:len(groups)])
 
-		parent, found, replayErr := parentCandidateAtRank(
-			s, requirements, ranks[len(ranks)-1],
+		parent, found, replayErr := rows.CandidateAtRank(
+			requirements, ranks[len(ranks)-1],
 		)
 		if replayErr != nil {
 			return nil, false, false, replayErr
@@ -393,50 +513,193 @@ func regenerateParentAtRank(
 	}
 }
 
-// parentCandidateAtRank regenerates one complete row rank under exact parent requirements.
-func parentCandidateAtRank(s *search, requirements []requirement, rank uint64) (*jsonValue, bool, error) {
-	if candidate, exists := activeEnumValueAtRank(
-		s.model.root, s.model.root.occurrence, requirements, new(uint64),
-	); exists && candidate != nil {
-		return parentEnumCandidateAtRank(s, requirements, rank)
+// faultCandidateRanksAtOrdinal keeps the common first-projection/first-path stream dense
+// while reserving every fourth rank for the complete direct tuple product.
+func faultCandidateRanksAtOrdinal(wanted uint64) (uint64, uint64, uint64, bool) {
+	const directTupleInterval = 4
+
+	if wanted%directTupleInterval != directTupleInterval-1 {
+		return 0, wanted - wanted/directTupleInterval, 0, true
 	}
 
-	var (
-		candidate *jsonValue
-		observed  uint64
-	)
+	decoder, ok := newDirectRankTupleDecoder(faultCandidateRankDimensions, wanted/directTupleInterval)
+	if !ok {
+		return 0, 0, 0, false
+	}
 
-	selected, err := s.walkNode(
-		s.model.root,
-		s.model.root.occurrence,
+	projectionRank, projectionExists := decoder.Next()
+	valueRank, valueExists := decoder.Next()
+	tailRank, tailExists := decoder.Next()
+
+	return projectionRank, valueRank, tailRank,
+		projectionExists && valueExists && tailExists
+}
+
+// faultRowAt directly decodes one projection/value coordinate without a row prefix walk.
+func faultRowAt(
+	s *search,
+	node *schemaNode,
+	occurrence schemaOccurrence,
+	requirements []requirement,
+	context rowSearchContext,
+	projectionRank uint64,
+	valueRank uint64,
+) (*jsonValue, bool, bool, uint64, error) {
+	view, exists, err := rowProjectionAt(node, occurrence, requirements, projectionRank)
+	if err != nil {
+		return nil, false, false, 0, err
+	}
+
+	active := append([]requirement(nil), requirements...)
+	if exists {
+		active, err = view.appendBranchRequirements(active, s.assign)
+		if err != nil {
+			return nil, false, false, 0, err
+		}
+	} else if projectionRank != 0 {
+		return nil, false, false, 0, nil
+	}
+
+	return s.rowConjunctionValueAt(
+		rowSchemaConjunction{sources: []rowSchemaSource{{
+			node: node, occurrence: occurrence,
+		}}},
+		active,
+		context,
+		valueRank,
+	)
+}
+
+// parentRowMachine directly addresses one complete row without replaying earlier rows.
+type parentRowMachine struct {
+	search *search
+}
+
+// CandidateAtRank evaluates one row coordinate and then yields to the fault product.
+//
+//nolint:cyclop // Enum, projection, row, and oracle checks form one machine advance.
+func (machine parentRowMachine) CandidateAtRank(
+	requirements []requirement,
+	rank uint64,
+) (*jsonValue, bool, error) {
+	if machine.search == nil || machine.search.model == nil || machine.search.model.root == nil {
+		return nil, false, errors.New("schematest: parent row machine has no model")
+	}
+
+	if candidate, exists := activeEnumValueAtRank(
+		machine.search.model.root,
+		machine.search.model.root.occurrence,
 		requirements,
-		rowSearchContext{},
-		func(value *jsonValue) (bool, error) {
-			if observed < rank {
-				observed++
+		new(uint64),
+	); exists && candidate != nil {
+		return parentEnumCandidateAtRawRank(machine.search, requirements, rank)
+	}
 
-				return false, nil
-			}
+	decoder, ok := newDirectRankTupleDecoder(directRowRankDimensions, rank)
+	if !ok {
+		return nil, false, nil
+	}
 
-			candidate = value
+	projectionRank, _ := decoder.Next()
+	valueRank, _ := decoder.Next()
 
-			return true, nil
-		},
+	view, exists, err := rowProjectionAt(
+		machine.search.model.root,
+		machine.search.model.root.occurrence,
+		requirements,
+		projectionRank,
 	)
-	if err != nil || !selected || candidate == nil {
+	if err != nil || !exists {
 		return nil, false, err
 	}
 
-	result := evaluate(s.model, candidate)
+	active, err := view.appendBranchRequirements(
+		append([]requirement(nil), requirements...), machine.search.assign,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	candidate, exists, usable, _, err := machine.search.rowConjunctionValueAt(
+		rowSchemaConjunction{sources: view.sources}, active, rowSearchContext{}, valueRank,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if (!exists || !usable || candidate == nil) &&
+		(machine.search.model.root.kind == schemaAny ||
+			machine.search.model.root.kind == schemaArray ||
+			machine.search.model.root.kind == schemaObject) {
+		candidate, exists, usable, _, err = faultRowAt(
+			machine.search,
+			machine.search.model.root,
+			machine.search.model.root.occurrence,
+			requirements,
+			rowSearchContext{},
+			projectionRank,
+			valueRank,
+		)
+		if err != nil || !exists || !usable || candidate == nil {
+			return nil, false, err
+		}
+	}
+
+	if !exists || !usable || candidate == nil {
+		return nil, false, nil
+	}
+
+	result := evaluate(machine.search.model, candidate)
 	if result.err != nil {
 		return nil, false, fmt.Errorf("evaluate regenerated parent: %w", result.err)
 	}
 
 	if !result.valid || !requirementsMatch(result, candidate, requirements) {
-		return candidate, false, nil
+		return nil, false, nil
 	}
 
 	return candidate, true, nil
+}
+
+// parentCandidateAtRank is the standalone direct parent-row adapter.
+func parentCandidateAtRank(s *search, requirements []requirement, rank uint64) (*jsonValue, bool, error) {
+	return (parentRowMachine{search: s}).CandidateAtRank(requirements, rank)
+}
+
+// parentEnumCandidateAtRawRank directly selects one finite same-instance enum coordinate.
+func parentEnumCandidateAtRawRank(
+	s *search,
+	requirements []requirement,
+	rank uint64,
+) (*jsonValue, bool, error) {
+	wanted := rank
+
+	candidate, exists := activeEnumValueAtRank(
+		s.model.root, s.model.root.occurrence, requirements, &wanted,
+	)
+	if !exists {
+		return nil, false, nil
+	}
+
+	if err := s.assign(); err != nil {
+		return nil, false, err
+	}
+
+	owned, err := cloneJSONValue(candidate)
+	if err != nil {
+		return nil, false, err
+	}
+
+	result := evaluate(s.model, owned)
+	if result.err != nil {
+		return nil, false, fmt.Errorf("evaluate regenerated enum parent: %w", result.err)
+	}
+
+	if !result.valid || !requirementsMatch(result, owned, requirements) {
+		return nil, false, nil
+	}
+
+	return owned, true, nil
 }
 
 // parentEnumCandidateAtRank replays the finite same-instance enum conjunction.
@@ -722,7 +985,7 @@ func applyFault(parent *jsonValue, fault faultProgram, s *search) (*jsonValue, e
 	return applyNonCompositionFault(parent, fault, s)
 }
 
-// applyFaultAtRank attempts one concrete occurrence and mutation tuple.
+// applyFaultAtRank is the standalone ranked fault adapter.
 func applyFaultAtRank(
 	parent *jsonValue,
 	fault faultProgram,
@@ -730,7 +993,21 @@ func applyFaultAtRank(
 	mutationRank uint64,
 	s *search,
 ) (*jsonValue, bool, bool, bool, error) {
-	selected, exists, occurrenceErr := faultAtOccurrenceRank(parent, fault, occurrenceRank, s)
+	return newFaultSearchMachines(s).applyFaultAtRank(
+		parent, fault, occurrenceRank, mutationRank,
+	)
+}
+
+// applyFaultAtRank attempts one concrete occurrence and mutation tuple with owned machines.
+func (machines faultSearchMachines) applyFaultAtRank(
+	parent *jsonValue,
+	fault faultProgram,
+	occurrenceRank uint64,
+	mutationRank uint64,
+) (*jsonValue, bool, bool, bool, error) {
+	selected, exists, occurrenceErr := faultAtOccurrenceRank(
+		parent, fault, occurrenceRank, machines.search,
+	)
 	if occurrenceErr != nil {
 		return nil, false, false, false, occurrenceErr
 	}
@@ -740,8 +1017,8 @@ func applyFaultAtRank(
 	}
 
 	if faultNeedsCompositionSearch(selected) {
-		derivative, attempted, exhausted, err := compositionFaultAttemptAtRank(
-			parent, selected, mutationRank, s,
+		derivative, attempted, exhausted, err := compositionFaultAttemptWithMachine(
+			parent, selected, mutationRank, machines.compositionAssignments,
 		)
 
 		return derivative, attempted, false, exhausted, err
@@ -749,14 +1026,25 @@ func applyFaultAtRank(
 
 	if selected.obligation.rule == oracleRuleType {
 		derivative, attempted, exhausted, err := rootTypeFaultAttemptAtRank(
-			parent, selected, mutationRank, s,
+			parent, selected, mutationRank, machines.search,
+		)
+
+		return derivative, attempted, false, exhausted, err
+	}
+
+	switch selected.obligation.rule {
+	case oracleRuleEnum, oracleRuleMinimum, oracleRuleExclusiveMinimum, oracleRuleMaximum,
+		oracleRuleExclusiveMaximum, oracleRuleMultipleOf, oracleRuleFormat,
+		oracleRuleMinLength, oracleRuleMaxLength, oracleRulePattern:
+		derivative, attempted, exhausted, err := machines.scalarCandidates.AttemptAtRank(
+			parent, selected, mutationRank,
 		)
 
 		return derivative, attempted, false, exhausted, err
 	}
 
 	derivative, attempted, exhausted, err := nonCompositionFaultAttemptAtRank(
-		parent, selected, mutationRank, s,
+		parent, selected, mutationRank, machines.search,
 	)
 
 	return derivative, attempted, false, exhausted, err

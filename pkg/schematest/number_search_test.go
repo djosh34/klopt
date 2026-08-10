@@ -367,7 +367,7 @@ func TestBuildSearchesIntegerFalseBranchObjectives(t *testing.T) {
 				{JSON: []byte("null"), Valid: false},
 			},
 			wantStop:  SpaceExhausted,
-			wantSteps: 388,
+			wantSteps: 1_631,
 			masks:     []string{"2", "3"},
 		},
 		{
