@@ -47,6 +47,7 @@ linters:
             - github.com/djosh34/klopt/pkg/validation
             - github.com/arran4/golang-diff/pkg/diff
             - golang.org/x/tools/imports
+            - golang.org/x/tools/go/ssa
     errcheck:
       check-blank: true
       check-type-assertions: true

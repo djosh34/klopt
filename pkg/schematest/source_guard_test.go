@@ -1842,6 +1842,8 @@ func parseGuardPackage(t *testing.T, sources map[string]string) *sourceGuardPack
 			Types:      make(map[ast.Expr]types.TypeAndValue),
 			Defs:       make(map[*ast.Ident]types.Object),
 			Uses:       make(map[*ast.Ident]types.Object),
+			Implicits:  make(map[ast.Node]types.Object),
+			Instances:  make(map[*ast.Ident]types.Instance),
 			Selections: make(map[*ast.SelectorExpr]*types.Selection),
 		},
 	}
