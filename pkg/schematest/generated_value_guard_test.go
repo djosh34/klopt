@@ -150,6 +150,41 @@ func TestGeneratedValueGuardRejectsDerivedAndInterproceduralRetention(t *testing
 	}
 }
 
+func TestGeneratedValueGuardRejectsOpaqueCarrierAndCallbackEffects(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"nested carrier result": `package schematest
+			import "bytes"
+			type Case struct { JSON []byte }; var saved [][]byte
+			func Build(yield func(Case)) { current := Case{JSON: []byte("a b")}; saved = bytes.Fields(current.JSON); yield(current) }`,
+		"external writable output": `package schematest
+			import "encoding/json"
+			type Case struct { JSON []byte }
+			func Build(yield func(Case)) { current := Case{JSON: []byte("null")}; var output any; _ = json.Unmarshal(current.JSON, &output); yield(current) }`,
+		"external retained receiver": `package schematest
+			import "bytes"
+			type Case struct { JSON []byte }
+			func Build(yield func(Case)) { current := Case{JSON: []byte("null")}; var output bytes.Buffer; _, _ = output.Write(current.JSON); yield(current) }`,
+		"helper invokes callback": `package schematest
+			type Case struct { JSON []byte }
+			func invoke(callback func(Case), current Case) { callback(current) }
+			func consume([]byte) {}
+			func Build(yield func(Case)) { current := Case{JSON: []byte("null")}; alias := current.JSON; invoke(yield, current); consume(alias) }`,
+		"callback phi keeps taint": `package schematest
+			type Case struct { JSON []byte }
+			func consume([]byte) {}
+			func Build(yield func(Case) []byte, choose bool) { current := Case{JSON: []byte("null")}; alias := current.JSON; replacement := yield(current); if choose { alias = replacement }; consume(alias) }`,
+	}
+
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.NotEmpty(t, generatedValueEscapeViolations(parseGuardPackage(t, map[string]string{"guard.go": source})))
+		})
+	}
+}
+
 func TestGeneratedValueGuardAllowsImmediateConsumption(t *testing.T) {
 	t.Parallel()
 
@@ -276,7 +311,7 @@ func generatedRuntimeFunctions(build *ssa.Function) map[*ssa.Function]bool {
 					continue
 				}
 
-				for callee := range resolvedLocalCallees(call.Common().Value, build.Pkg, make(map[ssa.Value]bool)) {
+				for callee := range possibleLocalCallees(call.Common(), build.Pkg) {
 					if callee.Name() != "parseInput" && callee.Name() != "makePlan" {
 						pending = append(pending, callee)
 					}
@@ -286,6 +321,97 @@ func generatedRuntimeFunctions(build *ssa.Function) map[*ssa.Function]bool {
 	}
 
 	return functions
+}
+
+func possibleLocalCallees(common *ssa.CallCommon, pkg *ssa.Package) map[*ssa.Function]bool {
+	result := resolvedLocalCallees(common.Value, pkg, make(map[ssa.Value]bool))
+	if callee := common.StaticCallee(); callee != nil {
+		if localSSAPackage(callee) == pkg {
+			result[callee] = true
+		}
+
+		return result
+	}
+
+	if pkg == nil || !common.IsInvoke() && !storedFunctionValue(common.Value) {
+		return result
+	}
+
+	addMatchingPackageFunctions(result, common.Signature(), common.Method, pkg)
+
+	return result
+}
+
+func storedFunctionValue(value ssa.Value) bool {
+	switch typed := value.(type) {
+	case *ssa.UnOp, *ssa.Field:
+		return true
+	case *ssa.Phi:
+		for _, edge := range typed.Edges {
+			if storedFunctionValue(edge) {
+				return true
+			}
+		}
+	case *ssa.ChangeType:
+		return storedFunctionValue(typed.X)
+	case *ssa.Convert:
+		return storedFunctionValue(typed.X)
+	case *ssa.Parameter, *ssa.FreeVar, *ssa.Function, *ssa.MakeClosure:
+		return false
+	default:
+		return true
+	}
+
+	return false
+}
+
+func localSSAPackage(function *ssa.Function) *ssa.Package {
+	for function != nil {
+		if function.Pkg != nil {
+			return function.Pkg
+		}
+
+		function = function.Parent()
+	}
+
+	return nil
+}
+
+func addMatchingPackageFunctions(
+	result map[*ssa.Function]bool,
+	signature *types.Signature,
+	invokedMethod *types.Func,
+	pkg *ssa.Package,
+) {
+	if invokedMethod == nil {
+		for _, member := range pkg.Members {
+			function, ok := member.(*ssa.Function)
+			if ok && (types.Identical(function.Signature, signature) ||
+				types.AssignableTo(function.Type(), signature)) {
+				result[function] = true
+			}
+		}
+	}
+
+	scope := pkg.Pkg.Scope()
+	for _, name := range scope.Names() {
+		typeName, ok := scope.Lookup(name).(*types.TypeName)
+		if !ok {
+			continue
+		}
+
+		for _, receiver := range []types.Type{typeName.Type(), types.NewPointer(typeName.Type())} {
+			methodSet := types.NewMethodSet(receiver)
+			for index := range methodSet.Len() {
+				function := pkg.Prog.MethodValue(methodSet.At(index))
+				if function != nil && (types.Identical(function.Signature, signature) ||
+					types.AssignableTo(function.Type(), signature)) &&
+					(invokedMethod == nil || function.Name() == invokedMethod.Name()) {
+					result[function] = true
+				}
+			}
+		}
+	}
 }
 
 func resolvedLocalCallees(value ssa.Value, pkg *ssa.Package, seen map[ssa.Value]bool) map[*ssa.Function]bool {
@@ -323,6 +449,40 @@ func resolvedLocalCallees(value ssa.Value, pkg *ssa.Package, seen map[ssa.Value]
 		for function := range resolvedLocalCallees(typed.X, pkg, seen) {
 			result[function] = true
 		}
+	case *ssa.UnOp:
+		for function := range resolvedStoredAddressCallees(typed.X, pkg, seen) {
+			result[function] = true
+		}
+	case *ssa.Field:
+		for function := range resolvedLocalCallees(typed.X, pkg, seen) {
+			result[function] = true
+		}
+	}
+
+	return result
+}
+
+func resolvedStoredAddressCallees(
+	address ssa.Value,
+	pkg *ssa.Package,
+	seen map[ssa.Value]bool,
+) map[*ssa.Function]bool {
+	result := make(map[*ssa.Function]bool)
+
+	referrers := address.Referrers()
+	if referrers == nil {
+		return result
+	}
+
+	for _, instruction := range *referrers {
+		store, ok := instruction.(*ssa.Store)
+		if !ok || store.Addr != address {
+			continue
+		}
+
+		for function := range resolvedLocalCallees(store.Val, pkg, seen) {
+			result[function] = true
+		}
 	}
 
 	return result
@@ -353,7 +513,7 @@ func propagateGeneratedValueTaint(
 	call, isCall := instruction.(ssa.CallInstruction)
 	if isCall {
 		common := call.Common()
-		for callee := range resolvedLocalCallees(common.Value, instruction.Parent().Pkg, make(map[ssa.Value]bool)) {
+		for callee := range possibleLocalCallees(common, localSSAPackage(instruction.Parent())) {
 			if !functions[callee] {
 				continue
 			}
@@ -363,6 +523,16 @@ func propagateGeneratedValueTaint(
 					taint.values[callee.Params[index]] = true
 					changed = true
 				}
+			}
+		}
+	}
+
+	if isCall && generatedCallHasTaintedArgument(call.Common(), taint.values) &&
+		generatedUnanalyzedCall(call.Common(), localSSAPackage(instruction.Parent())) {
+		for _, argument := range call.Common().Args {
+			if generatedWritableCarrier(argument.Type(), currentPackage) && !taint.values[argument] {
+				taint.values[argument] = true
+				changed = true
 			}
 		}
 	}
@@ -387,9 +557,7 @@ func propagateGeneratedValueTaint(
 		}
 
 		if callbackCall, ok := instruction.(ssa.CallInstruction); ok {
-			for callee := range resolvedLocalCallees(
-				callbackCall.Common().Value, instruction.Parent().Pkg, make(map[ssa.Value]bool),
-			) {
+			for callee := range possibleLocalCallees(callbackCall.Common(), localSSAPackage(instruction.Parent())) {
 				for _, block := range callee.Blocks {
 					for _, candidate := range block.Instrs {
 						returned, returnOK := candidate.(*ssa.Return)
@@ -417,7 +585,7 @@ func propagateGeneratedValueTaint(
 
 	if isCall {
 		common := call.Common()
-		for callee := range resolvedLocalCallees(common.Value, instruction.Parent().Pkg, make(map[ssa.Value]bool)) {
+		for callee := range possibleLocalCallees(common, localSSAPackage(instruction.Parent())) {
 			if taint.returns[callee] {
 				taint.values[value] = true
 
@@ -425,7 +593,9 @@ func propagateGeneratedValueTaint(
 			}
 		}
 
-		if generatedCallHasTaintedArgument(common, taint.values) && generatedDerivedResultType(value.Type()) {
+		if generatedCallHasTaintedArgument(common, taint.values) &&
+			!generatedCallbackType(common.Value.Type(), currentPackage) &&
+			generatedValueCarrierType(value.Type(), currentPackage) {
 			taint.values[value] = true
 
 			return true
@@ -460,10 +630,11 @@ func generatedValueSinks(
 
 	callbacks := generatedCallbackValues(functions, currentPackage)
 	callbackOwners := generatedCallbackOwners(functions, callbacks)
+	callbackInvokers := generatedCallbackInvokers(functions, callbacks)
 
 	cleared := generatedCallbackResultValues(functions, callbacks)
 	for function := range functions {
-		callbackAtEntry := generatedCallbackEntryState(function, callbacks)
+		callbackAtEntry := generatedCallbackEntryState(function, callbacks, callbackInvokers)
 		for _, block := range function.Blocks {
 			callbackSeen := callbackAtEntry[block]
 			for _, instruction := range block.Instrs {
@@ -506,14 +677,13 @@ func generatedValueSinks(
 					violations = append(violations, generatedValuePosition(instruction)+": generated value appended to callback-lived collection")
 				}
 
-				if generatedExternalCallback(common, callbacks) {
+				if generatedCallInvokesCallback(common, callbacks, callbackInvokers, function.Pkg) {
 					callbackSeen = true
 
 					continue
 				}
 
-				if generatedCallHasTaintedArgument(common, tainted) && common.StaticCallee() == nil &&
-					len(resolvedLocalCallees(common.Value, function.Pkg, make(map[ssa.Value]bool))) == 0 {
+				if generatedCallHasTaintedArgument(common, tainted) && generatedUnanalyzedCall(common, localSSAPackage(function)) {
 					violations = append(violations, generatedValuePosition(instruction)+": generated value escapes through unknown call")
 				}
 			}
@@ -573,7 +743,7 @@ func generatedCallbackValues(functions map[*ssa.Function]bool, currentPackage *t
 				for _, instruction := range block.Instrs {
 					call, ok := instruction.(ssa.CallInstruction)
 					if ok {
-						for callee := range resolvedLocalCallees(call.Common().Value, function.Pkg, make(map[ssa.Value]bool)) {
+						for callee := range possibleLocalCallees(call.Common(), function.Pkg) {
 							for index, argument := range call.Common().Args {
 								if index < len(callee.Params) && callbacks[argument] && !callbacks[callee.Params[index]] {
 									callbacks[callee.Params[index]] = true
@@ -634,13 +804,22 @@ func generatedCallbackResultValues(
 						continue
 					}
 
-					for _, operand := range instruction.Operands(nil) {
-						if operand != nil && cleared[*operand] {
-							cleared[value] = true
-							changed = true
+					operands := instruction.Operands(nil)
+					hasCleared := false
+					allValuesCleared := true
 
-							break
+					for _, operand := range operands {
+						if operand == nil || *operand == nil {
+							continue
 						}
+
+						hasCleared = hasCleared || cleared[*operand]
+						allValuesCleared = allValuesCleared && cleared[*operand]
+					}
+
+					if hasCleared && allValuesCleared {
+						cleared[value] = true
+						changed = true
 					}
 				}
 			}
@@ -666,7 +845,70 @@ func generatedCallbackOwners(functions map[*ssa.Function]bool, callbacks map[ssa
 	return owners
 }
 
-func generatedCallbackEntryState(function *ssa.Function, callbacks map[ssa.Value]bool) map[*ssa.BasicBlock]bool {
+func generatedCallbackInvokers(
+	functions map[*ssa.Function]bool,
+	callbacks map[ssa.Value]bool,
+) map[*ssa.Function]bool {
+	invokers := make(map[*ssa.Function]bool)
+
+	for changed := true; changed; {
+		changed = false
+
+		for function := range functions {
+			if invokers[function] {
+				continue
+			}
+
+			for _, block := range function.Blocks {
+				for _, instruction := range block.Instrs {
+					call, ok := instruction.(ssa.CallInstruction)
+					if !ok {
+						continue
+					}
+
+					if generatedExternalCallback(call.Common(), callbacks) {
+						invokers[function] = true
+						changed = true
+					}
+
+					for callee := range possibleLocalCallees(call.Common(), function.Pkg) {
+						if invokers[callee] {
+							invokers[function] = true
+							changed = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return invokers
+}
+
+func generatedCallInvokesCallback(
+	common *ssa.CallCommon,
+	callbacks map[ssa.Value]bool,
+	invokers map[*ssa.Function]bool,
+	currentPackage *ssa.Package,
+) bool {
+	if generatedExternalCallback(common, callbacks) {
+		return true
+	}
+
+	for callee := range possibleLocalCallees(common, currentPackage) {
+		if invokers[callee] {
+			return true
+		}
+	}
+
+	return false
+}
+
+func generatedCallbackEntryState(
+	function *ssa.Function,
+	callbacks map[ssa.Value]bool,
+	invokers map[*ssa.Function]bool,
+) map[*ssa.BasicBlock]bool {
 	entry := make(map[*ssa.BasicBlock]bool)
 
 	for changed := true; changed; {
@@ -676,7 +918,7 @@ func generatedCallbackEntryState(function *ssa.Function, callbacks map[ssa.Value
 			seen := entry[block]
 			for _, instruction := range block.Instrs {
 				call, ok := instruction.(ssa.CallInstruction)
-				if ok && generatedExternalCallback(call.Common(), callbacks) {
+				if ok && generatedCallInvokesCallback(call.Common(), callbacks, invokers, function.Pkg) {
 					seen = true
 				}
 			}
@@ -699,6 +941,28 @@ func generatedCallbackEntryState(function *ssa.Function, callbacks map[ssa.Value
 	}
 
 	return entry
+}
+
+func generatedUnanalyzedCall(common *ssa.CallCommon, currentPackage *ssa.Package) bool {
+	if _, builtin := common.Value.(*ssa.Builtin); builtin {
+		return false
+	}
+
+	callee := common.StaticCallee()
+	if callee != nil {
+		return localSSAPackage(callee) != currentPackage
+	}
+
+	return len(resolvedLocalCallees(common.Value, currentPackage, make(map[ssa.Value]bool))) == 0
+}
+
+func generatedWritableCarrier(valueType types.Type, currentPackage *types.Package) bool {
+	switch types.Unalias(valueType).Underlying().(type) {
+	case *types.Pointer, *types.Map, *types.Slice, *types.Interface:
+		return generatedValueCarrierType(valueType, currentPackage)
+	default:
+		return false
+	}
 }
 
 func generatedCallHasTaintedArgument(common *ssa.CallCommon, tainted map[ssa.Value]bool) bool {
@@ -830,22 +1094,40 @@ func generatedValueCarrierTypeSeen(valueType types.Type, currentPackage *types.P
 	case *types.Chan:
 		return generatedValueCarrierTypeSeen(typed.Elem(), currentPackage, seen)
 	case *types.Struct:
-		// Named Case and jsonValue structures are handled above. Arbitrary semantic
-		// structs are not encodings merely because one of their fields is a string.
+		for index := range typed.NumFields() {
+			if generatedWrapperFieldType(typed.Field(index).Type(), currentPackage, seen) {
+				return true
+			}
+		}
+
 		return false
 	}
 
 	return false
 }
 
-func generatedDerivedResultType(valueType types.Type) bool {
-	switch typed := types.Unalias(valueType).Underlying().(type) {
-	case *types.Basic:
-		return typed.Kind() == types.String
+func generatedWrapperFieldType(
+	valueType types.Type,
+	currentPackage *types.Package,
+	seen map[types.Type]bool,
+) bool {
+	valueType = types.Unalias(valueType)
+	switch typed := valueType.Underlying().(type) {
+	case *types.Interface:
+		return true
 	case *types.Slice:
-		basic, ok := types.Unalias(typed.Elem()).Underlying().(*types.Basic)
+		if basic, ok := types.Unalias(typed.Elem()).Underlying().(*types.Basic); ok {
+			return basic.Kind() == types.Byte
+		}
 
-		return ok && basic.Kind() == types.Byte
+		return generatedWrapperFieldType(typed.Elem(), currentPackage, seen)
+	case *types.Array:
+		return generatedWrapperFieldType(typed.Elem(), currentPackage, seen)
+	case *types.Map:
+		return generatedWrapperFieldType(typed.Key(), currentPackage, seen) ||
+			generatedWrapperFieldType(typed.Elem(), currentPackage, seen)
+	case *types.Struct:
+		return generatedValueCarrierTypeSeen(valueType, currentPackage, seen)
 	default:
 		return false
 	}

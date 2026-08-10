@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -47,6 +48,29 @@ func TestOperationIDFlowGuardRejectsTrustedFunctionBypasses(t *testing.T) {
 			func Build(input Input) bool { return selectRequestSchema(input.OperationID) }
 			func selectRequestSchema(operationID string) bool { return operationID == "copiedFixtureOperation" }`,
 	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.NotEmpty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"guard.go": source})))
+		})
+	}
+}
+
+func TestOperationIDFlowGuardRejectsLookupAndComputedEquality(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"verdict lookup": `package schematest
+			type Input struct { OperationID string }
+			func Build(input Input) bool { verdicts := map[string]bool{"copied": true}; return verdicts[input.OperationID] }`,
+		"package equality": `package schematest
+			type Input struct { OperationID string }; var copied = "copied"
+			func Build(input Input) bool { return input.OperationID == copied }`,
+		"computed equality": `package schematest
+			type Input struct { OperationID string }
+			func Build(input Input) bool { copied := "co" + input.OperationID[:0] + "pied"; return input.OperationID == copied }`,
+	}
+
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -115,6 +139,8 @@ func TestCopiedSemanticGuardRejectsIdentityAndShapeBypasses(t *testing.T) {
 		"approved name wrong role": `package schematest
 			type answer struct { keyword string; valid bool }
 			var operationMethods = []answer{{keyword: "type", valid: true}, {keyword: "enum", valid: false}}`,
+		"approved name copied data": `package schematest
+			var operationMethods = []string{"copiedAnswer"}`,
 		"numeric boolean answer table": `package schematest
 			type answer struct { code int; valid bool }
 			var renamed = []answer{{code: 1, valid: true}, {code: 2, valid: false}}`,
@@ -122,6 +148,13 @@ func TestCopiedSemanticGuardRejectsIdentityAndShapeBypasses(t *testing.T) {
 			type answer struct { keyword string; valid bool }
 			func copied() []answer { return []answer{{keyword: "type", valid: true}, {keyword: "enum", valid: false}} }
 			func Build() { _ = copied() }`,
+		"one element helper chain": `package schematest
+			type answer struct { valid bool }
+			func copied() []answer { rows := []answer{{valid: true}}; return rows }
+			func forwarded() []answer { return copied() }
+			func Build() { _ = forwarded() }`,
+		"map key and value": `package schematest
+			var renamed = map[string]bool{"copied": true}`,
 		"non fingerprint graph": `package schematest
 			type node struct { next *node; answer string }
 			var copied = &node{answer: "object", next: &node{answer: "string"}}`,
@@ -204,12 +237,8 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 						continue
 					}
 
-					if _, lookup := instruction.(*ssa.Lookup); lookup {
-						continue
-					}
-
 					if binary, binaryOK := instruction.(*ssa.BinOp); binaryOK &&
-						(binary.Op == token.EQL || binary.Op == token.NEQ) {
+						operationIDSelectionComparison(function, binary, tainted) {
 						continue
 					}
 
@@ -239,7 +268,7 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 		for _, block := range function.Blocks {
 			for _, instruction := range block.Instrs {
 				for _, operand := range instruction.Operands(nil) {
-					if operand == nil || !tainted[*operand] || operationIDAllowedUse(function, instruction) {
+					if operand == nil || !tainted[*operand] || operationIDAllowedUse(function, instruction, tainted) {
 						continue
 					}
 
@@ -256,18 +285,15 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 	return slices.Compact(violations)
 }
 
-func operationIDAllowedUse(function *ssa.Function, instruction ssa.Instruction) bool {
+func operationIDAllowedUse(
+	function *ssa.Function,
+	instruction ssa.Instruction,
+	tainted map[ssa.Value]bool,
+) bool {
 	switch typed := instruction.(type) {
 	case *ssa.BinOp:
-		if typed.Op != token.EQL && typed.Op != token.NEQ {
-			return false
-		}
-
-		_, leftConstant := typed.X.(*ssa.Const)
-		_, rightConstant := typed.Y.(*ssa.Const)
-
-		return !leftConstant && !rightConstant
-	case *ssa.Lookup, *ssa.Phi, *ssa.ChangeType, *ssa.Convert, *ssa.MakeInterface, *ssa.Return, *ssa.UnOp:
+		return operationIDSelectionComparison(function, typed, tainted)
+	case *ssa.Phi, *ssa.ChangeType, *ssa.Convert, *ssa.MakeInterface, *ssa.Return, *ssa.UnOp:
 		return true
 	case *ssa.Store:
 		return operationIDLocalAddress(typed.Addr)
@@ -281,6 +307,68 @@ func operationIDAllowedUse(function *ssa.Function, instruction ssa.Instruction) 
 	callee := call.Common().StaticCallee()
 
 	return callee != nil && callee.Pkg == function.Pkg
+}
+
+func operationIDSelectionComparison(
+	function *ssa.Function,
+	binary *ssa.BinOp,
+	tainted map[ssa.Value]bool,
+) bool {
+	if function.Name() != "selectRequestSchema" || binary.Op != token.EQL {
+		return false
+	}
+
+	var authored ssa.Value
+
+	switch {
+	case tainted[binary.X] && !tainted[binary.Y]:
+		authored = binary.Y
+	case tainted[binary.Y] && !tainted[binary.X]:
+		authored = binary.X
+	default:
+		return false
+	}
+
+	return operationIDAuthoredSelectionValue(authored, make(map[ssa.Value]bool))
+}
+
+func operationIDAuthoredSelectionValue(value ssa.Value, seen map[ssa.Value]bool) bool {
+	if value == nil || seen[value] {
+		return false
+	}
+
+	seen[value] = true
+
+	switch typed := value.(type) {
+	case *ssa.Field, *ssa.Extract, *ssa.Index, *ssa.Lookup:
+		return true
+	case *ssa.UnOp:
+		return operationIDAuthoredSelectionValue(typed.X, seen)
+	case *ssa.FieldAddr:
+		return operationIDAuthoredSelectionValue(typed.X, seen)
+	case *ssa.IndexAddr:
+		return operationIDAuthoredSelectionValue(typed.X, seen)
+	case *ssa.ChangeType:
+		return operationIDAuthoredSelectionValue(typed.X, seen)
+	case *ssa.Convert:
+		return operationIDAuthoredSelectionValue(typed.X, seen)
+	case *ssa.MakeInterface:
+		return operationIDAuthoredSelectionValue(typed.X, seen)
+	case *ssa.Phi:
+		for _, edge := range typed.Edges {
+			if !operationIDAuthoredSelectionValue(edge, seen) {
+				return false
+			}
+		}
+
+		return len(typed.Edges) > 0
+	case *ssa.Alloc:
+		return true
+	case *ssa.Const, *ssa.BinOp, *ssa.Call, *ssa.Global:
+		return false
+	default:
+		return true
+	}
 }
 
 func operationIDLocalAddress(value ssa.Value) bool {
@@ -409,7 +497,8 @@ func packageSemanticDataViolations(guardPackage *sourceGuardPackage) []string {
 		}
 
 		role := types.TypeString(object.Type(), ownershipTypeQualifier(guardPackage.pkg))
-		if allowedSemanticData[name] == role || genericNumericSpecification(object.Type()) {
+		if allowedSemanticData[name] == role && allowedSemanticSource(name, object, guardPackage) ||
+			independentlyAuthoredGenericSpecification(name, object.Type()) {
 			continue
 		}
 
@@ -423,6 +512,28 @@ func aggregateSemanticData(owned types.Type) bool {
 	switch types.Unalias(owned).Underlying().(type) {
 	case *types.Array, *types.Map, *types.Pointer, *types.Slice, *types.Struct:
 		return true
+	default:
+		return false
+	}
+}
+
+func allowedSemanticSource(name string, object *types.Var, guardPackage *sourceGuardPackage) bool {
+	expectedFile := "string_format_spec.go"
+
+	switch name {
+	case "operationMethods":
+		expectedFile = "oas_parse.go"
+	case "schemaKinds", "schemaKeywords", "numericFormatNames":
+		expectedFile = "oas_schema.go"
+	}
+
+	return filepath.Base(guardPackage.fset.Position(object.Pos()).Filename) == expectedFile
+}
+
+func independentlyAuthoredGenericSpecification(name string, owned types.Type) bool {
+	switch name {
+	case "unicodeGrammar", "formatTransitions":
+		return aggregateSemanticData(owned)
 	default:
 		return false
 	}
@@ -484,22 +595,62 @@ func genericNumericSpecificationSeen(
 func localSemanticTableViolations(guardPackage *sourceGuardPackage) []string {
 	var violations []string
 
+	allowedLocalSpecifications := map[string]bool{
+		"anyOfValidRequirements":           true,
+		"canonicalJSONKinds":               true,
+		"compileValidSchedule":             true,
+		"defaultArrayPresenceRequirements": true,
+		"enumFaultKinds":                   true,
+		"matchSequenceEnds":                true,
+		"mergePatternRanges":               true,
+		"normalizePatternMatcherRanges":    true,
+		"orderedTypeKinds":                 true,
+		"parseEscape":                      true,
+		"projectedMemberPresenceChoices":   true,
+		"rowKindChoices":                   true,
+	}
+
 	for _, file := range guardPackage.files {
 		for _, declaration := range file.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Body == nil {
+			if !ok || function.Body == nil || allowedLocalSpecifications[function.Name.Name] {
 				continue
 			}
 
+			localTables := make(map[*types.Var]bool)
+
 			ast.Inspect(function.Body, func(node ast.Node) bool {
+				assignment, assignmentOK := node.(*ast.AssignStmt)
+				if assignmentOK {
+					for index, right := range assignment.Rhs {
+						if index >= len(assignment.Lhs) || !semanticCollectionLiteral(right, guardPackage) {
+							continue
+						}
+
+						identifier, ok := assignment.Lhs[index].(*ast.Ident)
+						if ok {
+							if variable, variableOK := guardPackage.info.Defs[identifier].(*types.Var); variableOK {
+								localTables[variable] = true
+							}
+						}
+					}
+				}
+
 				returned, returnOK := node.(*ast.ReturnStmt)
 				if !returnOK {
 					return true
 				}
 
 				for _, result := range returned.Results {
+					if identifier, ok := result.(*ast.Ident); ok {
+						variable, variableOK := guardPackage.info.Uses[identifier].(*types.Var)
+						if variableOK && localTables[variable] {
+							violations = append(violations, function.Name.Name+": copied local semantic table")
+						}
+					}
+
 					literal, literalOK := result.(*ast.CompositeLit)
-					if !literalOK || len(literal.Elts) < 2 {
+					if !literalOK || len(literal.Elts) == 0 {
 						continue
 					}
 
@@ -521,7 +672,7 @@ func localSemanticTableViolations(guardPackage *sourceGuardPackage) []string {
 					categories := make(map[string]bool)
 					semanticPrimitiveCategories(element, categories, make(map[types.Type]bool))
 
-					if len(categories) > 1 {
+					if len(categories) > 0 {
 						violations = append(violations, function.Name.Name+": copied local semantic table")
 					}
 				}
@@ -532,6 +683,20 @@ func localSemanticTableViolations(guardPackage *sourceGuardPackage) []string {
 	}
 
 	return violations
+}
+
+func semanticCollectionLiteral(expression ast.Expr, guardPackage *sourceGuardPackage) bool {
+	literal, ok := expression.(*ast.CompositeLit)
+	if !ok || len(literal.Elts) == 0 {
+		return false
+	}
+
+	switch types.Unalias(guardPackage.info.TypeOf(literal)).Underlying().(type) {
+	case *types.Array, *types.Map, *types.Slice:
+		return true
+	default:
+		return false
+	}
 }
 
 func semanticPrimitiveCategories(owned types.Type, categories map[string]bool, seen map[types.Type]bool) {

@@ -149,7 +149,6 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.allOf|[]*schemaNode",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.allowAdditionalProperties|bool",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.anyOf|[]*schemaNode",
-		"github.com/djosh34/klopt/pkg/schematest.schemaShape.enum|[]enumMember",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.exclusiveMaximum|bool",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.exclusiveMinimum|bool",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.format|schemaFormat",
@@ -169,7 +168,6 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.properties|map[string]*schemaNode",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.readOnly|bool",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.required|[]string",
-		"github.com/djosh34/klopt/pkg/schematest.schemaShape.schemaJSON|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.writeOnly|bool",
 		"github.com/djosh34/klopt/pkg/schematest.stringFormatBoundary.bounds|stringFormatBounds",
 		"github.com/djosh34/klopt/pkg/schematest.stringFormatBoundary.kind|stringFormatObjective",
@@ -303,6 +301,8 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 	ownershipRowGroup{form: ownershipAuthoredValue, lifetime: ownershipBuildLifetime, rows: []string{
 		"github.com/djosh34/klopt/pkg/schematest.enumMember.value|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.schemaShape.defaultValue|*jsonValue",
+		"github.com/djosh34/klopt/pkg/schematest.schemaShape.enum|[]enumMember",
+		"github.com/djosh34/klopt/pkg/schematest.schemaShape.schemaJSON|*jsonValue",
 	}},
 	ownershipRowGroup{form: ownershipMachineState, lifetime: ownershipAttemptLifetime, rows: []string{
 		"github.com/djosh34/klopt/pkg/schematest.activeNumberRule.node|*schemaNode",
@@ -393,15 +393,12 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.append|bool",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.path|[]string",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.remove|bool",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.replacement|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSource.cursor|func() compositionEditCursor",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.levels|[]compositionEditSubsetLevel",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.seen|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.size|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.source|compositionEditSource",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.s|*search",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetLevel.cursor|compositionEditCursor",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetLevel.edit|compositionEdit",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.count|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.cursor|*compositionEditSubsetCursor",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.size|int",
@@ -423,7 +420,6 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.evaluationCacheEntry.result|evaluation",
 		"github.com/djosh34/klopt/pkg/schematest.evaluationCacheKey.shape|*schemaShape",
 		"github.com/djosh34/klopt/pkg/schematest.evaluationContext.base|schemaOccurrence",
-		"github.com/djosh34/klopt/pkg/schematest.evaluationContext.cache|map[evaluationCacheKey]evaluationCacheEntry",
 		"github.com/djosh34/klopt/pkg/schematest.exactDecimalTerm.coefficient|*math/big.Int",
 		"github.com/djosh34/klopt/pkg/schematest.exactDecimalTerm.exponent|*math/big.Int",
 		"github.com/djosh34/klopt/pkg/schematest.exactNumber.denominator|*math/big.Int",
@@ -460,8 +456,10 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.jsonMarshalFrame.names|[]string",
 		"github.com/djosh34/klopt/pkg/schematest.jsonValidationFrame.context|string",
 		"github.com/djosh34/klopt/pkg/schematest.jsonValidationFrame.exit|bool",
-		"github.com/djosh34/klopt/pkg/schematest.jsonValuePair.left|*jsonValue",
-		"github.com/djosh34/klopt/pkg/schematest.jsonValuePair.right|*jsonValue",
+		"github.com/djosh34/klopt/pkg/schematest.liveProjectionFrontier.cursor|*rowProjectionCursor",
+		"github.com/djosh34/klopt/pkg/schematest.liveProjectionFrontier.exhausted|bool",
+		"github.com/djosh34/klopt/pkg/schematest.liveProjectionFrontier.finiteSize|uint64",
+		"github.com/djosh34/klopt/pkg/schematest.liveProjectionFrontier.ordinal|uint64",
 		"github.com/djosh34/klopt/pkg/schematest.numberCandidateEmitter.index|uint64",
 		"github.com/djosh34/klopt/pkg/schematest.numberCandidateEmitter.schedule|numberSchedule",
 		"github.com/djosh34/klopt/pkg/schematest.numberCandidateEmitter.search|*search",
@@ -479,7 +477,6 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.parentReplayGroup.count|int",
 		"github.com/djosh34/klopt/pkg/schematest.parentReplayGroup.indexes|[]int",
 		"github.com/djosh34/klopt/pkg/schematest.parentRowMachine.search|*search",
-		"github.com/djosh34/klopt/pkg/schematest.prospectiveCompositionSource.container|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.prospectiveCompositionSource.path|[]string",
 		"github.com/djosh34/klopt/pkg/schematest.rankProductCursor.diagonal|uint64",
 		"github.com/djosh34/klopt/pkg/schematest.rankProductCursor.exhausted|bool",
@@ -542,7 +539,6 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 	ownershipRowGroup{form: ownershipMachineState, lifetime: ownershipCallLifetime, rows: []string{
 		"github.com/djosh34/klopt/pkg/schematest.arrayEditCharges.indexes|[]int",
 		"github.com/djosh34/klopt/pkg/schematest.arrayEditCharges.itemValues|int",
-		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceCursor.stack|[]compositionDifferenceFrame",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.arrayIndex|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.entered|bool",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.hasLastName|bool",
@@ -552,8 +548,25 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.compositionDirectEditCursor.pathRank|uint64",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDirectEditCursor.requirementIndex|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDirectEditCursor.requirements|[]requirement",
+		"github.com/djosh34/klopt/pkg/schematest.ecmaPatternParser.lowSurrogateContinuation|bool",
+		"github.com/djosh34/klopt/pkg/schematest.ecmaPatternParser.nesting|int",
+		"github.com/djosh34/klopt/pkg/schematest.ecmaPatternParser.nodeCount|int",
+		"github.com/djosh34/klopt/pkg/schematest.ecmaPatternParser.position|int",
+		"github.com/djosh34/klopt/pkg/schematest.ecmaPatternParser.units|[]uint16",
+		"github.com/djosh34/klopt/pkg/schematest.strictJSONParser.position|int",
+		"github.com/djosh34/klopt/pkg/schematest.strictJSONParser.source|[]byte",
+	}},
+	ownershipRowGroup{form: ownershipCurrentValue, lifetime: ownershipAttemptLifetime, rows: []string{
+		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.replacement|*jsonValue",
+		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.levels|[]compositionEditSubsetLevel",
+		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetLevel.edit|compositionEdit",
+		"github.com/djosh34/klopt/pkg/schematest.evaluationContext.cache|map[evaluationCacheKey]evaluationCacheEntry",
+		"github.com/djosh34/klopt/pkg/schematest.jsonValuePair.left|*jsonValue",
+		"github.com/djosh34/klopt/pkg/schematest.jsonValuePair.right|*jsonValue",
+		"github.com/djosh34/klopt/pkg/schematest.prospectiveCompositionSource.container|*jsonValue",
 	}},
 	ownershipRowGroup{form: ownershipCurrentValue, lifetime: ownershipCallLifetime, rows: []string{
+		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceCursor.stack|[]compositionDifferenceFrame",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.assignment|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.parent|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDirectEditCursor.parent|*jsonValue",
@@ -723,6 +736,24 @@ func TestExactOwnershipGuardDiscoversInlineSignatureAndReturnOwners(t *testing.T
 	}
 }
 
+func TestExactOwnershipGuardDiscoversDynamicCalleeOwners(t *testing.T) {
+	t.Parallel()
+
+	source := `package schematest
+		type runner interface { run() }
+		type implementation struct { hidden []string }
+		func (*implementation) run() {}
+		type storedOwner struct { hidden []byte }
+		var storedFunction = stored
+		func stored() { _ = new(storedOwner) }
+		func Build(value runner) { value.run(); storedFunction() }
+	`
+
+	violations := exactOwnershipViolations(parseGuardPackage(t, map[string]string{"guard.go": source}), nil)
+	require.Contains(t, violations, "unlisted owner field: "+modulePath+"/pkg/schematest.implementation.hidden")
+	require.Contains(t, violations, "unlisted owner field: "+modulePath+"/pkg/schematest.storedOwner.hidden")
+}
+
 func TestExactOwnershipGuardRejectsMisleadingCarrierRows(t *testing.T) {
 	t.Parallel()
 
@@ -736,6 +767,8 @@ func TestExactOwnershipGuardRejectsMisleadingCarrierRows(t *testing.T) {
 		{typeName: "[]string", field: "values"},
 		{typeName: "any", field: "value"},
 		{typeName: "[]*jsonValue", field: "values"},
+		{typeName: "*jsonValue", field: "value"},
+		{typeName: "struct{ nested *jsonValue }", field: "value"},
 	}
 	for _, test := range tests {
 		source := `package schematest; type Case struct{}; type jsonValue struct{}; type owner struct { ` +
@@ -804,6 +837,12 @@ func TestSingularCurrentOwnershipRequiresClearBeforeContinuation(t *testing.T) {
 		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); active.current = new(jsonValue); select { default: yield() }; active.current = nil }`,
 		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func next() int { return 1 }; func Build() { active := new(state); active.current = new(jsonValue); _ = next(); active.current = nil }`,
 		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func mutate(*state) {}; func Build() { active := new(state); active.current = new(jsonValue); mutate(active); active.current = nil }`,
+		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); switch 1 { case 1: active.current = new(jsonValue) }; yield() }`,
+		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); var value any = 1; switch value.(type) { case int: active.current = new(jsonValue) }; yield() }`,
+		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); select { default: active.current = new(jsonValue) }; yield() }`,
+		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); for { active.current = new(jsonValue); break }; yield() }`,
+		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); for range 1 { active.current = new(jsonValue) }; yield() }`,
+		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := &state{current: new(jsonValue)}; yield(); _ = active }`,
 	}
 	for _, source := range badPaths {
 		require.NotEmpty(t, exactOwnershipViolations(parseGuardPackage(t, map[string]string{"guard.go": source}), allowed), source)
@@ -858,7 +897,7 @@ func ownershipTypeQualifier(current *types.Package) types.Qualifier {
 	}
 }
 
-//nolint:cyclop,gocognit // Package, SSA value, and structural field discovery form one ownership graph.
+//nolint:cyclop,gocognit,gocyclo // Package, SSA value, and structural field discovery form one ownership graph.
 func buildOwnershipFields(guardPackage *sourceGuardPackage) map[string]*types.Var {
 	fields := make(map[string]*types.Var)
 	prefix := guardPackage.pkg.Path() + "."
@@ -879,7 +918,67 @@ func buildOwnershipFields(guardPackage *sourceGuardPackage) map[string]*types.Va
 		return fields
 	}
 
-	for function := range generatedRuntimeFunctions(build) {
+	functions := generatedRuntimeFunctions(build)
+	declarations := make(map[*types.Func]*ast.FuncDecl)
+
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+
+			if object, objectOK := guardPackage.info.Defs[function.Name].(*types.Func); objectOK {
+				declarations[object] = function
+			}
+		}
+	}
+
+	for _, file := range guardPackage.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			var values []ast.Expr
+
+			switch typed := node.(type) {
+			case *ast.ValueSpec:
+				values = typed.Values
+			case *ast.KeyValueExpr:
+				values = []ast.Expr{typed.Value}
+			default:
+				return true
+			}
+
+			for _, value := range values {
+				identifier, ok := value.(*ast.Ident)
+				if !ok {
+					continue
+				}
+
+				object, ok := guardPackage.info.Uses[identifier].(*types.Func)
+				if !ok {
+					continue
+				}
+
+				if function := ssaPackage.Func(object.Name()); function != nil {
+					functions[function] = true
+				}
+
+				if declaration := declarations[object]; declaration != nil {
+					ast.Inspect(declaration, func(child ast.Node) bool {
+						expression, expressionOK := child.(ast.Expr)
+						if expressionOK {
+							collectNamedOwnerTypes(guardPackage.info.TypeOf(expression), owners)
+						}
+
+						return true
+					})
+				}
+			}
+
+			return true
+		})
+	}
+
+	for function := range functions {
 		for _, parameter := range function.Params {
 			collectNamedOwnerTypes(parameter.Type(), owners)
 		}
@@ -941,7 +1040,9 @@ func validOwnershipAllowance(
 			ownershipProcessLifetime: true, ownershipBuildLifetime: true,
 			ownershipAttemptLifetime: true, ownershipCallLifetime: true,
 		},
-		ownershipCurrentValue: {ownershipCallLifetime: true, ownershipBeforeContinuation: true},
+		ownershipCurrentValue: {
+			ownershipAttemptLifetime: true, ownershipCallLifetime: true, ownershipBeforeContinuation: true,
+		},
 	}
 	if !validLifetime[allowance.form][allowance.lifetime] ||
 		recursivelyContainsGuardType(owned, packageObjectType(guardPackage, "Case"), make(map[types.Type]bool)) ||
@@ -968,8 +1069,15 @@ func validOwnershipAllowance(
 		}
 	}
 
+	containsJSONValue := containsRuntimeJSONCarrier(
+		owned, packageObjectType(guardPackage, "jsonValue"), make(map[types.Type]bool),
+	)
+	if containsJSONValue && allowance.form != ownershipAuthoredValue && allowance.form != ownershipCurrentValue {
+		return false
+	}
+
 	if allowance.form == ownershipAuthoredValue {
-		return recursivelyContainsGuardType(owned, packageObjectType(guardPackage, "jsonValue"), make(map[types.Type]bool))
+		return containsJSONValue
 	}
 
 	if allowance.form == ownershipCurrentValue && allowance.lifetime == ownershipBeforeContinuation {
@@ -979,6 +1087,48 @@ func validOwnershipAllowance(
 	}
 
 	return true
+}
+
+//nolint:cyclop // Every direct runtime carrier wrapper is classified explicitly.
+func containsRuntimeJSONCarrier(owned, wanted types.Type, visiting map[types.Type]bool) bool {
+	owned = types.Unalias(owned)
+	if sameGuardType(owned, wanted) {
+		return true
+	}
+
+	if visiting[owned] {
+		return false
+	}
+
+	visiting[owned] = true
+
+	switch typed := owned.(type) {
+	case *types.Pointer:
+		element := types.Unalias(typed.Elem())
+		if named, ok := element.(*types.Named); ok && !sameGuardType(named, wanted) {
+			return false
+		}
+
+		return containsRuntimeJSONCarrier(element, wanted, visiting)
+	}
+
+	switch typed := owned.Underlying().(type) {
+	case *types.Slice:
+		return containsRuntimeJSONCarrier(typed.Elem(), wanted, visiting)
+	case *types.Array:
+		return containsRuntimeJSONCarrier(typed.Elem(), wanted, visiting)
+	case *types.Map:
+		return containsRuntimeJSONCarrier(typed.Key(), wanted, visiting) ||
+			containsRuntimeJSONCarrier(typed.Elem(), wanted, visiting)
+	case *types.Struct:
+		for index := range typed.NumFields() {
+			if containsRuntimeJSONCarrier(typed.Field(index).Type(), wanted, visiting) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func directOwnershipType(owned, wanted types.Type) bool {
@@ -1105,6 +1255,8 @@ func inspectOwnershipStatements(
 	violations *[]string,
 ) {
 	for _, statement := range statements {
+		markCompositeOwnership(guardPackage, statement, watched, live)
+
 		if assignment, ok := statement.(*ast.AssignStmt); ok {
 			for index, left := range assignment.Lhs {
 				selector, selectorOK := left.(*ast.SelectorExpr)
@@ -1162,27 +1314,56 @@ func inspectOwnershipStatements(
 				appendLiveOwnershipViolations(live, watched, "continuation", violations)
 			}
 
+			join := make(map[*types.Var]bool)
+			hasDefault := false
+
 			for _, clause := range typed.Body.List {
 				caseClause, ok := clause.(*ast.CaseClause)
 				if !ok {
 					continue
 				}
 
+				hasDefault = hasDefault || len(caseClause.List) == 0
 				branchLive := maps.Clone(live)
 				inspectOwnershipStatements(guardPackage, caseClause.Body, watched, branchLive, violations)
+				maps.Copy(join, branchLive)
 			}
+
+			if !hasDefault {
+				maps.Copy(join, live)
+			}
+
+			clear(live)
+			maps.Copy(live, join)
 		case *ast.TypeSwitchStmt:
 			if ownershipContinuationCall(typed.Init) || ownershipContinuationCall(typed.Assign) {
 				appendLiveOwnershipViolations(live, watched, "continuation", violations)
 			}
 
+			join := make(map[*types.Var]bool)
+			hasDefault := false
+
 			for _, clause := range typed.Body.List {
 				caseClause, ok := clause.(*ast.CaseClause)
-				if ok {
-					inspectOwnershipStatements(guardPackage, caseClause.Body, watched, maps.Clone(live), violations)
+				if !ok {
+					continue
 				}
+
+				hasDefault = hasDefault || len(caseClause.List) == 0
+				branchLive := maps.Clone(live)
+				inspectOwnershipStatements(guardPackage, caseClause.Body, watched, branchLive, violations)
+				maps.Copy(join, branchLive)
 			}
+
+			if !hasDefault {
+				maps.Copy(join, live)
+			}
+
+			clear(live)
+			maps.Copy(live, join)
 		case *ast.SelectStmt:
+			join := make(map[*types.Var]bool)
+
 			for _, clause := range typed.Body.List {
 				communication, ok := clause.(*ast.CommClause)
 				if !ok {
@@ -1195,7 +1376,11 @@ func inspectOwnershipStatements(
 				}
 
 				inspectOwnershipStatements(guardPackage, communication.Body, watched, branchLive, violations)
+				maps.Copy(join, branchLive)
 			}
+
+			clear(live)
+			maps.Copy(live, join)
 		case *ast.ReturnStmt:
 			for field := range live {
 				*violations = append(*violations, "current value survives function return: "+watched[field])
@@ -1208,6 +1393,7 @@ func inspectOwnershipStatements(
 
 			for field := range nested {
 				*violations = append(*violations, "current value survives retry: "+watched[field])
+				live[field] = true
 			}
 		case *ast.RangeStmt:
 			nested := maps.Clone(live)
@@ -1215,9 +1401,43 @@ func inspectOwnershipStatements(
 
 			for field := range nested {
 				*violations = append(*violations, "current value survives sibling: "+watched[field])
+				live[field] = true
 			}
 		}
 	}
+}
+
+func markCompositeOwnership(
+	guardPackage *sourceGuardPackage,
+	node ast.Node,
+	watched map[*types.Var]string,
+	live map[*types.Var]bool,
+) {
+	ast.Inspect(node, func(child ast.Node) bool {
+		literal, ok := child.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+
+		for _, element := range literal.Elts {
+			keyValue, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+
+			identifier, ok := keyValue.Key.(*ast.Ident)
+			if !ok {
+				continue
+			}
+
+			field, ok := guardPackage.info.Uses[identifier].(*types.Var)
+			if ok && watched[field] != "" && !isNilExpression(keyValue.Value) {
+				live[field] = true
+			}
+		}
+
+		return false
+	})
 }
 
 func appendLiveOwnershipViolations(
