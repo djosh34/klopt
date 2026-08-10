@@ -405,6 +405,68 @@ func TestBuildDeclaredMutationNameCollisionReachesSuffix(t *testing.T) {
 	}, report)
 }
 
+// TestBuildBeyondCountSkipsUnusableFirstChildRank proves the scalar child
+// cursor keeps a beyond-count projection live until a later usable rank.
+func TestBuildBeyondCountSkipsUnusableFirstChildRank(t *testing.T) {
+	t.Parallel()
+
+	document := []byte(documentWithJSONSchema(`{
+		"anyOf":[
+			{"type":"array","minItems":18446744073709551616,
+			 "maxItems":18446744073709551616,
+			 "items":{"type":"string","enum":[false,"ok"]}},
+			{"enum":[0]}
+		]
+	}`))
+	wantCases := []Case{{JSON: []byte(`0`), Valid: true}}
+	wantReport := Report{
+		Stop:  MaxStepsReached,
+		Steps: 200,
+		Covered: []string{
+			publicSchemaPointer + `|#|type|level:number`,
+			publicSchemaPointer + `|#|anyOf|level:mask:2`,
+			publicSchemaPointer + `/anyOf/1|#|type|level:number`,
+			publicSchemaPointer + `/anyOf/1|#|enum|level:member:0`,
+		},
+		Uncovered: []string{
+			publicSchemaPointer + `|#|type|level:boolean`,
+			publicSchemaPointer + `|#|type|level:null`,
+			publicSchemaPointer + `|#|type|level:string`,
+			publicSchemaPointer + `|#|type|level:array`,
+			publicSchemaPointer + `|#|type|level:object`,
+			publicSchemaPointer + `|#|anyOf|level:mask:1`,
+			publicSchemaPointer + `|#|anyOf|level:mask:3`,
+			publicSchemaPointer + `|#|anyOf|fault:anyOf`,
+			publicSchemaPointer + `/anyOf/0|#|type|level:array`,
+			publicSchemaPointer + `/anyOf/0|#|type|fault:type`,
+			publicSchemaPointer + `/anyOf/0|#|minItems|level:valid`,
+			publicSchemaPointer + `/anyOf/0|#|minItems|fault:minItems`,
+			publicSchemaPointer + `/anyOf/0|#|maxItems|level:valid`,
+			publicSchemaPointer + `/anyOf/0|#|maxItems|fault:maxItems`,
+			publicSchemaPointer + `/anyOf/0/items|#/*|type|level:string`,
+			publicSchemaPointer + `/anyOf/0/items|#/*|type|fault:type`,
+			publicSchemaPointer + `/anyOf/0/items|#/*|enum|level:member:0`,
+			publicSchemaPointer + `/anyOf/0/items|#/*|enum|level:member:1`,
+			publicSchemaPointer + `/anyOf/0/items|#/*|enum|fault:enum`,
+			publicSchemaPointer + `/anyOf/1|#|type|level:boolean`,
+			publicSchemaPointer + `/anyOf/1|#|type|level:null`,
+			publicSchemaPointer + `/anyOf/1|#|type|level:string`,
+			publicSchemaPointer + `/anyOf/1|#|type|level:array`,
+			publicSchemaPointer + `/anyOf/1|#|type|level:object`,
+			publicSchemaPointer + `/anyOf/1|#|enum|fault:enum`,
+		},
+	}
+
+	for range 2 {
+		cases, report, err := collectDeterministicRun(Input{
+			OpenAPI: document, OperationID: "selected", MaxSteps: 200,
+		}, nil)
+		require.NoError(t, err)
+		require.Equal(t, wantCases, cases)
+		require.Equal(t, wantReport, report)
+	}
+}
+
 // TestBuildUnavailableBeyondCountChildYieldsNormally proves an exhausted
 // beyond-count item attempt is ordinary uncovered work, not a Build error.
 func TestBuildUnavailableBeyondCountChildYieldsNormally(t *testing.T) {
@@ -464,20 +526,25 @@ func TestBuildUnavailableBeyondCountChildYieldsNormally(t *testing.T) {
 	}
 }
 
-// TestBuildGenuinelyCompoundMatrixIsExact crosses repaired modules in one
-// unchanged public-Build document at sufficient and boundary budgets.
+// TestBuildGenuinelyCompoundMatrixIsExact crosses every repaired module
+// through complete public-Build runs plus one exact cutoff.
+//
+//nolint:maintidx // The exact matrix values intentionally remain visible at the public seam.
 func TestBuildGenuinelyCompoundMatrixIsExact(t *testing.T) {
 	t.Parallel()
 
-	document := []byte(`openapi: 3.0.4
+	matrix := []struct {
+		name     string
+		document []byte
+		cases    []Case
+		report   Report
+	}{
+		{
+			name: "repeated references, object, and request direction",
+			document: []byte(`openapi: 3.0.4
 components:
   schemas:
     Flag: {type: boolean}
-    Exact: {type: number, enum: [2], minimum: 2, maximum: 2, multipleOf: 2}
-    Token:
-      allOf:
-        - {type: string, format: uuid, pattern: "^[0-9a-f-]+$", minLength: 36, maxLength: 36}
-        - {enum: ["00000000-0000-4000-8000-000000000000"]}
 paths:
   /:
     post:
@@ -487,203 +554,279 @@ paths:
           application/json:
             schema:
               type: object
-              required: [left, right, exact, token, items, server]
+              required: [left, right, server]
               additionalProperties: false
               properties:
-                left: {$ref: "#/components/schemas/Flag"}
-                right: {$ref: "#/components/schemas/Flag"}
-                exact: {$ref: "#/components/schemas/Exact"}
-                token: {$ref: "#/components/schemas/Token"}
-                items: {type: array, minItems: 1, maxItems: 1, items: {anyOf: [{enum: [false]}]}}
+                left: {$ref: '#/components/schemas/Flag'}
+                right: {$ref: '#/components/schemas/Flag'}
                 server: {type: boolean, readOnly: true}
-`)
-	valid := Case{
-		JSON: []byte(
-			`{"exact":2,"items":[false],"left":false,"right":false,"server":false,` +
-				`"token":"00000000-0000-4000-8000-000000000000"}`,
-		),
-		Valid: true,
-	}
-	wantSufficientCases := []Case{valid, valid, {JSON: []byte(`null`), Valid: false}}
-	wantSufficientReport := Report{
-		Stop:  MaxStepsReached,
-		Steps: 10_000,
-		Covered: []string{
-			publicSchemaPointer + `|#|type|level:object`,
-			publicSchemaPointer + `|#|type|fault:type`,
-			publicSchemaPointer + `|#/exact|required|level:present`,
-			publicSchemaPointer + `|#/items|required|level:present`,
-			publicSchemaPointer + `|#/left|required|level:present`,
-			publicSchemaPointer + `|#/right|required|level:present`,
-			publicSchemaPointer + `|#/token|required|level:present`,
-			publicSchemaPointer + `/properties/exact|#/exact|type|level:number`,
-			publicSchemaPointer + `/properties/exact|#/exact|enum|level:member:0`,
-			publicSchemaPointer + `/properties/exact|#/exact|minimum|level:valid`,
-			publicSchemaPointer + `/properties/exact|#/exact|maximum|level:valid`,
-			publicSchemaPointer + `/properties/exact|#/exact|multipleOf|level:valid`,
-			publicSchemaPointer + `/properties/items|#/items|type|level:array`,
-			publicSchemaPointer + `/properties/items|#/items|minItems|level:valid`,
-			publicSchemaPointer + `/properties/items|#/items|maxItems|level:valid`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:boolean`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|anyOf|level:mask:1`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:boolean`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|enum|level:member:0`,
-			publicSchemaPointer + `/properties/left|#/left|type|level:boolean`,
-			publicSchemaPointer + `/properties/right|#/right|type|level:boolean`,
-			publicSchemaPointer + `/properties/server|#/server|type|level:boolean`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:string`,
-			publicSchemaPointer + `/properties/token|#/token|allOf|level:all-true`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|type|level:string`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|minLength|level:valid`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|maxLength|level:valid`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|pattern|level:valid`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|format|level:valid`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:string`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|enum|level:member:0`,
+`),
+			cases: []Case{
+				{JSON: []byte(`{"left":false,"right":false,"server":false}`), Valid: true},
+				{JSON: []byte(`null`), Valid: false},
+				{JSON: []byte(`{"__schematest_extra__":null,"left":false,"right":false}`), Valid: false},
+				{JSON: []byte(`{"right":false}`), Valid: false},
+				{JSON: []byte(`{"left":false}`), Valid: false},
+				{JSON: []byte(`{"left":null,"right":false}`), Valid: false},
+				{JSON: []byte(`{"left":false,"right":null}`), Valid: false},
+				{JSON: []byte(`{"left":false,"right":false,"server":null}`), Valid: false},
+			},
+			report: Report{Stop: SpaceExhausted, Steps: 1_910, Covered: []string{
+				publicSchemaPointer + `|#|type|level:object`,
+				publicSchemaPointer + `|#|type|fault:type`,
+				publicSchemaPointer + `|#/*|additionalProperties|fault:additionalProperties`,
+				publicSchemaPointer + `|#/left|required|level:present`,
+				publicSchemaPointer + `|#/left|required|fault:required`,
+				publicSchemaPointer + `|#/right|required|level:present`,
+				publicSchemaPointer + `|#/right|required|fault:required`,
+				publicSchemaPointer + `/properties/left|#/left|type|level:boolean`,
+				publicSchemaPointer + `/properties/left|#/left|type|fault:type`,
+				publicSchemaPointer + `/properties/right|#/right|type|level:boolean`,
+				publicSchemaPointer + `/properties/right|#/right|type|fault:type`,
+				publicSchemaPointer + `/properties/server|#/server|type|level:boolean`,
+				publicSchemaPointer + `/properties/server|#/server|type|fault:type`,
+			}},
 		},
-		Uncovered: []string{
-			publicSchemaPointer + `|#/*|additionalProperties|fault:additionalProperties`,
-			publicSchemaPointer + `|#/exact|required|fault:required`,
-			publicSchemaPointer + `|#/items|required|fault:required`,
-			publicSchemaPointer + `|#/left|required|fault:required`,
-			publicSchemaPointer + `|#/right|required|fault:required`,
-			publicSchemaPointer + `|#/token|required|fault:required`,
-			publicSchemaPointer + `/properties/exact|#/exact|type|fault:type`,
-			publicSchemaPointer + `/properties/exact|#/exact|enum|fault:enum`,
-			publicSchemaPointer + `/properties/exact|#/exact|minimum|fault:minimum`,
-			publicSchemaPointer + `/properties/exact|#/exact|maximum|fault:maximum`,
-			publicSchemaPointer + `/properties/exact|#/exact|multipleOf|fault:multipleOf`,
-			publicSchemaPointer + `/properties/items|#/items|type|fault:type`,
-			publicSchemaPointer + `/properties/items|#/items|minItems|fault:minItems`,
-			publicSchemaPointer + `/properties/items|#/items|maxItems|fault:maxItems`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:null`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:number`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:string`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:array`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:object`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|anyOf|fault:anyOf`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:null`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:number`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:string`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:array`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:object`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|enum|fault:enum`,
-			publicSchemaPointer + `/properties/left|#/left|type|fault:type`,
-			publicSchemaPointer + `/properties/right|#/right|type|fault:type`,
-			publicSchemaPointer + `/properties/server|#/server|type|fault:type`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:boolean`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:null`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:number`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:array`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:object`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|type|fault:type`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|minLength|fault:minLength`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|maxLength|fault:maxLength`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|pattern|fault:pattern`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|format|fault:format`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:boolean`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:null`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:number`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:array`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:object`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|enum|fault:enum`,
+		{
+			name:     "exact number constraints",
+			document: []byte(documentWithJSONSchema(`{"type":"number","minimum":2,"maximum":4,"multipleOf":2}`)),
+			cases: []Case{
+				{JSON: []byte(`2`), Valid: true},
+				{JSON: []byte(`null`), Valid: false},
+				{JSON: []byte(`0`), Valid: false},
+				{JSON: []byte(`8`), Valid: false},
+				{JSON: []byte(`3`), Valid: false},
+			}, report: Report{
+				Stop: SpaceExhausted, Steps: 4457,
+				Covered: []string{
+					publicSchemaPointer + `|#|type|level:number`,
+					publicSchemaPointer + `|#|type|fault:type`,
+					publicSchemaPointer + `|#|minimum|level:valid`,
+					publicSchemaPointer + `|#|minimum|fault:minimum`,
+					publicSchemaPointer + `|#|maximum|level:valid`,
+					publicSchemaPointer + `|#|maximum|fault:maximum`,
+					publicSchemaPointer + `|#|multipleOf|level:valid`,
+					publicSchemaPointer + `|#|multipleOf|fault:multipleOf`,
+				},
+			},
+		},
+		{
+			name:     "directed pattern",
+			document: []byte(documentWithJSONSchema(`{"type":"string","pattern":"^A$"}`)),
+			cases: []Case{
+				{JSON: []byte(`"A"`), Valid: true},
+				{JSON: []byte(`null`), Valid: false},
+				{JSON: []byte(`""`), Valid: false},
+			}, report: Report{
+				Stop: SpaceExhausted, Steps: 12,
+				Covered: []string{
+					publicSchemaPointer + `|#|type|level:string`,
+					publicSchemaPointer + `|#|type|fault:type`,
+					publicSchemaPointer + `|#|pattern|level:valid`,
+					publicSchemaPointer + `|#|pattern|fault:pattern`,
+				},
+			},
+		},
+		{
+			name:     "directed format",
+			document: []byte(documentWithJSONSchema(`{"type":"string","format":"byte"}`)),
+			cases: []Case{
+				{JSON: []byte(`""`), Valid: true},
+				{JSON: []byte(`"+A=="`), Valid: true},
+				{JSON: []byte(`"++0="`), Valid: true},
+				{JSON: []byte(`null`), Valid: false},
+				{JSON: []byte(`"\u0000"`), Valid: false},
+			}, report: Report{
+				Stop: SpaceExhausted, Steps: 66030,
+				Covered: []string{
+					publicSchemaPointer + `|#|type|level:string`,
+					publicSchemaPointer + `|#|type|fault:type`,
+					publicSchemaPointer + `|#|format|level:valid`,
+					publicSchemaPointer + `|#|format|fault:format`,
+				},
+			},
+		},
+		{
+			name:     "directed length",
+			document: []byte(documentWithJSONSchema(`{"type":"string","maxLength":1}`)),
+			cases: []Case{
+				{JSON: []byte(`"\u0000"`), Valid: true},
+				{JSON: []byte(`null`), Valid: false},
+				{JSON: []byte(`"\u0000\u0000"`), Valid: false},
+			}, report: Report{
+				Stop: SpaceExhausted, Steps: 14,
+				Covered: []string{
+					publicSchemaPointer + `|#|type|level:string`,
+					publicSchemaPointer + `|#|type|fault:type`,
+					publicSchemaPointer + `|#|maxLength|level:valid`,
+					publicSchemaPointer + `|#|maxLength|fault:maxLength`,
+				},
+			},
+		},
+		{
+			name:     "array structure",
+			document: []byte(documentWithJSONSchema(`{"type":"array","maxItems":1,"items":{"type":"boolean"}}`)),
+			cases: []Case{
+				{JSON: []byte(`[false]`), Valid: true},
+				{JSON: []byte(`null`), Valid: false},
+				{JSON: []byte(`[false,false]`), Valid: false},
+				{JSON: []byte(`[null]`), Valid: false},
+			}, report: Report{
+				Stop: SpaceExhausted, Steps: 33,
+				Covered: []string{
+					publicSchemaPointer + `|#|type|level:array`,
+					publicSchemaPointer + `|#|type|fault:type`,
+					publicSchemaPointer + `|#|maxItems|level:valid`,
+					publicSchemaPointer + `|#|maxItems|fault:maxItems`,
+					publicSchemaPointer + `/items|#/*|type|level:boolean`,
+					publicSchemaPointer + `/items|#/*|type|fault:type`,
+				},
+			},
+		},
+		{
+			name:     "allOf composition",
+			document: []byte(documentWithJSONSchema(`{"allOf":[{}]}`)),
+			cases: []Case{
+				{JSON: []byte(`false`), Valid: true},
+				{JSON: []byte(`null`), Valid: true},
+				{JSON: []byte(`0`), Valid: true},
+				{JSON: []byte(`""`), Valid: true},
+				{JSON: []byte(`[]`), Valid: true},
+				{JSON: []byte(`{}`), Valid: true},
+				{JSON: []byte(`null`), Valid: true},
+				{JSON: []byte(`0`), Valid: true},
+				{JSON: []byte(`""`), Valid: true},
+				{JSON: []byte(`[]`), Valid: true},
+				{JSON: []byte(`{}`), Valid: true},
+			}, report: Report{
+				Stop: SpaceExhausted, Steps: 71,
+				Covered: []string{
+					publicSchemaPointer + `|#|type|level:boolean`,
+					publicSchemaPointer + `|#|type|level:null`,
+					publicSchemaPointer + `|#|type|level:number`,
+					publicSchemaPointer + `|#|type|level:string`,
+					publicSchemaPointer + `|#|type|level:array`,
+					publicSchemaPointer + `|#|type|level:object`,
+					publicSchemaPointer + `|#|allOf|level:all-true`,
+					publicSchemaPointer + `/allOf/0|#|type|level:boolean`,
+					publicSchemaPointer + `/allOf/0|#|type|level:null`,
+					publicSchemaPointer + `/allOf/0|#|type|level:number`,
+					publicSchemaPointer + `/allOf/0|#|type|level:string`,
+					publicSchemaPointer + `/allOf/0|#|type|level:array`,
+					publicSchemaPointer + `/allOf/0|#|type|level:object`,
+				},
+			},
+		},
+		{
+			name: "anyOf composition",
+			document: []byte(documentWithJSONSchema(`{
+				"anyOf":[
+					{"enum":[false,null,0,"a",[],{}]},
+					{"enum":[true,null,1,"b",[0],{"x":0}]}
+				]
+			}`)),
+			cases: []Case{
+				{JSON: []byte(`false`), Valid: true},
+				{JSON: []byte(`0`), Valid: true},
+				{JSON: []byte(`"a"`), Valid: true},
+				{JSON: []byte(`[]`), Valid: true},
+				{JSON: []byte(`{}`), Valid: true},
+				{JSON: []byte(`true`), Valid: true},
+				{JSON: []byte(`0`), Valid: true},
+				{JSON: []byte(`"a"`), Valid: true},
+				{JSON: []byte(`[]`), Valid: true},
+				{JSON: []byte(`{}`), Valid: true},
+				{JSON: []byte(`0`), Valid: true},
+				{JSON: []byte(`"a"`), Valid: true},
+				{JSON: []byte(`[]`), Valid: true},
+				{JSON: []byte(`{}`), Valid: true},
+				{JSON: []byte(`null`), Valid: true},
+				{JSON: []byte(`1`), Valid: true},
+				{JSON: []byte(`"b"`), Valid: true},
+				{JSON: []byte(`[0]`), Valid: true},
+				{JSON: []byte(`{"x":0}`), Valid: true},
+				{JSON: []byte(`null`), Valid: true},
+				{JSON: []byte(`1`), Valid: true},
+				{JSON: []byte(`"b"`), Valid: true},
+				{JSON: []byte(`[0]`), Valid: true},
+				{JSON: []byte(`{"x":0}`), Valid: true},
+				{JSON: []byte(`-1`), Valid: false},
+				{JSON: []byte(`-1`), Valid: false},
+				{JSON: []byte(`-1`), Valid: false},
+			}, report: Report{
+				Stop: SpaceExhausted, Steps: 1081,
+				Covered: []string{
+					publicSchemaPointer + `|#|type|level:boolean`,
+					publicSchemaPointer + `|#|type|level:null`,
+					publicSchemaPointer + `|#|type|level:number`,
+					publicSchemaPointer + `|#|type|level:string`,
+					publicSchemaPointer + `|#|type|level:array`,
+					publicSchemaPointer + `|#|type|level:object`,
+					publicSchemaPointer + `|#|anyOf|level:mask:1`,
+					publicSchemaPointer + `|#|anyOf|level:mask:2`,
+					publicSchemaPointer + `|#|anyOf|level:mask:3`,
+					publicSchemaPointer + `|#|anyOf|fault:anyOf`,
+					publicSchemaPointer + `/anyOf/0|#|type|level:boolean`,
+					publicSchemaPointer + `/anyOf/0|#|type|level:null`,
+					publicSchemaPointer + `/anyOf/0|#|type|level:number`,
+					publicSchemaPointer + `/anyOf/0|#|type|level:string`,
+					publicSchemaPointer + `/anyOf/0|#|type|level:array`,
+					publicSchemaPointer + `/anyOf/0|#|type|level:object`,
+					publicSchemaPointer + `/anyOf/0|#|enum|level:member:0`,
+					publicSchemaPointer + `/anyOf/0|#|enum|level:member:1`,
+					publicSchemaPointer + `/anyOf/0|#|enum|level:member:2`,
+					publicSchemaPointer + `/anyOf/0|#|enum|level:member:3`,
+					publicSchemaPointer + `/anyOf/0|#|enum|level:member:4`,
+					publicSchemaPointer + `/anyOf/0|#|enum|level:member:5`,
+					publicSchemaPointer + `/anyOf/0|#|enum|fault:enum`,
+					publicSchemaPointer + `/anyOf/1|#|type|level:boolean`,
+					publicSchemaPointer + `/anyOf/1|#|type|level:null`,
+					publicSchemaPointer + `/anyOf/1|#|type|level:number`,
+					publicSchemaPointer + `/anyOf/1|#|type|level:string`,
+					publicSchemaPointer + `/anyOf/1|#|type|level:array`,
+					publicSchemaPointer + `/anyOf/1|#|type|level:object`,
+					publicSchemaPointer + `/anyOf/1|#|enum|level:member:0`,
+					publicSchemaPointer + `/anyOf/1|#|enum|level:member:1`,
+					publicSchemaPointer + `/anyOf/1|#|enum|level:member:2`,
+					publicSchemaPointer + `/anyOf/1|#|enum|level:member:3`,
+					publicSchemaPointer + `/anyOf/1|#|enum|level:member:4`,
+					publicSchemaPointer + `/anyOf/1|#|enum|level:member:5`,
+					publicSchemaPointer + `/anyOf/1|#|enum|fault:enum`,
+				},
+			},
 		},
 	}
-	wantBoundaryReport := Report{
-		Stop:  MaxStepsReached,
-		Steps: 100,
-		Uncovered: []string{
-			publicSchemaPointer + `|#|type|level:object`,
-			publicSchemaPointer + `|#|type|fault:type`,
-			publicSchemaPointer + `|#/*|additionalProperties|fault:additionalProperties`,
-			publicSchemaPointer + `|#/exact|required|level:present`,
-			publicSchemaPointer + `|#/exact|required|fault:required`,
-			publicSchemaPointer + `|#/items|required|level:present`,
-			publicSchemaPointer + `|#/items|required|fault:required`,
-			publicSchemaPointer + `|#/left|required|level:present`,
-			publicSchemaPointer + `|#/left|required|fault:required`,
-			publicSchemaPointer + `|#/right|required|level:present`,
-			publicSchemaPointer + `|#/right|required|fault:required`,
-			publicSchemaPointer + `|#/token|required|level:present`,
-			publicSchemaPointer + `|#/token|required|fault:required`,
-			publicSchemaPointer + `/properties/exact|#/exact|type|level:number`,
-			publicSchemaPointer + `/properties/exact|#/exact|type|fault:type`,
-			publicSchemaPointer + `/properties/exact|#/exact|enum|level:member:0`,
-			publicSchemaPointer + `/properties/exact|#/exact|enum|fault:enum`,
-			publicSchemaPointer + `/properties/exact|#/exact|minimum|level:valid`,
-			publicSchemaPointer + `/properties/exact|#/exact|minimum|fault:minimum`,
-			publicSchemaPointer + `/properties/exact|#/exact|maximum|level:valid`,
-			publicSchemaPointer + `/properties/exact|#/exact|maximum|fault:maximum`,
-			publicSchemaPointer + `/properties/exact|#/exact|multipleOf|level:valid`,
-			publicSchemaPointer + `/properties/exact|#/exact|multipleOf|fault:multipleOf`,
-			publicSchemaPointer + `/properties/items|#/items|type|level:array`,
-			publicSchemaPointer + `/properties/items|#/items|type|fault:type`,
-			publicSchemaPointer + `/properties/items|#/items|minItems|level:valid`,
-			publicSchemaPointer + `/properties/items|#/items|minItems|fault:minItems`,
-			publicSchemaPointer + `/properties/items|#/items|maxItems|level:valid`,
-			publicSchemaPointer + `/properties/items|#/items|maxItems|fault:maxItems`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:boolean`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:null`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:number`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:string`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:array`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|type|level:object`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|anyOf|level:mask:1`,
-			publicSchemaPointer + `/properties/items/items|#/items/*|anyOf|fault:anyOf`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:boolean`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:null`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:number`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:string`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:array`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|type|level:object`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|enum|level:member:0`,
-			publicSchemaPointer + `/properties/items/items/anyOf/0|#/items/*|enum|fault:enum`,
-			publicSchemaPointer + `/properties/left|#/left|type|level:boolean`,
-			publicSchemaPointer + `/properties/left|#/left|type|fault:type`,
-			publicSchemaPointer + `/properties/right|#/right|type|level:boolean`,
-			publicSchemaPointer + `/properties/right|#/right|type|fault:type`,
-			publicSchemaPointer + `/properties/server|#/server|type|level:boolean`,
-			publicSchemaPointer + `/properties/server|#/server|type|fault:type`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:boolean`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:null`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:number`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:string`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:array`,
-			publicSchemaPointer + `/properties/token|#/token|type|level:object`,
-			publicSchemaPointer + `/properties/token|#/token|allOf|level:all-true`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|type|level:string`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|type|fault:type`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|minLength|level:valid`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|minLength|fault:minLength`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|maxLength|level:valid`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|maxLength|fault:maxLength`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|pattern|level:valid`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|pattern|fault:pattern`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|format|level:valid`,
-			publicSchemaPointer + `/properties/token/allOf/0|#/token|format|fault:format`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:boolean`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:null`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:number`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:string`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:array`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|type|level:object`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|enum|level:member:0`,
-			publicSchemaPointer + `/properties/token/allOf/1|#/token|enum|fault:enum`,
-		},
+
+	for _, test := range matrix {
+		for range 2 {
+			cases, report, err := collectDeterministicRun(Input{
+				OpenAPI: test.document, OperationID: "selected", MaxSteps: 100_000,
+			}, nil)
+			require.NoError(t, err, test.name)
+			require.Equal(t, test.cases, cases, test.name)
+			require.Equal(t, test.report, report, test.name)
+			require.Empty(t, report.Uncovered, test.name)
+		}
 	}
+
+	wantBoundary := Report{Stop: MaxStepsReached, Steps: 1, Uncovered: []string{
+		publicSchemaPointer + `|#|type|level:number`,
+		publicSchemaPointer + `|#|type|fault:type`,
+		publicSchemaPointer + `|#|minimum|level:valid`,
+		publicSchemaPointer + `|#|minimum|fault:minimum`,
+		publicSchemaPointer + `|#|maximum|level:valid`,
+		publicSchemaPointer + `|#|maximum|fault:maximum`,
+		publicSchemaPointer + `|#|multipleOf|level:valid`,
+		publicSchemaPointer + `|#|multipleOf|fault:multipleOf`,
+	}}
 
 	for range 2 {
 		cases, report, err := collectDeterministicRun(Input{
-			OpenAPI: document, OperationID: "selected", MaxSteps: 10_000,
+			OpenAPI: matrix[1].document, OperationID: "selected", MaxSteps: 1,
 		}, nil)
 		require.NoError(t, err)
-		require.Equal(t, wantSufficientCases, cases)
-		require.Equal(t, wantSufficientReport, report)
-
-		cases, report, err = collectDeterministicRun(Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100}, nil)
-		require.NoError(t, err)
 		require.Empty(t, cases)
-		require.Equal(t, wantBoundaryReport, report)
+		require.Equal(t, wantBoundary, report)
 	}
 }
 

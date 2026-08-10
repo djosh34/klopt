@@ -15,11 +15,13 @@ type rankedArrayStructure struct {
 // beyondArrayCursor retains only scalar progress for an exact count outside
 // uint64. Each advance selects and immediately discards one concrete child.
 type beyondArrayCursor struct {
-	items        rowSchemaConjunction
-	requirements []requirement
-	context      rowSearchContext
-	projection   uint64
-	position     uint64
+	items          rowSchemaConjunction
+	requirements   []requirement
+	context        rowSearchContext
+	projection     uint64
+	position       uint64
+	childRank      uint64
+	childFiniteEnd uint64
 }
 
 // advance performs one attempt-local child assignment and yields.
@@ -28,20 +30,54 @@ func (cursor *beyondArrayCursor) advance(s *search) (bool, error) {
 		return false, errors.New("schematest: beyond-count array cursor is not initialized")
 	}
 
-	_, exists, usable, _, err := s.rowArrayChildForOrdinalPosition(
-		cursor.items, cursor.requirements, cursor.context, 0,
+	_, exists, usable, finiteSize, err := s.rowArrayChildForOrdinalPosition(
+		cursor.items, cursor.requirements, cursor.context, cursor.childRank,
 	)
-	if err != nil || !exists || !usable {
+	if err != nil {
 		return false, err
 	}
 
-	if cursor.position == ^uint64(0) {
-		return false, errors.New("schematest: beyond-count array position overflow")
+	if finiteSize > 0 {
+		cursor.childFiniteEnd = finiteSize
 	}
 
-	cursor.position++
+	if exists && usable {
+		if cursor.position == ^uint64(0) {
+			return false, errors.New("schematest: beyond-count array position overflow")
+		}
+
+		cursor.position++
+
+		return true, nil
+	}
+
+	if cursor.childFiniteEnd > 0 && cursor.childRank >= cursor.childFiniteEnd-1 {
+		return false, nil
+	}
+
+	if cursor.childRank == ^uint64(0) {
+		return false, errors.New("schematest: beyond-count array child rank overflow")
+	}
+
+	cursor.childRank++
 
 	return true, nil
+}
+
+// newBeyondArrayCursor charges the selected length exactly once before child work.
+func (s *search) newBeyondArrayCursor(
+	items rowSchemaConjunction,
+	requirements []requirement,
+	context rowSearchContext,
+	projection uint64,
+) (*beyondArrayCursor, error) {
+	if err := s.assign(); err != nil {
+		return nil, err
+	}
+
+	return &beyondArrayCursor{
+		items: items, requirements: requirements, context: context, projection: projection,
+	}, nil
 }
 
 // liveProjectionFrontier owns the one resumable projection traversal for a structural search.
@@ -1957,11 +1993,11 @@ func (s *search) walkArrayFrontier(
 				}
 
 				if beyondCursor == nil {
-					beyondCursor = &beyondArrayCursor{
-						items:        rowProjectedArrayItems(view, active),
-						requirements: active,
-						context:      context,
-						projection:   ranks[4],
+					beyondCursor, lengthErr = s.newBeyondArrayCursor(
+						rowProjectedArrayItems(view, active), active, context, ranks[4],
+					)
+					if lengthErr != nil {
+						return false, lengthErr
 					}
 				}
 

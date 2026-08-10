@@ -62,12 +62,16 @@ func TestArrayFrontierHasNoSyntheticCutoffLoop(t *testing.T) {
 	parsed := parseGoFile(t, "structural_frontier.go")
 	children := findGuardFunction(t, parsed, "rowArrayChildrenForOrdinal", "search")
 	advance := findGuardFunction(t, parsed, "advance", "beyondArrayCursor")
+	constructor := findGuardFunction(t, parsed, "newBeyondArrayCursor", "search")
 	walker := findGuardFunction(t, parsed, "walkArrayFrontier", "search")
 
 	loops, found := countGuardBeyondBranchLoops(children.Body)
 	require.True(t, found)
 	require.Zero(t, loops)
 	require.Zero(t, countGuardLoops(advance.Body))
+	require.Equal(t, 1, countGuardCalls(constructor.Body, "assign"))
+	require.Equal(t, 1, countGuardCalls(advance.Body, "rowArrayChildForOrdinalPosition"))
+	require.Equal(t, 1, countGuardCalls(walker.Body, "newBeyondArrayCursor"))
 	require.True(t, guardCallsSelector(walker.Body, "beyondCursor", "advance"))
 }
 
@@ -105,12 +109,19 @@ func TestArrayFaultEditsDoNotPrebuildTargetStorageOrRecipes(t *testing.T) {
 	} {
 		function := findGuardFunction(t, parsed, name, "")
 		require.False(t, guardCalls(function.Body, "make"), name)
-		require.False(t, guardCalls(function.Body, "arrayCombinationAt"), name)
+		require.False(t, guardCalls(function.Body, "arrayCombinationIndexAt"), name)
+	}
+
+	for _, name := range []string{"tryArrayDeletionCandidate", "tryArrayInsertionCandidate"} {
+		function := findGuardFunction(t, parsed, name, "")
+		require.Equal(t, 1, countGuardCalls(function.Body, "newArrayCombinationRankCursor"), name)
+		require.Equal(t, 1, countGuardCalls(function.Body, "Next"), name)
+		require.True(t, guardCallsSelector(function.Body, "indexes", "Next"), name)
 	}
 
 	text, err := os.ReadFile("fault_noncomposition.go")
 	require.NoError(t, err)
-	require.NotContains(t, string(text), "func arrayCombinationAt(")
+	require.NotContains(t, string(text), "func arrayCombinationIndexAt(")
 	require.NotContains(t, string(text), "rowArrayChildrenForOrdinal(")
 }
 
@@ -263,6 +274,30 @@ func countGuardLoops(node ast.Node) int {
 	ast.Inspect(node, func(child ast.Node) bool {
 		switch child.(type) {
 		case *ast.ForStmt, *ast.RangeStmt:
+			count++
+		}
+
+		return true
+	})
+
+	return count
+}
+
+// countGuardCalls counts calls to one function or method name.
+func countGuardCalls(node ast.Node, name string) int {
+	count := 0
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		call, ok := child.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		if identifier, identifierOK := call.Fun.(*ast.Ident); identifierOK && identifier.Name == name {
+			count++
+		}
+
+		if selector, selectorOK := call.Fun.(*ast.SelectorExpr); selectorOK && selector.Sel.Name == name {
 			count++
 		}
 

@@ -334,11 +334,17 @@ func TestArrayCombinationCoordinatesMatchCanonicalTuples(t *testing.T) {
 					break
 				}
 
-				for coordinate, wantIndex := range want {
-					got, gotExists := arrayCombinationIndexAt(length, selected, rank, coordinate)
+				decoder, decoderExists := newArrayCombinationRankCursor(length, selected, rank)
+				require.True(t, decoderExists)
+
+				for _, wantIndex := range want {
+					got, gotExists := decoder.Next()
 					require.True(t, gotExists)
 					require.Equal(t, wantIndex, got)
 				}
+
+				_, gotExists := decoder.Next()
+				require.False(t, gotExists)
 			}
 		}
 	}

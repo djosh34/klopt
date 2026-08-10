@@ -2070,10 +2070,15 @@ func tryArrayDeletionCandidate(
 		return nil, false, beginErr
 	}
 
+	indexes, exists := newArrayCombinationRankCursor(length, selected, rank)
+	if !exists {
+		return nil, false, errors.New("schematest: array deletion rank disappeared")
+	}
+
 	for coordinate := 0; coordinate < selected; coordinate++ {
-		originalIndex, exists := arrayCombinationIndexAt(length, selected, rank, coordinate)
-		if !exists {
-			return nil, false, errors.New("schematest: array deletion rank disappeared")
+		originalIndex, indexExists := indexes.Next()
+		if !indexExists {
+			return nil, false, errors.New("schematest: array deletion rank ended early")
 		}
 
 		index := originalIndex - coordinate
@@ -2121,10 +2126,15 @@ func tryArrayInsertionCandidate(
 		return nil, false, assignErr
 	}
 
+	indexes, exists := newArrayCombinationRankCursor(desired, selected, layoutRank)
+	if !exists {
+		return nil, false, errors.New("schematest: array insertion layout rank disappeared")
+	}
+
 	for coordinate := 0; coordinate < selected; coordinate++ {
-		index, exists := arrayCombinationIndexAt(desired, selected, layoutRank, coordinate)
-		if !exists || index < 0 || index > len(current.array) {
-			return nil, false, errors.New("schematest: array insertion layout rank disappeared")
+		index, indexExists := indexes.Next()
+		if !indexExists || index < 0 || index > len(current.array) {
+			return nil, false, errors.New("schematest: array insertion layout rank ended early")
 		}
 
 		if assignErr := s.assign(); assignErr != nil {
@@ -2253,34 +2263,47 @@ func arrayInsertionRanksAtOrdinal(
 	return [3]uint64{}, false
 }
 
-// arrayCombinationIndexAt directly addresses one coordinate of a ranked
-// combination without materializing the complete index tuple.
-func arrayCombinationIndexAt(length, selected int, rank uint64, wanted int) (int, bool) {
-	if selected < 0 || selected > length || wanted < 0 || wanted >= selected ||
+// arrayCombinationRankCursor decodes one ranked combination monotonically
+// without retaining its complete index tuple.
+type arrayCombinationRankCursor struct {
+	length    int
+	remaining int
+	next      int
+	rank      uint64
+}
+
+func newArrayCombinationRankCursor(
+	length int,
+	selected int,
+	rank uint64,
+) (*arrayCombinationRankCursor, bool) {
+	if selected < 0 || selected > length ||
 		rank >= saturatedBinomial(uint64(length), uint64(selected)) {
+		return nil, false
+	}
+
+	return &arrayCombinationRankCursor{length: length, remaining: selected, rank: rank}, true
+}
+
+// Next advances exactly one combination coordinate.
+func (cursor *arrayCombinationRankCursor) Next() (int, bool) {
+	if cursor == nil || cursor.remaining == 0 {
 		return 0, false
 	}
 
-	next := 0
+	maximum := cursor.length - cursor.remaining
+	for candidate := cursor.next; candidate <= maximum; candidate++ {
+		block := saturatedBinomial(
+			uint64(cursor.length-candidate-1), uint64(cursor.remaining-1),
+		)
+		if cursor.rank < block {
+			cursor.next = candidate + 1
+			cursor.remaining--
 
-	for coordinate := 0; coordinate <= wanted; coordinate++ {
-		remaining := selected - coordinate
-
-		maximum := length - remaining
-		for candidate := next; candidate <= maximum; candidate++ {
-			block := saturatedBinomial(uint64(length-candidate-1), uint64(remaining-1))
-			if rank < block {
-				if coordinate == wanted {
-					return candidate, true
-				}
-
-				next = candidate + 1
-
-				break
-			}
-
-			rank -= block
+			return candidate, true
 		}
+
+		cursor.rank -= block
 	}
 
 	return 0, false
