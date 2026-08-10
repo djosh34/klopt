@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -141,6 +142,9 @@ func TestCleanRoomDependencyGuardRejectsLocalBridge(t *testing.T) {
 	require.Contains(t, violations,
 		root+" -> "+modulePath+"/pkg/schematest/testdata/cleanroombridge/bridge"+
 			" -> "+modulePath+"/pkg/validation")
+	require.Contains(t, violations,
+		root+" -> "+modulePath+"/pkg/schematest/testdata/cleanroombridge/hiddenbridge"+
+			" -> "+modulePath+"/pkg/validation")
 }
 
 // cleanRoomPackage is the import information needed to inspect one non-test package closure.
@@ -171,7 +175,10 @@ var forbiddenCleanRoomImports = []string{
 	modulePath + "/pkg/internal/stringlanguage",
 }
 
-// loadCleanRoomPackages loads the production-only dependency graph selected by go list.
+// loadCleanRoomPackages loads dependencies and replaces every local package's selected
+// imports with imports parsed from all of its production files. Build tags must not hide edges.
+//
+//nolint:cyclop // Local and external imports require distinct graph treatment.
 func loadCleanRoomPackages(t *testing.T, pattern string) map[string]cleanRoomPackage {
 	t.Helper()
 
@@ -195,7 +202,127 @@ func loadCleanRoomPackages(t *testing.T, pattern string) map[string]cleanRoomPac
 		packages[loaded.ImportPath] = loaded
 	}
 
+	root := cleanRoomPatternDirectory(t, pattern)
+	moduleRoot := cleanRoomModuleRoot(t, root)
+	pending := []string{packagesForPattern(t, pattern)}
+	seen := make(map[string]bool)
+
+	for len(pending) > 0 {
+		path := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+
+		if seen[path] || !strings.HasPrefix(path, modulePath) {
+			continue
+		}
+
+		seen[path] = true
+
+		directory := moduleRoot
+		if path != modulePath {
+			directory = filepath.Join(moduleRoot, filepath.FromSlash(strings.TrimPrefix(path, modulePath+"/")))
+		}
+
+		imports := importsFromAllProductionFiles(t, directory)
+		loaded := packages[path]
+		loaded.ImportPath = path
+		loaded.Imports = imports
+		packages[path] = loaded
+
+		for _, imported := range imports {
+			if strings.HasPrefix(imported, modulePath) {
+				pending = append(pending, imported)
+				if _, exists := packages[imported]; !exists {
+					packages[imported] = cleanRoomPackage{ImportPath: imported}
+				}
+
+				continue
+			}
+
+			if _, exists := packages[imported]; !exists {
+				packages[imported] = cleanRoomPackage{ImportPath: imported, Standard: cleanRoomStandardImport(t, imported)}
+			}
+		}
+	}
+
 	return packages
+}
+
+// packagesForPattern resolves a go-list pattern to its import path.
+func packagesForPattern(t *testing.T, pattern string) string {
+	t.Helper()
+
+	command := exec.Command("go", "list", "-f", "{{.ImportPath}}", pattern)
+	output, err := command.Output()
+	require.NoError(t, err)
+
+	return strings.TrimSpace(string(output))
+}
+
+// cleanRoomPatternDirectory resolves a go-list pattern to its source directory.
+func cleanRoomPatternDirectory(t *testing.T, pattern string) string {
+	t.Helper()
+
+	command := exec.Command("go", "list", "-f", "{{.Dir}}", pattern)
+	output, err := command.Output()
+	require.NoError(t, err)
+
+	return strings.TrimSpace(string(output))
+}
+
+// cleanRoomModuleRoot locates the module containing directory.
+func cleanRoomModuleRoot(t *testing.T, directory string) string {
+	t.Helper()
+
+	command := exec.Command("go", "env", "GOMOD")
+	command.Dir = directory
+	output, err := command.Output()
+	require.NoError(t, err)
+
+	return filepath.Dir(strings.TrimSpace(string(output)))
+}
+
+// importsFromAllProductionFiles parses imports without applying build constraints.
+func importsFromAllProductionFiles(t *testing.T, directory string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(directory)
+	require.NoError(t, err)
+
+	imports := make(map[string]bool)
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+
+		file, parseErr := parser.ParseFile(
+			token.NewFileSet(), filepath.Join(directory, entry.Name()), nil, parser.ImportsOnly,
+		)
+		require.NoError(t, parseErr)
+
+		for _, specification := range file.Imports {
+			path, unquoteErr := strconv.Unquote(specification.Path.Value)
+			require.NoError(t, unquoteErr)
+
+			imports[path] = true
+		}
+	}
+
+	result := slices.Collect(maps.Keys(imports))
+	slices.Sort(result)
+
+	return result
+}
+
+// cleanRoomStandardImport reports go-list's standard-library classification.
+func cleanRoomStandardImport(t *testing.T, path string) bool {
+	t.Helper()
+
+	command := exec.Command("go", "list", "-f", "{{.Standard}}", path)
+	output, err := command.Output()
+	require.NoError(t, err)
+
+	return strings.TrimSpace(string(output)) == "true"
 }
 
 // cleanRoomDependencyViolations reports forbidden edges with their complete path from root.

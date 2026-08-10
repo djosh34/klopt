@@ -3,11 +3,12 @@ package schematest
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"slices"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa" //nolint:depguard // SSA is required for the source-local whole-program guard.
 
 	"github.com/stretchr/testify/require"
 )
@@ -31,6 +32,27 @@ func TestOperationIDFlowGuardRejectsSourceSpecificBranching(t *testing.T) {
 
 	violations := operationIDFlowViolations(parseGuardPackage(t, map[string]string{"branch.go": source}))
 	require.NotEmpty(t, violations)
+}
+
+func TestOperationIDFlowGuardRejectsTrustedFunctionBypasses(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"parse prefix": `package schematest
+			type Input struct { OperationID string }
+			func Build(input Input) bool { return parseInput(input) }
+			func parseInput(input Input) bool { return len(input.OperationID) > 2 && input.OperationID[:2] == "x-" }`,
+		"selection constant equality": `package schematest
+			type Input struct { OperationID string }
+			func Build(input Input) bool { return selectRequestSchema(input.OperationID) }
+			func selectRequestSchema(operationID string) bool { return operationID == "copiedFixtureOperation" }`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.NotEmpty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"guard.go": source})))
+		})
+	}
 }
 
 func TestOperationIDFlowGuardAllowsNormalSelection(t *testing.T) {
@@ -84,6 +106,32 @@ func TestCopiedSemanticGuardRejectsNamedHelperGraph(t *testing.T) {
 
 	guardPackage := parseGuardPackage(t, map[string]string{"answers.go": source})
 	require.NotEmpty(t, copiedAnswerViolations(guardPackage, nil))
+}
+
+func TestCopiedSemanticGuardRejectsIdentityAndShapeBypasses(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"approved name wrong role": `package schematest
+			type answer struct { keyword string; valid bool }
+			var operationMethods = []answer{{keyword: "type", valid: true}, {keyword: "enum", valid: false}}`,
+		"numeric boolean answer table": `package schematest
+			type answer struct { code int; valid bool }
+			var renamed = []answer{{code: 1, valid: true}, {code: 2, valid: false}}`,
+		"local helper return": `package schematest
+			type answer struct { keyword string; valid bool }
+			func copied() []answer { return []answer{{keyword: "type", valid: true}, {keyword: "enum", valid: false}} }
+			func Build() { _ = copied() }`,
+		"non fingerprint graph": `package schematest
+			type node struct { next *node; answer string }
+			var copied = &node{answer: "object", next: &node{answer: "string"}}`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.NotEmpty(t, copiedAnswerViolations(parseGuardPackage(t, map[string]string{"guard.go": source}), nil))
+		})
+	}
 }
 
 func TestCopiedSemanticGuardAllowsIndependentGenericSpecifications(t *testing.T) {
@@ -156,12 +204,17 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 						continue
 					}
 
+					if _, lookup := instruction.(*ssa.Lookup); lookup {
+						continue
+					}
+
+					if binary, binaryOK := instruction.(*ssa.BinOp); binaryOK &&
+						(binary.Op == token.EQL || binary.Op == token.NEQ) {
+						continue
+					}
+
 					if isCall {
 						callee := call.Common().StaticCallee()
-						if callee != nil && (callee.Name() == "parseInput" || callee.Name() == "selectRequestSchema") {
-							continue
-						}
-
 						if callee != nil && functions[callee] && !returned[callee] {
 							continue
 						}
@@ -183,14 +236,10 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 	var violations []string
 
 	for function := range functions {
-		if function.Name() == "selectRequestSchema" {
-			continue
-		}
-
 		for _, block := range function.Blocks {
 			for _, instruction := range block.Instrs {
 				for _, operand := range instruction.Operands(nil) {
-					if operand == nil || !tainted[*operand] || operationIDSelectionCall(function, instruction) {
+					if operand == nil || !tainted[*operand] || operationIDAllowedUse(function, instruction) {
 						continue
 					}
 
@@ -207,21 +256,44 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 	return slices.Compact(violations)
 }
 
-func operationIDSelectionCall(function *ssa.Function, instruction ssa.Instruction) bool {
-	if function.Name() != "parseInput" {
-		return false
+func operationIDAllowedUse(function *ssa.Function, instruction ssa.Instruction) bool {
+	switch typed := instruction.(type) {
+	case *ssa.BinOp:
+		if typed.Op != token.EQL && typed.Op != token.NEQ {
+			return false
+		}
+
+		_, leftConstant := typed.X.(*ssa.Const)
+		_, rightConstant := typed.Y.(*ssa.Const)
+
+		return !leftConstant && !rightConstant
+	case *ssa.Lookup, *ssa.Phi, *ssa.ChangeType, *ssa.Convert, *ssa.MakeInterface, *ssa.Return, *ssa.UnOp:
+		return true
+	case *ssa.Store:
+		return operationIDLocalAddress(typed.Addr)
 	}
 
-	call, isCall := instruction.(ssa.CallInstruction)
-	if !isCall {
-		_, isValue := instruction.(ssa.Value)
-
-		return isValue
+	call, ok := instruction.(ssa.CallInstruction)
+	if !ok {
+		return false
 	}
 
 	callee := call.Common().StaticCallee()
 
-	return callee != nil && callee.Name() == "selectRequestSchema"
+	return callee != nil && callee.Pkg == function.Pkg
+}
+
+func operationIDLocalAddress(value ssa.Value) bool {
+	switch typed := value.(type) {
+	case *ssa.Alloc:
+		return true
+	case *ssa.FieldAddr:
+		return operationIDLocalAddress(typed.X)
+	case *ssa.IndexAddr:
+		return operationIDLocalAddress(typed.X)
+	}
+
+	return false
 }
 
 func operationIDRuntimeFunctions(build *ssa.Function) map[*ssa.Function]bool {
@@ -291,6 +363,7 @@ func operationIDField(value ssa.Value, currentPackage *types.Package) bool {
 
 func copiedSemanticGraphViolations(guardPackage *sourceGuardPackage) []string {
 	violations := packageSemanticDataViolations(guardPackage)
+	violations = append(violations, localSemanticTableViolations(guardPackage)...)
 
 	for _, file := range guardPackage.files {
 		for _, declaration := range file.Decls {
@@ -311,19 +384,19 @@ func copiedSemanticGraphViolations(guardPackage *sourceGuardPackage) []string {
 }
 
 // allowedSemanticData is the literal provenance allowlist for independently authored admission and format specifications.
-var allowedSemanticData = map[string]bool{ //nolint:gochecknoglobals // A package source guard requires package-wide identities.
-	"operationMethods":            true,
-	"schemaKinds":                 true,
-	"schemaKeywords":              true,
-	"numericFormatNames":          true,
-	"base64FormatSpecification":   true,
-	"dateFormatSpecification":     true,
-	"dateTimeFormatSpecification": true,
-	"emailFormatSpecification":    true,
-	"ipv4FormatSpecification":     true,
-	"uuidFormatSpecification":     true,
-	"cidrFormatSpecification":     true,
-	"passwordFormatSpecification": true,
+var allowedSemanticData = map[string]string{ //nolint:gochecknoglobals // Exact identities and roles form the provenance boundary.
+	"operationMethods":            "[]string",
+	"schemaKinds":                 "map[string]schemaKind",
+	"schemaKeywords":              "map[string]bool",
+	"numericFormatNames":          "map[string]schemaFormat",
+	"base64FormatSpecification":   "*stringFormatSpecification",
+	"dateFormatSpecification":     "*stringFormatSpecification",
+	"dateTimeFormatSpecification": "*stringFormatSpecification",
+	"emailFormatSpecification":    "*stringFormatSpecification",
+	"ipv4FormatSpecification":     "*stringFormatSpecification",
+	"uuidFormatSpecification":     "*stringFormatSpecification",
+	"cidrFormatSpecification":     "*stringFormatSpecification",
+	"passwordFormatSpecification": "*stringFormatSpecification",
 }
 
 func packageSemanticDataViolations(guardPackage *sourceGuardPackage) []string {
@@ -331,7 +404,12 @@ func packageSemanticDataViolations(guardPackage *sourceGuardPackage) []string {
 
 	for _, name := range guardPackage.pkg.Scope().Names() {
 		object, ok := guardPackage.pkg.Scope().Lookup(name).(*types.Var)
-		if !ok || allowedSemanticData[name] || genericNumericSpecification(object.Type()) || !aggregateSemanticData(object.Type()) {
+		if !ok || !aggregateSemanticData(object.Type()) {
+			continue
+		}
+
+		role := types.TypeString(object.Type(), ownershipTypeQualifier(guardPackage.pkg))
+		if allowedSemanticData[name] == role || genericNumericSpecification(object.Type()) {
 			continue
 		}
 
@@ -351,10 +429,19 @@ func aggregateSemanticData(owned types.Type) bool {
 }
 
 func genericNumericSpecification(owned types.Type) bool {
-	return genericNumericSpecificationSeen(owned, make(map[types.Type]bool))
+	var numeric, boolean bool
+	if !genericNumericSpecificationSeen(owned, make(map[types.Type]bool), &numeric, &boolean) {
+		return false
+	}
+
+	return numeric != boolean
 }
 
-func genericNumericSpecificationSeen(owned types.Type, seen map[types.Type]bool) bool {
+func genericNumericSpecificationSeen(
+	owned types.Type,
+	seen map[types.Type]bool,
+	numeric, boolean *bool,
+) bool {
 	owned = types.Unalias(owned)
 	if seen[owned] {
 		return true
@@ -364,14 +451,26 @@ func genericNumericSpecificationSeen(owned types.Type, seen map[types.Type]bool)
 
 	switch typed := owned.Underlying().(type) {
 	case *types.Basic:
-		return typed.Info()&(types.IsInteger|types.IsFloat|types.IsBoolean) != 0
+		if typed.Info()&types.IsBoolean != 0 {
+			*boolean = true
+
+			return true
+		}
+
+		if typed.Info()&(types.IsInteger|types.IsFloat) != 0 {
+			*numeric = true
+
+			return true
+		}
+
+		return false
 	case *types.Array:
-		return genericNumericSpecificationSeen(typed.Elem(), seen)
+		return genericNumericSpecificationSeen(typed.Elem(), seen, numeric, boolean)
 	case *types.Slice:
-		return genericNumericSpecificationSeen(typed.Elem(), seen)
+		return genericNumericSpecificationSeen(typed.Elem(), seen, numeric, boolean)
 	case *types.Struct:
 		for index := range typed.NumFields() {
-			if !genericNumericSpecificationSeen(typed.Field(index).Type(), seen) {
+			if !genericNumericSpecificationSeen(typed.Field(index).Type(), seen, numeric, boolean) {
 				return false
 			}
 		}
@@ -379,6 +478,93 @@ func genericNumericSpecificationSeen(owned types.Type, seen map[types.Type]bool)
 		return true
 	default:
 		return false
+	}
+}
+
+func localSemanticTableViolations(guardPackage *sourceGuardPackage) []string {
+	var violations []string
+
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				returned, returnOK := node.(*ast.ReturnStmt)
+				if !returnOK {
+					return true
+				}
+
+				for _, result := range returned.Results {
+					literal, literalOK := result.(*ast.CompositeLit)
+					if !literalOK || len(literal.Elts) < 2 {
+						continue
+					}
+
+					valueType := guardPackage.info.TypeOf(literal)
+
+					var element types.Type
+
+					switch typed := types.Unalias(valueType).Underlying().(type) {
+					case *types.Array:
+						element = typed.Elem()
+					case *types.Slice:
+						element = typed.Elem()
+					case *types.Map:
+						element = typed.Elem()
+					default:
+						continue
+					}
+
+					categories := make(map[string]bool)
+					semanticPrimitiveCategories(element, categories, make(map[types.Type]bool))
+
+					if len(categories) > 1 {
+						violations = append(violations, function.Name.Name+": copied local semantic table")
+					}
+				}
+
+				return false
+			})
+		}
+	}
+
+	return violations
+}
+
+func semanticPrimitiveCategories(owned types.Type, categories map[string]bool, seen map[types.Type]bool) {
+	owned = types.Unalias(owned)
+	if seen[owned] {
+		return
+	}
+
+	seen[owned] = true
+
+	switch typed := owned.Underlying().(type) {
+	case *types.Basic:
+		switch {
+		case typed.Info()&types.IsBoolean != 0:
+			categories["boolean"] = true
+		case typed.Info()&(types.IsInteger|types.IsFloat) != 0:
+			categories["numeric"] = true
+		case typed.Info()&types.IsString != 0:
+			categories["string"] = true
+		}
+	case *types.Pointer:
+		semanticPrimitiveCategories(typed.Elem(), categories, seen)
+	case *types.Array:
+		semanticPrimitiveCategories(typed.Elem(), categories, seen)
+	case *types.Slice:
+		semanticPrimitiveCategories(typed.Elem(), categories, seen)
+	case *types.Map:
+		semanticPrimitiveCategories(typed.Key(), categories, seen)
+		semanticPrimitiveCategories(typed.Elem(), categories, seen)
+	case *types.Struct:
+		for index := range typed.NumFields() {
+			semanticPrimitiveCategories(typed.Field(index).Type(), categories, seen)
+		}
 	}
 }
 

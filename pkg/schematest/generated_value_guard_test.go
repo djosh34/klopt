@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa" //nolint:depguard // SSA is required for the source-local whole-program guard.
 
 	"github.com/stretchr/testify/require"
 )
@@ -100,6 +100,52 @@ func TestGeneratedValueGuardRejectsEscapesThroughRepresentations(t *testing.T) {
 
 			violations := generatedValueEscapeViolations(parseGuardPackage(t, map[string]string{"guard.go": test.source}))
 			require.NotEmpty(t, violations)
+		})
+	}
+}
+
+func TestGeneratedValueGuardRejectsDerivedAndInterproceduralRetention(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"external derived bytes": `package schematest
+			import "bytes"
+			type Case struct { JSON []byte }; var saved []byte
+			func Build(yield func(Case)) { current := Case{JSON: []byte("null")}; saved = bytes.Clone(current.JSON); yield(current) }`,
+		"external derived string": `package schematest
+			import "strings"
+			type Case struct { JSON []byte }; var saved string
+			func Build(yield func(Case)) { current := Case{JSON: []byte("null")}; saved = strings.TrimSpace(string(current.JSON)); yield(current) }`,
+		"branch successor": `package schematest
+			type Case struct { JSON []byte }
+			func consume([]byte) {}
+			func Build(yield func(Case) error) error { current := Case{JSON: []byte("null")}; if err := yield(current); err != nil { return err }; consume(current.JSON); return nil }`,
+		"indirect local helper": `package schematest
+			type Case struct { JSON []byte }; var saved []byte
+			func keep(current Case) { saved = current.JSON }
+			func Build(yield func(Case)) { helper := keep; current := Case{JSON: []byte("null")}; helper(current); yield(current) }`,
+		"pointer helper write": `package schematest
+			type Case struct { JSON []byte }; type owner struct { saved []byte }
+			func keep(target *owner, value []byte) { target.saved = value }
+			func Build(yield func(Case)) { target := new(owner); current := Case{JSON: []byte("null")}; keep(target, current.JSON); yield(current) }`,
+		"map helper write": `package schematest
+			type Case struct { JSON []byte }
+			func keep(target map[int][]byte, value []byte) { target[0] = value }
+			func Build(yield func(Case)) { target := make(map[int][]byte); current := Case{JSON: []byte("null")}; keep(target, current.JSON); yield(current) }`,
+		"slice helper write": `package schematest
+			type Case struct { JSON []byte }
+			func keep(target [][]byte, value []byte) { target[0] = value }
+			func Build(yield func(Case)) { target := make([][]byte, 1); current := Case{JSON: []byte("null")}; keep(target, current.JSON); yield(current) }`,
+		"loop continuation": `package schematest
+			type Case struct { JSON []byte }
+			func consume([]byte) {}
+			func Build(yield func(Case)) { var previous []byte; for range 2 { if previous != nil { consume(previous) }; current := Case{JSON: []byte("null")}; previous = current.JSON; yield(current) } }`,
+	}
+
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.NotEmpty(t, generatedValueEscapeViolations(parseGuardPackage(t, map[string]string{"guard.go": source})))
 		})
 	}
 }
@@ -221,7 +267,6 @@ func generatedRuntimeFunctions(build *ssa.Function) map[*ssa.Function]bool {
 		}
 
 		functions[function] = true
-
 		pending = append(pending, function.AnonFuncs...)
 
 		for _, block := range function.Blocks {
@@ -231,12 +276,11 @@ func generatedRuntimeFunctions(build *ssa.Function) map[*ssa.Function]bool {
 					continue
 				}
 
-				callee := call.Common().StaticCallee()
-				if callee == nil || callee.Pkg != build.Pkg || callee.Name() == "parseInput" || callee.Name() == "makePlan" {
-					continue
+				for callee := range resolvedLocalCallees(call.Common().Value, build.Pkg, make(map[ssa.Value]bool)) {
+					if callee.Name() != "parseInput" && callee.Name() != "makePlan" {
+						pending = append(pending, callee)
+					}
 				}
-
-				pending = append(pending, callee)
 			}
 		}
 	}
@@ -244,6 +288,47 @@ func generatedRuntimeFunctions(build *ssa.Function) map[*ssa.Function]bool {
 	return functions
 }
 
+func resolvedLocalCallees(value ssa.Value, pkg *ssa.Package, seen map[ssa.Value]bool) map[*ssa.Function]bool {
+	result := make(map[*ssa.Function]bool)
+	if value == nil || seen[value] {
+		return result
+	}
+
+	seen[value] = true
+
+	switch typed := value.(type) {
+	case *ssa.Function:
+		if typed.Pkg == pkg || typed.Parent() != nil && typed.Parent().Pkg == pkg {
+			result[typed] = true
+		}
+	case *ssa.MakeClosure:
+		if function, ok := typed.Fn.(*ssa.Function); ok {
+			result[function] = true
+		}
+	case *ssa.Phi:
+		for _, edge := range typed.Edges {
+			for function := range resolvedLocalCallees(edge, pkg, seen) {
+				result[function] = true
+			}
+		}
+	case *ssa.ChangeType:
+		for function := range resolvedLocalCallees(typed.X, pkg, seen) {
+			result[function] = true
+		}
+	case *ssa.Convert:
+		for function := range resolvedLocalCallees(typed.X, pkg, seen) {
+			result[function] = true
+		}
+	case *ssa.MakeInterface:
+		for function := range resolvedLocalCallees(typed.X, pkg, seen) {
+			result[function] = true
+		}
+	}
+
+	return result
+}
+
+//nolint:gocyclo,nestif // Forward and backward interprocedural propagation share one fixed-point transfer.
 func propagateGeneratedValueTaint(
 	instruction ssa.Instruction,
 	functions map[*ssa.Function]bool,
@@ -252,17 +337,27 @@ func propagateGeneratedValueTaint(
 ) bool {
 	changed := false
 
-	if stored, ok := instruction.(*ssa.Store); ok && taint.values[stored.Val] && !taint.values[stored.Addr] {
-		taint.values[stored.Addr] = true
-		changed = true
+	if stored, ok := instruction.(*ssa.Store); ok {
+		if taint.values[stored.Val] && !taint.values[stored.Addr] {
+			taint.values[stored.Addr] = true
+			changed = true
+		}
+
+		if taint.values[stored.Addr] && generatedValueCarrierType(stored.Val.Type(), currentPackage) &&
+			!taint.values[stored.Val] {
+			taint.values[stored.Val] = true
+			changed = true
+		}
 	}
 
 	call, isCall := instruction.(ssa.CallInstruction)
 	if isCall {
 		common := call.Common()
+		for callee := range resolvedLocalCallees(common.Value, instruction.Parent().Pkg, make(map[ssa.Value]bool)) {
+			if !functions[callee] {
+				continue
+			}
 
-		callee := common.StaticCallee()
-		if callee != nil && functions[callee] {
 			for index, argument := range common.Args {
 				if index < len(callee.Params) && taint.values[argument] && !taint.values[callee.Params[index]] {
 					taint.values[callee.Params[index]] = true
@@ -282,19 +377,61 @@ func propagateGeneratedValueTaint(
 	}
 
 	value, hasValue := instruction.(ssa.Value)
-	if !hasValue || taint.values[value] || !generatedValueCarrierType(value.Type(), currentPackage) {
+	if hasValue && taint.values[value] {
+		for _, operand := range instruction.Operands(nil) {
+			if operand != nil && *operand != nil && generatedValueCarrierType((*operand).Type(), currentPackage) &&
+				!taint.values[*operand] {
+				taint.values[*operand] = true
+				changed = true
+			}
+		}
+
+		if callbackCall, ok := instruction.(ssa.CallInstruction); ok {
+			for callee := range resolvedLocalCallees(
+				callbackCall.Common().Value, instruction.Parent().Pkg, make(map[ssa.Value]bool),
+			) {
+				for _, block := range callee.Blocks {
+					for _, candidate := range block.Instrs {
+						returned, returnOK := candidate.(*ssa.Return)
+						if !returnOK {
+							continue
+						}
+
+						for _, result := range returned.Results {
+							if generatedValueCarrierType(result.Type(), currentPackage) && !taint.values[result] {
+								taint.values[result] = true
+								changed = true
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return changed
+	}
+
+	if !hasValue || !generatedValueCarrierType(value.Type(), currentPackage) {
 		return changed
 	}
 
 	if isCall {
-		callee := call.Common().StaticCallee()
-		if callee != nil && taint.returns[callee] {
+		common := call.Common()
+		for callee := range resolvedLocalCallees(common.Value, instruction.Parent().Pkg, make(map[ssa.Value]bool)) {
+			if taint.returns[callee] {
+				taint.values[value] = true
+
+				return true
+			}
+		}
+
+		if generatedCallHasTaintedArgument(common, taint.values) && generatedDerivedResultType(value.Type()) {
 			taint.values[value] = true
 
 			return true
 		}
 
-		if builtin, ok := call.Common().Value.(*ssa.Builtin); !ok || builtin.Name() != "append" {
+		if builtin, ok := common.Value.(*ssa.Builtin); !ok || builtin.Name() != "append" {
 			return changed
 		}
 	}
@@ -313,7 +450,7 @@ func propagateGeneratedValueTaint(
 	return changed
 }
 
-//nolint:cyclop // The sink forms are the ownership boundary covered by the ticket.
+//nolint:cyclop,gocyclo // The sink forms and CFG lifetime transitions form one ownership boundary.
 func generatedValueSinks(
 	functions map[*ssa.Function]bool,
 	tainted map[ssa.Value]bool,
@@ -321,25 +458,19 @@ func generatedValueSinks(
 ) []string {
 	var violations []string
 
-	callbackOwners := make(map[*ssa.Function]bool)
+	callbacks := generatedCallbackValues(functions, currentPackage)
+	callbackOwners := generatedCallbackOwners(functions, callbacks)
 
+	cleared := generatedCallbackResultValues(functions, callbacks)
 	for function := range functions {
-		for current := function; current != nil; current = current.Parent() {
-			if generatedFunctionHasCallback(current, currentPackage) {
-				callbackOwners[function] = true
-
-				break
-			}
-		}
-	}
-
-	for function := range functions {
+		callbackAtEntry := generatedCallbackEntryState(function, callbacks)
 		for _, block := range function.Blocks {
-			callbackSeen := false
+			callbackSeen := callbackAtEntry[block]
 			for _, instruction := range block.Instrs {
 				if callbackSeen {
 					for _, operand := range instruction.Operands(nil) {
-						if operand != nil && tainted[*operand] && generatedValueCarrierType((*operand).Type(), currentPackage) {
+						if operand != nil && tainted[*operand] && !cleared[*operand] &&
+							generatedValueCarrierType((*operand).Type(), currentPackage) {
 							violations = append(violations, generatedValuePosition(instruction)+": callback alias used after callback return")
 
 							break
@@ -350,11 +481,12 @@ func generatedValueSinks(
 				switch typed := instruction.(type) {
 				case *ssa.Store:
 					if tainted[typed.Val] && generatedStoreEscapes(typed.Addr) &&
-						(generatedGlobalAddress(typed.Addr) || callbackOwners[function]) {
+						(callbackOwners[function] || generatedGlobalAddress(typed.Addr) || generatedParameterAddress(typed.Addr)) {
 						violations = append(violations, generatedValuePosition(instruction)+": generated value stored in owner state")
 					}
 				case *ssa.MapUpdate:
-					if (tainted[typed.Key] || tainted[typed.Value]) && !tainted[typed.Map] && callbackOwners[function] {
+					if (callbackOwners[function] || generatedGlobalAddress(typed.Map) || generatedParameterAddress(typed.Map)) &&
+						(tainted[typed.Key] || tainted[typed.Value]) && !tainted[typed.Map] {
 						violations = append(violations, generatedValuePosition(instruction)+": generated value stored in map")
 					}
 				case *ssa.Send:
@@ -364,15 +496,35 @@ func generatedValueSinks(
 				}
 
 				call, ok := instruction.(ssa.CallInstruction)
-				if ok {
-					if builtin, builtinOK := call.Common().Value.(*ssa.Builtin); builtinOK && builtin.Name() == "append" &&
-						callbackOwners[function] && generatedCallHasTaintedArgument(call.Common(), tainted) {
-						violations = append(violations, generatedValuePosition(instruction)+": generated value appended to callback-lived collection")
+				if !ok {
+					continue
+				}
+
+				common := call.Common()
+				if builtin, builtinOK := common.Value.(*ssa.Builtin); builtinOK && builtin.Name() == "append" &&
+					callbackOwners[function] && generatedCallHasTaintedArgument(common, tainted) {
+					violations = append(violations, generatedValuePosition(instruction)+": generated value appended to callback-lived collection")
+				}
+
+				if generatedExternalCallback(common, callbacks) {
+					callbackSeen = true
+
+					continue
+				}
+
+				if generatedCallHasTaintedArgument(common, tainted) && common.StaticCallee() == nil &&
+					len(resolvedLocalCallees(common.Value, function.Pkg, make(map[ssa.Value]bool))) == 0 {
+					violations = append(violations, generatedValuePosition(instruction)+": generated value escapes through unknown call")
+				}
+			}
+
+			if callbackSeen {
+				for _, successor := range block.Succs {
+					if successor.Index > block.Index || !generatedBlockUsesTaint(successor, tainted, cleared, currentPackage) {
+						continue
 					}
 
-					if generatedExternalCallback(call.Common(), currentPackage) {
-						callbackSeen = true
-					}
+					violations = append(violations, function.String()+": generated callback value survives loop continuation")
 				}
 			}
 		}
@@ -381,17 +533,172 @@ func generatedValueSinks(
 	return violations
 }
 
-func generatedFunctionHasCallback(function *ssa.Function, currentPackage *types.Package) bool {
-	for _, block := range function.Blocks {
-		for _, instruction := range block.Instrs {
-			call, ok := instruction.(ssa.CallInstruction)
-			if ok && generatedExternalCallback(call.Common(), currentPackage) {
+func generatedBlockUsesTaint(
+	block *ssa.BasicBlock,
+	tainted, cleared map[ssa.Value]bool,
+	currentPackage *types.Package,
+) bool {
+	for _, instruction := range block.Instrs {
+		for _, operand := range instruction.Operands(nil) {
+			if operand != nil && *operand != nil && tainted[*operand] && !cleared[*operand] &&
+				generatedValueCarrierType((*operand).Type(), currentPackage) {
 				return true
 			}
 		}
 	}
 
 	return false
+}
+
+func generatedCallbackValues(functions map[*ssa.Function]bool, currentPackage *types.Package) map[ssa.Value]bool {
+	callbacks := make(map[ssa.Value]bool)
+
+	for function := range functions {
+		if function.Name() != "Build" {
+			continue
+		}
+
+		for _, parameter := range function.Params {
+			if generatedCallbackType(parameter.Type(), currentPackage) {
+				callbacks[parameter] = true
+			}
+		}
+	}
+
+	for changed := true; changed; {
+		changed = false
+
+		for function := range functions {
+			for _, block := range function.Blocks {
+				for _, instruction := range block.Instrs {
+					call, ok := instruction.(ssa.CallInstruction)
+					if ok {
+						for callee := range resolvedLocalCallees(call.Common().Value, function.Pkg, make(map[ssa.Value]bool)) {
+							for index, argument := range call.Common().Args {
+								if index < len(callee.Params) && callbacks[argument] && !callbacks[callee.Params[index]] {
+									callbacks[callee.Params[index]] = true
+									changed = true
+								}
+							}
+						}
+					}
+
+					value, isValue := instruction.(ssa.Value)
+					if !isValue || callbacks[value] {
+						continue
+					}
+
+					for _, operand := range instruction.Operands(nil) {
+						if operand != nil && callbacks[*operand] {
+							callbacks[value] = true
+							changed = true
+
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return callbacks
+}
+
+func generatedCallbackResultValues(
+	functions map[*ssa.Function]bool,
+	callbacks map[ssa.Value]bool,
+) map[ssa.Value]bool {
+	cleared := make(map[ssa.Value]bool)
+
+	for function := range functions {
+		for _, block := range function.Blocks {
+			for _, instruction := range block.Instrs {
+				call, ok := instruction.(ssa.CallInstruction)
+
+				value, isValue := instruction.(ssa.Value)
+				if ok && isValue && generatedExternalCallback(call.Common(), callbacks) {
+					cleared[value] = true
+				}
+			}
+		}
+	}
+
+	for changed := true; changed; {
+		changed = false
+
+		for function := range functions {
+			for _, block := range function.Blocks {
+				for _, instruction := range block.Instrs {
+					value, ok := instruction.(ssa.Value)
+					if !ok || cleared[value] {
+						continue
+					}
+
+					for _, operand := range instruction.Operands(nil) {
+						if operand != nil && cleared[*operand] {
+							cleared[value] = true
+							changed = true
+
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return cleared
+}
+
+func generatedCallbackOwners(functions map[*ssa.Function]bool, callbacks map[ssa.Value]bool) map[*ssa.Function]bool {
+	owners := make(map[*ssa.Function]bool)
+
+	for function := range functions {
+		for _, parameter := range function.Params {
+			owners[function] = owners[function] || callbacks[parameter]
+		}
+
+		for _, freeVariable := range function.FreeVars {
+			owners[function] = owners[function] || callbacks[freeVariable]
+		}
+	}
+
+	return owners
+}
+
+func generatedCallbackEntryState(function *ssa.Function, callbacks map[ssa.Value]bool) map[*ssa.BasicBlock]bool {
+	entry := make(map[*ssa.BasicBlock]bool)
+
+	for changed := true; changed; {
+		changed = false
+
+		for _, block := range function.Blocks {
+			seen := entry[block]
+			for _, instruction := range block.Instrs {
+				call, ok := instruction.(ssa.CallInstruction)
+				if ok && generatedExternalCallback(call.Common(), callbacks) {
+					seen = true
+				}
+			}
+
+			if !seen {
+				continue
+			}
+
+			for _, successor := range block.Succs {
+				if successor.Index <= block.Index {
+					continue
+				}
+
+				if !entry[successor] {
+					entry[successor] = true
+					changed = true
+				}
+			}
+		}
+	}
+
+	return entry
 }
 
 func generatedCallHasTaintedArgument(common *ssa.CallCommon, tainted map[ssa.Value]bool) bool {
@@ -417,9 +724,22 @@ func generatedGlobalAddress(address ssa.Value) bool {
 	return false
 }
 
+func generatedParameterAddress(address ssa.Value) bool {
+	switch typed := address.(type) {
+	case *ssa.Parameter, *ssa.FreeVar:
+		return true
+	case *ssa.FieldAddr:
+		return generatedParameterAddress(typed.X)
+	case *ssa.IndexAddr:
+		return generatedParameterAddress(typed.X)
+	}
+
+	return false
+}
+
 func generatedStoreEscapes(address ssa.Value) bool {
 	switch typed := address.(type) {
-	case *ssa.Global:
+	case *ssa.Global, *ssa.Parameter, *ssa.FreeVar:
 		return true
 	case *ssa.Alloc:
 		return typed.Heap
@@ -432,19 +752,17 @@ func generatedStoreEscapes(address ssa.Value) bool {
 	return false
 }
 
-func generatedExternalCallback(common *ssa.CallCommon, currentPackage *types.Package) bool {
-	if common.StaticCallee() != nil || common.Signature() == nil || len(common.Args) == 0 {
+func generatedExternalCallback(common *ssa.CallCommon, callbacks map[ssa.Value]bool) bool {
+	return common.StaticCallee() == nil && callbacks[common.Value]
+}
+
+func generatedCallbackType(valueType types.Type, currentPackage *types.Package) bool {
+	signature, ok := types.Unalias(valueType).Underlying().(*types.Signature)
+	if !ok || signature.Params().Len() != 1 {
 		return false
 	}
 
-	caseType := packageObjectTypeFromTypes(currentPackage, "Case")
-	for _, argument := range common.Args {
-		if sameGuardType(argument.Type(), caseType) {
-			return true
-		}
-	}
-
-	return false
+	return sameGuardType(signature.Params().At(0).Type(), packageObjectTypeFromTypes(currentPackage, "Case"))
 }
 
 func packageObjectTypeFromTypes(currentPackage *types.Package, name string) types.Type {
@@ -464,11 +782,11 @@ func generatedValueRootType(valueType types.Type, currentPackage *types.Package)
 
 	named, ok := valueType.(*types.Named)
 
-	return ok && named.Obj().Pkg() == currentPackage && (named.Obj().Name() == "jsonValue" || named.Obj().Name() == "Case")
+	return ok && named.Obj().Pkg() == currentPackage && named.Obj().Name() == "Case"
 }
 
 func generatedValueCarrierType(valueType types.Type, currentPackage *types.Package) bool {
-	return generatedValueCarrierTypeSeen(valueType, currentPackage, make(map[types.Type]bool))
+	return valueType != nil && generatedValueCarrierTypeSeen(valueType, currentPackage, make(map[types.Type]bool))
 }
 
 func generatedValueCarrierTypeSeen(valueType types.Type, currentPackage *types.Package, seen map[types.Type]bool) bool {
@@ -480,6 +798,15 @@ func generatedValueCarrierTypeSeen(valueType types.Type, currentPackage *types.P
 	seen[valueType] = true
 
 	if generatedValueRootType(valueType, currentPackage) {
+		return true
+	}
+
+	root := valueType
+	if pointer, ok := root.(*types.Pointer); ok {
+		root = types.Unalias(pointer.Elem())
+	}
+
+	if named, ok := root.(*types.Named); ok && named.Obj().Pkg() == currentPackage && named.Obj().Name() == "jsonValue" {
 		return true
 	}
 
@@ -503,14 +830,25 @@ func generatedValueCarrierTypeSeen(valueType types.Type, currentPackage *types.P
 	case *types.Chan:
 		return generatedValueCarrierTypeSeen(typed.Elem(), currentPackage, seen)
 	case *types.Struct:
-		for index := range typed.NumFields() {
-			if generatedValueCarrierTypeSeen(typed.Field(index).Type(), currentPackage, seen) {
-				return true
-			}
-		}
+		// Named Case and jsonValue structures are handled above. Arbitrary semantic
+		// structs are not encodings merely because one of their fields is a string.
+		return false
 	}
 
 	return false
+}
+
+func generatedDerivedResultType(valueType types.Type) bool {
+	switch typed := types.Unalias(valueType).Underlying().(type) {
+	case *types.Basic:
+		return typed.Kind() == types.String
+	case *types.Slice:
+		basic, ok := types.Unalias(typed.Elem()).Underlying().(*types.Basic)
+
+		return ok && basic.Kind() == types.Byte
+	default:
+		return false
+	}
 }
 
 func generatedValuePosition(instruction ssa.Instruction) string {
