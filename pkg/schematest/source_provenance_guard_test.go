@@ -88,11 +88,11 @@ func TestOperationIDFlowGuardAllowsDecodedDocumentSelection(t *testing.T) {
 	t.Parallel()
 
 	source := `package schematest
-		type Input struct { OperationID string }; type jsonValue struct { text string; object map[string]*jsonValue }
-		func decodeOpenAPIDocument([]byte) (*jsonValue, error) { return new(jsonValue), nil }
+		type Input struct { OpenAPI []byte; OperationID string }; type jsonValue struct { text string; object map[string]*jsonValue }
+		func decodeOpenAPIDocument(source []byte) (*jsonValue, error) { return &jsonValue{text: string(source)}, nil }
 		func requireJSONObject(value *jsonValue) (map[string]*jsonValue, error) { return value.object, nil }
 		func Build(input Input) bool {
-			document, _ := decodeOpenAPIDocument(nil)
+			document, _ := decodeOpenAPIDocument(input.OpenAPI)
 			root, _ := requireJSONObject(document)
 			return selectRequestSchema(document, root, input.OperationID)
 		}
@@ -105,6 +105,26 @@ func TestOperationIDFlowGuardAllowsDecodedDocumentSelection(t *testing.T) {
 	`
 
 	require.Empty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
+}
+
+func TestOperationIDFlowGuardRejectsSameNameFixedDecoder(t *testing.T) {
+	t.Parallel()
+
+	source := `package schematest
+		type Input struct { OpenAPI []byte; OperationID string }; type jsonValue struct { text string; object map[string]*jsonValue }
+		func decodeOpenAPIDocument([]byte) (*jsonValue, error) {
+			return &jsonValue{object: map[string]*jsonValue{"operationId": {text: "fixed"}}}, nil
+		}
+		func Build(input Input) bool {
+			document, _ := decodeOpenAPIDocument(input.OpenAPI)
+			return selectRequestSchema(document, input.OperationID)
+		}
+		func selectRequestSchema(document *jsonValue, operationID string) bool {
+			return document.object["operationId"].text == operationID
+		}
+	`
+
+	require.NotEmpty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
 }
 
 func TestOperationIDFlowGuardRejectsMixedDocumentAndLocalSelectionValue(t *testing.T) {
@@ -247,6 +267,14 @@ func TestCopiedSemanticGuardRejectsLocalConstructionAndGenericRoleSpoofs(t *test
 			func copied() []cell { rows := make([]cell, 0); rows = append(rows, cell{x: 1, y: 2}); return rows }
 			func forwarded() []cell { return copied() }
 			func Build() { _ = forwarded() }`,
+		"primitive uint8 helper chain": `package schematest
+			func copied() []uint8 { rows := make([]uint8, 0); rows = append(rows, 1, 2); return rows }
+			func forwarded() []uint8 { return copied() }
+			func Build() { _ = forwarded() }`,
+		"primitive string helper chain": `package schematest
+			func copied() []string { rows := []string{"type", "required"}; return rows }
+			func forwarded() []string { return copied() }
+			func Build() { _ = forwarded() }`,
 		"unicode role spoof": `package schematest
 			type answer struct { keyword string; valid bool }
 			var unicodeGrammar = []answer{{keyword: "type", valid: true}}`,
@@ -303,7 +331,7 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 	}
 
 	functions := operationIDRuntimeFunctions(build)
-	authored := operationIDDocumentValues(functions)
+	authored := operationIDDocumentValues(functions, guardPackage.pkg)
 	tainted := make(map[ssa.Value]bool)
 	returned := make(map[*ssa.Function]bool)
 
@@ -450,13 +478,24 @@ func operationIDSelectionComparison(
 	return operationIDAuthoredSelectionValue(authored, documentValues, currentPackage, make(map[ssa.Value]bool))
 }
 
-func operationIDDocumentValues(functions map[*ssa.Function]bool) map[ssa.Value]bool {
+//nolint:maintidx // Authored-source and decoded-document fixed points share the exact admission seam.
+func operationIDDocumentValues(
+	functions map[*ssa.Function]bool,
+	currentPackage *types.Package,
+) map[ssa.Value]bool {
 	values := make(map[ssa.Value]bool)
+	sources := make(map[ssa.Value]bool)
+	returnsSource := make(map[*ssa.Function]bool)
 	calls := make(map[*ssa.Function][]ssa.CallInstruction)
 
 	for function := range functions {
 		for _, block := range function.Blocks {
 			for _, instruction := range block.Instrs {
+				value, hasValue := instruction.(ssa.Value)
+				if hasValue && operationIDOpenAPIField(value, currentPackage) {
+					sources[value] = true
+				}
+
 				call, ok := instruction.(ssa.CallInstruction)
 				if !ok {
 					continue
@@ -466,11 +505,6 @@ func operationIDDocumentValues(functions map[*ssa.Function]bool) map[ssa.Value]b
 				if callee != nil && functions[callee] {
 					calls[callee] = append(calls[callee], call)
 				}
-
-				value, hasValue := instruction.(ssa.Value)
-				if hasValue && callee != nil && callee.Pkg == function.Pkg && callee.Name() == "decodeOpenAPIDocument" {
-					values[value] = true
-				}
 			}
 		}
 	}
@@ -479,6 +513,82 @@ func operationIDDocumentValues(functions map[*ssa.Function]bool) map[ssa.Value]b
 		changed = false
 
 		for function := range functions {
+			for _, block := range function.Blocks {
+				for _, instruction := range block.Instrs {
+					if stored, ok := instruction.(*ssa.Store); ok {
+						if sources[stored.Val] && !sources[stored.Addr] {
+							sources[stored.Addr] = true
+							changed = true
+						}
+
+						if sources[stored.Addr] && !sources[stored.Val] {
+							sources[stored.Val] = true
+							changed = true
+						}
+					}
+
+					call, isCall := instruction.(ssa.CallInstruction)
+					if isCall {
+						callee := call.Common().StaticCallee()
+						if callee != nil && functions[callee] {
+							for index, argument := range call.Common().Args {
+								if index < len(callee.Params) && sources[argument] && !sources[callee.Params[index]] {
+									sources[callee.Params[index]] = true
+									changed = true
+								}
+							}
+						}
+					}
+
+					if returned, ok := instruction.(*ssa.Return); ok {
+						for _, result := range returned.Results {
+							if sources[result] && !returnsSource[function] {
+								returnsSource[function] = true
+								changed = true
+							}
+						}
+					}
+
+					value, hasValue := instruction.(ssa.Value)
+					if hasValue && sources[value] {
+						switch instruction.(type) {
+						case *ssa.FieldAddr, *ssa.IndexAddr:
+							for _, operand := range instruction.Operands(nil) {
+								if operand != nil && *operand != nil && !sources[*operand] {
+									sources[*operand] = true
+									changed = true
+								}
+							}
+						}
+
+						continue
+					}
+
+					if !hasValue {
+						continue
+					}
+
+					if isCall {
+						callee := call.Common().StaticCallee()
+						if callee != nil && returnsSource[callee] {
+							sources[value] = true
+							changed = true
+
+							continue
+						}
+					}
+
+					for _, operand := range instruction.Operands(nil) {
+						if operand != nil && sources[*operand] {
+							sources[value] = true
+							changed = true
+
+							break
+						}
+					}
+				}
+			}
+
 			for index, parameter := range function.Params {
 				incoming := calls[function]
 				if values[parameter] || len(incoming) == 0 {
@@ -504,12 +614,26 @@ func operationIDDocumentValues(functions map[*ssa.Function]bool) map[ssa.Value]b
 			for _, block := range function.Blocks {
 				for _, instruction := range block.Instrs {
 					value, ok := instruction.(ssa.Value)
-					if !ok || values[value] || !operationIDDocumentTransfer(instruction, values, functions) {
+					if !ok || values[value] {
 						continue
 					}
 
-					values[value] = true
-					changed = true
+					call, isCall := instruction.(ssa.CallInstruction)
+					if isCall {
+						callee := call.Common().StaticCallee()
+						if callee != nil && callee.Object() == currentPackage.Scope().Lookup("decodeOpenAPIDocument") &&
+							len(call.Common().Args) > 0 && sources[call.Common().Args[0]] && returnsSource[callee] {
+							values[value] = true
+							changed = true
+
+							continue
+						}
+					}
+
+					if operationIDDocumentTransfer(instruction, values, functions) {
+						values[value] = true
+						changed = true
+					}
 				}
 			}
 		}
@@ -909,7 +1033,15 @@ func operationIDRuntimeFunctions(build *ssa.Function) map[*ssa.Function]bool {
 	return functions
 }
 
+func operationIDOpenAPIField(value ssa.Value, currentPackage *types.Package) bool {
+	return operationIDInputField(value, currentPackage, "OpenAPI")
+}
+
 func operationIDField(value ssa.Value, currentPackage *types.Package) bool {
+	return operationIDInputField(value, currentPackage, "OperationID")
+}
+
+func operationIDInputField(value ssa.Value, currentPackage *types.Package, name string) bool {
 	var (
 		aggregate types.Type
 		index     int
@@ -938,7 +1070,7 @@ func operationIDField(value ssa.Value, currentPackage *types.Package) bool {
 
 	inputType := packageObjectTypeFromTypes(currentPackage, "Input")
 
-	return inputType != nil && sameGuardType(aggregate, inputType) && structure.Field(index).Name() == "OperationID"
+	return inputType != nil && sameGuardType(aggregate, inputType) && structure.Field(index).Name() == name
 }
 
 func copiedSemanticGraphViolations(guardPackage *sourceGuardPackage) []string {
@@ -1282,11 +1414,19 @@ func semanticTableExpression(
 			return semanticReturns[function]
 		}
 
-		if builtin, builtinOK := guardPackage.info.Uses[identifier].(*types.Builtin); builtinOK {
-			return (builtin.Name() == "make" && semanticCollectionType(guardPackage.info.TypeOf(expression))) ||
-				(builtin.Name() == "append" && len(call.Args) > 0 &&
-					(semanticTableExpression(call.Args[0], localTables, semanticReturns, guardPackage) ||
-						semanticCollectionType(guardPackage.info.TypeOf(expression))))
+		if builtin, builtinOK := guardPackage.info.Uses[identifier].(*types.Builtin); builtinOK &&
+			builtin.Name() == "append" && len(call.Args) > 0 &&
+			semanticCollectionType(guardPackage.info.TypeOf(expression)) {
+			if semanticTableExpression(call.Args[0], localTables, semanticReturns, guardPackage) {
+				return true
+			}
+
+			for _, argument := range call.Args[1:] {
+				switch argument.(type) {
+				case *ast.BasicLit, *ast.CompositeLit:
+					return true
+				}
+			}
 		}
 	}
 
@@ -1294,35 +1434,12 @@ func semanticTableExpression(
 }
 
 func semanticCollectionType(valueType types.Type) bool {
-	var element types.Type
-
-	switch typed := types.Unalias(valueType).Underlying().(type) {
-	case *types.Array:
-		element = typed.Elem()
-	case *types.Map:
-		element = typed.Elem()
-	case *types.Slice:
-		element = typed.Elem()
+	switch types.Unalias(valueType).Underlying().(type) {
+	case *types.Array, *types.Map, *types.Slice:
+		return true
 	default:
 		return false
 	}
-
-	if pointer, ok := types.Unalias(element).Underlying().(*types.Pointer); ok {
-		element = pointer.Elem()
-	}
-
-	structure, ok := types.Unalias(element).Underlying().(*types.Struct)
-	if !ok || structure.NumFields() == 0 {
-		return false
-	}
-
-	for index := range structure.NumFields() {
-		if !semanticPrimitiveType(structure.Field(index).Type(), make(map[types.Type]bool)) {
-			return false
-		}
-	}
-
-	return true
 }
 
 func semanticPrimitiveType(valueType types.Type, seen map[types.Type]bool) bool {
@@ -1357,23 +1474,45 @@ func semanticPrimitiveType(valueType types.Type, seen map[types.Type]bool) bool 
 
 func allowedLocalSemanticSpecification(function *types.Func, guardPackage *sourceGuardPackage) bool {
 	expected := map[string]string{
-		"anyOfValidRequirements":           "0fc85f2cf4bc2a157892614c8a6af245c0a386030314776aec895e1a0e45699c",
-		"basicStringClassRanges":           "ebe3b0741bfc7554abf2a2dd883baa477ee92fcf70775fa44cb7948310430954",
-		"canonicalJSONKinds":               "79e3f9dc3855882f59c3174539f1fd836b5da20342bb14ffb28368ab32ec2974",
-		"cloneBasicStringRepeatStates":     "29017eb64cc65be9382560724a6924db9fd12daeabfd16bf7476b5f37770dfb5",
-		"compileValidSchedule":             "1ffba664901331c7fa5fde695cc6cc577b2029c46d76a1c4de65472d5351d27b",
-		"complementBasicStringRanges":      "95078993453c77eab3550405408482def51a558f584f18451f56fc96b124af7a",
-		"complementPatternMatcherRanges":   "068d436c64ebc91d19309b3cc1ff5bf848ab77f3f07007ff854c69d2d6bd83fe",
-		"defaultArrayPresenceRequirements": "4e084352099455cc12ede093c87f2c0ba6c13bbf9b040ab4432c2b6c3bff0273",
-		"enumFaultKinds":                   "dad3667d89f84cf70220bcb7d2658c94ac9843f8d33f67955a7a57050460302e",
-		"mergePatternRanges":               "0e6afd27e5fd333290477b0be46e8183ee0a80f198b214c7df0acea9550f5f52",
-		"normalizePatternMatcherRanges":    "75d85c64ace80e89812da001b7d87d2c35581e19a5fd8ffdcaf0af5eae5a733d",
-		"orderedTypeKinds":                 "3107adac84b5c058d43aafd30a2c849acc683293f6f39fded3fbbd8436a4a41f",
-		"parsePlanPointer":                 "410a015514f2cd96b5dea9809b40c5809405d07290695faeb988638bc429474b",
-		"patternMatcherRanges":             "459f7e4b0369daa6246a23e1f00c2ad6c6e76baec9ac10f90c529edfb31ead8b",
-		"projectedMemberPresenceChoices":   "696dcc8d321d49e9f3aa2c23060ca8930e8697ba1cab59f54fe4466b1237b19f",
-		"rowKindChoices":                   "aab020d359db217d9ac71deb2a90640e5ea39c42011c37d9f398a8ff739d8d29",
-	}[function.Name()]
+		"allOfFaultRequirements":                     "ddd5c1c5364b89bd74283e0b582e5bde099b3f89f84da01540b942e7564cde4e",
+		"allOfValidRequirements":                     "a4e66d9004cad0859c80ddcee522a0ca3d6b9248793a742f4a9ca2a808448245",
+		"anyOfFaultRequirements":                     "4889344df06b545d9ef4ad966b9cc23b11beda241216e7a3105bcf7315499f64",
+		"anyOfMaskRequirements":                      "c147c722b45ed9b0d42f9f58bc89cb573aaad1ea98ea91243a54d4930b667ff8",
+		"anyOfValidRequirements":                     "0fc85f2cf4bc2a157892614c8a6af245c0a386030314776aec895e1a0e45699c",
+		"rowProjectionView.appendBranchRequirements": "ac3a4b0d0a23ccc6a66e86387b60ad0f5a36151996dde0d2973dca9a349efaf6",
+		"appendCanonicalString":                      "cb2e7cca818a5e174d228b5a8ce3b2da148055cb3003cb1949866183ee341dd6",
+		"appendExactDecimalTerm":                     "57c57a29049de187e337caa666a53b7516720ec333b82d551b4527e8ce1e560b",
+		"appendJSONBoolean":                          "d1c250fc32aaf7d9bc7a5d1fb41088ac2c8b3fb4c6888ceef7c97681e6014db8",
+		"appendJSONCharacter":                        "ee34f57139d30358be6c3b4187f1b33b1aec3bd682857890fa98e7ef30e7fb5d",
+		"appendJSONString":                           "6d52c05e037eaeb32002e8cb17afdbb808eb9e650b005bf1493c4a97bb3aa6f8",
+		"basicStringClassRanges":                     "ebe3b0741bfc7554abf2a2dd883baa477ee92fcf70775fa44cb7948310430954",
+		"canonicalJSONKinds":                         "79e3f9dc3855882f59c3174539f1fd836b5da20342bb14ffb28368ab32ec2974",
+		"cloneBasicStringRepeatStates":               "29017eb64cc65be9382560724a6924db9fd12daeabfd16bf7476b5f37770dfb5",
+		"compileValidSchedule":                       "1ffba664901331c7fa5fde695cc6cc577b2029c46d76a1c4de65472d5351d27b",
+		"complementBasicStringRanges":                "95078993453c77eab3550405408482def51a558f584f18451f56fc96b124af7a",
+		"complementPatternMatcherRanges":             "068d436c64ebc91d19309b3cc1ff5bf848ab77f3f07007ff854c69d2d6bd83fe",
+		"compositionFaultRequirements":               "fb0114768d74294b90e2d27c2721d806cadfb5aa8b0a67eebd4f2e5c20fd2b93",
+		"compositionRequirements":                    "0e6fdf8c13fa7263d59afb5233a815f63a79b739e3b4286a511279fbbc1374fb",
+		"defaultArrayPresenceRequirements":           "4e084352099455cc12ede093c87f2c0ba6c13bbf9b040ab4432c2b6c3bff0273",
+		"defaultPresenceRequirementsForKind":         "9dc35793eb1886047e5923ee9898970c4d9fc46d3756438874b8e41f69f75527",
+		"enumFaultKinds":                             "dad3667d89f84cf70220bcb7d2658c94ac9843f8d33f67955a7a57050460302e",
+		"faultSchemaChildren":                        "76754b6916577eede5d6aa04fbec583ddd3b4905eedde7c07f426b922b1d508f",
+		"marshalStrict":                              "da98656b52e423107cd0252b423bf0d07096e940e360af55672eb2338b90b4b9",
+		"*cleanPatternMatcher.matchAtom":             "f0b11dc6bb258d0312d5aee06ef8bbebfb5f4a6d523d0e74dc15f04233920d0d",
+		"*cleanPatternMatcher.matchSequenceEnds":     "73a9c035ac8216acef063c4b684c63375f489692e404f99f541140b9a879945d",
+		"mergePatternRanges":                         "0e6afd27e5fd333290477b0be46e8183ee0a80f198b214c7df0acea9550f5f52",
+		"normalizePatternMatcherRanges":              "75d85c64ace80e89812da001b7d87d2c35581e19a5fd8ffdcaf0af5eae5a733d",
+		"orderedTypeKinds":                           "3107adac84b5c058d43aafd30a2c849acc683293f6f39fded3fbbd8436a4a41f",
+		"parentReplayGroups":                         "546d00208747def18273b29de850e09ab07cbb68b4c4d22a6b2f3889393fe82f",
+		"*strictJSONParser.parseEscape":              "32d85ea9b2fd7559b650d94cdb38bae16db9e6956d5dcca86da88a95ce104514",
+		"*ecmaPatternParser.parseEscape":             "a69dcee79ff1830187d95a360eb61118759b171a2c92f0312996f3ddde396902",
+		"parsePlanPointer":                           "410a015514f2cd96b5dea9809b40c5809405d07290695faeb988638bc429474b",
+		"parseSchemaEnum":                            "6b4cf1a1c1d8ee08eb08da9c1b497489b3cdae0e8dd7f4a3dfd445aba9783752",
+		"patternMatcherRanges":                       "459f7e4b0369daa6246a23e1f00c2ad6c6e76baec9ac10f90c529edfb31ead8b",
+		"projectedMemberPresenceChoices":             "696dcc8d321d49e9f3aa2c23060ca8930e8697ba1cab59f54fe4466b1237b19f",
+		"rowKindChoices":                             "aab020d359db217d9ac71deb2a90640e5ea39c42011c37d9f398a8ff739d8d29",
+		"rowProjectionDecodeNode":                    "e3318c317c8fe3f83d355f5016f3587bccf4cfce753cf54277d062bf5e73b222",
+	}[semanticFunctionKey(function, guardPackage.pkg)]
 	if expected == "" {
 		return false
 	}
@@ -1392,6 +1531,15 @@ func allowedLocalSemanticSpecification(function *types.Func, guardPackage *sourc
 	}
 
 	return false
+}
+
+func semanticFunctionKey(function *types.Func, currentPackage *types.Package) string {
+	signature, ok := function.Type().(*types.Signature)
+	if !ok || signature.Recv() == nil {
+		return function.Name()
+	}
+
+	return types.TypeString(signature.Recv().Type(), ownershipTypeQualifier(currentPackage)) + "." + function.Name()
 }
 
 func semanticNodeHash(node ast.Node, guardPackage *sourceGuardPackage) (string, bool) {

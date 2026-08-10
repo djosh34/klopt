@@ -606,7 +606,8 @@ func exactOwnershipRows(groups ...ownershipRowGroup) map[string]ownershipAllowan
 func TestExactLongLivedOwnershipShapes(t *testing.T) {
 	t.Parallel()
 
-	require.Empty(t, exactOwnershipViolations(productionGuardPackage(t), exactOwnershipAllowlist))
+	violations := exactOwnershipViolations(productionGuardPackage(t), exactOwnershipAllowlist)
+	require.Empty(t, violations, "%#v", violations)
 }
 
 func TestProductionCurrentOwnershipRowsAreLifecycleGuarded(t *testing.T) {
@@ -623,7 +624,8 @@ func TestProductionCurrentOwnershipRowsAreLifecycleGuarded(t *testing.T) {
 
 	require.Positive(t, rows)
 	require.Len(t, currentValueLifecycleCoverage(guardPackage, exactOwnershipAllowlist), rows)
-	require.Empty(t, currentValueLifecycleViolations(guardPackage, exactOwnershipAllowlist))
+	violations := currentValueLifecycleViolations(guardPackage, exactOwnershipAllowlist)
+	require.Empty(t, violations, "%#v", violations)
 	require.Empty(t, generatedValueEscapeViolations(guardPackage))
 }
 
@@ -873,6 +875,54 @@ func TestCurrentOwnershipAnalyzesNonMapAttemptAndCallDeadlines(t *testing.T) {
 		require.Len(t, currentValueLifecycleCoverage(guardPackage, allowed), 1)
 		require.NotEmpty(t, currentValueLifecycleViolations(guardPackage, allowed))
 	}
+}
+
+func TestCurrentOwnershipRejectsAttemptSiblingAndNonReturnCallEscape(t *testing.T) {
+	t.Parallel()
+
+	const prefix = modulePath + "/pkg/schematest."
+
+	attemptSource := `package schematest
+		type jsonValue struct{}; type state struct { current *jsonValue }
+		func consume(*jsonValue) {}
+		func Build() { active := new(state); for range 2 { active.current = new(jsonValue); consume(active.current) } }
+	`
+	attemptAllowed := map[string]ownershipAllowance{
+		prefix + "state.current": {typeName: "*jsonValue", form: ownershipCurrentValue, lifetime: ownershipAttemptLifetime},
+	}
+	require.NotEmpty(t, currentValueLifecycleViolations(
+		parseGuardPackage(t, map[string]string{"guard.go": attemptSource}), attemptAllowed,
+	))
+
+	callSource := `package schematest
+		type jsonValue struct{}; type state struct { current *jsonValue }; var saved *state
+		func Build() { active := &state{current: new(jsonValue)}; saved = active }
+	`
+	callAllowed := map[string]ownershipAllowance{
+		prefix + "state.current": {typeName: "*jsonValue", form: ownershipCurrentValue, lifetime: ownershipCallLifetime},
+	}
+	require.NotEmpty(t, currentValueLifecycleViolations(
+		parseGuardPackage(t, map[string]string{"guard.go": callSource}), callAllowed,
+	))
+}
+
+func TestCurrentOwnershipRejectsCompleteJSONValueAfterPropagatedCallback(t *testing.T) {
+	t.Parallel()
+
+	const prefix = modulePath + "/pkg/schematest."
+
+	source := `package schematest
+		type jsonValue struct { text string }; type Case struct{}
+		func consume(*jsonValue) {}
+		func retain(yield func(Case)) { current := new(jsonValue); yield(Case{}); consume(current) }
+		func Build(yield func(Case)) { retain(yield) }
+	`
+	allowed := map[string]ownershipAllowance{
+		prefix + "jsonValue.text": {typeName: "string", form: ownershipCurrentValue, lifetime: ownershipCallLifetime},
+	}
+	require.NotEmpty(t, currentValueLifecycleViolations(
+		parseGuardPackage(t, map[string]string{"guard.go": source}), allowed,
+	))
 }
 
 func TestCurrentOwnershipRejectsCollectionsAndCallLifetimeEscape(t *testing.T) {
@@ -1265,28 +1315,10 @@ func currentValueLifecycleCoverage(
 	guardPackage *sourceGuardPackage,
 	allowed map[string]ownershipAllowance,
 ) map[string]ownershipLifetime {
-	discovered := buildOwnershipFields(guardPackage)
-	covered := make(map[string]ownershipLifetime)
-	build := buildGuardSSA(guardPackage).Func("Build")
-	prefix := guardPackage.pkg.Path() + "."
+	executed := make(map[string]ownershipLifetime)
+	_ = currentValueLifecycleAnalysis(guardPackage, allowed, executed)
 
-	for key, allowance := range allowed {
-		if allowance.form != ownershipCurrentValue || discovered[key] == nil || build == nil {
-			continue
-		}
-
-		owner, _, ownerField := strings.Cut(strings.TrimPrefix(key, prefix), ".")
-		if !ownerField || owner == "" {
-			continue
-		}
-
-		switch allowance.lifetime {
-		case ownershipBeforeContinuation, ownershipAttemptLifetime, ownershipCallLifetime:
-			covered[key] = allowance.lifetime
-		}
-	}
-
-	return covered
+	return executed
 }
 
 type ownershipLiveValue struct {
@@ -1294,27 +1326,40 @@ type ownershipLiveValue struct {
 	field    *types.Var
 }
 
-//nolint:cyclop // Package declarations and watched lifecycle rows are independent checks.
 func currentValueLifecycleViolations(
 	guardPackage *sourceGuardPackage,
 	allowed map[string]ownershipAllowance,
 ) []string {
+	return currentValueLifecycleAnalysis(guardPackage, allowed, nil)
+}
+
+//nolint:cyclop // Package declarations and watched lifecycle rows are independent checks.
+func currentValueLifecycleAnalysis(
+	guardPackage *sourceGuardPackage,
+	allowed map[string]ownershipAllowance,
+	executed map[string]ownershipLifetime,
+) []string {
 	watched := make(map[*types.Var]string)
+	discovered := buildOwnershipFields(guardPackage)
 
 	for key, allowance := range allowed {
 		if allowance.form != ownershipCurrentValue || allowance.lifetime != ownershipBeforeContinuation {
 			continue
 		}
 
-		field := buildOwnershipFields(guardPackage)[key]
+		field := discovered[key]
 		if field != nil {
 			watched[field] = key
+			if executed != nil {
+				executed[key] = allowance.lifetime
+			}
 		}
 	}
 
 	var violations []string
 
-	violations = append(violations, currentValueDeadlineViolations(guardPackage, allowed)...)
+	violations = append(violations, currentValueDeadlineViolations(guardPackage, allowed, executed)...)
+	violations = append(violations, currentValueAttemptBoundaryViolations(guardPackage, allowed, executed)...)
 	violations = append(violations, generatedValueEscapeViolations(guardPackage)...)
 
 	if len(watched) == 0 {
@@ -1340,10 +1385,86 @@ func currentValueLifecycleViolations(
 	return violations
 }
 
+//nolint:cyclop,gocognit // Loop-local assignments and exact watched rows form one boundary check.
+func currentValueAttemptBoundaryViolations(
+	guardPackage *sourceGuardPackage,
+	allowed map[string]ownershipAllowance,
+	executed map[string]ownershipLifetime,
+) []string {
+	watched := make(map[*types.Var]string)
+
+	discovered := buildOwnershipFields(guardPackage)
+	for key, allowance := range allowed {
+		if allowance.form == ownershipCurrentValue && allowance.lifetime == ownershipAttemptLifetime &&
+			discovered[key] != nil {
+			watched[discovered[key]] = key
+			if executed != nil {
+				executed[key] = allowance.lifetime
+			}
+		}
+	}
+
+	var violations []string
+
+	for _, file := range guardPackage.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			var body *ast.BlockStmt
+
+			boundary := "retry"
+
+			switch loop := node.(type) {
+			case *ast.ForStmt:
+				body = loop.Body
+			case *ast.RangeStmt:
+				body = loop.Body
+				boundary = "sibling"
+			default:
+				return true
+			}
+
+			live := make(map[*types.Var]bool)
+
+			ast.Inspect(body, func(child ast.Node) bool {
+				assignment, ok := child.(*ast.AssignStmt)
+				if !ok {
+					return true
+				}
+
+				for index, left := range assignment.Lhs {
+					selector, selectorOK := left.(*ast.SelectorExpr)
+					if !selectorOK {
+						continue
+					}
+
+					field, fieldOK := guardPackage.info.Uses[selector.Sel].(*types.Var)
+					if !fieldOK || watched[field] == "" || index >= len(assignment.Rhs) {
+						continue
+					}
+
+					live[field] = !isNilExpression(assignment.Rhs[index])
+				}
+
+				return true
+			})
+
+			for field, survives := range live {
+				if survives {
+					violations = append(violations, "current value survives "+boundary+": "+watched[field])
+				}
+			}
+
+			return true
+		})
+	}
+
+	return violations
+}
+
 //nolint:cyclop,gocognit,gocyclo,nestif // Exact row enrollment, return traversal, and continuation flow form one deadline check.
 func currentValueDeadlineViolations(
 	guardPackage *sourceGuardPackage,
 	allowed map[string]ownershipAllowance,
+	executed map[string]ownershipLifetime,
 ) []string {
 	owners := make(map[string]map[string]ownershipLifetime)
 	ownerFields := make(map[string]map[*types.Var]string)
@@ -1376,28 +1497,35 @@ func currentValueDeadlineViolations(
 	var violations []string
 
 	for _, file := range guardPackage.files {
-		ast.Inspect(file, func(node ast.Node) bool {
-			returned, ok := node.(*ast.ReturnStmt)
-			if !ok {
-				return true
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != "Build" || function.Body == nil {
+				continue
 			}
 
-			for _, result := range returned.Results {
-				for owner, rows := range owners {
-					if owner == "jsonValue" || !ownershipTypeContainsNamed(guardPackage.info.TypeOf(result), guardPackage.pkg, owner, make(map[types.Type]bool)) {
-						continue
-					}
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				returned, ok := node.(*ast.ReturnStmt)
+				if !ok {
+					return true
+				}
 
-					for key, lifetime := range rows {
-						if lifetime == ownershipCallLifetime {
-							violations = append(violations, "current value escapes call lifetime: "+key)
+				for _, result := range returned.Results {
+					for owner, rows := range owners {
+						if !ownershipTypeContainsNamed(guardPackage.info.TypeOf(result), guardPackage.pkg, owner, make(map[types.Type]bool)) {
+							continue
+						}
+
+						for key, lifetime := range rows {
+							if lifetime == ownershipCallLifetime {
+								violations = append(violations, "current value escapes call lifetime: "+key)
+							}
 						}
 					}
 				}
-			}
 
-			return false
-		})
+				return false
+			})
+		}
 	}
 
 	ssaPackage := buildGuardSSA(guardPackage)
@@ -1407,12 +1535,36 @@ func currentValueDeadlineViolations(
 		return violations
 	}
 
+	if executed != nil {
+		for _, rows := range owners {
+			for key, lifetime := range rows {
+				executed[key] = lifetime
+			}
+		}
+	}
+
 	functions := ownershipRuntimeFunctions(build)
 	callbacks := generatedCallbackValues(functions, guardPackage.pkg)
 	callbackInvokers := generatedCallbackInvokers(functions, callbacks)
 	cleared := generatedCallbackResultValues(functions, callbacks)
 
 	for function := range functions {
+		for _, block := range function.Blocks {
+			for _, instruction := range block.Instrs {
+				for owner, rows := range owners {
+					if !ownershipInstructionEscapesCall(instruction, owner, guardPackage.pkg, function == build) {
+						continue
+					}
+
+					for key, lifetime := range rows {
+						if lifetime == ownershipCallLifetime {
+							violations = append(violations, "current value escapes invocation: "+key)
+						}
+					}
+				}
+			}
+		}
+
 		callbackAtEntry := generatedCallbackEntryState(function, callbacks, callbackInvokers)
 		for _, block := range function.Blocks {
 			callbackSeen := callbackAtEntry[block]
@@ -1425,8 +1577,11 @@ func currentValueDeadlineViolations(
 
 						for owner, rows := range owners {
 							if owner == "jsonValue" {
-								field := ownershipSSAField(*operand)
-								if key := ownerFields[owner][field]; key != "" {
+								if ownershipTypeContainsNamed((*operand).Type(), guardPackage.pkg, owner, make(map[types.Type]bool)) {
+									for key := range rows {
+										violations = append(violations, "current value survives declared deadline: "+key)
+									}
+								} else if key := ownerFields[owner][ownershipSSAField(*operand)]; key != "" {
 									violations = append(violations, "current value survives declared deadline: "+key)
 								}
 
@@ -1453,6 +1608,42 @@ func currentValueDeadlineViolations(
 	}
 
 	return violations
+}
+
+//nolint:cyclop // Each SSA escape shape is checked explicitly at the invocation root.
+func ownershipInstructionEscapesCall(
+	instruction ssa.Instruction,
+	owner string,
+	currentPackage *types.Package,
+	invocationRoot bool,
+) bool {
+	containsOwner := func(value ssa.Value) bool {
+		return value != nil && ownershipTypeContainsNamed(
+			value.Type(), currentPackage, owner, make(map[types.Type]bool),
+		)
+	}
+
+	switch typed := instruction.(type) {
+	case *ssa.Store:
+		return containsOwner(typed.Val) &&
+			(generatedGlobalAddress(typed.Addr) || invocationRoot && generatedParameterAddress(typed.Addr))
+	case *ssa.MapUpdate:
+		return (containsOwner(typed.Key) || containsOwner(typed.Value)) &&
+			(generatedGlobalAddress(typed.Map) || invocationRoot && generatedParameterAddress(typed.Map))
+	}
+
+	call, ok := instruction.(ssa.CallInstruction)
+	if !invocationRoot || !ok || !generatedUnanalyzedCall(call.Common(), localSSAPackage(instruction.Parent())) {
+		return false
+	}
+
+	for _, argument := range call.Common().Args {
+		if containsOwner(argument) {
+			return true
+		}
+	}
+
+	return false
 }
 
 //nolint:cyclop // SSA exposes value and address field access as separate instruction shapes.

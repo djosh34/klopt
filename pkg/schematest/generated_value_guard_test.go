@@ -206,6 +206,16 @@ func TestGeneratedValueGuardRejectsRuntimeJSONAndLoopBackedgeRetention(t *testin
 			func makeCandidate() *jsonValue { return new(jsonValue) }
 			func consume([]any) {}
 			func Build(yield func(Case)) { archive := []any{makeCandidate()}; yield(Case{}); consume(archive) }`,
+		"helper-local runtime JSON": `package schematest
+			type jsonValue struct { text string }; type Case struct{}
+			func retain(yield func(Case)) { current := new(jsonValue); yield(Case{}); consume(current) }
+			func consume(*jsonValue) {}
+			func Build(yield func(Case)) { retain(yield) }`,
+		"helper out parameter": `package schematest
+			type jsonValue struct { text string }; type Case struct{}
+			func fill(dst *[]any) { *dst = append(*dst, new(jsonValue)) }
+			func consume([]any) {}
+			func Build(yield func(Case)) { var archive []any; fill(&archive); yield(Case{}); consume(archive) }`,
 		"later loop iteration": `package schematest
 			type Case struct { JSON []byte }
 			func consume([]byte) {}
@@ -246,8 +256,10 @@ func TestGeneratedValueGuardAllowsImmediateConsumption(t *testing.T) {
 // generatedValueTaint is a package-wide fixed point. SSA supplies explicit values for
 // conversions, interfaces, aggregate addresses, helper results, and closure bindings.
 type generatedValueTaint struct {
-	values  map[ssa.Value]bool
-	returns map[*ssa.Function]bool
+	values      map[ssa.Value]bool
+	returns     map[*ssa.Function]bool
+	backward    bool
+	runtimeJSON bool
 }
 
 func generatedValueEscapeViolations(guardPackage *sourceGuardPackage) []string {
@@ -260,12 +272,14 @@ func generatedValueEscapeViolations(guardPackage *sourceGuardPackage) []string {
 
 	functions := generatedRuntimeFunctions(build)
 	taint := generatedValueTaint{
-		values:  make(map[ssa.Value]bool),
-		returns: make(map[*ssa.Function]bool),
+		values:   make(map[ssa.Value]bool),
+		returns:  make(map[*ssa.Function]bool),
+		backward: true,
 	}
 	runtimeJSON := generatedValueTaint{
-		values:  make(map[ssa.Value]bool),
-		returns: make(map[*ssa.Function]bool),
+		values:      make(map[ssa.Value]bool),
+		returns:     make(map[*ssa.Function]bool),
+		runtimeJSON: true,
 	}
 
 	for function := range functions {
@@ -313,11 +327,8 @@ func generatedValueEscapeViolations(guardPackage *sourceGuardPackage) []string {
 		}
 	}
 
-	for value := range runtimeJSON.values {
-		taint.values[value] = true
-	}
-
-	violations := generatedValueSinks(functions, taint.values, guardPackage.pkg)
+	violations := generatedValueSinks(functions, taint.values, guardPackage.pkg, true)
+	violations = append(violations, generatedValueSinks(functions, runtimeJSON.values, guardPackage.pkg, false)...)
 	slices.Sort(violations)
 
 	return slices.Compact(violations)
@@ -550,7 +561,7 @@ func resolvedStoredAddressCallees(
 	return result
 }
 
-//nolint:gocyclo,nestif // Forward and backward interprocedural propagation share one fixed-point transfer.
+//nolint:gocyclo,maintidx,nestif // Forward and backward interprocedural propagation share one fixed-point transfer.
 func propagateGeneratedValueTaint(
 	instruction ssa.Instruction,
 	functions map[*ssa.Function]bool,
@@ -559,13 +570,19 @@ func propagateGeneratedValueTaint(
 ) bool {
 	changed := false
 
+	if updated, ok := instruction.(*ssa.MapUpdate); ok &&
+		(taint.values[updated.Key] || taint.values[updated.Value]) && !taint.values[updated.Map] {
+		taint.values[updated.Map] = true
+		changed = true
+	}
+
 	if stored, ok := instruction.(*ssa.Store); ok {
 		if taint.values[stored.Val] && !taint.values[stored.Addr] {
 			taint.values[stored.Addr] = true
 			changed = true
 		}
 
-		if taint.values[stored.Addr] && generatedValueCarrierType(stored.Val.Type(), currentPackage) &&
+		if taint.values[stored.Addr] && generatedTaintCarrierType(stored.Val.Type(), currentPackage, taint) &&
 			!taint.values[stored.Val] {
 			taint.values[stored.Val] = true
 			changed = true
@@ -581,8 +598,19 @@ func propagateGeneratedValueTaint(
 			}
 
 			for index, argument := range common.Args {
-				if index < len(callee.Params) && taint.values[argument] && !taint.values[callee.Params[index]] {
-					taint.values[callee.Params[index]] = true
+				if index >= len(callee.Params) {
+					continue
+				}
+
+				parameter := callee.Params[index]
+				if taint.values[argument] && !taint.values[parameter] {
+					taint.values[parameter] = true
+					changed = true
+				}
+
+				if taint.values[parameter] && generatedTaintCarrierType(argument.Type(), currentPackage, taint) &&
+					generatedWritableCarrier(argument.Type(), currentPackage) && !taint.values[argument] {
+					taint.values[argument] = true
 					changed = true
 				}
 			}
@@ -592,7 +620,8 @@ func propagateGeneratedValueTaint(
 	if isCall && generatedCallHasTaintedArgument(call.Common(), taint.values) &&
 		generatedUnanalyzedCall(call.Common(), localSSAPackage(instruction.Parent())) {
 		for _, argument := range call.Common().Args {
-			if generatedWritableCarrier(argument.Type(), currentPackage) && !taint.values[argument] {
+			if generatedTaintCarrierType(argument.Type(), currentPackage, taint) &&
+				generatedWritableCarrier(argument.Type(), currentPackage) && !taint.values[argument] {
 				taint.values[argument] = true
 				changed = true
 			}
@@ -610,8 +639,23 @@ func propagateGeneratedValueTaint(
 
 	value, hasValue := instruction.(ssa.Value)
 	if hasValue && taint.values[value] {
+		if !taint.backward {
+			switch instruction.(type) {
+			case *ssa.FieldAddr, *ssa.IndexAddr:
+				for _, operand := range instruction.Operands(nil) {
+					if operand != nil && *operand != nil && generatedRuntimeJSONContainerType((*operand).Type(), currentPackage) &&
+						!taint.values[*operand] {
+						taint.values[*operand] = true
+						changed = true
+					}
+				}
+			}
+
+			return changed
+		}
+
 		for _, operand := range instruction.Operands(nil) {
-			if operand != nil && *operand != nil && generatedValueCarrierType((*operand).Type(), currentPackage) &&
+			if operand != nil && *operand != nil && generatedTaintCarrierType((*operand).Type(), currentPackage, taint) &&
 				!taint.values[*operand] {
 				taint.values[*operand] = true
 				changed = true
@@ -628,7 +672,7 @@ func propagateGeneratedValueTaint(
 						}
 
 						for _, result := range returned.Results {
-							if generatedValueCarrierType(result.Type(), currentPackage) && !taint.values[result] {
+							if generatedTaintCarrierType(result.Type(), currentPackage, taint) && !taint.values[result] {
 								taint.values[result] = true
 								changed = true
 							}
@@ -641,7 +685,7 @@ func propagateGeneratedValueTaint(
 		return changed
 	}
 
-	if !hasValue || !generatedValueCarrierType(value.Type(), currentPackage) {
+	if !hasValue || !generatedTaintCarrierType(value.Type(), currentPackage, taint) {
 		return changed
 	}
 
@@ -657,7 +701,7 @@ func propagateGeneratedValueTaint(
 
 		if generatedCallHasTaintedArgument(common, taint.values) &&
 			!generatedCallbackType(common.Value.Type(), currentPackage) &&
-			generatedValueCarrierType(value.Type(), currentPackage) {
+			generatedTaintCarrierType(value.Type(), currentPackage, taint) {
 			taint.values[value] = true
 
 			return true
@@ -682,11 +726,24 @@ func propagateGeneratedValueTaint(
 	return changed
 }
 
+func generatedTaintCarrierType(
+	valueType types.Type,
+	currentPackage *types.Package,
+	taint *generatedValueTaint,
+) bool {
+	if taint.runtimeJSON {
+		return generatedRuntimeJSONContainerType(valueType, currentPackage)
+	}
+
+	return generatedValueCarrierType(valueType, currentPackage)
+}
+
 //nolint:cyclop,gocyclo // The sink forms and CFG lifetime transitions form one ownership boundary.
 func generatedValueSinks(
 	functions map[*ssa.Function]bool,
 	tainted map[ssa.Value]bool,
 	currentPackage *types.Package,
+	ownerStorage bool,
 ) []string {
 	var violations []string
 
@@ -703,6 +760,10 @@ func generatedValueSinks(
 			callbackSeen := callbackFromEntry
 			for _, instruction := range block.Instrs {
 				if callbackSeen {
+					if _, phi := instruction.(*ssa.Phi); phi {
+						continue
+					}
+
 					for _, operand := range instruction.Operands(nil) {
 						if operand != nil && !cleared[*operand] && tainted[*operand] &&
 							generatedValueCarrierType((*operand).Type(), currentPackage) &&
@@ -717,12 +778,14 @@ func generatedValueSinks(
 				switch typed := instruction.(type) {
 				case *ssa.Store:
 					if tainted[typed.Val] && generatedStoreEscapes(typed.Addr) &&
-						(callbackOwners[function] || generatedGlobalAddress(typed.Addr) || generatedParameterAddress(typed.Addr)) {
+						(generatedGlobalAddress(typed.Addr) || ownerStorage &&
+							(generatedParameterAddress(typed.Addr) || callbackOwners[function])) {
 						violations = append(violations, generatedValuePosition(instruction)+": generated value stored in owner state")
 					}
 				case *ssa.MapUpdate:
-					if (callbackOwners[function] || generatedGlobalAddress(typed.Map) || generatedParameterAddress(typed.Map)) &&
-						(tainted[typed.Key] || tainted[typed.Value]) && !tainted[typed.Map] {
+					if (generatedGlobalAddress(typed.Map) || ownerStorage &&
+						(generatedParameterAddress(typed.Map) || callbackOwners[function])) &&
+						(tainted[typed.Key] || tainted[typed.Value]) {
 						violations = append(violations, generatedValuePosition(instruction)+": generated value stored in map")
 					}
 				case *ssa.Send:
@@ -737,7 +800,7 @@ func generatedValueSinks(
 				}
 
 				common := call.Common()
-				if builtin, builtinOK := common.Value.(*ssa.Builtin); builtinOK && builtin.Name() == "append" &&
+				if builtin, builtinOK := common.Value.(*ssa.Builtin); ownerStorage && builtinOK && builtin.Name() == "append" &&
 					callbackOwners[function] && generatedCallHasTaintedArgument(common, tainted) {
 					violations = append(violations, generatedValuePosition(instruction)+": generated value appended to callback-lived collection")
 				}
@@ -748,7 +811,8 @@ func generatedValueSinks(
 					continue
 				}
 
-				if generatedCallHasTaintedArgument(common, tainted) && generatedUnanalyzedCall(common, localSSAPackage(function)) {
+				if generatedCallHasTaintedArgument(common, tainted) && generatedUnanalyzedCall(common, localSSAPackage(function)) &&
+					(ownerStorage || callbackSeen) {
 					violations = append(violations, generatedValuePosition(instruction)+": generated value escapes through unknown call")
 				}
 			}
@@ -1137,45 +1201,34 @@ func packageObjectTypeFromTypes(currentPackage *types.Package, name string) type
 	return object.Type()
 }
 
+func generatedRuntimeJSONContainerType(valueType types.Type, currentPackage *types.Package) bool {
+	valueType = types.Unalias(valueType)
+	if pointer, ok := valueType.Underlying().(*types.Pointer); ok {
+		valueType = types.Unalias(pointer.Elem())
+	}
+
+	if named, ok := valueType.(*types.Named); ok && named.Obj().Pkg() == currentPackage &&
+		named.Obj().Name() == "jsonValue" {
+		return true
+	}
+
+	switch valueType.Underlying().(type) {
+	case *types.Array, *types.Interface, *types.Map, *types.Slice:
+		return generatedValueCarrierType(valueType, currentPackage)
+	default:
+		return false
+	}
+}
+
 func generatedRuntimeJSONRoot(value ssa.Value, currentPackage *types.Package) bool {
 	allocation, ok := value.(*ssa.Alloc)
-	if !ok || allocation.Parent() == nil ||
-		(allocation.Parent().Name() != "Build" && !generatedAllocationReturned(allocation, make(map[ssa.Value]bool))) {
+	if !ok {
 		return false
 	}
 
 	pointer, ok := types.Unalias(allocation.Type()).Underlying().(*types.Pointer)
 
 	return ok && sameGuardType(pointer.Elem(), packageObjectTypeFromTypes(currentPackage, "jsonValue"))
-}
-
-func generatedAllocationReturned(value ssa.Value, seen map[ssa.Value]bool) bool {
-	if value == nil || seen[value] {
-		return false
-	}
-
-	seen[value] = true
-
-	referrers := value.Referrers()
-	if referrers == nil {
-		return false
-	}
-
-	for _, instruction := range *referrers {
-		if returned, ok := instruction.(*ssa.Return); ok {
-			for _, result := range returned.Results {
-				if result == value {
-					return true
-				}
-			}
-		}
-
-		if derived, ok := instruction.(ssa.Value); ok && generatedAllocationReturned(derived, seen) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func generatedValueRootType(valueType types.Type, currentPackage *types.Package) bool {
