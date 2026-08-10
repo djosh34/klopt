@@ -394,11 +394,12 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.path|[]string",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.remove|bool",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSource.cursor|func() compositionEditCursor",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.seen|int",
+		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.count|int",
+		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.levels|[]compositionEditCursor",
+		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.positions|[]int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.size|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.source|compositionEditSource",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.s|*search",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetLevel.cursor|compositionEditCursor",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.count|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.cursor|*compositionEditSubsetCursor",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.size|int",
@@ -558,15 +559,13 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 	}},
 	ownershipRowGroup{form: ownershipCurrentValue, lifetime: ownershipAttemptLifetime, rows: []string{
 		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.replacement|*jsonValue",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.levels|[]compositionEditSubsetLevel",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetLevel.edit|compositionEdit",
-		"github.com/djosh34/klopt/pkg/schematest.evaluationContext.cache|map[evaluationCacheKey]evaluationCacheEntry",
 		"github.com/djosh34/klopt/pkg/schematest.jsonValuePair.left|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.jsonValuePair.right|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.prospectiveCompositionSource.container|*jsonValue",
 	}},
 	ownershipRowGroup{form: ownershipCurrentValue, lifetime: ownershipCallLifetime, rows: []string{
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceCursor.stack|[]compositionDifferenceFrame",
+		"github.com/djosh34/klopt/pkg/schematest.evaluationContext.cache|map[evaluationCacheKey]evaluationCacheEntry",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.assignment|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDifferenceFrame.parent|*jsonValue",
 		"github.com/djosh34/klopt/pkg/schematest.compositionDirectEditCursor.parent|*jsonValue",
@@ -619,6 +618,7 @@ func TestExactLongLivedOwnershipShapes(t *testing.T) {
 func TestProductionCurrentOwnershipRowsAreLifecycleGuarded(t *testing.T) {
 	t.Parallel()
 
+	guardPackage := productionGuardPackage(t)
 	rows := 0
 
 	for _, allowance := range exactOwnershipAllowlist {
@@ -628,7 +628,9 @@ func TestProductionCurrentOwnershipRowsAreLifecycleGuarded(t *testing.T) {
 	}
 
 	require.Positive(t, rows)
-	require.Empty(t, generatedValueEscapeViolations(productionGuardPackage(t)))
+	require.Len(t, currentValueLifecycleCoverage(guardPackage, exactOwnershipAllowlist), rows)
+	require.Empty(t, currentValueLifecycleViolations(guardPackage, exactOwnershipAllowlist))
+	require.Empty(t, generatedValueEscapeViolations(guardPackage))
 }
 
 func TestExactOwnershipGuardRejectsUnlistedAndChangedFields(t *testing.T) {
@@ -831,7 +833,15 @@ func TestSingularCurrentOwnershipRequiresClearBeforeContinuation(t *testing.T) {
 	require.Empty(t, exactOwnershipViolations(parseGuardPackage(t, map[string]string{"guard.go": replaced}), allowed))
 	require.NotEmpty(t, exactOwnershipViolations(parseGuardPackage(t, map[string]string{"guard.go": bad}), allowed))
 
+	instancePath := `package schematest
+		type jsonValue struct{}; type state struct { current *jsonValue }
+		func Build(yield func()) { first, second := new(state), new(state); first.current = new(jsonValue); second.current = new(jsonValue); second.current = nil; yield() }
+	`
+	require.NotEmpty(t, exactOwnershipViolations(parseGuardPackage(t, map[string]string{"guard.go": instancePath}), allowed))
+
 	badPaths := []string{
+		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func advance() int { return 1 }; func Build() { active := new(state); active.current = new(jsonValue); var result = advance(); active.current = nil; _ = result }`,
+		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func append() {}; func Build() { active := new(state); active.current = new(jsonValue); append(); active.current = nil }`,
 		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); active.current = new(jsonValue); if true { yield() }; active.current = nil }`,
 		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); active.current = new(jsonValue); switch 1 { case 1: yield() }; active.current = nil }`,
 		`package schematest; type jsonValue struct{}; type state struct { current *jsonValue }; func Build(yield func()) { active := new(state); active.current = new(jsonValue); select { default: yield() }; active.current = nil }`,
@@ -847,6 +857,31 @@ func TestSingularCurrentOwnershipRequiresClearBeforeContinuation(t *testing.T) {
 	for _, source := range badPaths {
 		require.NotEmpty(t, exactOwnershipViolations(parseGuardPackage(t, map[string]string{"guard.go": source}), allowed), source)
 	}
+}
+
+func TestCurrentOwnershipRejectsCollectionsAndCallLifetimeEscape(t *testing.T) {
+	t.Parallel()
+
+	const prefix = modulePath + "/pkg/schematest."
+
+	collectionSource := `package schematest
+		type jsonValue struct{}; type state struct { current []*jsonValue }
+		func Build() { _ = new(state) }
+	`
+	collectionAllowed := map[string]ownershipAllowance{
+		prefix + "state.current": {typeName: "[]*jsonValue", form: ownershipCurrentValue, lifetime: ownershipAttemptLifetime},
+	}
+	require.NotEmpty(t, exactOwnershipViolations(parseGuardPackage(t, map[string]string{"guard.go": collectionSource}), collectionAllowed))
+
+	cacheSource := `package schematest
+		type jsonValue struct{}; type cacheKey struct { value *jsonValue }; type evaluationContext struct { cache map[cacheKey]bool }
+		func Build() evaluationContext { context := evaluationContext{cache: make(map[cacheKey]bool)}; return context }
+	`
+	cacheAllowed := map[string]ownershipAllowance{
+		prefix + "cacheKey.value":          {typeName: "*jsonValue", form: ownershipCurrentValue, lifetime: ownershipCallLifetime},
+		prefix + "evaluationContext.cache": {typeName: "map[cacheKey]bool", form: ownershipCurrentValue, lifetime: ownershipCallLifetime},
+	}
+	require.NotEmpty(t, exactOwnershipViolations(parseGuardPackage(t, map[string]string{"guard.go": cacheSource}), cacheAllowed))
 }
 
 func exactOwnershipViolations(
@@ -1076,6 +1111,13 @@ func validOwnershipAllowance(
 		return false
 	}
 
+	if containsJSONValue && allowance.form == ownershipCurrentValue && allowance.lifetime == ownershipAttemptLifetime {
+		switch types.Unalias(owned).Underlying().(type) {
+		case *types.Array, *types.Map, *types.Slice:
+			return false
+		}
+	}
+
 	if allowance.form == ownershipAuthoredValue {
 		return containsJSONValue
 	}
@@ -1203,6 +1245,27 @@ func recursivelyContainsGuardType(owned, wanted types.Type, visiting map[types.T
 	return false
 }
 
+func currentValueLifecycleCoverage(
+	guardPackage *sourceGuardPackage,
+	allowed map[string]ownershipAllowance,
+) map[string]ownershipLifetime {
+	discovered := buildOwnershipFields(guardPackage)
+	covered := make(map[string]ownershipLifetime)
+
+	for key, allowance := range allowed {
+		if allowance.form == ownershipCurrentValue && discovered[key] != nil {
+			covered[key] = allowance.lifetime
+		}
+	}
+
+	return covered
+}
+
+type ownershipLiveValue struct {
+	receiver string
+	field    *types.Var
+}
+
 //nolint:cyclop // Package declarations and watched lifecycle rows are independent checks.
 func currentValueLifecycleViolations(
 	guardPackage *sourceGuardPackage,
@@ -1221,11 +1284,13 @@ func currentValueLifecycleViolations(
 		}
 	}
 
-	if len(watched) == 0 {
-		return nil
-	}
-
 	var violations []string
+
+	violations = append(violations, currentValueDeadlineViolations(guardPackage, allowed)...)
+
+	if len(watched) == 0 {
+		return violations
+	}
 
 	for _, file := range guardPackage.files {
 		for _, declaration := range file.Decls {
@@ -1234,11 +1299,11 @@ func currentValueLifecycleViolations(
 				continue
 			}
 
-			live := make(map[*types.Var]bool)
+			live := make(map[ownershipLiveValue]bool)
 			inspectOwnershipStatements(guardPackage, function.Body.List, watched, live, &violations)
 
-			for field := range live {
-				violations = append(violations, "current value survives function return: "+watched[field])
+			for value := range live {
+				violations = append(violations, "current value survives function return: "+watched[value.field])
 			}
 		}
 	}
@@ -1246,12 +1311,97 @@ func currentValueLifecycleViolations(
 	return violations
 }
 
+//nolint:cyclop // Exact holder discovery and return-shape traversal form one deadline check.
+func currentValueDeadlineViolations(
+	guardPackage *sourceGuardPackage,
+	allowed map[string]ownershipAllowance,
+) []string {
+	callOwners := make(map[string]string)
+	prefix := guardPackage.pkg.Path() + "."
+	discovered := buildOwnershipFields(guardPackage)
+
+	for key, allowance := range allowed {
+		if allowance.form != ownershipCurrentValue || allowance.lifetime != ownershipCallLifetime || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+
+		field := discovered[key]
+		if field == nil {
+			continue
+		}
+
+		if _, mapHolder := types.Unalias(field.Type()).Underlying().(*types.Map); !mapHolder {
+			continue
+		}
+
+		owner, _, found := strings.Cut(strings.TrimPrefix(key, prefix), ".")
+		if found && owner != "jsonValue" {
+			callOwners[owner] = key
+		}
+	}
+
+	var violations []string
+
+	for _, file := range guardPackage.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			returned, ok := node.(*ast.ReturnStmt)
+			if !ok {
+				return true
+			}
+
+			for _, result := range returned.Results {
+				for owner, key := range callOwners {
+					if ownershipTypeContainsNamed(guardPackage.info.TypeOf(result), guardPackage.pkg, owner, make(map[types.Type]bool)) {
+						violations = append(violations, "current value escapes call lifetime: "+key)
+					}
+				}
+			}
+
+			return false
+		})
+	}
+
+	return violations
+}
+
+//nolint:cyclop // Every aggregate carrier is traversed explicitly.
+func ownershipTypeContainsNamed(owned types.Type, currentPackage *types.Package, name string, seen map[types.Type]bool) bool {
+	if owned == nil {
+		return false
+	}
+
+	owned = types.Unalias(owned)
+	if seen[owned] {
+		return false
+	}
+
+	seen[owned] = true
+
+	if named, ok := owned.(*types.Named); ok && named.Obj().Pkg() == currentPackage && named.Obj().Name() == name {
+		return true
+	}
+
+	switch typed := owned.Underlying().(type) {
+	case *types.Pointer:
+		return ownershipTypeContainsNamed(typed.Elem(), currentPackage, name, seen)
+	case *types.Array:
+		return ownershipTypeContainsNamed(typed.Elem(), currentPackage, name, seen)
+	case *types.Slice:
+		return ownershipTypeContainsNamed(typed.Elem(), currentPackage, name, seen)
+	case *types.Map:
+		return ownershipTypeContainsNamed(typed.Key(), currentPackage, name, seen) ||
+			ownershipTypeContainsNamed(typed.Elem(), currentPackage, name, seen)
+	}
+
+	return false
+}
+
 //nolint:cyclop,gocognit,gocyclo // All structured control-flow boundaries share one lifecycle pass.
 func inspectOwnershipStatements(
 	guardPackage *sourceGuardPackage,
 	statements []ast.Stmt,
 	watched map[*types.Var]string,
-	live map[*types.Var]bool,
+	live map[ownershipLiveValue]bool,
 	violations *[]string,
 ) {
 	for _, statement := range statements {
@@ -1269,24 +1419,30 @@ func inspectOwnershipStatements(
 					continue
 				}
 
-				live[field] = !isNilExpression(assignment.Rhs[index])
-				if !live[field] {
-					delete(live, field)
+				value := ownershipLiveValue{receiver: ownershipReceiverPath(selector.X), field: field}
+
+				live[value] = !isNilExpression(assignment.Rhs[index])
+				if !live[value] {
+					delete(live, value)
 				}
 			}
 		}
 
 		switch typed := statement.(type) {
 		case *ast.AssignStmt:
-			if ownershipContinuationCall(typed) {
+			if ownershipContinuationCall(guardPackage, typed) {
 				appendLiveOwnershipViolations(live, watched, "continuation", violations)
 			}
 		case *ast.ExprStmt:
-			if ownershipContinuationCall(typed) {
+			if ownershipContinuationCall(guardPackage, typed) {
+				appendLiveOwnershipViolations(live, watched, "continuation", violations)
+			}
+		case *ast.DeclStmt:
+			if ownershipContinuationCall(guardPackage, typed) {
 				appendLiveOwnershipViolations(live, watched, "continuation", violations)
 			}
 		case *ast.IfStmt:
-			if ownershipContinuationCall(typed.Init) || ownershipContinuationCall(typed.Cond) {
+			if ownershipContinuationCall(guardPackage, typed.Init) || ownershipContinuationCall(guardPackage, typed.Cond) {
 				appendLiveOwnershipViolations(live, watched, "continuation", violations)
 			}
 
@@ -1310,11 +1466,11 @@ func inspectOwnershipStatements(
 		case *ast.BlockStmt:
 			inspectOwnershipStatements(guardPackage, typed.List, watched, live, violations)
 		case *ast.SwitchStmt:
-			if ownershipContinuationCall(typed.Init) || ownershipContinuationCall(typed.Tag) {
+			if ownershipContinuationCall(guardPackage, typed.Init) || ownershipContinuationCall(guardPackage, typed.Tag) {
 				appendLiveOwnershipViolations(live, watched, "continuation", violations)
 			}
 
-			join := make(map[*types.Var]bool)
+			join := make(map[ownershipLiveValue]bool)
 			hasDefault := false
 
 			for _, clause := range typed.Body.List {
@@ -1336,11 +1492,11 @@ func inspectOwnershipStatements(
 			clear(live)
 			maps.Copy(live, join)
 		case *ast.TypeSwitchStmt:
-			if ownershipContinuationCall(typed.Init) || ownershipContinuationCall(typed.Assign) {
+			if ownershipContinuationCall(guardPackage, typed.Init) || ownershipContinuationCall(guardPackage, typed.Assign) {
 				appendLiveOwnershipViolations(live, watched, "continuation", violations)
 			}
 
-			join := make(map[*types.Var]bool)
+			join := make(map[ownershipLiveValue]bool)
 			hasDefault := false
 
 			for _, clause := range typed.Body.List {
@@ -1362,7 +1518,7 @@ func inspectOwnershipStatements(
 			clear(live)
 			maps.Copy(live, join)
 		case *ast.SelectStmt:
-			join := make(map[*types.Var]bool)
+			join := make(map[ownershipLiveValue]bool)
 
 			for _, clause := range typed.Body.List {
 				communication, ok := clause.(*ast.CommClause)
@@ -1371,7 +1527,7 @@ func inspectOwnershipStatements(
 				}
 
 				branchLive := maps.Clone(live)
-				if ownershipContinuationCall(communication.Comm) {
+				if ownershipContinuationCall(guardPackage, communication.Comm) {
 					appendLiveOwnershipViolations(branchLive, watched, "continuation", violations)
 				}
 
@@ -1382,8 +1538,8 @@ func inspectOwnershipStatements(
 			clear(live)
 			maps.Copy(live, join)
 		case *ast.ReturnStmt:
-			for field := range live {
-				*violations = append(*violations, "current value survives function return: "+watched[field])
+			for value := range live {
+				*violations = append(*violations, "current value survives function return: "+watched[value.field])
 			}
 
 			clear(live)
@@ -1391,17 +1547,17 @@ func inspectOwnershipStatements(
 			nested := maps.Clone(live)
 			inspectOwnershipStatements(guardPackage, typed.Body.List, watched, nested, violations)
 
-			for field := range nested {
-				*violations = append(*violations, "current value survives retry: "+watched[field])
-				live[field] = true
+			for value := range nested {
+				*violations = append(*violations, "current value survives retry: "+watched[value.field])
+				live[value] = true
 			}
 		case *ast.RangeStmt:
 			nested := maps.Clone(live)
 			inspectOwnershipStatements(guardPackage, typed.Body.List, watched, nested, violations)
 
-			for field := range nested {
-				*violations = append(*violations, "current value survives sibling: "+watched[field])
-				live[field] = true
+			for value := range nested {
+				*violations = append(*violations, "current value survives sibling: "+watched[value.field])
+				live[value] = true
 			}
 		}
 	}
@@ -1411,7 +1567,7 @@ func markCompositeOwnership(
 	guardPackage *sourceGuardPackage,
 	node ast.Node,
 	watched map[*types.Var]string,
-	live map[*types.Var]bool,
+	live map[ownershipLiveValue]bool,
 ) {
 	ast.Inspect(node, func(child ast.Node) bool {
 		literal, ok := child.(*ast.CompositeLit)
@@ -1432,7 +1588,7 @@ func markCompositeOwnership(
 
 			field, ok := guardPackage.info.Uses[identifier].(*types.Var)
 			if ok && watched[field] != "" && !isNilExpression(keyValue.Value) {
-				live[field] = true
+				live[ownershipLiveValue{receiver: "composite", field: field}] = true
 			}
 		}
 
@@ -1441,17 +1597,32 @@ func markCompositeOwnership(
 }
 
 func appendLiveOwnershipViolations(
-	live map[*types.Var]bool,
+	live map[ownershipLiveValue]bool,
 	watched map[*types.Var]string,
 	boundary string,
 	violations *[]string,
 ) {
-	for field := range live {
-		*violations = append(*violations, "current value survives "+boundary+": "+watched[field])
+	for value := range live {
+		*violations = append(*violations, "current value survives "+boundary+": "+watched[value.field])
 	}
 }
 
-func ownershipContinuationCall(node ast.Node) bool {
+func ownershipReceiverPath(expression ast.Expr) string {
+	switch typed := expression.(type) {
+	case *ast.Ident:
+		return typed.Name
+	case *ast.SelectorExpr:
+		return ownershipReceiverPath(typed.X) + "." + typed.Sel.Name
+	case *ast.ParenExpr:
+		return ownershipReceiverPath(typed.X)
+	case *ast.StarExpr:
+		return ownershipReceiverPath(typed.X)
+	default:
+		return "unknown"
+	}
+}
+
+func ownershipContinuationCall(guardPackage *sourceGuardPackage, node ast.Node) bool {
 	if node == nil {
 		return false
 	}
@@ -1465,9 +1636,8 @@ func ownershipContinuationCall(node ast.Node) bool {
 		}
 
 		if identifier, identifierOK := call.Fun.(*ast.Ident); identifierOK {
-			switch identifier.Name {
-			case "new", "make", "len", "cap", "append", "copy", "delete", "clear", "min", "max":
-				return true
+			if _, builtin := guardPackage.info.Uses[identifier].(*types.Builtin); builtin {
+				return false
 			}
 		}
 

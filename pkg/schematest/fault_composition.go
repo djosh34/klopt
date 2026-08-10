@@ -970,19 +970,14 @@ func nextCompositionObjectName(object map[string]*jsonValue, after string, hasAf
 	return selected, found
 }
 
-// compositionEditSubsetCursor retains only one fixed-size combination frontier.
+// compositionEditSubsetCursor retains only cursor and ordinal combination state.
 type compositionEditSubsetCursor struct {
-	source compositionEditSource
-	size   int
-	levels []compositionEditSubsetLevel
-	s      *search
-	seen   int
-}
-
-// compositionEditSubsetLevel retains one selected edit and cloned source cursor.
-type compositionEditSubsetLevel struct {
-	cursor compositionEditCursor
-	edit   compositionEdit
+	source    compositionEditSource
+	size      int
+	levels    []compositionEditCursor
+	positions []int
+	s         *search
+	count     int
 }
 
 // newCompositionEditSubsetCursor starts one fixed-size combination frontier.
@@ -994,53 +989,82 @@ func newCompositionEditSubsetCursor(
 	return &compositionEditSubsetCursor{source: source, size: size, s: s}
 }
 
-// Next resumes the next canonical combination.
+// Next materializes one candidate and discards every generated edit before returning.
 func (cursor *compositionEditSubsetCursor) Next() ([]compositionEdit, bool, bool, error) {
 	if cursor.size <= 0 {
 		return nil, false, true, nil
 	}
 
 	if len(cursor.levels) == 0 {
-		cursor.levels = append(cursor.levels, compositionEditSubsetLevel{cursor: cursor.source.Cursor()})
+		cursor.levels = append(cursor.levels, cursor.source.Cursor())
+		cursor.positions = append(cursor.positions, -1)
 	}
 
 	for len(cursor.levels) > 0 {
-		level := &cursor.levels[len(cursor.levels)-1]
+		index := len(cursor.levels) - 1
+		editCursor := cursor.levels[index]
 
-		edit, exists, err := level.cursor.Next(cursor.s)
+		_, exists, err := editCursor.Next(cursor.s)
 		if err != nil {
 			return nil, false, false, err
 		}
 
 		if !exists {
-			cursor.levels = cursor.levels[:len(cursor.levels)-1]
+			cursor.levels = cursor.levels[:index]
+			cursor.positions = cursor.positions[:index]
 
 			continue
 		}
 
-		level.edit = edit
-
-		if len(cursor.levels) == 1 {
-			cursor.seen++
+		cursor.positions[index]++
+		if index == 0 {
+			cursor.count++
 		}
 
 		if len(cursor.levels) < cursor.size {
-			cursor.levels = append(cursor.levels, compositionEditSubsetLevel{
-				cursor: level.cursor.Clone(),
-			})
+			cursor.levels = append(cursor.levels, editCursor.Clone())
+			cursor.positions = append(cursor.positions, cursor.positions[index])
 
 			continue
 		}
 
-		selected := make([]compositionEdit, len(cursor.levels))
-		for index := range cursor.levels {
-			selected[index] = cursor.levels[index].edit
+		selected := make([]compositionEdit, cursor.size)
+		for selectedIndex, position := range cursor.positions {
+			edit, materializeErr := cursor.editAt(position)
+			if materializeErr != nil {
+				return nil, false, false, materializeErr
+			}
+
+			selected[selectedIndex] = edit
 		}
 
 		return selected, true, false, nil
 	}
 
 	return nil, false, true, nil
+}
+
+// editAt transiently reconstructs one selected edit without charging the search twice.
+func (cursor *compositionEditSubsetCursor) editAt(position int) (compositionEdit, error) {
+	sourceCursor := cursor.source.Cursor()
+	shadow := *cursor.s
+	shadow.steps = 0
+	shadow.maxSteps = ^uint64(0)
+
+	for index := 0; ; index++ {
+		edit, exists, err := sourceCursor.Next(&shadow)
+		if err != nil {
+			return compositionEdit{}, err
+		}
+
+		if !exists {
+			return compositionEdit{}, errors.New("schematest: composition edit ordinal is unavailable")
+		}
+
+		if index == position {
+			return edit, nil
+		}
+	}
 }
 
 // compositionEditSubsetMachine traverses canonical subset sizes without a corpus.
@@ -1072,7 +1096,7 @@ func (machine *compositionEditSubsetMachine) Advance() ([]compositionEdit, bool,
 	}
 
 	if machine.size == 1 {
-		machine.count = machine.cursor.seen
+		machine.count = machine.cursor.count
 	}
 
 	if machine.size >= machine.count {

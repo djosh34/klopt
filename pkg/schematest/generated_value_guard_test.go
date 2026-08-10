@@ -185,6 +185,39 @@ func TestGeneratedValueGuardRejectsOpaqueCarrierAndCallbackEffects(t *testing.T)
 	}
 }
 
+func TestGeneratedValueGuardRejectsRuntimeJSONAndLoopBackedgeRetention(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"unemitted runtime JSON archive": `package schematest
+			type jsonValue struct { text string }; type Case struct{}
+			func consume([]*jsonValue) {}
+			func Build(yield func(Case)) { current := new(jsonValue); archive := []*jsonValue{current}; yield(Case{}); consume(archive) }`,
+		"later loop iteration": `package schematest
+			type Case struct { JSON []byte }
+			func consume([]byte) {}
+			func Build(yield func(Case)) { current := Case{JSON: []byte("null")}; alias := current.JSON; for range 2 { consume(alias); yield(current) } }`,
+	}
+
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.NotEmpty(t, generatedValueEscapeViolations(parseGuardPackage(t, map[string]string{"guard.go": source})))
+		})
+	}
+}
+
+func TestGeneratedValueGuardAllowsAuthoredJSONMetadata(t *testing.T) {
+	t.Parallel()
+
+	source := `package schematest
+		type jsonValue struct { text string }; type schemaShape struct { enum []*jsonValue }; type Case struct{}
+		func Build(shape *schemaShape, yield func(Case)) { _ = shape.enum; yield(Case{}) }
+	`
+
+	require.Empty(t, generatedValueEscapeViolations(parseGuardPackage(t, map[string]string{"guard.go": source})))
+}
+
 func TestGeneratedValueGuardAllowsImmediateConsumption(t *testing.T) {
 	t.Parallel()
 
@@ -217,6 +250,10 @@ func generatedValueEscapeViolations(guardPackage *sourceGuardPackage) []string {
 		values:  make(map[ssa.Value]bool),
 		returns: make(map[*ssa.Function]bool),
 	}
+	runtimeJSON := generatedValueTaint{
+		values:  make(map[ssa.Value]bool),
+		returns: make(map[*ssa.Function]bool),
+	}
 
 	for function := range functions {
 		for _, parameter := range function.Params {
@@ -237,6 +274,10 @@ func generatedValueEscapeViolations(guardPackage *sourceGuardPackage) []string {
 				if ok && generatedValueRootType(value.Type(), guardPackage.pkg) {
 					taint.values[value] = true
 				}
+
+				if ok && generatedRuntimeJSONRoot(value, guardPackage.pkg) {
+					runtimeJSON.values[value] = true
+				}
 			}
 		}
 	}
@@ -250,12 +291,16 @@ func generatedValueEscapeViolations(guardPackage *sourceGuardPackage) []string {
 					if propagateGeneratedValueTaint(instruction, functions, &taint, guardPackage.pkg) {
 						changed = true
 					}
+
+					if propagateGeneratedValueTaint(instruction, functions, &runtimeJSON, guardPackage.pkg) {
+						changed = true
+					}
 				}
 			}
 		}
 	}
 
-	violations := generatedValueSinks(functions, taint.values, guardPackage.pkg)
+	violations := generatedValueSinks(functions, taint.values, runtimeJSON.values, guardPackage.pkg)
 	slices.Sort(violations)
 
 	return slices.Compact(violations)
@@ -624,6 +669,7 @@ func propagateGeneratedValueTaint(
 func generatedValueSinks(
 	functions map[*ssa.Function]bool,
 	tainted map[ssa.Value]bool,
+	runtimeJSON map[ssa.Value]bool,
 	currentPackage *types.Package,
 ) []string {
 	var violations []string
@@ -636,12 +682,16 @@ func generatedValueSinks(
 	for function := range functions {
 		callbackAtEntry := generatedCallbackEntryState(function, callbacks, callbackInvokers)
 		for _, block := range function.Blocks {
-			callbackSeen := callbackAtEntry[block]
+			callbackFromEntry := callbackAtEntry[block]
+
+			callbackSeen := callbackFromEntry
 			for _, instruction := range block.Instrs {
 				if callbackSeen {
 					for _, operand := range instruction.Operands(nil) {
-						if operand != nil && tainted[*operand] && !cleared[*operand] &&
-							generatedValueCarrierType((*operand).Type(), currentPackage) {
+						if operand != nil && !cleared[*operand] &&
+							((tainted[*operand] && generatedValueCarrierType((*operand).Type(), currentPackage)) ||
+								(runtimeJSON[*operand] && generatedCallbackAliasType((*operand).Type(), currentPackage))) &&
+							(!callbackFromEntry || !generatedValueRefreshedBeforeUse(*operand, instruction)) {
 							violations = append(violations, generatedValuePosition(instruction)+": callback alias used after callback return")
 
 							break
@@ -687,34 +737,81 @@ func generatedValueSinks(
 					violations = append(violations, generatedValuePosition(instruction)+": generated value escapes through unknown call")
 				}
 			}
-
-			if callbackSeen {
-				for _, successor := range block.Succs {
-					if successor.Index > block.Index || !generatedBlockUsesTaint(successor, tainted, cleared, currentPackage) {
-						continue
-					}
-
-					violations = append(violations, function.String()+": generated callback value survives loop continuation")
-				}
-			}
 		}
 	}
 
 	return violations
 }
 
-func generatedBlockUsesTaint(
-	block *ssa.BasicBlock,
-	tainted, cleared map[ssa.Value]bool,
-	currentPackage *types.Package,
-) bool {
-	for _, instruction := range block.Instrs {
-		for _, operand := range instruction.Operands(nil) {
-			if operand != nil && *operand != nil && tainted[*operand] && !cleared[*operand] &&
-				generatedValueCarrierType((*operand).Type(), currentPackage) {
-				return true
-			}
+func generatedCallbackAliasType(valueType types.Type, currentPackage *types.Package) bool {
+	valueType = types.Unalias(valueType)
+	if pointer, ok := valueType.Underlying().(*types.Pointer); ok {
+		return sameGuardType(pointer.Elem(), packageObjectTypeFromTypes(currentPackage, "jsonValue"))
+	}
+
+	slice, ok := valueType.Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+
+	if basic, basicOK := types.Unalias(slice.Elem()).Underlying().(*types.Basic); basicOK {
+		return basic.Kind() == types.Byte
+	}
+
+	pointer, ok := types.Unalias(slice.Elem()).Underlying().(*types.Pointer)
+
+	return ok && sameGuardType(pointer.Elem(), packageObjectTypeFromTypes(currentPackage, "jsonValue"))
+}
+
+func generatedValueRefreshedBeforeUse(value ssa.Value, use ssa.Instruction) bool {
+	definition, ok := value.(ssa.Instruction)
+	if !ok || definition.Block() == nil || use.Block() == nil {
+		return false
+	}
+
+	if _, phi := definition.(*ssa.Phi); phi {
+		return false
+	}
+
+	if definition.Block() != use.Block() {
+		return definition.Block().Dominates(use.Block()) && generatedBlockCanReach(use.Block(), definition.Block())
+	}
+
+	if !generatedBlockCanReach(use.Block(), definition.Block()) {
+		return false
+	}
+
+	for _, instruction := range use.Block().Instrs {
+		if instruction == definition {
+			return true
 		}
+
+		if instruction == use {
+			return false
+		}
+	}
+
+	return false
+}
+
+func generatedBlockCanReach(from, wanted *ssa.BasicBlock) bool {
+	seen := map[*ssa.BasicBlock]bool{from: true}
+	pending := slices.Clone(from.Succs)
+
+	for len(pending) > 0 {
+		block := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+
+		if block == wanted {
+			return true
+		}
+
+		if seen[block] {
+			continue
+		}
+
+		seen[block] = true
+		pending = append(pending, block.Succs...)
 	}
 
 	return false
@@ -928,10 +1025,6 @@ func generatedCallbackEntryState(
 			}
 
 			for _, successor := range block.Succs {
-				if successor.Index <= block.Index {
-					continue
-				}
-
 				if !entry[successor] {
 					entry[successor] = true
 					changed = true
@@ -1036,6 +1129,17 @@ func packageObjectTypeFromTypes(currentPackage *types.Package, name string) type
 	}
 
 	return object.Type()
+}
+
+func generatedRuntimeJSONRoot(value ssa.Value, currentPackage *types.Package) bool {
+	allocation, ok := value.(*ssa.Alloc)
+	if !ok {
+		return false
+	}
+
+	pointer, ok := types.Unalias(allocation.Type()).Underlying().(*types.Pointer)
+
+	return ok && sameGuardType(pointer.Elem(), packageObjectTypeFromTypes(currentPackage, "jsonValue"))
 }
 
 func generatedValueRootType(valueType types.Type, currentPackage *types.Package) bool {
