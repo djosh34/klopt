@@ -92,7 +92,7 @@ func (machines faultSearchMachines) directParentAtRank(
 
 	groups := parentReplayGroups(fault.requirements)
 
-	decoder, ok := newDirectRankTupleDecoder(len(groups)+1, rank)
+	decoder, ok := newDirectRankTupleDecoder(uint64(len(groups)+1), rank)
 	if !ok {
 		return nil, false, false, nil
 	}

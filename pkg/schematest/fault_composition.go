@@ -253,7 +253,7 @@ func prospectiveCompositionEditsAtRank(
 		}
 	}
 
-	decoder, ok := newDirectRankTupleDecoder(selected*directRowRankDimensions, tupleRank)
+	decoder, ok := newDirectRankTupleDecoder(uint64(selected*directRowRankDimensions), tupleRank)
 	if !ok {
 		return nil, true, nil
 	}

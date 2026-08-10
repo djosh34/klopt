@@ -12,7 +12,6 @@ import (
 
 const (
 	objectFaultProductDimensions = 4
-	arrayFaultProductDimensions  = 3
 	directRowRankDimensions      = 2
 	faultCandidateRankDimensions = 3
 	objectGrowthRanksPerAddition = 2
@@ -427,10 +426,19 @@ func objectCountFaultAttemptAtRank(
 	return candidate, true, false, err
 }
 
-// oversizedObjectFaultAttempt retains an exact monotonic member cursor. It
-// shares the projected member/value decoder used by ordinary object growth.
+func parseAndCompareJSONCount(count int, desired *exactNumber) (int, error) {
+	current, err := parseExactNumber(strconv.Itoa(count))
+	if err != nil {
+		return 0, err
+	}
+
+	return current.compare(desired)
+}
+
+// oversizedObjectFaultAttempt performs one directly ranked member edit before
+// yielding to the owning fault product.
 //
-//nolint:cyclop,gocognit // Exact count, member, name, and value state form one machine.
+//nolint:cyclop // Exact count, member, name, and value state form one machine.
 func oversizedObjectFaultAttempt(
 	parent *jsonValue,
 	fault faultProgram,
@@ -471,76 +479,38 @@ func oversizedObjectFaultAttempt(
 		return nil, false, false, err
 	}
 
-	working, err := cloneJSONValue(current)
+	comparison, err := parseAndCompareJSONCount(len(current.object), desired)
 	if err != nil {
 		return nil, false, false, err
+	}
+
+	if comparison >= 0 {
+		return nil, false, true, nil
 	}
 
 	if assignErr := s.assign(); assignErr != nil { // exact member count
 		return nil, false, false, assignErr
 	}
 
-	currentCount, err := parseExactNumber(strconv.Itoa(len(current.object)))
-	if err != nil {
-		return nil, false, false, err
+	member, memberExists, memberErr := objectMutationMemberAtRank(
+		shape, current, nil, active, rank,
+	)
+	if memberErr != nil || !memberExists {
+		return nil, false, false, memberErr
 	}
 
-	one, err := parseExactNumber("1")
-	if err != nil {
-		return nil, false, false, err
+	if assignErr := s.assign(); assignErr != nil { // selected name
+		return nil, false, false, assignErr
 	}
 
-	memberRank := rank
-
-	for {
-		comparison, compareErr := currentCount.compare(desired)
-		if compareErr != nil {
-			return nil, false, false, compareErr
-		}
-
-		if comparison >= 0 {
-			return nil, false, false, errors.New("schematest: oversized object unexpectedly materialized")
-		}
-
-		member, memberExists, memberErr := objectMutationMemberAtRank(
-			shape, working, nil, active, memberRank,
-		)
-		if memberErr != nil {
-			return nil, false, false, memberErr
-		}
-
-		if memberRank == ^uint64(0) {
-			return nil, false, false, errors.New("schematest: object member rank overflow")
-		}
-
-		memberRank++
-
-		if !memberExists {
-			continue
-		}
-
-		if assignErr := s.assign(); assignErr != nil { // selected name
-			return nil, false, false, assignErr
-		}
-
-		value, valueExists, usable, _, valueErr := s.rowConjunctionValueAt(
-			member.schemas, active, rowSearchContext{}, rank,
-		)
-		if valueErr != nil {
-			return nil, false, false, valueErr
-		}
-
-		if !valueExists || !usable {
-			return nil, false, false, nil
-		}
-
-		working.object[member.name] = value
-
-		currentCount, err = addExactNumbers(currentCount, one)
-		if err != nil {
-			return nil, false, false, err
-		}
+	_, valueExists, usable, _, valueErr := s.rowConjunctionValueAt(
+		member.schemas, active, rowSearchContext{}, rank,
+	)
+	if valueErr != nil || !valueExists || !usable {
+		return nil, false, false, valueErr
 	}
+
+	return nil, false, false, nil
 }
 
 // arrayCountFaultAttemptAtRank preserves exact authored counts through a lazy edit cursor.
@@ -597,8 +567,8 @@ func arrayCountFaultAttemptAtRank(
 	return representableArrayFaultAttemptAtRank(parent, fault, int(count), rank, s)
 }
 
-// oversizedArrayFaultAttempt retains an exact monotonic length cursor. Every
-// charged step precedes a selected length, index, or item-value assignment.
+// oversizedArrayFaultAttempt performs one directly ranked item edit before
+// yielding to the owning fault product.
 //
 //nolint:cyclop // Exact count, index, and item-value state form one machine.
 func oversizedArrayFaultAttempt(
@@ -639,53 +609,34 @@ func oversizedArrayFaultAttempt(
 		return nil, false, false, assignErr
 	}
 
-	currentCount, err := parseExactNumber(strconv.Itoa(len(current.array)))
+	comparison, err := parseAndCompareJSONCount(len(current.array), desired)
 	if err != nil {
 		return nil, false, false, err
+	}
+
+	if comparison >= 0 {
+		return nil, false, true, nil
 	}
 
 	items := rowProjectedArrayItems(view, active)
 
-	one, err := parseExactNumber("1")
-	if err != nil {
-		return nil, false, false, err
+	if assignErr := s.assign(); assignErr != nil { // selected index
+		return nil, false, false, assignErr
 	}
 
-	for {
-		comparison, compareErr := currentCount.compare(desired)
-		if compareErr != nil {
-			return nil, false, false, compareErr
-		}
-
-		if comparison >= 0 {
-			return nil, false, false, errors.New("schematest: oversized array unexpectedly materialized")
-		}
-
-		if assignErr := s.assign(); assignErr != nil { // selected index
-			return nil, false, false, assignErr
-		}
-
-		_, valueExists, usable, _, valueErr := s.rowConjunctionValueAt(
-			items, active, rowSearchContext{}, rank,
-		)
-		if valueErr != nil {
-			return nil, false, false, valueErr
-		}
-
-		if !valueExists || !usable {
-			return nil, false, false, nil
-		}
-
-		currentCount, err = addExactNumbers(currentCount, one)
-		if err != nil {
-			return nil, false, false, err
-		}
+	_, valueExists, usable, _, valueErr := s.rowConjunctionValueAt(
+		items, active, rowSearchContext{}, rank,
+	)
+	if valueErr != nil || !valueExists || !usable {
+		return nil, false, false, valueErr
 	}
+
+	return nil, false, false, nil
 }
 
 // representableArrayFaultAttemptAtRank attempts one authored or parent-relative array edit.
 //
-//nolint:cyclop // Authored, deletion, and insertion families share one ranked adapter.
+
 func representableArrayFaultAttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
@@ -733,26 +684,8 @@ func representableArrayFaultAttemptAtRank(
 			return nil, false, true, nil
 		}
 
-		indexes, exists := arrayCombinationAt(len(current.array), removed, rank)
-		if !exists {
-			return nil, false, false, errors.New("schematest: array deletion rank disappeared")
-		}
-
-		values := make([]*jsonValue, 0, desired)
-
-		removedIndex := 0
-		for index, value := range current.array {
-			if removedIndex < len(indexes) && indexes[removedIndex] == index {
-				removedIndex++
-
-				continue
-			}
-
-			values = append(values, value)
-		}
-
-		candidate, matched, err := tryArrayCountCandidate(
-			parent, path, values, arrayEditCharges{indexes: pathCopyInts(indexes)}, fault, s,
+		candidate, matched, err := tryArrayDeletionCandidate(
+			parent, path, len(current.array), removed, rank, fault, s,
 		)
 
 		return candidate, matched, false, err
@@ -860,25 +793,14 @@ func authoredArrayFaultAttemptAtRank(
 			continue
 		}
 
-		indexes := make([]int, len(selected.array))
-		for index := range indexes {
-			indexes[index] = index
-		}
-
-		candidate, matched, err := tryArrayCountCandidate(
-			parent,
-			path,
-			selected.array,
-			arrayEditCharges{indexes: indexes, itemValues: len(indexes)},
-			fault,
-			s,
+		candidate, matched, err := tryArrayReplacementCandidate(
+			parent, path, selected.array, fault, s,
 		)
 
 		return candidate, matched, false, err
 	}
 }
 
-//nolint:cyclop // Projection, layout, and item ranks form one insertion attempt.
 func arrayInsertionFaultAttemptAtRank(
 	parent *jsonValue,
 	path []string,
@@ -899,28 +821,9 @@ func arrayInsertionFaultAttemptAtRank(
 
 	layoutCount := saturatedBinomial(uint64(desired), uint64(insertions))
 
-	frontier, err := newRankProductCursor(arrayFaultProductDimensions)
-	if err != nil {
-		return nil, false, false, err
-	}
-
-	if setErr := frontier.SetFinite(0, projectionCount); setErr != nil {
-		return nil, false, false, setErr
-	}
-
-	if setErr := frontier.SetFinite(1, layoutCount); setErr != nil {
-		return nil, false, false, setErr
-	}
-
-	var ranks []uint64
-
-	for currentRank := uint64(0); currentRank <= rank; currentRank++ {
-		var exists bool
-
-		ranks, exists = frontier.Next()
-		if !exists {
-			return nil, false, true, nil
-		}
+	ranks, exists := arrayInsertionRanksAtOrdinal(projectionCount, layoutCount, rank)
+	if !exists {
+		return nil, false, true, nil
 	}
 
 	view, exists, err := rowProjectionAt(container, occurrence, fault.requirements, ranks[0])
@@ -937,44 +840,26 @@ func arrayInsertionFaultAttemptAtRank(
 		return nil, false, false, assignErr
 	}
 
-	tupleValues, exists, _, _, err := s.rowArrayChildrenForOrdinal(
-		rankedArrayStructure{view: view, active: active, length: rowArrayCount{value: uint64(insertions)}},
-		active,
-		rowSearchContext{},
-		ranks[2],
-	)
-	if err != nil || !exists {
-		return nil, false, false, err
+	decoder, ok := newDirectRankTupleDecoder(uint64(insertions), ranks[2])
+	if !ok {
+		return nil, false, false, nil
 	}
 
-	indexes, exists := arrayCombinationAt(desired, insertions, ranks[1])
-	if !exists {
-		return nil, false, false, errors.New("schematest: array insertion layout rank disappeared")
-	}
+	items := rowProjectedArrayItems(view, active)
+	candidate, matched, err := tryArrayInsertionCandidate(
+		parent, path, desired, insertions, ranks[1], fault, s,
+		func(_ int) (*jsonValue, bool, error) {
+			itemRank, rankExists := decoder.Next()
+			if !rankExists {
+				return nil, false, errors.New("schematest: array item rank tuple ended early")
+			}
 
-	values := make([]*jsonValue, 0, desired)
-	parentIndex := 0
+			value, valueExists, usable, _, valueErr := s.rowArrayChildForOrdinalPosition(
+				items, active, rowSearchContext{}, itemRank,
+			)
 
-	insertedIndex := 0
-	for index := 0; index < desired; index++ {
-		if insertedIndex < len(indexes) && indexes[insertedIndex] == index {
-			values = append(values, tupleValues[insertedIndex])
-			insertedIndex++
-
-			continue
-		}
-
-		values = append(values, current.array[parentIndex])
-		parentIndex++
-	}
-
-	candidate, matched, err := tryArrayCountCandidate(
-		parent,
-		path,
-		values,
-		arrayEditCharges{indexes: pathCopyInts(indexes), itemValues: len(indexes)},
-		fault,
-		s,
+			return value, valueExists && usable, valueErr
+		},
 	)
 
 	return candidate, matched, false, err
@@ -1062,7 +947,7 @@ func objectGrowthFaultAttemptAtRank(
 	projectionRank := rank % projectionCount
 
 	decoder, ok := newDirectRankTupleDecoder(
-		additions*objectGrowthRanksPerAddition, rank/projectionCount,
+		uint64(additions*objectGrowthRanksPerAddition), rank/projectionCount,
 	)
 	if !ok {
 		return nil, false, true, nil
@@ -1938,13 +1823,8 @@ func findAuthoredArrayCountDerivative(
 				return true
 			}
 
-			indexes := make([]int, len(value.array))
-			for index := range indexes {
-				indexes[index] = index
-			}
-
-			derivative, _, candidateErr = tryArrayCountCandidate(
-				parent, path, value.array, arrayEditCharges{indexes: indexes, itemValues: len(indexes)}, fault, s,
+			derivative, _, candidateErr = tryArrayReplacementCandidate(
+				parent, path, value.array, fault, s,
 			)
 
 			return candidateErr == nil && derivative == nil
@@ -1968,24 +1848,11 @@ func findArrayDeletionDerivative(
 ) (*jsonValue, bool, error) {
 	array := valueAtPath(parent, path)
 	removed := len(array.array) - desired
-	cursor := newArrayCombinationCursor(len(array.array), removed)
+	combinationCount := saturatedBinomial(uint64(len(array.array)), uint64(removed))
 
-	for indexes, ok := cursor.Next(); ok; indexes, ok = cursor.Next() {
-		values := make([]*jsonValue, 0, desired)
-		removedIndex := 0
-
-		for index, value := range array.array {
-			if removedIndex < len(indexes) && indexes[removedIndex] == index {
-				removedIndex++
-
-				continue
-			}
-
-			values = append(values, value)
-		}
-
-		derivative, matched, err := tryArrayCountCandidate(
-			parent, path, values, arrayEditCharges{indexes: pathCopyInts(indexes)}, fault, s,
+	for rank := uint64(0); rank < combinationCount; rank++ {
+		derivative, matched, err := tryArrayDeletionCandidate(
+			parent, path, len(array.array), removed, rank, fault, s,
 		)
 		if err != nil || matched {
 			return derivative, matched, err
@@ -2074,119 +1941,70 @@ func findArrayInsertionDerivative(
 			diagonalLive = true
 		}
 
-		tupleValues, exists, _, _, err := s.rowArrayChildrenForOrdinal(
-			rankedArrayStructure{view: view, active: active, length: rowArrayCount{value: uint64(insertions)}},
-			active,
-			rowSearchContext{},
-			ranks[2],
-		)
-		if err != nil {
-			return nil, false, err
-		}
-
-		if !exists {
+		decoder, ok := newDirectRankTupleDecoder(uint64(insertions), ranks[2])
+		if !ok {
 			continue
 		}
 
-		diagonalLive = true
+		items := rowProjectedArrayItems(view, active)
+		selectedValue := false
+		derivative, matched, err := tryArrayInsertionCandidate(
+			parent, path, desired, insertions, ranks[1], fault, s,
+			func(_ int) (*jsonValue, bool, error) {
+				itemRank, rankExists := decoder.Next()
+				if !rankExists {
+					return nil, false, errors.New("schematest: array item rank tuple ended early")
+				}
 
-		indexes, exists := arrayCombinationAt(desired, insertions, ranks[1])
-		if !exists {
-			return nil, false, errors.New("schematest: array insertion layout rank disappeared")
-		}
+				value, valueExists, usable, _, valueErr := s.rowArrayChildForOrdinalPosition(
+					items, active, rowSearchContext{}, itemRank,
+				)
+				selectedValue = selectedValue || valueExists
 
-		values := make([]*jsonValue, 0, desired)
-		parentIndex := 0
-		insertedIndex := 0
-
-		for index := 0; index < desired; index++ {
-			if insertedIndex < len(indexes) && indexes[insertedIndex] == index {
-				values = append(values, tupleValues[insertedIndex])
-				insertedIndex++
-
-				continue
-			}
-
-			values = append(values, array.array[parentIndex])
-			parentIndex++
-		}
-
-		derivative, matched, err := tryArrayCountCandidate(
-			parent,
-			path,
-			values,
-			arrayEditCharges{indexes: pathCopyInts(indexes), itemValues: len(indexes)},
-			fault,
-			s,
+				return value, valueExists && usable, valueErr
+			},
 		)
+
+		if selectedValue {
+			diagonalLive = true
+		}
+
 		if err != nil || matched {
 			return derivative, matched, err
 		}
 	}
 }
 
-// arrayEditCharges identifies the selected atomic coordinates and item witnesses.
-type arrayEditCharges struct {
-	indexes    []int
-	itemValues int
-}
-
-// tryArrayCountCandidate charges the retry, length edit, selected indexes, and
-// item values before installing one independently cloned complete array.
-//
-//nolint:cyclop // Each atomic assignment remains explicit at the apply boundary.
-func tryArrayCountCandidate(
+// beginArrayCountCandidate creates the independently owned current derivative
+// immediately after charging the retry assignment.
+func beginArrayCountCandidate(
 	parent *jsonValue,
 	path []string,
-	values []*jsonValue,
-	charges arrayEditCharges,
-	fault faultProgram,
 	s *search,
-) (*jsonValue, bool, error) {
+) (*jsonValue, *jsonValue, error) {
 	if err := s.assign(); err != nil {
-		return nil, false, err
-	}
-
-	current := valueAtPath(parent, path)
-	if current == nil || current.kind != jsonArray {
-		return nil, false, errors.New("schematest: array fault path is not an array")
-	}
-
-	if err := s.assign(); err != nil {
-		return nil, false, err
-	}
-
-	for range charges.indexes {
-		if err := s.assign(); err != nil {
-			return nil, false, err
-		}
-	}
-
-	for range charges.itemValues {
-		if err := s.assign(); err != nil {
-			return nil, false, err
-		}
+		return nil, nil, err
 	}
 
 	candidate, err := cloneJSONValue(parent)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, err
 	}
 
-	owned := &jsonValue{kind: jsonArray, array: make([]*jsonValue, 0, len(values))}
-	for _, value := range values {
-		item, cloneErr := cloneJSONValue(value)
-		if cloneErr != nil {
-			return nil, false, cloneErr
-		}
-
-		owned.array = append(owned.array, item)
+	current := valueAtPath(candidate, path)
+	if current == nil || current.kind != jsonArray {
+		return nil, nil, errors.New("schematest: array fault path is not an array")
 	}
 
-	if !replaceValueAtPath(candidate, path, owned) {
-		return nil, false, errors.New("schematest: array fault path disappeared")
-	}
+	return candidate, current, nil
+}
 
+func finishArrayCountCandidate(
+	candidate *jsonValue,
+	path []string,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
 	matched, err := derivativeMatchesFault(s.model, candidate, concretizeFaultAtPath(fault, path))
 	if err != nil || !matched {
 		return nil, false, err
@@ -2195,77 +2013,300 @@ func tryArrayCountCandidate(
 	return candidate, true, nil
 }
 
-func pathCopyInts(values []int) []int {
-	return append([]int(nil), values...)
-}
-
-type arrayCombinationCursor struct {
-	indexes []int
-	length  int
-	started bool
-}
-
-func newArrayCombinationCursor(length, selected int) *arrayCombinationCursor {
-	indexes := make([]int, selected)
-	for index := range indexes {
-		indexes[index] = index
+// tryArrayReplacementCandidate incrementally installs one authored array.
+func tryArrayReplacementCandidate(
+	parent *jsonValue,
+	path []string,
+	values []*jsonValue,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
+	candidate, current, beginErr := beginArrayCountCandidate(parent, path, s)
+	if beginErr != nil {
+		return nil, false, beginErr
 	}
 
-	return &arrayCombinationCursor{indexes: indexes, length: length}
-}
-
-func (cursor *arrayCombinationCursor) Next() ([]int, bool) {
-	if cursor == nil || len(cursor.indexes) > cursor.length {
-		return nil, false
+	if assignErr := s.assign(); assignErr != nil {
+		return nil, false, assignErr
 	}
 
-	if !cursor.started {
-		cursor.started = true
+	current.array = nil
 
-		return cursor.indexes, true
-	}
-
-	for index := len(cursor.indexes) - 1; index >= 0; index-- {
-		maximum := cursor.length - len(cursor.indexes) + index
-		if cursor.indexes[index] == maximum {
-			continue
+	for _, value := range values {
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
 		}
 
-		cursor.indexes[index]++
-		for next := index + 1; next < len(cursor.indexes); next++ {
-			cursor.indexes[next] = cursor.indexes[next-1] + 1
+		current.array = append(current.array, nil)
+
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
 		}
 
-		return cursor.indexes, true
+		item, cloneErr := cloneJSONValue(value)
+		if cloneErr != nil {
+			return nil, false, cloneErr
+		}
+
+		current.array[len(current.array)-1] = item
 	}
 
-	return nil, false
+	return finishArrayCountCandidate(candidate, path, fault, s)
 }
 
-func arrayCombinationAt(length, selected int, rank uint64) ([]int, bool) {
-	if selected < 0 || selected > length || rank >= saturatedBinomial(uint64(length), uint64(selected)) {
-		return nil, false
+// tryArrayDeletionCandidate removes selected coordinates from high to low and
+// charges immediately before every index and length mutation.
+func tryArrayDeletionCandidate(
+	parent *jsonValue,
+	path []string,
+	length int,
+	selected int,
+	rank uint64,
+	fault faultProgram,
+	s *search,
+) (*jsonValue, bool, error) {
+	candidate, current, beginErr := beginArrayCountCandidate(parent, path, s)
+	if beginErr != nil {
+		return nil, false, beginErr
 	}
 
-	indexes := make([]int, 0, selected)
-	next := 0
+	indexes, exists := newArrayCombinationRankCursor(length, selected, rank)
+	if !exists {
+		return nil, false, errors.New("schematest: array deletion rank disappeared")
+	}
 
-	for remaining := selected; remaining > 0; remaining-- {
-		maximum := length - remaining
-		for candidate := next; candidate <= maximum; candidate++ {
-			block := saturatedBinomial(uint64(length-candidate-1), uint64(remaining-1))
-			if rank < block {
-				indexes = append(indexes, candidate)
-				next = candidate + 1
+	for coordinate := 0; coordinate < selected; coordinate++ {
+		originalIndex, indexExists := indexes.Next()
+		if !indexExists {
+			return nil, false, errors.New("schematest: array deletion rank ended early")
+		}
 
+		index := originalIndex - coordinate
+		if index < 0 || index >= len(current.array) {
+			return nil, false, errors.New("schematest: array deletion index is out of range")
+		}
+
+		if err := s.assign(); err != nil {
+			return nil, false, err
+		}
+
+		copy(current.array[index:], current.array[index+1:])
+		current.array[len(current.array)-1] = nil
+
+		if err := s.assign(); err != nil {
+			return nil, false, err
+		}
+
+		current.array = current.array[:len(current.array)-1]
+	}
+
+	return finishArrayCountCandidate(candidate, path, fault, s)
+}
+
+// tryArrayInsertionCandidate grows the owned array and applies each insertion
+// directly, charging its index and item assignment at the mutation boundary.
+//
+//nolint:cyclop // Charged index and value mutations are kept together and explicit.
+func tryArrayInsertionCandidate(
+	parent *jsonValue,
+	path []string,
+	desired int,
+	selected int,
+	layoutRank uint64,
+	fault faultProgram,
+	s *search,
+	valueAt func(int) (*jsonValue, bool, error),
+) (*jsonValue, bool, error) {
+	candidate, current, beginErr := beginArrayCountCandidate(parent, path, s)
+	if beginErr != nil {
+		return nil, false, beginErr
+	}
+
+	if assignErr := s.assign(); assignErr != nil {
+		return nil, false, assignErr
+	}
+
+	indexes, exists := newArrayCombinationRankCursor(desired, selected, layoutRank)
+	if !exists {
+		return nil, false, errors.New("schematest: array insertion layout rank disappeared")
+	}
+
+	for coordinate := 0; coordinate < selected; coordinate++ {
+		index, indexExists := indexes.Next()
+		if !indexExists || index < 0 || index > len(current.array) {
+			return nil, false, errors.New("schematest: array insertion layout rank ended early")
+		}
+
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
+		}
+
+		current.array = append(current.array, nil)
+		copy(current.array[index+1:], current.array[index:len(current.array)-1])
+		current.array[index] = nil
+
+		value, valueExists, valueErr := valueAt(coordinate)
+		if valueErr != nil || !valueExists {
+			return nil, false, valueErr
+		}
+
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, assignErr
+		}
+
+		item, cloneErr := cloneJSONValue(value)
+		if cloneErr != nil {
+			return nil, false, cloneErr
+		}
+
+		current.array[index] = item
+	}
+
+	return finishArrayCountCandidate(candidate, path, fault, s)
+}
+
+// arrayInsertionRanksAtOrdinal directly addresses one tuple with finite
+// projection/layout prefixes and one open item rank; it never replays tuples
+// 0 through wanted-1.
+//
+//nolint:cyclop,mnd // Saturating direct diagonal decoding keeps all arithmetic explicit.
+func arrayInsertionRanksAtOrdinal(
+	projectionCount uint64,
+	layoutCount uint64,
+	wanted uint64,
+) ([3]uint64, bool) {
+	if projectionCount == 0 || layoutCount == 0 {
+		return [3]uint64{}, false
+	}
+
+	saturatedAdd := func(left uint64, right uint64) uint64 {
+		if left > ^uint64(0)-right {
+			return ^uint64(0)
+		}
+
+		return left + right
+	}
+	saturatedMultiply := func(left uint64, right uint64) uint64 {
+		if left != 0 && right > ^uint64(0)/left {
+			return ^uint64(0)
+		}
+
+		return left * right
+	}
+	countThrough := func(diagonal uint64) uint64 {
+		var count uint64
+
+		projectionLimit := min(projectionCount-1, diagonal)
+		for projection := uint64(0); projection <= projectionLimit; projection++ {
+			remaining := diagonal - projection
+
+			terms := min(layoutCount, remaining+1)
+			if remaining == ^uint64(0) {
+				return ^uint64(0)
+			}
+
+			lowest := remaining - (terms - 1)
+			if lowest == ^uint64(0) {
+				return ^uint64(0)
+			}
+
+			linear := saturatedMultiply(terms, lowest+1)
+			triangular := saturatedBinomial(terms, 2)
+			count = saturatedAdd(count, saturatedAdd(linear, triangular))
+		}
+
+		return count
+	}
+
+	low, high := uint64(0), uint64(1)
+	for countThrough(high) <= wanted && high < ^uint64(0) {
+		low = high + 1
+		if high > (^uint64(0)-1)/2 {
+			high = ^uint64(0)
+		} else {
+			high = high*2 + 1
+		}
+	}
+
+	diagonal := high
+	for low <= high {
+		middle := low + (high-low)/2
+		if countThrough(middle) <= wanted {
+			low = middle + 1
+		} else {
+			diagonal = middle
+			if middle == 0 {
 				break
 			}
 
-			rank -= block
+			high = middle - 1
 		}
 	}
 
-	return indexes, true
+	before := uint64(0)
+	if diagonal > 0 {
+		before = countThrough(diagonal - 1)
+	}
+
+	ordinal := wanted - before
+
+	projectionLimit := min(projectionCount-1, diagonal)
+	for projection := uint64(0); projection <= projectionLimit; projection++ {
+		layoutCountOnDiagonal := min(layoutCount-1, diagonal-projection) + 1
+		if ordinal < layoutCountOnDiagonal {
+			return [3]uint64{projection, ordinal, diagonal - projection - ordinal}, true
+		}
+
+		ordinal -= layoutCountOnDiagonal
+	}
+
+	return [3]uint64{}, false
+}
+
+// arrayCombinationRankCursor decodes one ranked combination monotonically
+// without retaining its complete index tuple.
+type arrayCombinationRankCursor struct {
+	length    int
+	remaining int
+	next      int
+	rank      uint64
+}
+
+func newArrayCombinationRankCursor(
+	length int,
+	selected int,
+	rank uint64,
+) (*arrayCombinationRankCursor, bool) {
+	if selected < 0 || selected > length ||
+		rank >= saturatedBinomial(uint64(length), uint64(selected)) {
+		return nil, false
+	}
+
+	return &arrayCombinationRankCursor{length: length, remaining: selected, rank: rank}, true
+}
+
+// Next advances exactly one combination coordinate.
+func (cursor *arrayCombinationRankCursor) Next() (int, bool) {
+	if cursor == nil || cursor.remaining == 0 {
+		return 0, false
+	}
+
+	maximum := cursor.length - cursor.remaining
+	for candidate := cursor.next; candidate <= maximum; candidate++ {
+		block := saturatedBinomial(
+			uint64(cursor.length-candidate-1), uint64(cursor.remaining-1),
+		)
+		if cursor.rank < block {
+			cursor.next = candidate + 1
+			cursor.remaining--
+
+			return candidate, true
+		}
+
+		cursor.rank -= block
+	}
+
+	return 0, false
 }
 
 // findObjectCountDerivative directs the selected count rule false and lets the

@@ -707,6 +707,105 @@ func TestArrayLengthAddressDirectlyIndexesLaterSourceMember(t *testing.T) {
 	require.Equal(t, uint64(3), later.value)
 }
 
+// TestBeyondArrayCursorChargesLengthBeforeChildren pins the length and child cutoffs.
+func TestBeyondArrayCursorChargesLengthBeforeChildren(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI:     []byte(documentWithJSONSchema(`{"type":"array","items":{"enum":[false]}}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	view, exists, err := rowProjectionAt(model.root, model.root.occurrence, nil, 0)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	items := rowProjectedArrayItems(view, nil)
+
+	beforeLength := &search{model: model, maxSteps: 0}
+	cursor, err := beforeLength.newBeyondArrayCursor(items, nil, rowSearchContext{}, 0)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Nil(t, cursor)
+	require.Zero(t, beforeLength.steps)
+
+	beforeChild := &search{model: model, maxSteps: 1}
+	cursor, err = beforeChild.newBeyondArrayCursor(items, nil, rowSearchContext{}, 0)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), beforeChild.steps)
+	live, err := cursor.advance(beforeChild)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.False(t, live)
+	require.Zero(t, cursor.position)
+	require.Equal(t, uint64(1), beforeChild.steps)
+
+	laterChildren := &search{model: model, maxSteps: 5}
+	cursor, err = laterChildren.newBeyondArrayCursor(items, nil, rowSearchContext{}, 0)
+	require.NoError(t, err)
+
+	for range 2 {
+		live, err = cursor.advance(laterChildren)
+		require.NoError(t, err)
+		require.True(t, live)
+	}
+
+	require.Equal(t, uint64(2), cursor.position)
+	require.Equal(t, uint64(5), laterChildren.steps)
+}
+
+// TestBeyondArrayCursorAdvancesPastUnusableFirstChildRank locks genuine child-rank exhaustion.
+func TestBeyondArrayCursorAdvancesPastUnusableFirstChildRank(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{
+		OpenAPI: []byte(documentWithJSONSchema(`{
+			"type":"array","items":{"type":"string"},
+			"allOf":[{"items":{"type":"string","enum":[false,"ok"]}}]
+		}`)),
+		OperationID: "selected",
+	})
+	require.NoError(t, err)
+	view, exists, err := rowProjectionAt(model.root, model.root.occurrence, nil, 0)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	active, err := view.appendBranchRequirements(nil, func() error { return nil })
+	require.NoError(t, err)
+
+	items := rowProjectedArrayItems(view, active)
+
+	domainSearch := &search{model: model, maxSteps: 100}
+	_, exists, usable, finiteSize, err := domainSearch.rowConjunctionValueAt(
+		items, active, rowSearchContext{}, 2,
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.False(t, usable)
+	require.Equal(t, uint64(5), finiteSize)
+	value, exists, usable, finiteSize, err := domainSearch.rowConjunctionValueAt(
+		items, active, rowSearchContext{}, 4,
+	)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, usable)
+	require.Equal(t, "ok", value.text)
+	require.Equal(t, uint64(5), finiteSize)
+
+	searchState := &search{model: model, maxSteps: 100}
+	cursor, err := searchState.newBeyondArrayCursor(
+		items, active, rowSearchContext{}, 0,
+	)
+	require.NoError(t, err)
+
+	for cursor.position == 0 {
+		live, advanceErr := cursor.advance(searchState)
+		require.NoError(t, advanceErr)
+		require.True(t, live)
+	}
+
+	require.Equal(t, uint64(4), cursor.childRank)
+	require.Equal(t, uint64(8), searchState.steps)
+}
+
 // TestConjunctionEnumRankUsesActualSourceIndex locks non-enum source holes.
 func TestConjunctionEnumRankUsesActualSourceIndex(t *testing.T) {
 	t.Parallel()

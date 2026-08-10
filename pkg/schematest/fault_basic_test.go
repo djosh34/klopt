@@ -94,7 +94,9 @@ func TestParentReplayYieldsPastUnproductiveFirstAnyOfMask(t *testing.T) {
 	require.Equal(t, `0`, string(marshalFaultTestValue(t, parent)))
 }
 
-func TestParentReplayMaskAtRankReachesBranchesBeyondUint64Bits(t *testing.T) {
+// TestAnyOfReplayMaskUnitAuditReachesBeyondUint64 is the sanctioned private
+// behavioral seam for masks whose complete public Report is infeasibly large.
+func TestAnyOfReplayMaskUnitAuditReachesBeyondUint64(t *testing.T) {
 	t.Parallel()
 
 	for rank := uint64(0); rank <= 64; rank++ {

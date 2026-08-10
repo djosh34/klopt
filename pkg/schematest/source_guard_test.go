@@ -54,6 +54,318 @@ func TestStructuralFrontierRetainsNoProjectionCorpusOrLocalProduct(t *testing.T)
 	require.Equal(t, 2, strings.Count(text, "newRankProductCursor(5)"))
 }
 
+// TestArrayFrontierHasNoSyntheticCutoffLoop locks oversized counts to one
+// resumable assignment between shared-frontier alternatives.
+func TestArrayFrontierHasNoSyntheticCutoffLoop(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("structural_frontier.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(source), "return value, true, usable, uint64(len(selected.node.enum))")
+
+	parsed := parseGoFile(t, "structural_frontier.go")
+	children := findGuardFunction(t, parsed, "rowArrayChildrenForOrdinal", "search")
+	advance := findGuardFunction(t, parsed, "advance", "beyondArrayCursor")
+	constructor := findGuardFunction(t, parsed, "newBeyondArrayCursor", "search")
+	walker := findGuardFunction(t, parsed, "walkArrayFrontier", "search")
+
+	loops, found := countGuardBeyondBranchLoops(children.Body)
+	require.True(t, found)
+	require.Zero(t, loops)
+	require.Zero(t, countGuardLoops(advance.Body))
+	require.Equal(t, 1, countGuardCalls(constructor.Body, "assign"))
+	require.Equal(t, 1, countGuardCalls(advance.Body, "rowArrayChildForOrdinalPosition"))
+	require.Equal(t, 1, countGuardCalls(walker.Body, "newBeyondArrayCursor"))
+	require.True(t, guardCallsSelector(walker.Body, "beyondCursor", "advance"))
+}
+
+// TestAnyOfReplayMasksHaveNoFixedWidthNarrowing is the source half of the
+// sanctioned arbitrary-width mask unit audit.
+func TestAnyOfReplayMasksHaveNoFixedWidthNarrowing(t *testing.T) {
+	t.Parallel()
+
+	var source strings.Builder
+
+	for _, filename := range productionGoFiles(t) {
+		contents, err := os.ReadFile(filename)
+		require.NoError(t, err)
+		_, err = source.Write(contents)
+		require.NoError(t, err)
+	}
+
+	text := source.String()
+	require.NotContains(t, text, "uint64(mask")
+	require.NotContains(t, text, "mask.Uint64()")
+	require.NotContains(t, text, "1 << len(node.anyOf)")
+	require.Contains(t, strings.ReplaceAll(text, "\t", " "), "parentReplayMaskAtOrdinal")
+}
+
+// TestArrayFaultEditsDoNotPrebuildTargetStorageOrRecipes locks incremental
+// coordinate mutation and direct combination addressing.
+func TestArrayFaultEditsDoNotPrebuildTargetStorageOrRecipes(t *testing.T) {
+	t.Parallel()
+
+	parsed := parseGoFile(t, "fault_noncomposition.go")
+	for _, name := range []string{
+		"tryArrayReplacementCandidate",
+		"tryArrayDeletionCandidate",
+		"tryArrayInsertionCandidate",
+	} {
+		function := findGuardFunction(t, parsed, name, "")
+		require.False(t, guardCalls(function.Body, "make"), name)
+		require.False(t, guardCalls(function.Body, "arrayCombinationIndexAt"), name)
+	}
+
+	for _, name := range []string{"tryArrayDeletionCandidate", "tryArrayInsertionCandidate"} {
+		function := findGuardFunction(t, parsed, name, "")
+		require.Equal(t, 1, countGuardCalls(function.Body, "newArrayCombinationRankCursor"), name)
+		require.Equal(t, 1, countGuardCalls(function.Body, "Next"), name)
+		require.True(t, guardCallsSelector(function.Body, "indexes", "Next"), name)
+	}
+
+	text, err := os.ReadFile("fault_noncomposition.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(text), "func arrayCombinationIndexAt(")
+	require.NotContains(t, string(text), "rowArrayChildrenForOrdinal(")
+}
+
+// TestArrayInsertionRankSelectionHasNoPrefixReplay locks direct addressing at
+// the ranked adapter while the owning unranked search retains its live cursor.
+func TestArrayInsertionRankSelectionHasNoPrefixReplay(t *testing.T) {
+	t.Parallel()
+
+	parsed := parseGoFile(t, "fault_noncomposition.go")
+	function := findGuardFunction(t, parsed, "arrayInsertionFaultAttemptAtRank", "")
+
+	require.Zero(t, countGuardLoops(function.Body))
+	require.False(t, guardCalls(function.Body, "newRankProductCursor"))
+	require.True(t, guardCalls(function.Body, "arrayInsertionRanksAtOrdinal"))
+}
+
+// TestArchitectureGuardsRejectMissingAmbiguousAndLoopingTargets exercises the
+// guard helpers against synthetic source shapes rather than trusting production.
+func TestArchitectureGuardsRejectMissingAmbiguousAndLoopingTargets(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parser.ParseFile(token.NewFileSet(), "guard.go", `package guard
+		type first struct{}
+		type second struct{}
+		func (*first) target() { if value.beyond {} }
+		func (*second) target() { if value.beyond { for {} } }
+	`, 0)
+	require.NoError(t, err)
+
+	function, matches := guardFunctionDeclarations(parsed, "target", "first")
+	require.Len(t, matches, 1)
+
+	loops, found := countGuardBeyondBranchLoops(function.Body)
+	require.True(t, found)
+	require.Zero(t, loops)
+
+	function, matches = guardFunctionDeclarations(parsed, "target", "second")
+	require.Len(t, matches, 1)
+
+	loops, found = countGuardBeyondBranchLoops(function.Body)
+	require.True(t, found)
+	require.Equal(t, 1, loops)
+
+	_, matches = guardFunctionDeclarations(parsed, "target", "missing")
+	require.Empty(t, matches)
+	_, matches = guardFunctionDeclarations(parsed, "target", "")
+	require.Empty(t, matches)
+
+	missingBranch, err := parser.ParseFile(token.NewFileSet(), "missing.go", `package guard
+		type first struct{}
+		func (*first) target() {}
+	`, 0)
+	require.NoError(t, err)
+
+	function, matches = guardFunctionDeclarations(missingBranch, "target", "first")
+	require.Len(t, matches, 1)
+
+	_, found = countGuardBeyondBranchLoops(function.Body)
+	require.False(t, found)
+
+	ambiguous, err := parser.ParseFile(token.NewFileSet(), "ambiguous.go", `package guard
+		type first struct{}
+		func (*first) target() {}
+		func (first) target() {}
+	`, parser.SkipObjectResolution)
+	require.NoError(t, err)
+
+	_, matches = guardFunctionDeclarations(ambiguous, "target", "first")
+	require.Len(t, matches, 2)
+}
+
+// findGuardFunction returns the unique declaration matching name and receiver.
+func findGuardFunction(t *testing.T, parsed *ast.File, name string, receiver string) *ast.FuncDecl {
+	t.Helper()
+
+	function, matches := guardFunctionDeclarations(parsed, name, receiver)
+	require.Len(t, matches, 1, "guarded function must have exactly one declaration")
+
+	return function
+}
+
+// guardFunctionDeclarations returns every declaration matching name and receiver.
+func guardFunctionDeclarations(parsed *ast.File, name string, receiver string) (*ast.FuncDecl, []*ast.FuncDecl) {
+	var matches []*ast.FuncDecl
+
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Name.Name != name || guardReceiverName(function) != receiver {
+			continue
+		}
+
+		matches = append(matches, function)
+	}
+
+	if len(matches) != 1 {
+		return nil, matches
+	}
+
+	return matches[0], matches
+}
+
+// guardReceiverName returns the declaration's normalized receiver type name.
+func guardReceiverName(function *ast.FuncDecl) string {
+	if function.Recv == nil || len(function.Recv.List) != 1 {
+		return ""
+	}
+
+	receiver := function.Recv.List[0].Type
+	if pointer, ok := receiver.(*ast.StarExpr); ok {
+		receiver = pointer.X
+	}
+
+	identifier, ok := receiver.(*ast.Ident)
+	if !ok {
+		return ""
+	}
+
+	return identifier.Name
+}
+
+// countGuardBeyondBranchLoops counts loops inside the exact beyond-count branch.
+func countGuardBeyondBranchLoops(node ast.Node) (int, bool) {
+	count := 0
+	found := false
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		statement, ok := child.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+
+		selector, ok := statement.Cond.(*ast.SelectorExpr)
+		if ok && selector.Sel.Name == "beyond" {
+			found = true
+			count += countGuardLoops(statement.Body)
+
+			return false
+		}
+
+		return true
+	})
+
+	return count, found
+}
+
+// countGuardLoops counts loop statements below one syntax node.
+func countGuardLoops(node ast.Node) int {
+	count := 0
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		switch child.(type) {
+		case *ast.ForStmt, *ast.RangeStmt:
+			count++
+		}
+
+		return true
+	})
+
+	return count
+}
+
+// countGuardCalls counts calls to one function or method name.
+func countGuardCalls(node ast.Node, name string) int {
+	count := 0
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		call, ok := child.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		if identifier, identifierOK := call.Fun.(*ast.Ident); identifierOK && identifier.Name == name {
+			count++
+		}
+
+		if selector, selectorOK := call.Fun.(*ast.SelectorExpr); selectorOK && selector.Sel.Name == name {
+			count++
+		}
+
+		return true
+	})
+
+	return count
+}
+
+// guardCalls reports whether a syntax node calls one package function.
+func guardCalls(node ast.Node, name string) bool {
+	found := false
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		call, ok := child.(*ast.CallExpr)
+
+		identifier, identifierOK := callFunIdentifier(call, ok)
+		if identifierOK && identifier.Name == name {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+// guardCallsSelector reports whether a syntax node invokes one receiver method.
+func guardCallsSelector(node ast.Node, receiver string, name string) bool {
+	found := false
+
+	ast.Inspect(node, func(child ast.Node) bool {
+		call, ok := child.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+
+		identifier, identifierOK := selector.X.(*ast.Ident)
+		if identifierOK && identifier.Name == receiver && selector.Sel.Name == name {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+// callFunIdentifier returns the direct function identifier for a call.
+func callFunIdentifier(call *ast.CallExpr, ok bool) (*ast.Ident, bool) {
+	if !ok {
+		return nil, false
+	}
+
+	identifier, identifierOK := call.Fun.(*ast.Ident)
+
+	return identifier, identifierOK
+}
+
 // TestFaultRowMachinesNeverRestartWalkNode locks direct row addressing into the outer continuation.
 //
 //nolint:cyclop // Three receiver declarations share one AST guard.

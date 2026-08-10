@@ -150,6 +150,30 @@ func TestWalkArrayChargesBeforeBeyondUint64Minimum(t *testing.T) {
 	require.Zero(t, emitted)
 }
 
+// TestWalkArrayChargesBeforeMachineIntMinimum proves tuple addressing does not reject an admitted count.
+func TestWalkArrayChargesBeforeMachineIntMinimum(t *testing.T) {
+	t.Parallel()
+
+	model, err := parseInput(Input{OpenAPI: []byte(documentWithJSONSchema(`{
+		"type":"array","items":{},"minItems":9223372036854775808
+	}`)), OperationID: "selected"})
+	require.NoError(t, err)
+
+	searchState := &search{model: model, maxSteps: 2}
+	emitted := 0
+	_, err = searchState.walkArray(
+		model.root, model.root.occurrence, nil, rowSearchContext{},
+		func(*jsonValue) (bool, error) {
+			emitted++
+
+			return false, nil
+		},
+	)
+	require.ErrorIs(t, err, errMaxSteps)
+	require.Equal(t, uint64(2), searchState.steps)
+	require.Zero(t, emitted)
+}
+
 // TestWalkArrayChargesBeforeHugeMinimumAllocation proves authored bounds do not allocate containers.
 func TestWalkArrayChargesBeforeHugeMinimumAllocation(t *testing.T) {
 	t.Parallel()

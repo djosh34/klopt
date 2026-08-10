@@ -304,6 +304,135 @@ func TestArrayCountFaultsPreserveWholeArrayEnums(t *testing.T) {
 	}
 }
 
+func TestArrayInsertionRanksAddressWithoutPrefixReplay(t *testing.T) {
+	t.Parallel()
+
+	cursor, err := newRankProductCursor(3)
+	require.NoError(t, err)
+	require.NoError(t, cursor.SetFinite(0, 3))
+	require.NoError(t, cursor.SetFinite(1, 5))
+
+	for rank := uint64(0); rank < 128; rank++ {
+		want, exists := cursor.Next()
+		require.True(t, exists)
+
+		got, exists := arrayInsertionRanksAtOrdinal(3, 5, rank)
+		require.True(t, exists)
+		require.Equal(t, [3]uint64{want[0], want[1], want[2]}, got)
+	}
+}
+
+func TestArrayCombinationCoordinatesMatchCanonicalTuples(t *testing.T) {
+	t.Parallel()
+
+	for length := 1; length <= 8; length++ {
+		for selected := 1; selected <= length; selected++ {
+			cursor := newTestCombinationCursor(length, selected)
+			for rank := uint64(0); ; rank++ {
+				want, exists := cursor()
+				if !exists {
+					break
+				}
+
+				decoder, decoderExists := newArrayCombinationRankCursor(length, selected, rank)
+				require.True(t, decoderExists)
+
+				for _, wantIndex := range want {
+					got, gotExists := decoder.Next()
+					require.True(t, gotExists)
+					require.Equal(t, wantIndex, got)
+				}
+
+				_, gotExists := decoder.Next()
+				require.False(t, gotExists)
+			}
+		}
+	}
+}
+
+func newTestCombinationCursor(length int, selected int) func() ([]int, bool) {
+	indexes := make([]int, selected)
+	for index := range indexes {
+		indexes[index] = index
+	}
+
+	started := false
+
+	return func() ([]int, bool) {
+		if !started {
+			started = true
+
+			return append([]int(nil), indexes...), true
+		}
+
+		for index := len(indexes) - 1; index >= 0; index-- {
+			maximum := length - len(indexes) + index
+			if indexes[index] == maximum {
+				continue
+			}
+
+			indexes[index]++
+			for next := index + 1; next < len(indexes); next++ {
+				indexes[next] = indexes[next-1] + 1
+			}
+
+			return append([]int(nil), indexes...), true
+		}
+
+		return nil, false
+	}
+}
+
+func TestOversizedArrayFaultRanksYieldDeterministically(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{"type":"array","maxItems":9223372036854775808,`+
+		`"default":[],"items":{"enum":[false]}}`)
+	fault := findFaultTarget(t, plan, "|maxItems|fault:maxItems")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	before := searchState.steps
+	for rank := uint64(0); rank < 2; rank++ {
+		derivative, attempted, exhausted, attemptErr := arrayCountFaultAttemptAtRank(
+			parent, fault, rank, searchState,
+		)
+		require.NoError(t, attemptErr)
+		require.Nil(t, derivative)
+		require.False(t, attempted)
+		require.False(t, exhausted)
+	}
+
+	require.Equal(t, uint64(5), searchState.steps-before)
+}
+
+func TestOversizedObjectFaultRanksYieldDeterministically(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{"type":"object","maxProperties":9223372036854775808,`+
+		`"default":{},"additionalProperties":{"enum":[false]}}`)
+	fault := findFaultTarget(t, plan, "|maxProperties|fault:maxProperties")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent, found, err := regenerateParent(plan, fault, searchState)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	before := searchState.steps
+	for rank := uint64(0); rank < 2; rank++ {
+		derivative, attempted, exhausted, attemptErr := objectCountFaultAttemptAtRank(
+			parent, fault, rank, searchState,
+		)
+		require.NoError(t, attemptErr)
+		require.Nil(t, derivative)
+		require.False(t, attempted)
+		require.False(t, exhausted)
+	}
+
+	require.Equal(t, uint64(5), searchState.steps-before)
+}
+
 func TestArrayCountFaultPositionsAdvanceCanonically(t *testing.T) {
 	t.Parallel()
 
@@ -343,28 +472,52 @@ func TestArrayCountFaultCutoffPrecedesEachAtomicAssignment(t *testing.T) {
 	model, plan := compositionFaultModel(t, `{"type":"array","minItems":2,`+
 		`"enum":[["a","b"],["b"]],"items":{"type":"string"}}`)
 	fault := findFaultTarget(t, plan, "|minItems|fault:minItems")
+	requireArrayFaultAtomicCutoffs(t, model, plan, fault, 4, `["b"]`)
+}
+
+func TestArrayInsertionFaultCutoffPrecedesEveryCoordinateMutation(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{"type":"array","maxItems":1,"default":["x"],`+
+		`"items":{"enum":[false]}}`)
+	fault := findFaultTarget(t, plan, "|maxItems|fault:maxItems")
+	requireArrayFaultAtomicCutoffs(t, model, plan, fault, 6, `[false,false]`)
+}
+
+func requireArrayFaultAtomicCutoffs(
+	t *testing.T,
+	model *schemaModel,
+	plan *searchPlan,
+	fault faultProgram,
+	assignments uint64,
+	want string,
+) {
+	t.Helper()
+
+	for cutoff := uint64(1); cutoff < assignments; cutoff++ {
+		searchState := &search{model: model, maxSteps: 100_000}
+		parent, found, err := regenerateParent(plan, fault, searchState)
+		require.NoError(t, err)
+		require.True(t, found)
+
+		beforeMutation := searchState.steps
+		searchState.maxSteps = beforeMutation + cutoff
+		derivative, applyErr := applyFault(parent, fault, searchState)
+		require.ErrorIs(t, applyErr, errMaxSteps, "cutoff=%d", cutoff)
+		require.Nil(t, derivative)
+		require.Equal(t, searchState.maxSteps, searchState.steps)
+	}
+
 	searchState := &search{model: model, maxSteps: 100_000}
 	parent, found, err := regenerateParent(plan, fault, searchState)
 	require.NoError(t, err)
 	require.True(t, found)
 
 	beforeMutation := searchState.steps
-	searchState.maxSteps = beforeMutation + 3
 	derivative, err := applyFault(parent, fault, searchState)
-	require.ErrorIs(t, err, errMaxSteps)
-	require.Nil(t, derivative)
-	require.Equal(t, searchState.maxSteps, searchState.steps)
-
-	searchState = &search{model: model, maxSteps: 100_000}
-	parent, found, err = regenerateParent(plan, fault, searchState)
 	require.NoError(t, err)
-	require.True(t, found)
-
-	beforeMutation = searchState.steps
-	derivative, err = applyFault(parent, fault, searchState)
-	require.NoError(t, err)
-	require.Equal(t, `["b"]`, string(marshalFaultTestValue(t, derivative)))
-	require.Equal(t, uint64(4), searchState.steps-beforeMutation)
+	require.Equal(t, want, string(marshalFaultTestValue(t, derivative)))
+	require.Equal(t, assignments, searchState.steps-beforeMutation)
 }
 
 func TestCountFaultRepairsUseActiveComposedSchemas(t *testing.T) {

@@ -12,6 +12,74 @@ type rankedArrayStructure struct {
 	length rowArrayCount
 }
 
+// beyondArrayCursor retains only scalar progress for an exact count outside
+// uint64. Each advance selects and immediately discards one concrete child.
+type beyondArrayCursor struct {
+	items          rowSchemaConjunction
+	requirements   []requirement
+	context        rowSearchContext
+	projection     uint64
+	position       uint64
+	childRank      uint64
+	childFiniteEnd uint64
+}
+
+// advance performs one attempt-local child assignment and yields.
+func (cursor *beyondArrayCursor) advance(s *search) (bool, error) {
+	if cursor == nil {
+		return false, errors.New("schematest: beyond-count array cursor is not initialized")
+	}
+
+	_, exists, usable, finiteSize, err := s.rowArrayChildForOrdinalPosition(
+		cursor.items, cursor.requirements, cursor.context, cursor.childRank,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	if finiteSize > 0 {
+		cursor.childFiniteEnd = finiteSize
+	}
+
+	if exists && usable {
+		if cursor.position == ^uint64(0) {
+			return false, errors.New("schematest: beyond-count array position overflow")
+		}
+
+		cursor.position++
+
+		return true, nil
+	}
+
+	if cursor.childFiniteEnd > 0 && cursor.childRank >= cursor.childFiniteEnd-1 {
+		return false, nil
+	}
+
+	if cursor.childRank == ^uint64(0) {
+		return false, errors.New("schematest: beyond-count array child rank overflow")
+	}
+
+	cursor.childRank++
+
+	return true, nil
+}
+
+// newBeyondArrayCursor charges the selected length exactly once before child work.
+func (s *search) newBeyondArrayCursor(
+	items rowSchemaConjunction,
+	requirements []requirement,
+	context rowSearchContext,
+	projection uint64,
+) (*beyondArrayCursor, error) {
+	if err := s.assign(); err != nil {
+		return nil, err
+	}
+
+	return &beyondArrayCursor{
+		items: items, requirements: requirements, context: context, projection: projection,
+	}, nil
+}
+
 // liveProjectionFrontier owns the one resumable projection traversal for a structural search.
 type liveProjectionFrontier struct {
 	cursor     *rowProjectionCursor
@@ -65,8 +133,8 @@ func (frontier *liveProjectionFrontier) Close() {
 
 // directRankTupleDecoder resumes one directly addressed canonical tuple component by component.
 type directRankTupleDecoder struct {
-	dimensions int
-	dimension  int
+	dimensions uint64
+	dimension  uint64
 	remaining  uint64
 	ordinal    uint64
 }
@@ -74,8 +142,8 @@ type directRankTupleDecoder struct {
 // newDirectRankTupleDecoder directly addresses one tuple without replaying earlier tuples.
 //
 //nolint:mnd // Saturating exponential and binary searches decode one ordinal without prefix replay.
-func newDirectRankTupleDecoder(dimensions int, wanted uint64) (*directRankTupleDecoder, bool) {
-	if dimensions <= 0 {
+func newDirectRankTupleDecoder(dimensions uint64, wanted uint64) (*directRankTupleDecoder, bool) {
+	if dimensions == 0 {
 		return nil, false
 	}
 
@@ -147,21 +215,21 @@ func (decoder *directRankTupleDecoder) Next() (uint64, bool) {
 }
 
 // saturatedRankTupleCount counts tuples through one diagonal without overflow.
-func saturatedRankTupleCount(diagonal uint64, dimensions int) uint64 {
-	if diagonal > ^uint64(0)-uint64(dimensions) {
+func saturatedRankTupleCount(diagonal uint64, dimensions uint64) uint64 {
+	if diagonal > ^uint64(0)-dimensions {
 		return ^uint64(0)
 	}
 
-	return saturatedBinomial(diagonal+uint64(dimensions), uint64(dimensions))
+	return saturatedBinomial(diagonal+dimensions, dimensions)
 }
 
 // saturatedWeakCompositionCount counts tuples on exactly one diagonal.
-func saturatedWeakCompositionCount(sum uint64, dimensions int) uint64 {
+func saturatedWeakCompositionCount(sum uint64, dimensions uint64) uint64 {
 	if dimensions == 1 {
 		return 1
 	}
 
-	addend := uint64(dimensions) - 1
+	addend := dimensions - 1
 	if sum > ^uint64(0)-addend {
 		return ^uint64(0)
 	}
@@ -1255,12 +1323,12 @@ func (s *search) rowConjunctionValueAt(
 			maximumMembers = max(maximumMembers, uint64(len(conjunction.sources[index].node.enum)))
 		}
 
-		if selected.node.enum == nil || memberRank >= uint64(len(selected.node.enum)) {
-			lastDiagonal := uint64(len(conjunction.sources)) - 1 + maximumMembers - 1
+		lastDiagonal := uint64(len(conjunction.sources)) - 1 + maximumMembers - 1
+		finiteSize := saturatedSourceValueTupleCount(
+			uint64(len(conjunction.sources)), lastDiagonal,
+		)
 
-			finiteSize := saturatedSourceValueTupleCount(
-				uint64(len(conjunction.sources)), lastDiagonal,
-			)
+		if selected.node.enum == nil || memberRank >= uint64(len(selected.node.enum)) {
 			if wanted < finiteSize {
 				return &jsonValue{kind: jsonNull}, true, false, finiteSize, nil
 			}
@@ -1286,7 +1354,7 @@ func (s *search) rowConjunctionValueAt(
 			conjunction.sources, requirements, context, value,
 		)
 
-		return value, true, usable, uint64(len(selected.node.enum)), err
+		return value, true, usable, finiteSize, err
 	}
 
 	if wanted == 0 {
@@ -1512,9 +1580,23 @@ func (s *search) rowObjectValueForRank(
 	return candidate, true, 0, nil
 }
 
+// rowArrayChildForOrdinalPosition selects one child without retaining a row.
+func (s *search) rowArrayChildForOrdinalPosition(
+	items rowSchemaConjunction,
+	requirements []requirement,
+	context rowSearchContext,
+	rank uint64,
+) (*jsonValue, bool, bool, uint64, error) {
+	if err := s.assign(); err != nil {
+		return nil, false, false, 0, err
+	}
+
+	return s.rowConjunctionValueAt(items, requirements, context, rank)
+}
+
 // rowArrayChildrenForOrdinal rebuilds one diagonal tuple while extending position state only after charge.
 //
-//nolint:cyclop // Component endpoints and incremental transient reconstruction are one operation.
+//nolint:cyclop // Direct tuple decoding and charged child selection share this small seam.
 func (s *search) rowArrayChildrenForOrdinal(
 	structure rankedArrayStructure,
 	requirements []requirement,
@@ -1522,11 +1604,7 @@ func (s *search) rowArrayChildrenForOrdinal(
 	wanted uint64,
 ) ([]*jsonValue, bool, bool, uint64, error) {
 	if structure.length.beyond {
-		for {
-			if err := s.assign(); err != nil {
-				return nil, false, false, 0, err
-			}
-		}
+		return nil, false, false, 0, nil
 	}
 
 	if structure.length.value == 0 {
@@ -1537,11 +1615,7 @@ func (s *search) rowArrayChildrenForOrdinal(
 		return nil, false, false, 1, nil
 	}
 
-	if structure.length.value > uint64(^uint(0)>>1) {
-		return nil, false, false, 0, errors.New("schematest: array item rank dimension overflow")
-	}
-
-	decoder, ok := newDirectRankTupleDecoder(int(structure.length.value), wanted)
+	decoder, ok := newDirectRankTupleDecoder(structure.length.value, wanted)
 	if !ok {
 		return nil, false, false, 0, nil
 	}
@@ -1692,7 +1766,7 @@ func (s *search) rowArrayProjectionCandidate(
 
 // rowPackedArrayFrontierCeiling returns the last potentially live packed length diagonal.
 //
-//nolint:cyclop,nestif // Finite authored and numeric endpoints share one conservative ceiling.
+//nolint:cyclop // Finite authored and numeric endpoints share one conservative ceiling.
 func rowPackedArrayFrontierCeiling(view rowProjectionView, requirements []requirement) (uint64, error) {
 	domain, err := newRowArrayLengthDomain(view, requirements)
 	if err != nil {
@@ -1744,11 +1818,7 @@ func rowPackedArrayFrontierCeiling(view rowProjectionView, requirements []requir
 			return ^uint64(0), nil
 		}
 
-		if domain.exact.value > uint64(^uint(0)>>1) {
-			return ^uint64(0), nil
-		}
-
-		childCeiling := saturatedRankTupleCount(childDiagonal, int(domain.exact.value))
+		childCeiling := saturatedRankTupleCount(childDiagonal, domain.exact.value)
 
 		return max(directSize, childCeiling), nil
 	}
@@ -1770,7 +1840,7 @@ func rowPackedArrayFrontierCeiling(view rowProjectionView, requirements []requir
 
 // walkArrayFrontier decodes one ephemeral projection for each shared structural rank tuple.
 //
-//nolint:cyclop,gocognit,gocyclo,mnd // One frontier owns projection, source, length, and child ranks.
+//nolint:cyclop,gocognit,gocyclo,maintidx,mnd // One frontier owns projection, source, length, and child ranks.
 func (s *search) walkArrayFrontier(
 	node *schemaNode,
 	occurrence schemaOccurrence,
@@ -1795,9 +1865,32 @@ func (s *search) walkArrayFrontier(
 
 	diagonalLive := true
 
+	var (
+		beyondCursor                   *beyondArrayCursor
+		unavailableBeyondProjection    uint64
+		hasUnavailableBeyondProjection bool
+	)
+
 	for {
+		if beyondCursor != nil {
+			live, advanceErr := beyondCursor.advance(s)
+			if advanceErr != nil {
+				return false, advanceErr
+			}
+
+			if !live {
+				unavailableBeyondProjection = beyondCursor.projection
+				hasUnavailableBeyondProjection = true
+				beyondCursor = nil
+			}
+		}
+
 		ranks, ok := frontier.Next()
 		if !ok {
+			if beyondCursor != nil {
+				continue
+			}
+
 			return false, nil
 		}
 
@@ -1847,7 +1940,8 @@ func (s *search) walkArrayFrontier(
 			return false, ceilingErr
 		}
 
-		if ranks[4] == 0 && diagonal < ceiling {
+		if ranks[4] == 0 && diagonal < ceiling &&
+			(!hasUnavailableBeyondProjection || ranks[4] != unavailableBeyondProjection) {
 			diagonalLive = true
 		}
 
@@ -1885,6 +1979,28 @@ func (s *search) walkArrayFrontier(
 			itemsHaveEnum := rowArrayItemsHaveEnum(view, active)
 			if ranks[2] != 0 || rowProjectionHasExactCount(view, active) &&
 				(ranks[1] != 0 || ranks[0] != 0 && !itemsHaveEnum) {
+				continue
+			}
+
+			length, lengthExists, _, lengthErr := rowArrayLengthForOrdinal(view, active, ranks[1])
+			if lengthErr != nil {
+				return false, lengthErr
+			}
+
+			if lengthExists && length.beyond {
+				if hasUnavailableBeyondProjection && ranks[4] == unavailableBeyondProjection {
+					continue
+				}
+
+				if beyondCursor == nil {
+					beyondCursor, lengthErr = s.newBeyondArrayCursor(
+						rowProjectedArrayItems(view, active), active, context, ranks[4],
+					)
+					if lengthErr != nil {
+						return false, lengthErr
+					}
+				}
+
 				continue
 			}
 
@@ -1938,7 +2054,7 @@ func rowObjectPresenceForOrdinal(
 		return []bool{}, extras, feasible, 0, nil
 	}
 
-	decoder, ok := newDirectRankTupleDecoder(len(shape.members), wanted)
+	decoder, ok := newDirectRankTupleDecoder(uint64(len(shape.members)), wanted)
 	if !ok {
 		return nil, 0, false, 0, nil
 	}
@@ -2066,7 +2182,7 @@ func (s *search) rowObjectChildrenForOrdinal(
 		return nil, false, false, 1, nil
 	}
 
-	decoder, ok := newDirectRankTupleDecoder(len(members), wanted)
+	decoder, ok := newDirectRankTupleDecoder(uint64(len(members)), wanted)
 	if !ok {
 		return nil, false, false, 0, nil
 	}
