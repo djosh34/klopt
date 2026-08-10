@@ -60,13 +60,58 @@ func TestArrayFrontierHasNoSyntheticCutoffLoop(t *testing.T) {
 	t.Parallel()
 
 	parsed := parseGoFile(t, "structural_frontier.go")
-	children := findGuardFunction(t, parsed, "rowArrayChildrenForOrdinal")
-	advance := findGuardFunction(t, parsed, "advance")
-	walker := findGuardFunction(t, parsed, "walkArrayFrontier")
+	children := findGuardFunction(t, parsed, "rowArrayChildrenForOrdinal", "search")
+	advance := findGuardFunction(t, parsed, "advance", "beyondArrayCursor")
+	walker := findGuardFunction(t, parsed, "walkArrayFrontier", "search")
 
-	require.Zero(t, countGuardBeyondBranchLoops(children.Body))
+	loops, found := countGuardBeyondBranchLoops(children.Body)
+	require.True(t, found)
+	require.Zero(t, loops)
 	require.Zero(t, countGuardLoops(advance.Body))
-	require.True(t, guardCallsSelector(walker.Body, "currentBeyond", "advance"))
+	require.True(t, guardCallsSelector(walker.Body, "beyondCursor", "advance"))
+}
+
+// TestAnyOfReplayMasksHaveNoFixedWidthNarrowing is the source half of the
+// sanctioned arbitrary-width mask unit audit.
+func TestAnyOfReplayMasksHaveNoFixedWidthNarrowing(t *testing.T) {
+	t.Parallel()
+
+	var source strings.Builder
+
+	for _, filename := range productionGoFiles(t) {
+		contents, err := os.ReadFile(filename)
+		require.NoError(t, err)
+		_, err = source.Write(contents)
+		require.NoError(t, err)
+	}
+
+	text := source.String()
+	require.NotContains(t, text, "uint64(mask")
+	require.NotContains(t, text, "mask.Uint64()")
+	require.NotContains(t, text, "1 << len(node.anyOf)")
+	require.Contains(t, strings.ReplaceAll(text, "\t", " "), "parentReplayMaskAtOrdinal")
+}
+
+// TestArrayFaultEditsDoNotPrebuildTargetStorageOrRecipes locks incremental
+// coordinate mutation and direct combination addressing.
+func TestArrayFaultEditsDoNotPrebuildTargetStorageOrRecipes(t *testing.T) {
+	t.Parallel()
+
+	parsed := parseGoFile(t, "fault_noncomposition.go")
+	for _, name := range []string{
+		"tryArrayReplacementCandidate",
+		"tryArrayDeletionCandidate",
+		"tryArrayInsertionCandidate",
+	} {
+		function := findGuardFunction(t, parsed, name, "")
+		require.False(t, guardCalls(function.Body, "make"), name)
+		require.False(t, guardCalls(function.Body, "arrayCombinationAt"), name)
+	}
+
+	text, err := os.ReadFile("fault_noncomposition.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(text), "func arrayCombinationAt(")
+	require.NotContains(t, string(text), "rowArrayChildrenForOrdinal(")
 }
 
 // TestArrayInsertionRankSelectionHasNoPrefixReplay locks direct addressing at
@@ -75,32 +120,121 @@ func TestArrayInsertionRankSelectionHasNoPrefixReplay(t *testing.T) {
 	t.Parallel()
 
 	parsed := parseGoFile(t, "fault_noncomposition.go")
-	function := findGuardFunction(t, parsed, "arrayInsertionFaultAttemptAtRank")
+	function := findGuardFunction(t, parsed, "arrayInsertionFaultAttemptAtRank", "")
 
 	require.Zero(t, countGuardLoops(function.Body))
 	require.False(t, guardCalls(function.Body, "newRankProductCursor"))
 	require.True(t, guardCalls(function.Body, "arrayInsertionRanksAtOrdinal"))
 }
 
-// findGuardFunction returns one named declaration from a parsed guard target.
-func findGuardFunction(t *testing.T, parsed *ast.File, name string) *ast.FuncDecl {
+// TestArchitectureGuardsRejectMissingAmbiguousAndLoopingTargets exercises the
+// guard helpers against synthetic source shapes rather than trusting production.
+func TestArchitectureGuardsRejectMissingAmbiguousAndLoopingTargets(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parser.ParseFile(token.NewFileSet(), "guard.go", `package guard
+		type first struct{}
+		type second struct{}
+		func (*first) target() { if value.beyond {} }
+		func (*second) target() { if value.beyond { for {} } }
+	`, 0)
+	require.NoError(t, err)
+
+	function, matches := guardFunctionDeclarations(parsed, "target", "first")
+	require.Len(t, matches, 1)
+
+	loops, found := countGuardBeyondBranchLoops(function.Body)
+	require.True(t, found)
+	require.Zero(t, loops)
+
+	function, matches = guardFunctionDeclarations(parsed, "target", "second")
+	require.Len(t, matches, 1)
+
+	loops, found = countGuardBeyondBranchLoops(function.Body)
+	require.True(t, found)
+	require.Equal(t, 1, loops)
+
+	_, matches = guardFunctionDeclarations(parsed, "target", "missing")
+	require.Empty(t, matches)
+	_, matches = guardFunctionDeclarations(parsed, "target", "")
+	require.Empty(t, matches)
+
+	missingBranch, err := parser.ParseFile(token.NewFileSet(), "missing.go", `package guard
+		type first struct{}
+		func (*first) target() {}
+	`, 0)
+	require.NoError(t, err)
+
+	function, matches = guardFunctionDeclarations(missingBranch, "target", "first")
+	require.Len(t, matches, 1)
+
+	_, found = countGuardBeyondBranchLoops(function.Body)
+	require.False(t, found)
+
+	ambiguous, err := parser.ParseFile(token.NewFileSet(), "ambiguous.go", `package guard
+		type first struct{}
+		func (*first) target() {}
+		func (first) target() {}
+	`, parser.SkipObjectResolution)
+	require.NoError(t, err)
+
+	_, matches = guardFunctionDeclarations(ambiguous, "target", "first")
+	require.Len(t, matches, 2)
+}
+
+// findGuardFunction returns the unique declaration matching name and receiver.
+func findGuardFunction(t *testing.T, parsed *ast.File, name string, receiver string) *ast.FuncDecl {
 	t.Helper()
+
+	function, matches := guardFunctionDeclarations(parsed, name, receiver)
+	require.Len(t, matches, 1, "guarded function must have exactly one declaration")
+
+	return function
+}
+
+// guardFunctionDeclarations returns every declaration matching name and receiver.
+func guardFunctionDeclarations(parsed *ast.File, name string, receiver string) (*ast.FuncDecl, []*ast.FuncDecl) {
+	var matches []*ast.FuncDecl
 
 	for _, declaration := range parsed.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if ok && function.Name.Name == name {
-			return function
+		if !ok || function.Name.Name != name || guardReceiverName(function) != receiver {
+			continue
 		}
+
+		matches = append(matches, function)
 	}
 
-	require.FailNow(t, "guarded function does not exist", name)
+	if len(matches) != 1 {
+		return nil, matches
+	}
 
-	return nil
+	return matches[0], matches
+}
+
+// guardReceiverName returns the declaration's normalized receiver type name.
+func guardReceiverName(function *ast.FuncDecl) string {
+	if function.Recv == nil || len(function.Recv.List) != 1 {
+		return ""
+	}
+
+	receiver := function.Recv.List[0].Type
+	if pointer, ok := receiver.(*ast.StarExpr); ok {
+		receiver = pointer.X
+	}
+
+	identifier, ok := receiver.(*ast.Ident)
+	if !ok {
+		return ""
+	}
+
+	return identifier.Name
 }
 
 // countGuardBeyondBranchLoops counts loops inside the exact beyond-count branch.
-func countGuardBeyondBranchLoops(node ast.Node) int {
+func countGuardBeyondBranchLoops(node ast.Node) (int, bool) {
 	count := 0
+	found := false
 
 	ast.Inspect(node, func(child ast.Node) bool {
 		statement, ok := child.(*ast.IfStmt)
@@ -110,6 +244,7 @@ func countGuardBeyondBranchLoops(node ast.Node) int {
 
 		selector, ok := statement.Cond.(*ast.SelectorExpr)
 		if ok && selector.Sel.Name == "beyond" {
+			found = true
 			count += countGuardLoops(statement.Body)
 
 			return false
@@ -118,7 +253,7 @@ func countGuardBeyondBranchLoops(node ast.Node) int {
 		return true
 	})
 
-	return count
+	return count, found
 }
 
 // countGuardLoops counts loop statements below one syntax node.

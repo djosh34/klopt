@@ -12,46 +12,36 @@ type rankedArrayStructure struct {
 	length rowArrayCount
 }
 
-// beyondArrayRow is the sole transient current row for an exact count outside uint64.
-// It advances one concrete position between shared-frontier alternatives and can
-// never emit until every authored position has been assigned.
-type beyondArrayRow struct {
+// beyondArrayCursor retains only scalar progress for an exact count outside
+// uint64. Each advance selects and immediately discards one concrete child.
+type beyondArrayCursor struct {
 	items        rowSchemaConjunction
 	requirements []requirement
 	context      rowSearchContext
-	current      *jsonValue
+	projection   uint64
 	position     uint64
 }
 
-// advance assigns one current-row position and then yields to the shared frontier.
-func (row *beyondArrayRow) advance(s *search) error {
-	if row == nil || row.current == nil || row.current.kind != jsonArray {
-		return errors.New("schematest: beyond-count array row is not initialized")
+// advance performs one attempt-local child assignment and yields.
+func (cursor *beyondArrayCursor) advance(s *search) (bool, error) {
+	if cursor == nil {
+		return false, errors.New("schematest: beyond-count array cursor is not initialized")
 	}
 
-	if err := s.assign(); err != nil {
-		return err
-	}
-
-	value, exists, _, _, err := s.rowConjunctionValueAt(
-		row.items, row.requirements, row.context, 0,
+	_, exists, usable, _, err := s.rowArrayChildForOrdinalPosition(
+		cursor.items, cursor.requirements, cursor.context, 0,
 	)
-	if err != nil {
-		return err
+	if err != nil || !exists || !usable {
+		return false, err
 	}
 
-	if !exists {
-		return errors.New("schematest: beyond-count array item has no first witness")
+	if cursor.position == ^uint64(0) {
+		return false, errors.New("schematest: beyond-count array position overflow")
 	}
 
-	row.current.array = append(row.current.array, value)
-	if row.position == ^uint64(0) {
-		return errors.New("schematest: beyond-count array position overflow")
-	}
+	cursor.position++
 
-	row.position++
-
-	return nil
+	return true, nil
 }
 
 // liveProjectionFrontier owns the one resumable projection traversal for a structural search.
@@ -1554,9 +1544,23 @@ func (s *search) rowObjectValueForRank(
 	return candidate, true, 0, nil
 }
 
+// rowArrayChildForOrdinalPosition selects one child without retaining a row.
+func (s *search) rowArrayChildForOrdinalPosition(
+	items rowSchemaConjunction,
+	requirements []requirement,
+	context rowSearchContext,
+	rank uint64,
+) (*jsonValue, bool, bool, uint64, error) {
+	if err := s.assign(); err != nil {
+		return nil, false, false, 0, err
+	}
+
+	return s.rowConjunctionValueAt(items, requirements, context, rank)
+}
+
 // rowArrayChildrenForOrdinal rebuilds one diagonal tuple while extending position state only after charge.
 //
-//nolint:cyclop // Component endpoints and incremental transient reconstruction are one operation.
+//nolint:cyclop // Direct tuple decoding and charged child selection share this small seam.
 func (s *search) rowArrayChildrenForOrdinal(
 	structure rankedArrayStructure,
 	requirements []requirement,
@@ -1825,18 +1829,29 @@ func (s *search) walkArrayFrontier(
 
 	diagonalLive := true
 
-	var currentBeyond *beyondArrayRow
+	var (
+		beyondCursor                   *beyondArrayCursor
+		unavailableBeyondProjection    uint64
+		hasUnavailableBeyondProjection bool
+	)
 
 	for {
-		if currentBeyond != nil {
-			if err := currentBeyond.advance(s); err != nil {
-				return false, err
+		if beyondCursor != nil {
+			live, advanceErr := beyondCursor.advance(s)
+			if advanceErr != nil {
+				return false, advanceErr
+			}
+
+			if !live {
+				unavailableBeyondProjection = beyondCursor.projection
+				hasUnavailableBeyondProjection = true
+				beyondCursor = nil
 			}
 		}
 
 		ranks, ok := frontier.Next()
 		if !ok {
-			if currentBeyond != nil {
+			if beyondCursor != nil {
 				continue
 			}
 
@@ -1889,7 +1904,8 @@ func (s *search) walkArrayFrontier(
 			return false, ceilingErr
 		}
 
-		if ranks[4] == 0 && diagonal < ceiling {
+		if ranks[4] == 0 && diagonal < ceiling &&
+			(!hasUnavailableBeyondProjection || ranks[4] != unavailableBeyondProjection) {
 			diagonalLive = true
 		}
 
@@ -1936,20 +1952,18 @@ func (s *search) walkArrayFrontier(
 			}
 
 			if lengthExists && length.beyond {
-				if currentBeyond == nil {
-					if err := s.assign(); err != nil {
-						return false, err
-					}
+				if hasUnavailableBeyondProjection && ranks[4] == unavailableBeyondProjection {
+					continue
+				}
 
-					currentBeyond = &beyondArrayRow{
+				if beyondCursor == nil {
+					beyondCursor = &beyondArrayCursor{
 						items:        rowProjectedArrayItems(view, active),
 						requirements: active,
 						context:      context,
-						current:      &jsonValue{kind: jsonArray},
+						projection:   ranks[4],
 					}
 				}
-
-				diagonalLive = true
 
 				continue
 			}

@@ -98,6 +98,36 @@ func TestBuildRetainedMemoryIsFlatWithEmittedCount(t *testing.T) {
 	)
 }
 
+// TestBeyondCountCursorRetainsNoGeneratedRowAcrossBudgets proves an open
+// beyond-count branch keeps only scalar progress while an emitting sibling runs.
+//
+//nolint:paralleltest // Per-process memory statistics require isolation from concurrent tests.
+func TestBeyondCountCursorRetainsNoGeneratedRowAcrossBudgets(t *testing.T) {
+	document := []byte(documentWithJSONSchema(`{
+		"anyOf":[
+			{"type":"array","minItems":18446744073709551616,
+			 "maxItems":18446744073709551616,"items":{"enum":[false]}},
+			{"enum":[0]}
+		]
+	}`))
+
+	short, err := measureBuildMemory(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 200}, 1,
+	)
+	require.NoError(t, err, "measurement=%+v", short)
+	long, err := measureBuildMemory(
+		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 20_000}, 1,
+	)
+	require.NoError(t, err, "measurement=%+v", long)
+
+	t.Logf("beyond-count retention measurements: short=%+v long=%+v", short, long)
+	require.Equal(t, MaxStepsReached, short.stop)
+	require.Equal(t, MaxStepsReached, long.stop)
+	require.Equal(t, uint64(200), short.steps)
+	require.Equal(t, uint64(20_000), long.steps)
+	require.LessOrEqual(t, long.retained, short.retained+retainedMemoryNoiseTolerance)
+}
+
 // measureBuildMemory counts and discards callback values. It retains only
 // scalar raw measurements and fails unless the requested callback is observed.
 func measureBuildMemory(input Input, measureAtCase int) (buildMemoryMeasurement, error) {
