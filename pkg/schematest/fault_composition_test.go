@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompositionDifferenceReusesBoundedSubtreeMetadata(t *testing.T) {
+func TestCompositionDifferenceResumesDeepTraversal(t *testing.T) {
 	t.Parallel()
 
 	parent := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
@@ -27,21 +27,46 @@ func TestCompositionDifferenceReusesBoundedSubtreeMetadata(t *testing.T) {
 	parentCursor.object["leaf"] = &jsonValue{kind: jsonBoolean}
 	assignmentCursor.object["leaf"] = &jsonValue{kind: jsonBoolean, boolean: true}
 
-	searchState := &search{maxSteps: 10}
-	source := compositionDifference(parent, assignment, nil)
-	count, err := source.Count(searchState)
+	searchState := &search{maxSteps: 1_000}
+	cursor := compositionDifference(parent, assignment, nil).Cursor()
+
+	edit, exists, err := cursor.Next(searchState)
 	require.NoError(t, err)
-	require.Equal(t, 1, count)
-	require.Equal(t, uint64(1), searchState.steps)
+	require.True(t, exists)
+	require.Len(t, edit.path, 101)
+	require.Greater(t, searchState.steps, uint64(100))
 
-	for range 2 {
-		edit, exists, err := source.At(0, searchState)
-		require.NoError(t, err)
-		require.True(t, exists)
-		require.Len(t, edit.path, 101)
-	}
+	_, exists, err = cursor.Next(searchState)
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.Less(t, searchState.steps, searchState.maxSteps)
+}
 
-	require.Equal(t, uint64(3), searchState.steps)
+func TestCompositionEditSubsetCursorResumesSuccessiveCombinations(t *testing.T) {
+	t.Parallel()
+
+	parent := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
+	assignment := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{
+		"a": {kind: jsonNull}, "b": {kind: jsonNull}, "c": {kind: jsonNull},
+	}}
+	searchState := &search{maxSteps: 100}
+	cursor := newCompositionEditSubsetCursor(
+		compositionDifference(parent, assignment, nil), 2, searchState,
+	)
+
+	first, ready, exhausted, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ready)
+	require.False(t, exhausted)
+	require.Equal(t, []string{"a", "b"}, []string{first[0].path[0], first[1].path[0]})
+
+	steps := searchState.steps
+	second, ready, exhausted, err := cursor.Next()
+	require.NoError(t, err)
+	require.True(t, ready)
+	require.False(t, exhausted)
+	require.Equal(t, []string{"a", "c"}, []string{second[0].path[0], second[1].path[0]})
+	require.Equal(t, steps+1, searchState.steps)
 }
 
 func TestAllOfFaultKeepsSiblingBranchesTrue(t *testing.T) {
@@ -209,9 +234,13 @@ func TestAggregateFaultCombinesProspectiveCoordinates(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 
+	machine := &compositionAssignmentMachine{search: searchState}
+
 	var derivative *jsonValue
 	for rank := uint64(0); rank < 20 && derivative == nil; rank++ {
-		derivative, _, _, err = compositionFaultAttemptAtRank(parent, selected, rank, searchState)
+		derivative, _, _, err = compositionFaultAttemptWithMachine(
+			parent, selected, rank, machine,
+		)
 		require.NoError(t, err)
 	}
 

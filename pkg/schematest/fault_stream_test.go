@@ -7,6 +7,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFaultProductExhaustionWaitsForEveryReachableNestedCursor(t *testing.T) {
+	t.Parallel()
+
+	exhaustion := newFaultProductExhaustion()
+	setFaultFiniteEndpoint(&exhaustion.closureFinite, &exhaustion.closureSize, 1)
+	closure := exhaustion.closure(0)
+	setFaultFiniteEndpoint(&closure.parentFinite, &closure.parentSize, 2)
+
+	first := exhaustion.parent(0, 0)
+	setFaultFiniteEndpoint(&first.occurrenceFinite, &first.occurrenceSize, 0)
+
+	second := exhaustion.parent(0, 1)
+	setFaultFiniteEndpoint(&second.occurrenceFinite, &second.occurrenceSize, 1)
+	exhaustion.occurrence(0, 1, 0)
+	require.False(t, exhaustion.complete())
+
+	mutation := exhaustion.occurrence(0, 1, 0)
+	setFaultFiniteEndpoint(&mutation.mutationFinite, &mutation.mutationSize, 1)
+	require.True(t, exhaustion.complete())
+}
+
 func TestParentRowMachineYieldsPastAnUnproductiveFirstMask(t *testing.T) {
 	t.Parallel()
 

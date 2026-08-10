@@ -73,7 +73,12 @@ func TestFaultRowMachinesNeverRestartWalkNode(t *testing.T) {
 				continue
 			}
 
-			receiver, ok := function.Recv.List[0].Type.(*ast.Ident)
+			receiverType := function.Recv.List[0].Type
+			if pointer, isPointer := receiverType.(*ast.StarExpr); isPointer {
+				receiverType = pointer.X
+			}
+
+			receiver, ok := receiverType.(*ast.Ident)
 			if !ok {
 				continue
 			}
@@ -98,6 +103,20 @@ func TestFaultRowMachinesNeverRestartWalkNode(t *testing.T) {
 	for machine, found := range targets {
 		require.True(t, found, machine)
 	}
+}
+
+// TestCompositionFaultCursorsDoNotReplayOrdinalPrefixes locks resumable difference/subset traversal.
+func TestCompositionFaultCursorsDoNotReplayOrdinalPrefixes(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("fault_composition.go")
+	require.NoError(t, err)
+
+	text := string(source)
+	require.NotContains(t, text, "compositionDifferenceAt")
+	require.NotContains(t, text, "countCompositionDifferences")
+	require.NotContains(t, text, "remaining := index")
+	require.NotContains(t, text, "observed := uint64(0)")
 }
 
 // TestProductionImportsStayCleanRoom forbids semantic production dependencies in non-test sources.
@@ -1769,7 +1788,10 @@ func authorizedOwnerTypes(guardPackage *sourceGuardPackage) map[*types.TypeName]
 	for _, root := range []string{
 		"schemaModel", "searchPlan", "jsonValue", "search", "evaluationContext",
 		"jsonActivePath", "jsonValuePair", "jsonValidationFrame", "jsonCloneFrame", "jsonMarshalFrame",
-		"strictJSONContainerFrame",
+		"strictJSONContainerFrame", "faultSearchMachines", "faultProductExhaustion",
+		"compositionAssignmentMachine", "compositionRankedSubsetCursor",
+		"compositionEditSubsetMachine", "compositionEditSubsetCursor",
+		"compositionDifferenceCursor", "compositionDirectEditCursor",
 	} {
 		collectNamedOwnerTypes(packageObjectType(guardPackage, root), authorized)
 	}

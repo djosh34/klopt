@@ -52,7 +52,7 @@ type faultSearchMachines struct {
 	search                 *search
 	parentRows             parentRowMachine
 	scalarCandidates       scalarCandidateMachine
-	compositionAssignments compositionAssignmentMachine
+	compositionAssignments *compositionAssignmentMachine
 }
 
 // newFaultSearchMachines gives the outer continuation sole ownership of its live row machines.
@@ -61,7 +61,7 @@ func newFaultSearchMachines(s *search) *faultSearchMachines {
 		search:                 s,
 		parentRows:             parentRowMachine{search: s},
 		scalarCandidates:       scalarCandidateMachine{search: s},
-		compositionAssignments: compositionAssignmentMachine{search: s},
+		compositionAssignments: &compositionAssignmentMachine{search: s},
 	}
 }
 
@@ -125,13 +125,22 @@ func (machines faultSearchMachines) directParentAtRank(
 		return parent, found, false, err
 	}
 
+	firstEnumRank := uint64(0)
 	if _, hasEnum := activeEnumValueAtRank(
 		machines.search.model.root,
 		machines.search.model.root.occurrence,
 		requirements,
-		new(uint64),
+		&firstEnumRank,
 	); hasEnum {
-		return nil, false, true, nil
+		requested := rank
+		_, rankExists := activeEnumValueAtRank(
+			machines.search.model.root,
+			machines.search.model.root.occurrence,
+			requirements,
+			&requested,
+		)
+
+		return nil, false, !rankExists, nil
 	}
 
 	exhausted, err := finiteScalarFaultRows(
@@ -143,9 +152,130 @@ func (machines faultSearchMachines) directParentAtRank(
 	return nil, false, exhausted, err
 }
 
+// faultProductExhaustion retains conditional finite endpoints for reachable nested cursors.
+type faultProductExhaustion struct {
+	closureFinite bool
+	closureSize   uint64
+	closures      map[uint64]*faultClosureExhaustion
+}
+
+// faultClosureExhaustion owns one closure-local parent endpoint.
+type faultClosureExhaustion struct {
+	parentFinite bool
+	parentSize   uint64
+	parents      map[uint64]*faultParentExhaustion
+}
+
+// faultParentExhaustion owns one parent-local occurrence endpoint.
+type faultParentExhaustion struct {
+	occurrenceFinite bool
+	occurrenceSize   uint64
+	occurrences      map[uint64]*faultOccurrenceExhaustion
+}
+
+// faultOccurrenceExhaustion owns one occurrence-local mutation endpoint.
+type faultOccurrenceExhaustion struct {
+	mutationFinite         bool
+	mutationSize           uint64
+	compositionAssignments *compositionAssignmentMachine
+}
+
+// newFaultProductExhaustion starts empty conditional endpoint state.
+func newFaultProductExhaustion() *faultProductExhaustion {
+	return &faultProductExhaustion{closures: make(map[uint64]*faultClosureExhaustion)}
+}
+
+// closure returns the endpoint state for one reachable closure rank.
+func (state *faultProductExhaustion) closure(rank uint64) *faultClosureExhaustion {
+	closure := state.closures[rank]
+	if closure == nil {
+		closure = &faultClosureExhaustion{parents: make(map[uint64]*faultParentExhaustion)}
+		state.closures[rank] = closure
+	}
+
+	return closure
+}
+
+// parent returns the endpoint state for one reachable parent rank.
+func (state *faultProductExhaustion) parent(
+	closureRank uint64,
+	parentRank uint64,
+) *faultParentExhaustion {
+	closure := state.closure(closureRank)
+
+	parent := closure.parents[parentRank]
+	if parent == nil {
+		parent = &faultParentExhaustion{
+			occurrences: make(map[uint64]*faultOccurrenceExhaustion),
+		}
+		closure.parents[parentRank] = parent
+	}
+
+	return parent
+}
+
+// occurrence returns the endpoint state for one reachable occurrence rank.
+func (state *faultProductExhaustion) occurrence(
+	closureRank uint64,
+	parentRank uint64,
+	occurrenceRank uint64,
+) *faultOccurrenceExhaustion {
+	parent := state.parent(closureRank, parentRank)
+
+	occurrence := parent.occurrences[occurrenceRank]
+	if occurrence == nil {
+		occurrence = new(faultOccurrenceExhaustion)
+		parent.occurrences[occurrenceRank] = occurrence
+	}
+
+	return occurrence
+}
+
+// setFaultFiniteEndpoint retains the smallest proven finite upper bound.
+func setFaultFiniteEndpoint(finite *bool, current *uint64, size uint64) {
+	if !*finite || size < *current {
+		*current = size
+	}
+
+	*finite = true
+}
+
+// complete reports whether every reachable nested finite cursor is exhausted.
+//
+//nolint:cyclop // Four conditional cursor levels are checked in one proof.
+func (state *faultProductExhaustion) complete() bool {
+	if !state.closureFinite || uint64(len(state.closures)) != state.closureSize {
+		return false
+	}
+
+	for _, closure := range state.closures {
+		if !closure.parentFinite {
+			return false
+		}
+
+		for parentRank, parent := range closure.parents {
+			if parentRank >= closure.parentSize {
+				continue
+			}
+
+			if !parent.occurrenceFinite {
+				return false
+			}
+
+			for occurrenceRank, occurrence := range parent.occurrences {
+				if occurrenceRank < parent.occurrenceSize && !occurrence.mutationFinite {
+					return false
+				}
+			}
+		}
+	}
+
+	return true
+}
+
 // streamFault is the sole continuation over parent, closure, occurrence, and mutation ranks.
 //
-//nolint:cyclop,gocognit // Product exhaustion, exact verification, and callback errors meet here.
+//nolint:cyclop,gocognit,gocyclo // Conditional product exhaustion and exact verification meet here.
 func streamFault(
 	plan *searchPlan,
 	fault faultProgram,
@@ -159,11 +289,11 @@ func streamFault(
 	}
 
 	machines := newFaultSearchMachines(s)
+	exhaustion := newFaultProductExhaustion()
 
 	var (
 		diagonal        uint64
 		diagonalStarted bool
-		diagonalLive    bool
 	)
 
 	for {
@@ -173,12 +303,11 @@ func streamFault(
 		}
 
 		if !diagonalStarted || product.diagonal != diagonal {
-			if diagonalStarted && !diagonalLive && product.finite[faultClosureDimension] {
+			if diagonalStarted && exhaustion.complete() {
 				return nil
 			}
 
 			diagonal = product.diagonal
-			diagonalLive = false
 			diagonalStarted = true
 		}
 
@@ -190,9 +319,14 @@ func streamFault(
 		}
 
 		if closureExhausted {
-			if err := product.SetFinite(faultClosureDimension, ranks[faultClosureDimension]); err != nil {
+			closureSize := ranks[faultClosureDimension]
+			if err := product.SetFinite(faultClosureDimension, closureSize); err != nil {
 				return err
 			}
+
+			setFaultFiniteEndpoint(
+				&exhaustion.closureFinite, &exhaustion.closureSize, closureSize,
+			)
 
 			continue
 		}
@@ -200,6 +334,11 @@ func streamFault(
 		if !closureExists {
 			continue
 		}
+
+		closureRank := ranks[faultClosureDimension]
+		exhaustion.closure(closureRank)
+
+		parentRank := ranks[faultParentDimension]
 
 		parent, found, exhausted, replayErr := machines.parentAtRank(
 			plan, selectedFault, ranks[faultParentDimension],
@@ -209,13 +348,38 @@ func streamFault(
 		}
 
 		if exhausted {
+			closure := exhaustion.closure(closureRank)
+			setFaultFiniteEndpoint(&closure.parentFinite, &closure.parentSize, parentRank)
+
 			continue
 		}
 
 		if !found {
-			diagonalLive = true
-
 			continue
+		}
+
+		closure := exhaustion.closure(closureRank)
+
+		trackedParent := !closure.parentFinite || parentRank < closure.parentSize
+		if trackedParent {
+			exhaustion.parent(closureRank, parentRank)
+		}
+
+		occurrenceRank := ranks[faultOccurrenceDimension]
+		mutationRank := ranks[faultMutationDimension]
+
+		compositionAssignments := machines.compositionAssignments
+
+		if trackedParent {
+			parentState := exhaustion.parent(closureRank, parentRank)
+			if !parentState.occurrenceFinite || occurrenceRank < parentState.occurrenceSize {
+				occurrenceState := exhaustion.occurrence(closureRank, parentRank, occurrenceRank)
+				if occurrenceState.compositionAssignments == nil {
+					occurrenceState.compositionAssignments = &compositionAssignmentMachine{search: s}
+				}
+
+				compositionAssignments = occurrenceState.compositionAssignments
+			}
 		}
 
 		derivative, attempted, occurrenceExhausted, mutationExhausted, faultErr := machines.applyFaultAtRank(
@@ -223,15 +387,44 @@ func streamFault(
 			selectedFault,
 			ranks[faultOccurrenceDimension],
 			ranks[faultMutationDimension],
+			compositionAssignments,
 		)
-		if occurrenceExhausted || mutationExhausted {
+		if faultErr != nil {
+			return faultErr
+		}
+
+		if occurrenceExhausted {
+			if trackedParent {
+				parentState := exhaustion.parent(closureRank, parentRank)
+				setFaultFiniteEndpoint(
+					&parentState.occurrenceFinite, &parentState.occurrenceSize, occurrenceRank,
+				)
+			}
+
 			continue
 		}
 
-		diagonalLive = true
+		trackedOccurrence := false
 
-		if faultErr != nil {
-			return faultErr
+		if trackedParent {
+			parentState := exhaustion.parent(closureRank, parentRank)
+
+			trackedOccurrence = !parentState.occurrenceFinite ||
+				occurrenceRank < parentState.occurrenceSize
+			if trackedOccurrence {
+				exhaustion.occurrence(closureRank, parentRank, occurrenceRank)
+			}
+		}
+
+		if mutationExhausted {
+			if trackedOccurrence {
+				occurrenceState := exhaustion.occurrence(closureRank, parentRank, occurrenceRank)
+				setFaultFiniteEndpoint(
+					&occurrenceState.mutationFinite, &occurrenceState.mutationSize, mutationRank,
+				)
+			}
+
+			continue
 		}
 
 		if !attempted || derivative == nil {
@@ -993,8 +1186,10 @@ func applyFaultAtRank(
 	mutationRank uint64,
 	s *search,
 ) (*jsonValue, bool, bool, bool, error) {
-	return newFaultSearchMachines(s).applyFaultAtRank(
-		parent, fault, occurrenceRank, mutationRank,
+	machines := newFaultSearchMachines(s)
+
+	return machines.applyFaultAtRank(
+		parent, fault, occurrenceRank, mutationRank, machines.compositionAssignments,
 	)
 }
 
@@ -1004,6 +1199,7 @@ func (machines faultSearchMachines) applyFaultAtRank(
 	fault faultProgram,
 	occurrenceRank uint64,
 	mutationRank uint64,
+	compositionAssignments *compositionAssignmentMachine,
 ) (*jsonValue, bool, bool, bool, error) {
 	selected, exists, occurrenceErr := faultAtOccurrenceRank(
 		parent, fault, occurrenceRank, machines.search,
@@ -1018,7 +1214,7 @@ func (machines faultSearchMachines) applyFaultAtRank(
 
 	if faultNeedsCompositionSearch(selected) {
 		derivative, attempted, exhausted, err := compositionFaultAttemptWithMachine(
-			parent, selected, mutationRank, machines.compositionAssignments,
+			parent, selected, mutationRank, compositionAssignments,
 		)
 
 		return derivative, attempted, false, exhausted, err

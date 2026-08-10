@@ -80,9 +80,15 @@ func findCompositionFaultDerivative(
 	return derivative, found, err
 }
 
-// compositionAssignmentMachine directly addresses one complete assignment and edit subset.
+// compositionAssignmentMachine owns the resumable subset continuations for direct row addresses.
 type compositionAssignmentMachine struct {
 	search *search
+
+	direct             *compositionRankedSubsetCursor
+	assignment         *compositionRankedSubsetCursor
+	assignmentViewRank uint64
+	assignmentRowRank  uint64
+	assignmentSet      bool
 }
 
 // compositionFaultAttemptAtRank is the standalone composition-assignment adapter.
@@ -93,7 +99,7 @@ func compositionFaultAttemptAtRank(
 	s *search,
 ) (*jsonValue, bool, bool, error) {
 	return compositionFaultAttemptWithMachine(
-		parent, fault, rank, compositionAssignmentMachine{search: s},
+		parent, fault, rank, &compositionAssignmentMachine{search: s},
 	)
 }
 
@@ -104,13 +110,14 @@ func compositionFaultAttemptWithMachine(
 	parent *jsonValue,
 	fault faultProgram,
 	rank uint64,
-	assignments compositionAssignmentMachine,
+	assignments *compositionAssignmentMachine,
 ) (*jsonValue, bool, bool, error) {
 	if parent == nil {
 		return nil, false, false, errors.New("schematest: nil composition fault parent")
 	}
 
-	if assignments.search == nil || assignments.search.model == nil || assignments.search.model.root == nil {
+	if assignments == nil || assignments.search == nil ||
+		assignments.search.model == nil || assignments.search.model.root == nil {
 		return nil, false, false, errors.New("schematest: composition assignment machine has no model")
 	}
 
@@ -128,13 +135,13 @@ func compositionFaultAttemptWithMachine(
 		}
 	}
 
-	candidate, attempted, err := compositionEditSourceAttemptAtRank(
-		parent,
-		fault,
-		compositionDirectEdits(parent, fault.requirements),
-		rank,
-		assignments.search,
-	)
+	if assignments.direct == nil {
+		assignments.direct = newCompositionRankedSubsetCursor(
+			compositionDirectEdits(parent, fault.requirements), assignments.search,
+		)
+	}
+
+	candidate, attempted, err := assignments.direct.AttemptAtRank(parent, fault, rank)
 	if err != nil || attempted {
 		return candidate, attempted, false, err
 	}
@@ -143,7 +150,9 @@ func compositionFaultAttemptWithMachine(
 }
 
 // AttemptAtRank evaluates one assignment-row/subset coordinate and yields.
-func (machine compositionAssignmentMachine) AttemptAtRank(
+//
+//nolint:cyclop // Direct row exhaustion and resumable subset state meet here.
+func (machine *compositionAssignmentMachine) AttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
 	rank uint64,
@@ -173,13 +182,17 @@ func (machine compositionAssignmentMachine) AttemptAtRank(
 		return nil, false, exhausted, nil
 	}
 
-	candidate, attempted, err := compositionEditSourceAttemptAtRank(
-		parent,
-		fault,
-		compositionDifference(parent, assignment, nil),
-		subsetRank,
-		machine.search,
-	)
+	if !machine.assignmentSet || machine.assignmentViewRank != projectionRank ||
+		machine.assignmentRowRank != rowRank {
+		machine.assignment = newCompositionRankedSubsetCursor(
+			compositionDifference(parent, assignment, nil), machine.search,
+		)
+		machine.assignmentViewRank = projectionRank
+		machine.assignmentRowRank = rowRank
+		machine.assignmentSet = true
+	}
+
+	candidate, attempted, err := machine.assignment.AttemptAtRank(parent, fault, subsetRank)
 
 	return candidate, attempted, false, err
 }
@@ -380,41 +393,56 @@ func prospectiveCompositionEdit(
 	}
 }
 
-// compositionEditSourceAttemptAtRank selects one existing subset without changing its cursor policy.
-func compositionEditSourceAttemptAtRank(
+// compositionRankedSubsetCursor resumes canonical subsets across increasing ranks.
+type compositionRankedSubsetCursor struct {
+	source   compositionEditSource
+	stream   *compositionEditSubsetMachine
+	search   *search
+	observed uint64
+}
+
+// newCompositionRankedSubsetCursor starts one rank-addressed subset continuation.
+func newCompositionRankedSubsetCursor(
+	source compositionEditSource,
+	s *search,
+) *compositionRankedSubsetCursor {
+	return &compositionRankedSubsetCursor{
+		source: source, stream: newCompositionEditSubsetMachine(source, s), search: s,
+	}
+}
+
+// AttemptAtRank advances the existing subset stream instead of replaying its prefix.
+func (cursor *compositionRankedSubsetCursor) AttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
-	edits compositionEditSource,
 	rank uint64,
-	s *search,
 ) (*jsonValue, bool, error) {
-	observed := uint64(0)
-	attempted := false
+	if rank < cursor.observed {
+		cursor.stream = newCompositionEditSubsetMachine(cursor.source, cursor.search)
+		cursor.observed = 0
+	}
 
-	var derivative *jsonValue
-
-	_, err := visitCompositionEditSizes(edits, s, func(selected []compositionEdit) (bool, error) {
-		if observed != rank {
-			observed++
-
-			return false, nil
+	for {
+		selected, ready, exhausted, err := cursor.stream.Advance()
+		if err != nil || exhausted {
+			return nil, false, err
 		}
 
-		candidate, matched, attemptErr := tryCompositionEdits(parent, fault, selected, s)
-		if attemptErr != nil {
-			return false, attemptErr
+		if !ready {
+			continue
 		}
 
-		attempted = true
+		if cursor.observed < rank {
+			cursor.observed++
 
-		if matched {
-			derivative = candidate
+			continue
 		}
 
-		return true, nil
-	})
+		cursor.observed++
+		candidate, _, err := tryCompositionEdits(parent, fault, selected, cursor.search)
 
-	return derivative, attempted, err
+		return candidate, true, err
+	}
 }
 
 // visitCompositionEditSizes traverses edit subsets in increasing size and source order.
@@ -423,31 +451,23 @@ func visitCompositionEditSizes(
 	s *search,
 	visit func([]compositionEdit) (bool, error),
 ) (bool, error) {
-	count, err := edits.Count(s)
-	if err != nil {
-		return false, err
-	}
+	machine := newCompositionEditSubsetMachine(edits, s)
 
-	for size := 1; size <= count; size++ {
-		cursor := newCompositionEditSubsetCursor(edits, count, size, s)
-		for {
-			selected, exists, cursorErr := cursor.Next()
-			if cursorErr != nil || !exists {
-				if cursorErr != nil {
-					return false, cursorErr
-				}
+	for {
+		selected, ready, exhausted, err := machine.Advance()
+		if err != nil || exhausted {
+			return false, err
+		}
 
-				break
-			}
+		if !ready {
+			continue
+		}
 
-			stopped, visitErr := visit(selected)
-			if visitErr != nil || stopped {
-				return stopped, visitErr
-			}
+		stopped, err := visit(selected)
+		if err != nil || stopped {
+			return stopped, err
 		}
 	}
-
-	return false, nil
 }
 
 // compositionAssignmentEditVisitor converts each complete assignment to parent-relative edits.
@@ -461,84 +481,78 @@ func compositionAssignmentEditVisitor(
 	}
 }
 
-// compositionEditSource directly addresses edits without retaining an edit corpus.
+// compositionEditCursor retains only active source traversal state.
+type compositionEditCursor interface {
+	Next(s *search) (compositionEdit, bool, error)
+	Clone() compositionEditCursor
+}
+
+// compositionEditSource starts independent cursors without retaining an edit corpus.
 type compositionEditSource struct {
-	count func(*search) (int, error)
-	at    func(int, *search) (compositionEdit, bool, error)
+	cursor func() compositionEditCursor
 }
 
-// Count charges before advancing across each discovered source coordinate.
-func (source compositionEditSource) Count(s *search) (int, error) {
-	return source.count(s)
+// Cursor starts one independent source traversal.
+func (source compositionEditSource) Cursor() compositionEditCursor {
+	return source.cursor()
 }
 
-// At charges immediately before selecting one edit coordinate.
-func (source compositionEditSource) At(index int, s *search) (compositionEdit, bool, error) {
-	return source.at(index, s)
+// compositionDirectEditCursor resumes represented removals in requirement order.
+type compositionDirectEditCursor struct {
+	parent           *jsonValue
+	requirements     []requirement
+	requirementIndex int
+	pathRank         uint64
 }
 
-// compositionDirectEdits addresses the current parent's represented removals.
-//
-//nolint:cyclop // Counting and addressing use the same direct requirement filter.
+// Next resumes at the next represented removal.
+func (cursor *compositionDirectEditCursor) Next(s *search) (compositionEdit, bool, error) {
+	for cursor.requirementIndex < len(cursor.requirements) {
+		current := cursor.requirements[cursor.requirementIndex]
+		if current.canonical || current.presence != requirementAbsent {
+			cursor.requirementIndex++
+			cursor.pathRank = 0
+
+			continue
+		}
+
+		if err := s.assign(); err != nil {
+			return compositionEdit{}, false, err
+		}
+
+		path, exists := matchingValuePathAt(
+			cursor.parent, current.occurrence.instanceTemplate, cursor.pathRank,
+		)
+		if !exists {
+			cursor.requirementIndex++
+			cursor.pathRank = 0
+
+			continue
+		}
+
+		cursor.pathRank++
+		if len(path) == 0 || valueAtPath(cursor.parent, path) == nil {
+			continue
+		}
+
+		return compositionEdit{path: pathCopy(path), remove: true}, true, nil
+	}
+
+	return compositionEdit{}, false, nil
+}
+
+// Clone copies only the current direct source coordinates.
+func (cursor *compositionDirectEditCursor) Clone() compositionEditCursor {
+	clone := *cursor
+
+	return &clone
+}
+
+// compositionDirectEdits starts represented-removal traversal.
 func compositionDirectEdits(parent *jsonValue, requirements []requirement) compositionEditSource {
-	eligible := func(requirement requirement) bool {
-		return !requirement.canonical && requirement.presence == requirementAbsent
-	}
-
-	return compositionEditSource{
-		count: func(s *search) (int, error) {
-			total := 0
-
-			for _, requirement := range requirements {
-				if !eligible(requirement) {
-					continue
-				}
-
-				for range matchingValuePathSequence(parent, requirement.occurrence.instanceTemplate) {
-					if err := s.assign(); err != nil {
-						return 0, err
-					}
-
-					total++
-				}
-			}
-
-			return total, nil
-		},
-		at: func(wanted int, s *search) (compositionEdit, bool, error) {
-			if wanted < 0 {
-				return compositionEdit{}, false, nil
-			}
-
-			if err := s.assign(); err != nil {
-				return compositionEdit{}, false, err
-			}
-
-			for _, requirement := range requirements {
-				if !eligible(requirement) {
-					continue
-				}
-
-				paths := matchingValuePathCount(parent, requirement.occurrence.instanceTemplate)
-				if wanted >= int(paths) {
-					wanted -= int(paths)
-
-					continue
-				}
-
-				path, exists := matchingValuePathAt(
-					parent, requirement.occurrence.instanceTemplate, uint64(wanted),
-				)
-				if !exists || len(path) == 0 || valueAtPath(parent, path) == nil {
-					return compositionEdit{}, false, nil
-				}
-
-				return compositionEdit{path: pathCopy(path), remove: true}, true, nil
-			}
-
-			return compositionEdit{}, false, nil
-		},
-	}
+	return compositionEditSource{cursor: func() compositionEditCursor {
+		return &compositionDirectEditCursor{parent: parent, requirements: requirements}
+	}}
 }
 
 // applyCompositionRequirementEdits applies directly represented absent-presence requirements.
@@ -728,250 +742,324 @@ func chargeCompositionEdit(candidate *jsonValue, edit compositionEdit, s *search
 	return nil
 }
 
-// compositionDifference exposes deterministic leaf edits without retaining an edit corpus.
+// compositionDifference exposes one resumable depth-first edit source.
 func compositionDifference(parent, assignment *jsonValue, path []string) compositionEditSource {
-	counted := false
-	count := 0
-
-	return compositionEditSource{
-		count: func(s *search) (int, error) {
-			if counted {
-				return count, nil
-			}
-
-			var err error
-
-			count, err = countCompositionDifferences(parent, assignment, s)
-			if err != nil {
-				return 0, err
-			}
-
-			counted = true
-
-			return count, nil
-		},
-		at: func(index int, s *search) (compositionEdit, bool, error) {
-			if index < 0 {
-				return compositionEdit{}, false, nil
-			}
-
-			if err := s.assign(); err != nil {
-				return compositionEdit{}, false, err
-			}
-
-			remaining := index
-			edit, exists := compositionDifferenceAt(parent, assignment, path, &remaining)
-
-			return edit, exists, nil
-		},
-	}
+	return compositionEditSource{cursor: func() compositionEditCursor {
+		return &compositionDifferenceCursor{stack: []compositionDifferenceFrame{{
+			parent: parent, assignment: assignment, path: pathCopy(path), arrayIndex: -1,
+		}}}
+	}}
 }
 
-// countCompositionDifferences charges before each discovered source coordinate.
-//
-//nolint:cyclop,gocognit // Object, array, and scalar cardinalities share one recursion.
-func countCompositionDifferences(parent, assignment *jsonValue, s *search) (int, error) {
-	if parent == nil || assignment == nil || parent.kind != assignment.kind {
+// compositionDifferenceFrame retains one active depth-first frame.
+type compositionDifferenceFrame struct {
+	parent      *jsonValue
+	assignment  *jsonValue
+	path        []string
+	entered     bool
+	stage       uint8
+	lastName    string
+	hasLastName bool
+	arrayIndex  int
+}
+
+// compositionDifferenceCursor retains only active traversal frames.
+type compositionDifferenceCursor struct {
+	stack []compositionDifferenceFrame
+}
+
+// Next advances the live depth-first traversal until its next edit.
+func (cursor *compositionDifferenceCursor) Next(s *search) (compositionEdit, bool, error) {
+	for len(cursor.stack) > 0 {
 		if err := s.assign(); err != nil {
-			return 0, err
+			return compositionEdit{}, false, err
 		}
 
-		return 1, nil
-	}
-
-	count := 0
-
-	switch parent.kind {
-	case jsonObject:
-		for _, name := range sortedObjectNames(parent.object) {
-			assigned, exists := assignment.object[name]
-			if !exists {
-				if err := s.assign(); err != nil {
-					return 0, err
-				}
-
-				count++
-
-				continue
-			}
-
-			childCount, err := countCompositionDifferences(parent.object[name], assigned, s)
-			if err != nil {
-				return 0, err
-			}
-
-			count += childCount
-		}
-
-		for _, name := range sortedObjectNames(assignment.object) {
-			if _, exists := parent.object[name]; exists {
-				continue
-			}
-
-			if err := s.assign(); err != nil {
-				return 0, err
-			}
-
-			count++
-		}
-	case jsonArray:
-		common := min(len(parent.array), len(assignment.array))
-		for index := range common {
-			childCount, err := countCompositionDifferences(parent.array[index], assignment.array[index], s)
-			if err != nil {
-				return 0, err
-			}
-
-			count += childCount
-		}
-
-		for range max(len(parent.array), len(assignment.array)) - common {
-			if err := s.assign(); err != nil {
-				return 0, err
-			}
-
-			count++
-		}
-	default:
-		if !jsonValuesEqual(parent, assignment) {
-			if err := s.assign(); err != nil {
-				return 0, err
-			}
-
-			count = 1
+		edit, exists := cursor.advance()
+		if exists {
+			return edit, true, nil
 		}
 	}
 
-	return count, nil
+	return compositionEdit{}, false, nil
 }
 
-// compositionDifferenceAt advances one bounded depth-first cursor to the requested edit.
+// Clone copies only active source traversal frames and paths.
+func (cursor *compositionDifferenceCursor) Clone() compositionEditCursor {
+	clone := &compositionDifferenceCursor{stack: make([]compositionDifferenceFrame, len(cursor.stack))}
+	copy(clone.stack, cursor.stack)
+
+	for index := range clone.stack {
+		clone.stack[index].path = pathCopy(clone.stack[index].path)
+	}
+
+	return clone
+}
+
+// advance performs one charged source traversal transition.
 //
-//nolint:cyclop,gocognit // Containers share one canonical traversal.
-func compositionDifferenceAt(
-	parent, assignment *jsonValue,
-	path []string,
-	remaining *int,
-) (compositionEdit, bool) {
-	selectEdit := func(edit compositionEdit) (compositionEdit, bool) {
-		if *remaining == 0 {
+//nolint:cyclop // One charged transition handles every JSON kind.
+func (cursor *compositionDifferenceCursor) advance() (compositionEdit, bool) {
+	frame := &cursor.stack[len(cursor.stack)-1]
+	if !frame.entered {
+		frame.entered = true
+		if frame.parent == nil || frame.assignment == nil || frame.parent.kind != frame.assignment.kind {
+			edit := compositionEdit{path: pathCopy(frame.path), replacement: frame.assignment}
+			cursor.stack = cursor.stack[:len(cursor.stack)-1]
+
 			return edit, true
 		}
 
-		*remaining--
+		if frame.parent.kind != jsonObject && frame.parent.kind != jsonArray {
+			cursor.stack = cursor.stack[:len(cursor.stack)-1]
+
+			if !jsonValuesEqual(frame.parent, frame.assignment) {
+				return compositionEdit{path: pathCopy(frame.path), replacement: frame.assignment}, true
+			}
+		}
 
 		return compositionEdit{}, false
 	}
 
-	if parent == nil || assignment == nil || parent.kind != assignment.kind {
-		return selectEdit(compositionEdit{path: pathCopy(path), replacement: assignment})
-	}
-
-	switch parent.kind {
+	switch frame.parent.kind {
 	case jsonObject:
-		for _, name := range sortedObjectNames(parent.object) {
-			assigned, exists := assignment.object[name]
-			if !exists {
-				if edit, selected := selectEdit(compositionEdit{
-					path: append(pathCopy(path), name), remove: true,
-				}); selected {
-					return edit, true
-				}
-
-				continue
-			}
-
-			if edit, selected := compositionDifferenceAt(
-				parent.object[name], assigned, append(pathCopy(path), name), remaining,
-			); selected {
-				return edit, true
-			}
-		}
-
-		for _, name := range sortedObjectNames(assignment.object) {
-			if _, exists := parent.object[name]; exists {
-				continue
-			}
-
-			if edit, selected := selectEdit(compositionEdit{
-				path: append(pathCopy(path), name), replacement: assignment.object[name],
-			}); selected {
-				return edit, true
-			}
-		}
+		return cursor.advanceObject(frame)
 	case jsonArray:
-		common := min(len(parent.array), len(assignment.array))
-		for index := range common {
-			if edit, selected := compositionDifferenceAt(
-				parent.array[index], assignment.array[index],
-				append(pathCopy(path), strconv.Itoa(index)), remaining,
-			); selected {
-				return edit, true
-			}
-		}
-
-		for index := len(parent.array) - 1; index >= len(assignment.array); index-- {
-			if edit, selected := selectEdit(compositionEdit{
-				path: append(pathCopy(path), strconv.Itoa(index)), remove: true,
-			}); selected {
-				return edit, true
-			}
-		}
-
-		for index := len(parent.array); index < len(assignment.array); index++ {
-			if edit, selected := selectEdit(compositionEdit{
-				path:        append(pathCopy(path), strconv.Itoa(index)),
-				replacement: assignment.array[index], append: true,
-			}); selected {
-				return edit, true
-			}
-		}
+		return cursor.advanceArray(frame)
 	default:
-		if !jsonValuesEqual(parent, assignment) {
-			return selectEdit(compositionEdit{path: pathCopy(path), replacement: assignment})
-		}
+		cursor.stack = cursor.stack[:len(cursor.stack)-1]
+
+		return compositionEdit{}, false
 	}
+}
+
+// advanceObject advances one canonical object member.
+func (cursor *compositionDifferenceCursor) advanceObject(
+	frame *compositionDifferenceFrame,
+) (compositionEdit, bool) {
+	if frame.stage == 0 {
+		name, exists := nextCompositionObjectName(frame.parent.object, frame.lastName, frame.hasLastName)
+		if exists {
+			frame.lastName = name
+			frame.hasLastName = true
+
+			assigned, assignedExists := frame.assignment.object[name]
+			if !assignedExists {
+				return compositionEdit{path: append(pathCopy(frame.path), name), remove: true}, true
+			}
+
+			cursor.stack = append(cursor.stack, compositionDifferenceFrame{
+				parent: frame.parent.object[name], assignment: assigned,
+				path: append(pathCopy(frame.path), name), arrayIndex: -1,
+			})
+
+			return compositionEdit{}, false
+		}
+
+		frame.stage = 1
+		frame.lastName = ""
+		frame.hasLastName = false
+
+		return compositionEdit{}, false
+	}
+
+	name, exists := nextCompositionObjectName(frame.assignment.object, frame.lastName, frame.hasLastName)
+	if exists {
+		frame.lastName = name
+
+		frame.hasLastName = true
+		if _, parentExists := frame.parent.object[name]; parentExists {
+			return compositionEdit{}, false
+		}
+
+		return compositionEdit{
+			path: append(pathCopy(frame.path), name), replacement: frame.assignment.object[name],
+		}, true
+	}
+
+	cursor.stack = cursor.stack[:len(cursor.stack)-1]
 
 	return compositionEdit{}, false
 }
 
-// compositionEditSubsetCursor retains only the current subset indexes and edits.
-type compositionEditSubsetCursor struct {
-	edits        compositionEditSource
-	combinations *arrayCombinationCursor
-	s            *search
+// advanceArray advances one canonical array child or tail edit.
+func (cursor *compositionDifferenceCursor) advanceArray(
+	frame *compositionDifferenceFrame,
+) (compositionEdit, bool) {
+	common := min(len(frame.parent.array), len(frame.assignment.array))
+	if frame.stage == 0 {
+		frame.arrayIndex++
+		if frame.arrayIndex < common {
+			index := frame.arrayIndex
+			cursor.stack = append(cursor.stack, compositionDifferenceFrame{
+				parent: frame.parent.array[index], assignment: frame.assignment.array[index],
+				path: append(pathCopy(frame.path), strconv.Itoa(index)), arrayIndex: -1,
+			})
+
+			return compositionEdit{}, false
+		}
+
+		frame.stage = 1
+		frame.arrayIndex = len(frame.parent.array)
+	}
+
+	if frame.stage == 1 {
+		frame.arrayIndex--
+		if frame.arrayIndex >= len(frame.assignment.array) {
+			return compositionEdit{
+				path: append(pathCopy(frame.path), strconv.Itoa(frame.arrayIndex)), remove: true,
+			}, true
+		}
+
+		frame.stage = 2
+		frame.arrayIndex = len(frame.parent.array) - 1
+	}
+
+	frame.arrayIndex++
+	if frame.arrayIndex < len(frame.assignment.array) {
+		return compositionEdit{
+			path:        append(pathCopy(frame.path), strconv.Itoa(frame.arrayIndex)),
+			replacement: frame.assignment.array[frame.arrayIndex], append: true,
+		}, true
+	}
+
+	cursor.stack = cursor.stack[:len(cursor.stack)-1]
+
+	return compositionEdit{}, false
 }
 
-// newCompositionEditSubsetCursor starts one fixed-size subset traversal.
+// nextCompositionObjectName selects one canonical key without retaining a key set.
+func nextCompositionObjectName(object map[string]*jsonValue, after string, hasAfter bool) (string, bool) {
+	var (
+		selected string
+		found    bool
+	)
+
+	for name := range object {
+		if hasAfter && name <= after || found && name >= selected {
+			continue
+		}
+
+		selected = name
+		found = true
+	}
+
+	return selected, found
+}
+
+// compositionEditSubsetCursor retains only one fixed-size combination frontier.
+type compositionEditSubsetCursor struct {
+	source compositionEditSource
+	size   int
+	levels []compositionEditSubsetLevel
+	s      *search
+	seen   int
+}
+
+// compositionEditSubsetLevel retains one selected edit and cloned source cursor.
+type compositionEditSubsetLevel struct {
+	cursor compositionEditCursor
+	edit   compositionEdit
+}
+
+// newCompositionEditSubsetCursor starts one fixed-size combination frontier.
 func newCompositionEditSubsetCursor(
-	edits compositionEditSource,
-	count int,
+	source compositionEditSource,
 	size int,
 	s *search,
 ) *compositionEditSubsetCursor {
-	return &compositionEditSubsetCursor{
-		edits: edits, combinations: newArrayCombinationCursor(count, size), s: s,
-	}
+	return &compositionEditSubsetCursor{source: source, size: size, s: s}
 }
 
-// Next selects one subset without recounting or replaying the source prefix.
-func (cursor *compositionEditSubsetCursor) Next() ([]compositionEdit, bool, error) {
-	indexes, exists := cursor.combinations.Next()
-	if !exists {
-		return nil, false, nil
+// Next resumes the next canonical combination.
+func (cursor *compositionEditSubsetCursor) Next() ([]compositionEdit, bool, bool, error) {
+	if cursor.size <= 0 {
+		return nil, false, true, nil
 	}
 
-	selected := make([]compositionEdit, 0, len(indexes))
-	for _, index := range indexes {
-		edit, editExists, err := cursor.edits.At(index, cursor.s)
-		if err != nil || !editExists {
-			return nil, false, err
+	if len(cursor.levels) == 0 {
+		cursor.levels = append(cursor.levels, compositionEditSubsetLevel{cursor: cursor.source.Cursor()})
+	}
+
+	for len(cursor.levels) > 0 {
+		level := &cursor.levels[len(cursor.levels)-1]
+
+		edit, exists, err := level.cursor.Next(cursor.s)
+		if err != nil {
+			return nil, false, false, err
 		}
 
-		selected = append(selected, edit)
+		if !exists {
+			cursor.levels = cursor.levels[:len(cursor.levels)-1]
+
+			continue
+		}
+
+		level.edit = edit
+
+		if len(cursor.levels) == 1 {
+			cursor.seen++
+		}
+
+		if len(cursor.levels) < cursor.size {
+			cursor.levels = append(cursor.levels, compositionEditSubsetLevel{
+				cursor: level.cursor.Clone(),
+			})
+
+			continue
+		}
+
+		selected := make([]compositionEdit, len(cursor.levels))
+		for index := range cursor.levels {
+			selected[index] = cursor.levels[index].edit
+		}
+
+		return selected, true, false, nil
 	}
 
-	return selected, true, nil
+	return nil, false, true, nil
+}
+
+// compositionEditSubsetMachine traverses canonical subset sizes without a corpus.
+type compositionEditSubsetMachine struct {
+	source compositionEditSource
+	s      *search
+	size   int
+	count  int
+	cursor *compositionEditSubsetCursor
+}
+
+// newCompositionEditSubsetMachine starts at singleton subsets.
+func newCompositionEditSubsetMachine(
+	source compositionEditSource,
+	s *search,
+) *compositionEditSubsetMachine {
+	return &compositionEditSubsetMachine{source: source, s: s, size: 1}
+}
+
+// Advance resumes one canonical subset or the finite endpoint.
+func (machine *compositionEditSubsetMachine) Advance() ([]compositionEdit, bool, bool, error) {
+	if machine.cursor == nil {
+		machine.cursor = newCompositionEditSubsetCursor(machine.source, machine.size, machine.s)
+	}
+
+	selected, ready, exhausted, err := machine.cursor.Next()
+	if err != nil || !exhausted {
+		return selected, ready, false, err
+	}
+
+	if machine.size == 1 {
+		machine.count = machine.cursor.seen
+	}
+
+	if machine.size >= machine.count {
+		return nil, false, true, nil
+	}
+
+	machine.size++
+	machine.cursor = newCompositionEditSubsetCursor(machine.source, machine.size, machine.s)
+
+	return machine.Advance()
 }
 
 // errCompositionEditInapplicable rejects a structurally incomplete edit subset.
