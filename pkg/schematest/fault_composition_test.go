@@ -42,6 +42,77 @@ func TestCompositionDifferenceResumesDeepTraversal(t *testing.T) {
 	require.Less(t, searchState.steps, searchState.maxSteps)
 }
 
+func TestCompositionAssignmentMachineRetainsInterleavedRowSubsets(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object","required":["a","b"],
+		"enum":[{"a":false,"b":false},{"a":false,"b":true},{"a":true,"b":false}],
+		"properties":{"a":{"type":"boolean"},"b":{"type":"boolean"}},
+		"anyOf":[{"required":["a"]},{"required":["b"]}]
+	}`)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	searchState := &search{model: model, maxSteps: 100_000}
+	parent := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{
+		"x": {kind: jsonNull},
+		"y": {kind: jsonNull},
+	}}
+
+	fault, exists, closureExhausted, err := faultClosureAtRank(fault, 0, searchState)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.False(t, closureExhausted)
+
+	fault, exists, err = faultAtOccurrenceRank(parent, fault, 0, searchState)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	machine := &compositionAssignmentMachine{search: searchState}
+	for _, rank := range []uint64{0, 1, 2} {
+		_, attempted, rowExhausted, attemptErr := machine.AttemptAtRank(parent, fault, rank)
+		require.NoError(t, attemptErr)
+		require.True(t, attempted)
+		require.False(t, rowExhausted)
+	}
+
+	rowZero := compositionAssignmentCoordinate{}
+	firstCursor := machine.assignments[rowZero]
+	require.NotNil(t, firstCursor)
+	require.Equal(t, uint64(1), firstCursor.observed)
+
+	steps := searchState.steps
+	_, attempted, exhausted, err := machine.AttemptAtRank(parent, fault, 3)
+	require.NoError(t, err)
+	require.False(t, attempted)
+	require.False(t, exhausted)
+	require.Equal(t, steps, searchState.steps)
+	require.Same(t, firstCursor, machine.assignments[rowZero])
+	require.Equal(t, uint64(1), firstCursor.observed)
+
+	_, attempted, exhausted, err = machine.AttemptAtRank(parent, fault, 7)
+	require.NoError(t, err)
+	require.True(t, attempted)
+	require.False(t, exhausted)
+	require.Same(t, firstCursor, machine.assignments[rowZero])
+	require.Equal(t, uint64(2), firstCursor.observed)
+
+	rowOne := compositionAssignmentCoordinate{rowRank: 1}
+	steps = searchState.steps
+	_, attempted, exhausted, err = machine.AttemptAtRank(parent, fault, 11)
+	require.NoError(t, err)
+	require.False(t, attempted)
+	require.False(t, exhausted)
+	require.Equal(t, steps, searchState.steps)
+	require.NotNil(t, machine.assignments[rowOne])
+
+	_, attempted, exhausted, err = machine.AttemptAtRank(parent, fault, 19)
+	require.NoError(t, err)
+	require.True(t, attempted)
+	require.False(t, exhausted)
+	require.Same(t, firstCursor, machine.assignments[rowZero])
+	require.Equal(t, uint64(3), firstCursor.observed)
+}
+
 func TestCompositionEditSubsetCursorResumesSuccessiveCombinations(t *testing.T) {
 	t.Parallel()
 

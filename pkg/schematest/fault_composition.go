@@ -80,15 +80,18 @@ func findCompositionFaultDerivative(
 	return derivative, found, err
 }
 
+// compositionAssignmentCoordinate identifies one projection-row subset continuation.
+type compositionAssignmentCoordinate struct {
+	projectionRank uint64
+	rowRank        uint64
+}
+
 // compositionAssignmentMachine owns the resumable subset continuations for direct row addresses.
 type compositionAssignmentMachine struct {
 	search *search
 
-	direct             *compositionRankedSubsetCursor
-	assignment         *compositionRankedSubsetCursor
-	assignmentViewRank uint64
-	assignmentRowRank  uint64
-	assignmentSet      bool
+	direct      *compositionRankedSubsetCursor
+	assignments map[compositionAssignmentCoordinate]*compositionRankedSubsetCursor
 }
 
 // compositionFaultAttemptAtRank is the standalone composition-assignment adapter.
@@ -162,37 +165,48 @@ func (machine *compositionAssignmentMachine) AttemptAtRank(
 		return nil, false, true, nil
 	}
 
-	assignment, exists, _, finiteSize, err := faultRowAt(
-		machine.search,
-		machine.search.model.root,
-		machine.search.model.root.occurrence,
-		fault.requirements,
-		rowSearchContext{},
-		projectionRank,
-		rowRank,
-	)
-	if err != nil {
-		return nil, false, false, err
+	coordinate := compositionAssignmentCoordinate{
+		projectionRank: projectionRank,
+		rowRank:        rowRank,
 	}
 
-	if !exists || assignment == nil {
-		exhausted := subsetRank == 0 && (projectionRank == 0 ||
-			finiteSize > 0 && rowRank >= finiteSize)
+	cursor := machine.assignments[coordinate]
+	if cursor == nil {
+		assignment, exists, _, finiteSize, err := faultRowAt(
+			machine.search,
+			machine.search.model.root,
+			machine.search.model.root.occurrence,
+			fault.requirements,
+			rowSearchContext{},
+			projectionRank,
+			rowRank,
+		)
+		if err != nil {
+			return nil, false, false, err
+		}
 
-		return nil, false, exhausted, nil
-	}
+		if !exists || assignment == nil {
+			exhausted := subsetRank == 0 && (projectionRank == 0 ||
+				finiteSize > 0 && rowRank >= finiteSize)
 
-	if !machine.assignmentSet || machine.assignmentViewRank != projectionRank ||
-		machine.assignmentRowRank != rowRank {
-		machine.assignment = newCompositionRankedSubsetCursor(
+			return nil, false, exhausted, nil
+		}
+
+		if err := machine.search.assign(); err != nil {
+			return nil, false, false, err
+		}
+
+		if machine.assignments == nil {
+			machine.assignments = make(map[compositionAssignmentCoordinate]*compositionRankedSubsetCursor)
+		}
+
+		cursor = newCompositionRankedSubsetCursor(
 			compositionDifference(parent, assignment, nil), machine.search,
 		)
-		machine.assignmentViewRank = projectionRank
-		machine.assignmentRowRank = rowRank
-		machine.assignmentSet = true
+		machine.assignments[coordinate] = cursor
 	}
 
-	candidate, attempted, err := machine.assignment.AttemptAtRank(parent, fault, subsetRank)
+	candidate, attempted, err := cursor.AttemptAtRank(parent, fault, subsetRank)
 
 	return candidate, attempted, false, err
 }
@@ -395,10 +409,11 @@ func prospectiveCompositionEdit(
 
 // compositionRankedSubsetCursor resumes canonical subsets across increasing ranks.
 type compositionRankedSubsetCursor struct {
-	source   compositionEditSource
-	stream   *compositionEditSubsetMachine
-	search   *search
-	observed uint64
+	source    compositionEditSource
+	stream    *compositionEditSubsetMachine
+	search    *search
+	observed  uint64
+	exhausted bool
 }
 
 // newCompositionRankedSubsetCursor starts one rank-addressed subset continuation.
@@ -417,15 +432,23 @@ func (cursor *compositionRankedSubsetCursor) AttemptAtRank(
 	fault faultProgram,
 	rank uint64,
 ) (*jsonValue, bool, error) {
-	if rank < cursor.observed {
-		cursor.stream = newCompositionEditSubsetMachine(cursor.source, cursor.search)
-		cursor.observed = 0
+	if rank < cursor.observed || cursor.exhausted {
+		return nil, false, nil
 	}
 
 	for {
 		selected, ready, exhausted, err := cursor.stream.Advance()
-		if err != nil || exhausted {
+		if err != nil {
 			return nil, false, err
+		}
+
+		if exhausted {
+			cursor.source = compositionEditSource{}
+			cursor.stream = nil
+			cursor.search = nil
+			cursor.exhausted = true
+
+			return nil, false, nil
 		}
 
 		if !ready {
