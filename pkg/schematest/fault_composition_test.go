@@ -7,6 +7,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCompositionDifferenceReusesBoundedSubtreeMetadata(t *testing.T) {
+	t.Parallel()
+
+	parent := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
+	assignment := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
+	parentCursor := parent
+	assignmentCursor := assignment
+
+	for index := 0; index < 100; index++ {
+		parentChild := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
+		assignmentChild := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
+		parentCursor.object["nested"] = parentChild
+		assignmentCursor.object["nested"] = assignmentChild
+		parentCursor = parentChild
+		assignmentCursor = assignmentChild
+	}
+
+	parentCursor.object["leaf"] = &jsonValue{kind: jsonBoolean}
+	assignmentCursor.object["leaf"] = &jsonValue{kind: jsonBoolean, boolean: true}
+
+	searchState := &search{maxSteps: 10}
+	source := compositionDifference(parent, assignment, nil)
+	count, err := source.Count(searchState)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	require.Equal(t, uint64(1), searchState.steps)
+
+	for range 2 {
+		edit, exists, err := source.At(0, searchState)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Len(t, edit.path, 101)
+	}
+
+	require.Equal(t, uint64(3), searchState.steps)
+}
+
 func TestAllOfFaultKeepsSiblingBranchesTrue(t *testing.T) {
 	t.Parallel()
 
@@ -33,6 +70,87 @@ func TestAllOfFaultKeepsSiblingBranchesTrue(t *testing.T) {
 	result := evaluate(model, derivative)
 	require.Equal(t, identityStrings(fault.expected), identityStrings(result.failureRecords()))
 	require.Equal(t, [][]bool{{false, true}}, compositionTruthVectorsForTest(result.compositionRecords(oracleRuleAllOf)))
+}
+
+func TestAggregateFaultConcretizesFailureAtInsertedItem(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"array",
+		"items":{},
+		"anyOf":[
+			{"maxItems":0},
+			{"items":{"type":"string"}}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	searchState := &search{model: model, maxSteps: 1_000_000}
+	selected, exists, exhausted, err := faultClosureAtRank(fault, 0, searchState)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.False(t, exhausted)
+
+	parent := &jsonValue{kind: jsonArray, array: []*jsonValue{}}
+	selected, exists, err = faultAtOccurrenceRank(parent, selected, 0, searchState)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	value, attempted, exhausted, err := compositionFaultAttemptAtRank(
+		parent, selected, 0, searchState,
+	)
+	require.NoError(t, err)
+	require.True(t, attempted)
+	require.False(t, exhausted)
+	require.NotNil(t, value)
+
+	result := evaluate(model, value)
+	require.Equal(t, []string{"maxItems", "type", "anyOf"}, failureRules(result.failureRecords()))
+
+	for failure := range result.failureRecords() {
+		if failure.rule == oracleRuleType {
+			require.Equal(t, "#/0", failure.occurrence.instanceTemplate)
+		}
+	}
+}
+
+func TestAggregateFaultConcretizesFailureAtInsertedProperty(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"anyOf":[
+			{"additionalProperties":false},
+			{"additionalProperties":{"type":"string"}}
+		]
+	}`)
+	fault := findFaultTarget(t, plan, "|anyOf|fault:anyOf")
+	searchState := &search{model: model, maxSteps: 1_000_000}
+
+	var generated Case
+
+	err := streamFault(plan, fault, searchState, make(map[string]bool), func(testCase Case) error {
+		generated = testCase
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, generated.JSON)
+
+	value, err := parseStrictJSON(generated.JSON)
+	require.NoError(t, err)
+
+	result := evaluate(model, value)
+	require.Equal(
+		t,
+		[]string{"additionalProperties", "type", "anyOf"},
+		failureRules(result.failureRecords()),
+	)
+
+	for failure := range result.failureRecords() {
+		if failure.rule == oracleRuleType {
+			require.NotEqual(t, "#/*", failure.occurrence.instanceTemplate)
+		}
+	}
 }
 
 func TestBuildCompositionFaultGoldenStream(t *testing.T) {

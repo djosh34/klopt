@@ -198,6 +198,44 @@ func TestObjectFaultRejectsAnImpossibleRootKindBeforeCharging(t *testing.T) {
 	require.Zero(t, searchState.steps)
 }
 
+func TestMaxPropertiesFaultUsesOneCanonicalCursorForMultipleAdditions(t *testing.T) {
+	t.Parallel()
+
+	model, plan := compositionFaultModel(t, `{
+		"type":"object",
+		"maxProperties":2,
+		"additionalProperties":{"enum":["first","later"]}
+	}`)
+	fault := findFaultTarget(t, plan, "|maxProperties|fault:maxProperties")
+	parent := &jsonValue{kind: jsonObject, object: map[string]*jsonValue{}}
+
+	firstSearch := &search{model: model, maxSteps: 100_000}
+	first, attempted, exhausted, err := objectCountFaultAttemptAtRank(
+		parent, fault, 40, firstSearch,
+	)
+	require.NoError(t, err)
+	require.True(t, attempted)
+	require.False(t, exhausted)
+	require.JSONEq(t, `{
+		"__schematest_extra__":"first",
+		"__schematest_extra___1":"first",
+		"__schematest_extra___2":"first"
+	}`, string(marshalFaultTestValue(t, first)))
+
+	laterSearch := &search{model: model, maxSteps: 100_000}
+	later, attempted, exhausted, err := objectCountFaultAttemptAtRank(
+		parent, fault, 101, laterSearch,
+	)
+	require.NoError(t, err)
+	require.True(t, attempted)
+	require.False(t, exhausted)
+	require.JSONEq(t, `{
+		"__schematest_extra__":"first",
+		"__schematest_extra___1":"first",
+		"__schematest_extra___2":"later"
+	}`, string(marshalFaultTestValue(t, later)))
+}
+
 func TestMaxPropertiesFaultAdvancesPastAParentKeyCollision(t *testing.T) {
 	t.Parallel()
 

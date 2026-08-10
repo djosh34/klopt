@@ -75,7 +75,7 @@ func streamFault(
 		}
 
 		if !diagonalStarted || product.diagonal != diagonal {
-			if diagonalStarted && !diagonalLive {
+			if diagonalStarted && !diagonalLive && product.finite[faultClosureDimension] {
 				return nil
 			}
 

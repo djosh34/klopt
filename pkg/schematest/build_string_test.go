@@ -36,7 +36,7 @@ func TestBuildStreamsValidStringTargetsInLockedOrder(t *testing.T) {
 	}, firstCases)
 	require.Equal(t, Report{
 		Stop:  SpaceExhausted,
-		Steps: 94,
+		Steps: 119,
 		Covered: []string{
 			schemaPointer + "|#|type|level:string",
 			schemaPointer + "|#|type|fault:type",
@@ -320,7 +320,7 @@ func TestBuildReachesSurrogatePairForDirectedBMPComplement(t *testing.T) {
 		steps  uint64
 	}{
 		{
-			name: "one rune", length: 1, steps: 59,
+			name: "one rune", length: 1, steps: 78,
 			want: []Case{
 				{JSON: []byte(`"\u0000"`), Valid: true},
 				{JSON: []byte(`null`), Valid: false},
@@ -544,7 +544,7 @@ func TestBuildExhaustsContradictoryFormatLengthIntersection(t *testing.T) {
 
 	require.Empty(t, firstCases)
 	require.Equal(t, SpaceExhausted, firstReport.Stop)
-	require.Equal(t, uint64(44), firstReport.Steps)
+	require.Equal(t, uint64(80), firstReport.Steps)
 	require.Equal(t, firstCases, secondCases)
 	require.Equal(t, firstReport, secondReport)
 }

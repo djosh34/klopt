@@ -14,6 +14,7 @@ const (
 	objectFaultProductDimensions = 4
 	arrayFaultProductDimensions  = 3
 	directRowRankDimensions      = 2
+	objectGrowthRanksPerAddition = 2
 )
 
 // applyNonCompositionFault builds one isolated non-composition derivative.
@@ -253,7 +254,7 @@ func scalarFaultAttemptAtRank(
 
 // objectCountFaultAttemptAtRank attempts one complete directed object replacement.
 //
-//nolint:cyclop,nestif // Exact count decoding and one row attempt share this boundary.
+//nolint:cyclop // Exact count decoding and one row attempt share this boundary.
 func objectCountFaultAttemptAtRank(
 	parent *jsonValue,
 	fault faultProgram,
@@ -307,19 +308,26 @@ func objectCountFaultAttemptAtRank(
 
 	if fault.obligation.rule == oracleRuleMaxProperties {
 		path, exists := matchingValuePathAt(parent, fault.obligation.occurrence.instanceTemplate, 0)
-		if exists {
-			current := valueAtPath(parent, path)
-			if current != nil && current.kind == jsonObject && uint64(len(current.object))+1 == count {
-				container, occurrence, containerFound := resolveFaultContainer(
-					root, s.model.root.occurrence, fault.obligation.occurrence, jsonObject,
-				)
-				if containerFound {
-					return objectGrowthFaultAttemptAtRank(
-						parent, path, current, fault, container, occurrence, nil, rank, s,
-					)
-				}
-			}
+		if !exists {
+			return nil, false, true, nil
 		}
+
+		current := valueAtPath(parent, path)
+		if current == nil || current.kind != jsonObject || uint64(len(current.object)) >= count {
+			return nil, false, true, nil
+		}
+
+		container, occurrence, containerFound := resolveFaultContainer(
+			root, s.model.root.occurrence, fault.obligation.occurrence, jsonObject,
+		)
+		if !containerFound {
+			return nil, false, true, nil
+		}
+
+		return objectGrowthFaultAttemptAtRank(
+			parent, path, current, fault, container, occurrence, nil,
+			int(count-uint64(len(current.object))), rank, s,
+		)
 	}
 
 	directed := fault
@@ -970,7 +978,7 @@ func additionalPropertyFaultAttemptAtRank(
 	}
 
 	return objectGrowthFaultAttemptAtRank(
-		parent, path, object, fault, container, containerOccurrence, target, rank, s,
+		parent, path, object, fault, container, containerOccurrence, target, 1, rank, s,
 	)
 }
 
@@ -986,6 +994,7 @@ func objectGrowthFaultAttemptAtRank(
 	container *schemaNode,
 	containerOccurrence schemaOccurrence,
 	target *schemaNode,
+	additions int,
 	rank uint64,
 	s *search,
 ) (*jsonValue, bool, bool, error) {
@@ -996,15 +1005,22 @@ func objectGrowthFaultAttemptAtRank(
 		return nil, false, false, err
 	}
 
-	ranks, exists, err := finiteFirstRankProductTupleAt(
-		arrayFaultProductDimensions, projectionCount, rank,
+	if projectionCount == 0 || additions <= 0 ||
+		additions > (int(^uint(0)>>1)-1)/objectGrowthRanksPerAddition {
+		return nil, false, true, nil
+	}
+
+	projectionRank := rank % projectionCount
+
+	decoder, ok := newDirectRankTupleDecoder(
+		additions*objectGrowthRanksPerAddition, rank/projectionCount,
 	)
-	if err != nil || !exists {
-		return nil, false, !exists, err
+	if !ok {
+		return nil, false, true, nil
 	}
 
 	view, exists, err := rowProjectionAt(
-		container, containerOccurrence, fault.requirements, ranks[0],
+		container, containerOccurrence, fault.requirements, projectionRank,
 	)
 	if err != nil || !exists {
 		return nil, false, false, err
@@ -1020,37 +1036,43 @@ func objectGrowthFaultAttemptAtRank(
 		return nil, false, false, err
 	}
 
-	if assignErr := s.assign(); assignErr != nil {
-		return nil, false, false, assignErr
-	}
-
-	member, exists, err := objectMutationMemberAtRank(shape, object, target, active, ranks[1])
-	if err != nil || !exists {
-		return nil, false, false, err
-	}
-
-	if target != nil {
-		candidate, _, candidateErr := tryAdditionalPropertyName(
-			parent, path, object, fault, target, member, active, ranks[2], s,
-		)
-
-		return candidate, true, false, candidateErr
-	}
-
-	value, valueExists, usable, _, err := s.rowConjunctionValueAt(
-		member.schemas, active, rowSearchContext{}, ranks[2],
-	)
-	if err != nil || !valueExists || !usable {
-		return nil, false, false, err
-	}
-
-	replacement, err := cloneJSONValue(object)
+	working, err := cloneJSONValue(object)
 	if err != nil {
 		return nil, false, false, err
 	}
 
-	replacement.object[member.name] = value
-	candidate, _, err := tryObjectReplacement(parent, path, object, replacement, fault, s)
+	for addition := 0; addition < additions; addition++ {
+		nameRank, _ := decoder.Next()
+		valueRank, _ := decoder.Next()
+
+		if assignErr := s.assign(); assignErr != nil {
+			return nil, false, false, assignErr
+		}
+
+		member, exists, memberErr := objectMutationMemberAtRank(shape, working, target, active, nameRank)
+		if memberErr != nil || !exists {
+			return nil, false, false, memberErr
+		}
+
+		if target != nil {
+			candidate, _, candidateErr := tryAdditionalPropertyName(
+				parent, path, working, fault, target, member, active, valueRank, s,
+			)
+
+			return candidate, true, false, candidateErr
+		}
+
+		value, valueExists, usable, _, valueErr := s.rowConjunctionValueAt(
+			member.schemas, active, rowSearchContext{}, valueRank,
+		)
+		if valueErr != nil || !valueExists || !usable {
+			return nil, false, false, valueErr
+		}
+
+		working.object[member.name] = value
+	}
+
+	candidate, _, err := tryObjectReplacement(parent, path, object, working, fault, s)
 
 	return candidate, true, false, err
 }
