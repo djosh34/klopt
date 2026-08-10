@@ -664,7 +664,7 @@ func buildStringCases(t *testing.T, document []byte, maxSteps uint64) ([]Case, R
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: maxSteps},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},

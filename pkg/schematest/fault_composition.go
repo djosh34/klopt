@@ -139,12 +139,12 @@ func compositionFaultAttemptWithMachine(
 	}
 
 	if assignments.direct == nil {
-		assignments.direct = newCompositionRankedSubsetCursor(
-			compositionDirectEdits(parent, fault.requirements), assignments.search,
-		)
+		assignments.direct = newCompositionRankedSubsetCursor()
 	}
 
-	candidate, attempted, err := assignments.direct.AttemptAtRank(parent, fault, rank)
+	candidate, attempted, err := assignments.direct.AttemptAtRank(
+		compositionDirectEdits(parent, fault.requirements), parent, fault, rank, assignments.search,
+	)
 	if err != nil || attempted {
 		return candidate, attempted, false, err
 	}
@@ -170,43 +170,43 @@ func (machine *compositionAssignmentMachine) AttemptAtRank(
 		rowRank:        rowRank,
 	}
 
+	assignment, exists, _, finiteSize, err := faultRowAt(
+		machine.search,
+		machine.search.model.root,
+		machine.search.model.root.occurrence,
+		fault.requirements,
+		rowSearchContext{},
+		projectionRank,
+		rowRank,
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if !exists || assignment == nil {
+		exhausted := subsetRank == 0 && (projectionRank == 0 ||
+			finiteSize > 0 && rowRank >= finiteSize)
+
+		return nil, false, exhausted, nil
+	}
+
 	cursor := machine.assignments[coordinate]
 	if cursor == nil {
-		assignment, exists, _, finiteSize, err := faultRowAt(
-			machine.search,
-			machine.search.model.root,
-			machine.search.model.root.occurrence,
-			fault.requirements,
-			rowSearchContext{},
-			projectionRank,
-			rowRank,
-		)
-		if err != nil {
-			return nil, false, false, err
-		}
-
-		if !exists || assignment == nil {
-			exhausted := subsetRank == 0 && (projectionRank == 0 ||
-				finiteSize > 0 && rowRank >= finiteSize)
-
-			return nil, false, exhausted, nil
-		}
-
-		if err := machine.search.assign(); err != nil {
-			return nil, false, false, err
+		if assignErr := machine.search.assign(); assignErr != nil {
+			return nil, false, false, assignErr
 		}
 
 		if machine.assignments == nil {
 			machine.assignments = make(map[compositionAssignmentCoordinate]*compositionRankedSubsetCursor)
 		}
 
-		cursor = newCompositionRankedSubsetCursor(
-			compositionDifference(parent, assignment, nil), machine.search,
-		)
+		cursor = newCompositionRankedSubsetCursor()
 		machine.assignments[coordinate] = cursor
 	}
 
-	candidate, attempted, err := cursor.AttemptAtRank(parent, fault, subsetRank)
+	candidate, attempted, err := cursor.AttemptAtRank(
+		compositionDifference(parent, assignment, nil), parent, fault, subsetRank, machine.search,
+	)
 
 	return candidate, attempted, false, err
 }
@@ -407,45 +407,38 @@ func prospectiveCompositionEdit(
 	}
 }
 
-// compositionRankedSubsetCursor resumes canonical subsets across increasing ranks.
+// compositionRankedSubsetCursor retains only scalar subset coordinates across attempts.
 type compositionRankedSubsetCursor struct {
-	source    compositionEditSource
 	stream    *compositionEditSubsetMachine
-	search    *search
 	observed  uint64
 	exhausted bool
 }
 
 // newCompositionRankedSubsetCursor starts one rank-addressed subset continuation.
-func newCompositionRankedSubsetCursor(
-	source compositionEditSource,
-	s *search,
-) *compositionRankedSubsetCursor {
-	return &compositionRankedSubsetCursor{
-		source: source, stream: newCompositionEditSubsetMachine(source, s), search: s,
-	}
+func newCompositionRankedSubsetCursor() *compositionRankedSubsetCursor {
+	return &compositionRankedSubsetCursor{stream: newCompositionEditSubsetMachine()}
 }
 
-// AttemptAtRank advances the existing subset stream instead of replaying its prefix.
+// AttemptAtRank advances the scalar subset stream using only the transient source and search.
 func (cursor *compositionRankedSubsetCursor) AttemptAtRank(
+	source compositionEditSource,
 	parent *jsonValue,
 	fault faultProgram,
 	rank uint64,
+	s *search,
 ) (*jsonValue, bool, error) {
 	if rank < cursor.observed || cursor.exhausted {
 		return nil, false, nil
 	}
 
 	for {
-		selected, ready, exhausted, err := cursor.stream.Advance()
+		selected, ready, exhausted, err := cursor.stream.Advance(source, s)
 		if err != nil {
 			return nil, false, err
 		}
 
 		if exhausted {
-			cursor.source = compositionEditSource{}
 			cursor.stream = nil
-			cursor.search = nil
 			cursor.exhausted = true
 
 			return nil, false, nil
@@ -462,7 +455,7 @@ func (cursor *compositionRankedSubsetCursor) AttemptAtRank(
 		}
 
 		cursor.observed++
-		candidate, _, err := tryCompositionEdits(parent, fault, selected, cursor.search)
+		candidate, _, err := tryCompositionEdits(parent, fault, selected, s)
 
 		return candidate, true, err
 	}
@@ -474,10 +467,10 @@ func visitCompositionEditSizes(
 	s *search,
 	visit func([]compositionEdit) (bool, error),
 ) (bool, error) {
-	machine := newCompositionEditSubsetMachine(edits, s)
+	machine := newCompositionEditSubsetMachine()
 
 	for {
-		selected, ready, exhausted, err := machine.Advance()
+		selected, ready, exhausted, err := machine.Advance(edits, s)
 		if err != nil || exhausted {
 			return false, err
 		}
@@ -507,7 +500,6 @@ func compositionAssignmentEditVisitor(
 // compositionEditCursor retains only active source traversal state.
 type compositionEditCursor interface {
 	Next(s *search) (compositionEdit, bool, error)
-	Clone() compositionEditCursor
 }
 
 // compositionEditSource starts independent cursors without retaining an edit corpus.
@@ -562,13 +554,6 @@ func (cursor *compositionDirectEditCursor) Next(s *search) (compositionEdit, boo
 	}
 
 	return compositionEdit{}, false, nil
-}
-
-// Clone copies only the current direct source coordinates.
-func (cursor *compositionDirectEditCursor) Clone() compositionEditCursor {
-	clone := *cursor
-
-	return &clone
 }
 
 // compositionDirectEdits starts represented-removal traversal.
@@ -807,18 +792,6 @@ func (cursor *compositionDifferenceCursor) Next(s *search) (compositionEdit, boo
 	return compositionEdit{}, false, nil
 }
 
-// Clone copies only active source traversal frames and paths.
-func (cursor *compositionDifferenceCursor) Clone() compositionEditCursor {
-	clone := &compositionDifferenceCursor{stack: make([]compositionDifferenceFrame, len(cursor.stack))}
-	copy(clone.stack, cursor.stack)
-
-	for index := range clone.stack {
-		clone.stack[index].path = pathCopy(clone.stack[index].path)
-	}
-
-	return clone
-}
-
 // advance performs one charged source traversal transition.
 //
 //nolint:cyclop // One charged transition handles every JSON kind.
@@ -970,109 +943,119 @@ func nextCompositionObjectName(object map[string]*jsonValue, after string, hasAf
 	return selected, found
 }
 
-// compositionEditSubsetCursor retains only one fixed-size combination frontier.
+// compositionEditSubsetCursor retains only ordinal combination state.
 type compositionEditSubsetCursor struct {
-	source compositionEditSource
-	size   int
-	levels []compositionEditSubsetLevel
-	s      *search
-	seen   int
-}
-
-// compositionEditSubsetLevel retains one selected edit and cloned source cursor.
-type compositionEditSubsetLevel struct {
-	cursor compositionEditCursor
-	edit   compositionEdit
+	size      int
+	positions []int
+	count     int
+	done      bool
 }
 
 // newCompositionEditSubsetCursor starts one fixed-size combination frontier.
-func newCompositionEditSubsetCursor(
-	source compositionEditSource,
-	size int,
-	s *search,
-) *compositionEditSubsetCursor {
-	return &compositionEditSubsetCursor{source: source, size: size, s: s}
+func newCompositionEditSubsetCursor(size int) *compositionEditSubsetCursor {
+	return &compositionEditSubsetCursor{size: size}
 }
 
-// Next resumes the next canonical combination.
-func (cursor *compositionEditSubsetCursor) Next() ([]compositionEdit, bool, bool, error) {
-	if cursor.size <= 0 {
+// Next reconstructs one candidate through the original, never-reset search counter.
+//
+//nolint:cyclop // Materialization and scalar combination advancement share one bounded pass.
+func (cursor *compositionEditSubsetCursor) Next(
+	source compositionEditSource,
+	s *search,
+) ([]compositionEdit, bool, bool, error) {
+	if cursor.size <= 0 || cursor.done {
 		return nil, false, true, nil
 	}
 
-	if len(cursor.levels) == 0 {
-		cursor.levels = append(cursor.levels, compositionEditSubsetLevel{cursor: cursor.source.Cursor()})
+	if cursor.positions == nil {
+		cursor.positions = make([]int, cursor.size)
+		for index := range cursor.positions {
+			cursor.positions[index] = index
+		}
 	}
 
-	for len(cursor.levels) > 0 {
-		level := &cursor.levels[len(cursor.levels)-1]
+	sourceCursor := source.Cursor()
+	selected := make([]compositionEdit, cursor.size)
+	selectedIndex := 0
+	count := 0
 
-		edit, exists, err := level.cursor.Next(cursor.s)
+	for {
+		edit, exists, err := sourceCursor.Next(s)
 		if err != nil {
 			return nil, false, false, err
 		}
 
 		if !exists {
-			cursor.levels = cursor.levels[:len(cursor.levels)-1]
-
-			continue
+			break
 		}
 
-		level.edit = edit
-
-		if len(cursor.levels) == 1 {
-			cursor.seen++
+		if selectedIndex < len(cursor.positions) && count == cursor.positions[selectedIndex] {
+			selected[selectedIndex] = edit
+			selectedIndex++
 		}
 
-		if len(cursor.levels) < cursor.size {
-			cursor.levels = append(cursor.levels, compositionEditSubsetLevel{
-				cursor: level.cursor.Clone(),
-			})
-
-			continue
-		}
-
-		selected := make([]compositionEdit, len(cursor.levels))
-		for index := range cursor.levels {
-			selected[index] = cursor.levels[index].edit
-		}
-
-		return selected, true, false, nil
+		count++
 	}
 
-	return nil, false, true, nil
+	cursor.count = count
+	if selectedIndex != cursor.size {
+		cursor.done = true
+
+		return nil, false, true, nil
+	}
+
+	cursor.advance(count)
+
+	return selected, true, false, nil
+}
+
+// advance selects the next ordinal combination without retaining generated edits.
+func (cursor *compositionEditSubsetCursor) advance(count int) {
+	for index := len(cursor.positions) - 1; index >= 0; index-- {
+		maximum := count - len(cursor.positions) + index
+		if cursor.positions[index] >= maximum {
+			continue
+		}
+
+		cursor.positions[index]++
+		for later := index + 1; later < len(cursor.positions); later++ {
+			cursor.positions[later] = cursor.positions[later-1] + 1
+		}
+
+		return
+	}
+
+	cursor.done = true
 }
 
 // compositionEditSubsetMachine traverses canonical subset sizes without a corpus.
 type compositionEditSubsetMachine struct {
-	source compositionEditSource
-	s      *search
 	size   int
 	count  int
 	cursor *compositionEditSubsetCursor
 }
 
 // newCompositionEditSubsetMachine starts at singleton subsets.
-func newCompositionEditSubsetMachine(
-	source compositionEditSource,
-	s *search,
-) *compositionEditSubsetMachine {
-	return &compositionEditSubsetMachine{source: source, s: s, size: 1}
+func newCompositionEditSubsetMachine() *compositionEditSubsetMachine {
+	return &compositionEditSubsetMachine{size: 1}
 }
 
 // Advance resumes one canonical subset or the finite endpoint.
-func (machine *compositionEditSubsetMachine) Advance() ([]compositionEdit, bool, bool, error) {
+func (machine *compositionEditSubsetMachine) Advance(
+	source compositionEditSource,
+	s *search,
+) ([]compositionEdit, bool, bool, error) {
 	if machine.cursor == nil {
-		machine.cursor = newCompositionEditSubsetCursor(machine.source, machine.size, machine.s)
+		machine.cursor = newCompositionEditSubsetCursor(machine.size)
 	}
 
-	selected, ready, exhausted, err := machine.cursor.Next()
+	selected, ready, exhausted, err := machine.cursor.Next(source, s)
 	if err != nil || !exhausted {
 		return selected, ready, false, err
 	}
 
 	if machine.size == 1 {
-		machine.count = machine.cursor.seen
+		machine.count = machine.cursor.count
 	}
 
 	if machine.size >= machine.count {
@@ -1080,9 +1063,9 @@ func (machine *compositionEditSubsetMachine) Advance() ([]compositionEdit, bool,
 	}
 
 	machine.size++
-	machine.cursor = newCompositionEditSubsetCursor(machine.source, machine.size, machine.s)
+	machine.cursor = newCompositionEditSubsetCursor(machine.size)
 
-	return machine.Advance()
+	return machine.Advance(source, s)
 }
 
 // errCompositionEditInapplicable rejects a structurally incomplete edit subset.

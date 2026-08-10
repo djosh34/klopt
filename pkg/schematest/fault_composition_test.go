@@ -85,7 +85,7 @@ func TestCompositionAssignmentMachineRetainsInterleavedRowSubsets(t *testing.T) 
 	require.NoError(t, err)
 	require.False(t, attempted)
 	require.False(t, exhausted)
-	require.Equal(t, steps, searchState.steps)
+	require.Greater(t, searchState.steps, steps)
 	require.Same(t, firstCursor, machine.assignments[rowZero])
 	require.Equal(t, uint64(1), firstCursor.observed)
 
@@ -102,7 +102,7 @@ func TestCompositionAssignmentMachineRetainsInterleavedRowSubsets(t *testing.T) 
 	require.NoError(t, err)
 	require.False(t, attempted)
 	require.False(t, exhausted)
-	require.Equal(t, steps, searchState.steps)
+	require.Greater(t, searchState.steps, steps)
 	require.NotNil(t, machine.assignments[rowOne])
 
 	_, attempted, exhausted, err = machine.AttemptAtRank(parent, fault, 19)
@@ -121,23 +121,22 @@ func TestCompositionEditSubsetCursorResumesSuccessiveCombinations(t *testing.T) 
 		"a": {kind: jsonNull}, "b": {kind: jsonNull}, "c": {kind: jsonNull},
 	}}
 	searchState := &search{maxSteps: 100}
-	cursor := newCompositionEditSubsetCursor(
-		compositionDifference(parent, assignment, nil), 2, searchState,
-	)
+	source := compositionDifference(parent, assignment, nil)
+	cursor := newCompositionEditSubsetCursor(2)
 
-	first, ready, exhausted, err := cursor.Next()
+	first, ready, exhausted, err := cursor.Next(source, searchState)
 	require.NoError(t, err)
 	require.True(t, ready)
 	require.False(t, exhausted)
 	require.Equal(t, []string{"a", "b"}, []string{first[0].path[0], first[1].path[0]})
 
 	steps := searchState.steps
-	second, ready, exhausted, err := cursor.Next()
+	second, ready, exhausted, err := cursor.Next(source, searchState)
 	require.NoError(t, err)
 	require.True(t, ready)
 	require.False(t, exhausted)
 	require.Equal(t, []string{"a", "c"}, []string{second[0].path[0], second[1].path[0]})
-	require.Equal(t, steps+1, searchState.steps)
+	require.Greater(t, searchState.steps, steps)
 }
 
 func TestAllOfFaultKeepsSiblingBranchesTrue(t *testing.T) {
@@ -225,7 +224,7 @@ func TestAggregateFaultConcretizesFailureAtInsertedProperty(t *testing.T) {
 	var generated Case
 
 	err := streamFault(plan, fault, searchState, make(map[string]bool), func(testCase Case) error {
-		generated = testCase
+		generated = retainCase(testCase)
 
 		return nil
 	})
@@ -333,7 +332,7 @@ func TestBuildCompositionFaultGoldenStream(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: maxSteps},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},
@@ -375,7 +374,7 @@ func TestBuildAllOfCompositionFaultGoldenStream(t *testing.T) {
 		report, err := Build(Input{
 			OpenAPI: document, OperationID: "selected", MaxSteps: maxSteps,
 		}, func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		})

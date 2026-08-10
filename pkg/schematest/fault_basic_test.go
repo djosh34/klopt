@@ -229,7 +229,7 @@ func TestStreamAggregateFaultAdvancesPastImpossibleFirstClosure(t *testing.T) {
 	var aggregate Case
 
 	err = streamFault(plan, fault, searchState, covered, func(generated Case) error {
-		aggregate = generated
+		aggregate = retainCase(generated)
 
 		return nil
 	})
@@ -261,7 +261,7 @@ func TestStreamAggregateFaultAdvancesPastImpossibleFirstClosure(t *testing.T) {
 	var repeatedCase Case
 
 	err = streamFault(plan, fault, repeated, make(map[string]bool), func(generated Case) error {
-		repeatedCase = generated
+		repeatedCase = retainCase(generated)
 
 		return nil
 	})
@@ -280,7 +280,7 @@ func TestBuildStreamsBasicTypeFaultAfterValidTargets(t *testing.T) {
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 7},
 		func(generated Case) error {
-			cases = append(cases, generated)
+			cases = append(cases, retainCase(generated))
 
 			return nil
 		},
@@ -306,7 +306,7 @@ func TestBuildDiscardsBasicFaultAtCutoff(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: maxSteps},
 			func(generated Case) error {
-				cases = append(cases, generated)
+				cases = append(cases, retainCase(generated))
 
 				return nil
 			},
@@ -360,7 +360,7 @@ func TestBuildVisitsMaximumFaultInsideAnyOfContext(t *testing.T) {
 		OperationID: "selected",
 		MaxSteps:    1_000_000,
 	}, func(testCase Case) error {
-		cases = append(cases, testCase)
+		cases = append(cases, retainCase(testCase))
 
 		return nil
 	})

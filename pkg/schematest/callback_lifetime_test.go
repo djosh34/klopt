@@ -7,6 +7,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// retainCase makes callback bytes caller-owned for comparisons after callback return.
+func retainCase(testCase Case) Case {
+	testCase.JSON = bytes.Clone(testCase.JSON)
+
+	return testCase
+}
+
 // TestBuildCallbackBytesRequireCallerCopyAndAreNotRetained proves emitted bytes leave execution state at return.
 func TestBuildCallbackBytesRequireCallerCopyAndAreNotRetained(t *testing.T) {
 	t.Parallel()

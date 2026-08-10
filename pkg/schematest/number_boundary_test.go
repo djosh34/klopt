@@ -519,7 +519,7 @@ func TestBuildChargesExclusiveHugeExponentNeighborBeforeConstruction(t *testing.
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 3},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
@@ -546,7 +546,7 @@ func TestBuildStopsBeforeConstructingHugeExponentNeighbor(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 2},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},

@@ -350,7 +350,7 @@ func TestBuildSearchesSimpleFormatAcrossActiveAllOfConstraints(t *testing.T) {
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
@@ -523,7 +523,7 @@ func TestBuildSearchesRemainingFormatsAcrossActiveSiblingConstraints(t *testing.
 			report, err := Build(
 				Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100_000},
 				func(testCase Case) error {
-					cases = append(cases, testCase)
+					cases = append(cases, retainCase(testCase))
 
 					return nil
 				},
