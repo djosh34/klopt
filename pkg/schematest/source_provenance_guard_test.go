@@ -127,6 +127,29 @@ func TestOperationIDFlowGuardRejectsSameNameFixedDecoder(t *testing.T) {
 	require.NotEmpty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
 }
 
+func TestOperationIDFlowGuardRejectsSourceSiblingWithFixedOperationID(t *testing.T) {
+	t.Parallel()
+
+	source := `package schematest
+		type Input struct { OpenAPI []byte; OperationID string }; type jsonValue struct { text string; object map[string]*jsonValue }
+		func decodeOpenAPIDocument(source []byte) (*jsonValue, error) {
+			return &jsonValue{
+				text: string(source),
+				object: map[string]*jsonValue{"operationId": {text: "fixed"}},
+			}, nil
+		}
+		func Build(input Input) bool {
+			document, _ := decodeOpenAPIDocument(input.OpenAPI)
+			return selectRequestSchema(document, input.OperationID)
+		}
+		func selectRequestSchema(document *jsonValue, operationID string) bool {
+			return document.object["operationId"].text == operationID
+		}
+	`
+
+	require.NotEmpty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
+}
+
 func TestOperationIDFlowGuardRejectsMixedDocumentAndLocalSelectionValue(t *testing.T) {
 	t.Parallel()
 
@@ -273,6 +296,14 @@ func TestCopiedSemanticGuardRejectsLocalConstructionAndGenericRoleSpoofs(t *test
 			func Build() { _ = forwarded() }`,
 		"primitive string helper chain": `package schematest
 			func copied() []string { rows := []string{"type", "required"}; return rows }
+			func forwarded() []string { return copied() }
+			func Build() { _ = forwarded() }`,
+		"primitive uint8 aliased append helper chain": `package schematest
+			func copied() []uint8 { rows := make([]uint8, 0); first := uint8(1); second := first; rows = append(rows, second); return rows }
+			func forwarded() []uint8 { return copied() }
+			func Build() { _ = forwarded() }`,
+		"primitive string aliased append helper chain": `package schematest
+			func copied() []string { rows := make([]string, 0); first := "type"; second := first; rows = append(rows, second); return rows }
 			func forwarded() []string { return copied() }
 			func Build() { _ = forwarded() }`,
 		"unicode role spoof": `package schematest
@@ -478,7 +509,6 @@ func operationIDSelectionComparison(
 	return operationIDAuthoredSelectionValue(authored, documentValues, currentPackage, make(map[ssa.Value]bool))
 }
 
-//nolint:maintidx // Authored-source and decoded-document fixed points share the exact admission seam.
 func operationIDDocumentValues(
 	functions map[*ssa.Function]bool,
 	currentPackage *types.Package,
@@ -515,16 +545,9 @@ func operationIDDocumentValues(
 		for function := range functions {
 			for _, block := range function.Blocks {
 				for _, instruction := range block.Instrs {
-					if stored, ok := instruction.(*ssa.Store); ok {
-						if sources[stored.Val] && !sources[stored.Addr] {
-							sources[stored.Addr] = true
-							changed = true
-						}
-
-						if sources[stored.Addr] && !sources[stored.Val] {
-							sources[stored.Val] = true
-							changed = true
-						}
+					if stored, ok := instruction.(*ssa.Store); ok && sources[stored.Val] && !sources[stored.Addr] {
+						sources[stored.Addr] = true
+						changed = true
 					}
 
 					call, isCall := instruction.(ssa.CallInstruction)
@@ -551,16 +574,6 @@ func operationIDDocumentValues(
 
 					value, hasValue := instruction.(ssa.Value)
 					if hasValue && sources[value] {
-						switch instruction.(type) {
-						case *ssa.FieldAddr, *ssa.IndexAddr:
-							for _, operand := range instruction.Operands(nil) {
-								if operand != nil && *operand != nil && !sources[*operand] {
-									sources[*operand] = true
-									changed = true
-								}
-							}
-						}
-
 						continue
 					}
 
@@ -622,7 +635,9 @@ func operationIDDocumentValues(
 					if isCall {
 						callee := call.Common().StaticCallee()
 						if callee != nil && callee.Object() == currentPackage.Scope().Lookup("decodeOpenAPIDocument") &&
-							len(call.Common().Args) > 0 && sources[call.Common().Args[0]] && returnsSource[callee] {
+							len(call.Common().Args) > 0 && sources[call.Common().Args[0]] &&
+							operationIDDecoderConsumesSource(callee, sources) &&
+							!operationIDDecoderAuthorsFixedIdentity(callee, functions, make(map[*ssa.Function]bool)) {
 							values[value] = true
 							changed = true
 
@@ -640,6 +655,55 @@ func operationIDDocumentValues(
 	}
 
 	return values
+}
+
+func operationIDDecoderConsumesSource(function *ssa.Function, sources map[ssa.Value]bool) bool {
+	for _, block := range function.Blocks {
+		for _, instruction := range block.Instrs {
+			for _, operand := range instruction.Operands(nil) {
+				if operand != nil && sources[*operand] {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func operationIDDecoderAuthorsFixedIdentity(
+	function *ssa.Function,
+	functions map[*ssa.Function]bool,
+	seen map[*ssa.Function]bool,
+) bool {
+	if function == nil || seen[function] {
+		return false
+	}
+
+	seen[function] = true
+
+	for _, block := range function.Blocks {
+		for _, instruction := range block.Instrs {
+			if update, ok := instruction.(*ssa.MapUpdate); ok {
+				key, constantKey := update.Key.(*ssa.Const)
+				if constantKey && key.Value != nil && constant.StringVal(key.Value) == "operationId" {
+					return true
+				}
+			}
+
+			call, ok := instruction.(ssa.CallInstruction)
+			if !ok {
+				continue
+			}
+
+			callee := call.Common().StaticCallee()
+			if callee != nil && functions[callee] && operationIDDecoderAuthorsFixedIdentity(callee, functions, seen) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func operationIDDocumentTransfer(
@@ -1348,21 +1412,33 @@ func functionReturnsSemanticTable(
 	guardPackage *sourceGuardPackage,
 ) bool {
 	localTables := make(map[*types.Var]bool)
+	localSemanticValues := make(map[*types.Var]bool)
 	returnedTable := false
 
 	ast.Inspect(function.Body, func(node ast.Node) bool {
 		switch typed := node.(type) {
 		case *ast.ValueSpec:
 			for index, value := range typed.Values {
-				if index < len(typed.Names) && semanticTableExpression(value, localTables, semanticReturns, guardPackage) {
-					if variable, ok := guardPackage.info.Defs[typed.Names[index]].(*types.Var); ok {
-						localTables[variable] = true
-					}
+				if index >= len(typed.Names) {
+					continue
+				}
+
+				variable, ok := guardPackage.info.Defs[typed.Names[index]].(*types.Var)
+				if !ok {
+					continue
+				}
+
+				if semanticTableExpression(value, localTables, localSemanticValues, semanticReturns, guardPackage) {
+					localTables[variable] = true
+				}
+
+				if semanticValueExpression(value, localSemanticValues, guardPackage) {
+					localSemanticValues[variable] = true
 				}
 			}
 		case *ast.AssignStmt:
 			for index, value := range typed.Rhs {
-				if index >= len(typed.Lhs) || !semanticTableExpression(value, localTables, semanticReturns, guardPackage) {
+				if index >= len(typed.Lhs) {
 					continue
 				}
 
@@ -1372,13 +1448,23 @@ func functionReturnsSemanticTable(
 				}
 
 				variable, ok := guardPackage.info.ObjectOf(identifier).(*types.Var)
-				if ok {
+				if !ok {
+					continue
+				}
+
+				if semanticTableExpression(value, localTables, localSemanticValues, semanticReturns, guardPackage) {
 					localTables[variable] = true
+				}
+
+				if semanticValueExpression(value, localSemanticValues, guardPackage) {
+					localSemanticValues[variable] = true
 				}
 			}
 		case *ast.ReturnStmt:
 			for _, result := range typed.Results {
-				returnedTable = returnedTable || semanticTableExpression(result, localTables, semanticReturns, guardPackage)
+				returnedTable = returnedTable || semanticTableExpression(
+					result, localTables, localSemanticValues, semanticReturns, guardPackage,
+				)
 			}
 		}
 
@@ -1391,6 +1477,7 @@ func functionReturnsSemanticTable(
 func semanticTableExpression(
 	expression ast.Expr,
 	localTables map[*types.Var]bool,
+	localSemanticValues map[*types.Var]bool,
 	semanticReturns map[*types.Func]bool,
 	guardPackage *sourceGuardPackage,
 ) bool {
@@ -1409,28 +1496,68 @@ func semanticTableExpression(
 		return false
 	}
 
-	if identifier, identifierOK := call.Fun.(*ast.Ident); identifierOK {
-		if function, functionOK := guardPackage.info.Uses[identifier].(*types.Func); functionOK {
-			return semanticReturns[function]
-		}
+	identifier, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return false
+	}
 
-		if builtin, builtinOK := guardPackage.info.Uses[identifier].(*types.Builtin); builtinOK &&
-			builtin.Name() == "append" && len(call.Args) > 0 &&
-			semanticCollectionType(guardPackage.info.TypeOf(expression)) {
-			if semanticTableExpression(call.Args[0], localTables, semanticReturns, guardPackage) {
-				return true
-			}
+	if function, functionOK := guardPackage.info.Uses[identifier].(*types.Func); functionOK {
+		return semanticReturns[function]
+	}
 
-			for _, argument := range call.Args[1:] {
-				switch argument.(type) {
-				case *ast.BasicLit, *ast.CompositeLit:
-					return true
-				}
-			}
+	return semanticAppendExpression(call, localTables, localSemanticValues, semanticReturns, guardPackage)
+}
+
+func semanticAppendExpression(
+	call *ast.CallExpr,
+	localTables map[*types.Var]bool,
+	localSemanticValues map[*types.Var]bool,
+	semanticReturns map[*types.Func]bool,
+	guardPackage *sourceGuardPackage,
+) bool {
+	identifier, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return false
+	}
+
+	builtin, ok := guardPackage.info.Uses[identifier].(*types.Builtin)
+	if !ok || builtin.Name() != "append" || len(call.Args) == 0 ||
+		!semanticCollectionType(guardPackage.info.TypeOf(call)) {
+		return false
+	}
+
+	if semanticTableExpression(call.Args[0], localTables, localSemanticValues, semanticReturns, guardPackage) {
+		return true
+	}
+
+	for _, argument := range call.Args[1:] {
+		if semanticValueExpression(argument, localSemanticValues, guardPackage) {
+			return true
 		}
 	}
 
 	return false
+}
+
+func semanticValueExpression(
+	expression ast.Expr,
+	localSemanticValues map[*types.Var]bool,
+	guardPackage *sourceGuardPackage,
+) bool {
+	switch typed := expression.(type) {
+	case *ast.BasicLit, *ast.CompositeLit:
+		return true
+	case *ast.Ident:
+		variable, ok := guardPackage.info.ObjectOf(typed).(*types.Var)
+
+		return ok && localSemanticValues[variable]
+	case *ast.ParenExpr:
+		return semanticValueExpression(typed.X, localSemanticValues, guardPackage)
+	case *ast.CallExpr:
+		return len(typed.Args) == 1 && semanticValueExpression(typed.Args[0], localSemanticValues, guardPackage)
+	default:
+		return false
+	}
 }
 
 func semanticCollectionType(valueType types.Type) bool {
@@ -1479,6 +1606,7 @@ func allowedLocalSemanticSpecification(function *types.Func, guardPackage *sourc
 		"anyOfFaultRequirements":                     "4889344df06b545d9ef4ad966b9cc23b11beda241216e7a3105bcf7315499f64",
 		"anyOfMaskRequirements":                      "c147c722b45ed9b0d42f9f58bc89cb573aaad1ea98ea91243a54d4930b667ff8",
 		"anyOfValidRequirements":                     "0fc85f2cf4bc2a157892614c8a6af245c0a386030314776aec895e1a0e45699c",
+		"arrayCombinationAt":                         "f5b7fbb50429f53d4ae0b03f1d97ff24694cd5278dec7f96f177471baaa88b26",
 		"rowProjectionView.appendBranchRequirements": "ac3a4b0d0a23ccc6a66e86387b60ad0f5a36151996dde0d2973dca9a349efaf6",
 		"appendCanonicalString":                      "cb2e7cca818a5e174d228b5a8ce3b2da148055cb3003cb1949866183ee341dd6",
 		"appendExactDecimalTerm":                     "57c57a29049de187e337caa666a53b7516720ec333b82d551b4527e8ce1e560b",
@@ -1511,6 +1639,7 @@ func allowedLocalSemanticSpecification(function *types.Func, guardPackage *sourc
 		"patternMatcherRanges":                       "459f7e4b0369daa6246a23e1f00c2ad6c6e76baec9ac10f90c529edfb31ead8b",
 		"projectedMemberPresenceChoices":             "696dcc8d321d49e9f3aa2c23060ca8930e8697ba1cab59f54fe4466b1237b19f",
 		"rowKindChoices":                             "aab020d359db217d9ac71deb2a90640e5ea39c42011c37d9f398a8ff739d8d29",
+		"rowObjectMembers":                           "545f757e035866edfbbd94db203fd9b0909fd1cf7457dab77a4e19336ea2f904",
 		"rowProjectionDecodeNode":                    "e3318c317c8fe3f83d355f5016f3587bccf4cfce753cf54277d062bf5e73b222",
 	}[semanticFunctionKey(function, guardPackage.pkg)]
 	if expected == "" {
