@@ -395,20 +395,14 @@ var exactOwnershipAllowlist = exactOwnershipRows(
 		"github.com/djosh34/klopt/pkg/schematest.compositionEdit.remove|bool",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSource.cursor|func() compositionEditCursor",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.count|int",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.levels|[]compositionEditCursor",
+		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.done|bool",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.positions|[]int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.size|int",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.source|compositionEditSource",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetCursor.s|*search",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.count|int",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.cursor|*compositionEditSubsetCursor",
 		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.size|int",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.source|compositionEditSource",
-		"github.com/djosh34/klopt/pkg/schematest.compositionEditSubsetMachine.s|*search",
 		"github.com/djosh34/klopt/pkg/schematest.compositionRankedSubsetCursor.exhausted|bool",
 		"github.com/djosh34/klopt/pkg/schematest.compositionRankedSubsetCursor.observed|uint64",
-		"github.com/djosh34/klopt/pkg/schematest.compositionRankedSubsetCursor.search|*search",
-		"github.com/djosh34/klopt/pkg/schematest.compositionRankedSubsetCursor.source|compositionEditSource",
 		"github.com/djosh34/klopt/pkg/schematest.compositionRankedSubsetCursor.stream|*compositionEditSubsetMachine",
 		"github.com/djosh34/klopt/pkg/schematest.directRankTupleDecoder.dimensions|int",
 		"github.com/djosh34/klopt/pkg/schematest.directRankTupleDecoder.dimension|int",
@@ -859,6 +853,27 @@ func TestSingularCurrentOwnershipRequiresClearBeforeContinuation(t *testing.T) {
 	}
 }
 
+func TestCurrentOwnershipAnalyzesNonMapAttemptAndCallDeadlines(t *testing.T) {
+	t.Parallel()
+
+	const prefix = modulePath + "/pkg/schematest."
+
+	for _, lifetime := range []ownershipLifetime{ownershipAttemptLifetime, ownershipCallLifetime} {
+		source := `package schematest
+			type jsonValue struct{}; type Case struct{}; type state struct { current *jsonValue }
+			func consume(*state) {}
+			func Build(yield func(Case)) { active := &state{current: new(jsonValue)}; yield(Case{}); consume(active) }
+		`
+		allowed := map[string]ownershipAllowance{
+			prefix + "state.current": {typeName: "*jsonValue", form: ownershipCurrentValue, lifetime: lifetime},
+		}
+		guardPackage := parseGuardPackage(t, map[string]string{"guard.go": source})
+
+		require.Len(t, currentValueLifecycleCoverage(guardPackage, allowed), 1)
+		require.NotEmpty(t, currentValueLifecycleViolations(guardPackage, allowed))
+	}
+}
+
 func TestCurrentOwnershipRejectsCollectionsAndCallLifetimeEscape(t *testing.T) {
 	t.Parallel()
 
@@ -1251,10 +1266,23 @@ func currentValueLifecycleCoverage(
 ) map[string]ownershipLifetime {
 	discovered := buildOwnershipFields(guardPackage)
 	covered := make(map[string]ownershipLifetime)
+	build := buildGuardSSA(guardPackage).Func("Build")
+	prefix := guardPackage.pkg.Path() + "."
 
 	for key, allowance := range allowed {
-		if allowance.form == ownershipCurrentValue && discovered[key] != nil {
+		field := discovered[key]
+		if allowance.form != ownershipCurrentValue || field == nil {
+			continue
+		}
+
+		switch allowance.lifetime {
+		case ownershipBeforeContinuation:
 			covered[key] = allowance.lifetime
+		case ownershipAttemptLifetime, ownershipCallLifetime:
+			owner, _, ownerField := strings.Cut(strings.TrimPrefix(key, prefix), ".")
+			if build != nil && ownerField && owner != "" {
+				covered[key] = allowance.lifetime
+			}
 		}
 	}
 
@@ -1287,6 +1315,7 @@ func currentValueLifecycleViolations(
 	var violations []string
 
 	violations = append(violations, currentValueDeadlineViolations(guardPackage, allowed)...)
+	violations = append(violations, generatedValueEscapeViolations(guardPackage)...)
 
 	if len(watched) == 0 {
 		return violations
@@ -1321,7 +1350,8 @@ func currentValueDeadlineViolations(
 	discovered := buildOwnershipFields(guardPackage)
 
 	for key, allowance := range allowed {
-		if allowance.form != ownershipCurrentValue || allowance.lifetime != ownershipCallLifetime || !strings.HasPrefix(key, prefix) {
+		if allowance.form != ownershipCurrentValue || allowance.lifetime != ownershipCallLifetime ||
+			!strings.HasPrefix(key, prefix) {
 			continue
 		}
 

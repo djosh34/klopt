@@ -193,6 +193,14 @@ func TestGeneratedValueGuardRejectsRuntimeJSONAndLoopBackedgeRetention(t *testin
 			type jsonValue struct { text string }; type Case struct{}
 			func consume([]*jsonValue) {}
 			func Build(yield func(Case)) { current := new(jsonValue); archive := []*jsonValue{current}; yield(Case{}); consume(archive) }`,
+		"interface-held runtime JSON archive": `package schematest
+			type jsonValue struct { text string }; type Case struct{}
+			func consume([]any) {}
+			func Build(yield func(Case)) { current := new(jsonValue); archive := []any{current}; yield(Case{}); consume(archive) }`,
+		"nested runtime JSON archive": `package schematest
+			type jsonValue struct { text string }; type Case struct{}
+			func consume(map[string][]any) {}
+			func Build(yield func(Case)) { current := new(jsonValue); archive := map[string][]any{"saved": {current}}; yield(Case{}); consume(archive) }`,
 		"later loop iteration": `package schematest
 			type Case struct { JSON []byte }
 			func consume([]byte) {}
@@ -300,7 +308,11 @@ func generatedValueEscapeViolations(guardPackage *sourceGuardPackage) []string {
 		}
 	}
 
-	violations := generatedValueSinks(functions, taint.values, runtimeJSON.values, guardPackage.pkg)
+	for value := range runtimeJSON.values {
+		taint.values[value] = true
+	}
+
+	violations := generatedValueSinks(functions, taint.values, guardPackage.pkg)
 	slices.Sort(violations)
 
 	return slices.Compact(violations)
@@ -669,7 +681,6 @@ func propagateGeneratedValueTaint(
 func generatedValueSinks(
 	functions map[*ssa.Function]bool,
 	tainted map[ssa.Value]bool,
-	runtimeJSON map[ssa.Value]bool,
 	currentPackage *types.Package,
 ) []string {
 	var violations []string
@@ -688,9 +699,8 @@ func generatedValueSinks(
 			for _, instruction := range block.Instrs {
 				if callbackSeen {
 					for _, operand := range instruction.Operands(nil) {
-						if operand != nil && !cleared[*operand] &&
-							((tainted[*operand] && generatedValueCarrierType((*operand).Type(), currentPackage)) ||
-								(runtimeJSON[*operand] && generatedCallbackAliasType((*operand).Type(), currentPackage))) &&
+						if operand != nil && !cleared[*operand] && tainted[*operand] &&
+							generatedValueCarrierType((*operand).Type(), currentPackage) &&
 							(!callbackFromEntry || !generatedValueRefreshedBeforeUse(*operand, instruction)) {
 							violations = append(violations, generatedValuePosition(instruction)+": callback alias used after callback return")
 
@@ -741,26 +751,6 @@ func generatedValueSinks(
 	}
 
 	return violations
-}
-
-func generatedCallbackAliasType(valueType types.Type, currentPackage *types.Package) bool {
-	valueType = types.Unalias(valueType)
-	if pointer, ok := valueType.Underlying().(*types.Pointer); ok {
-		return sameGuardType(pointer.Elem(), packageObjectTypeFromTypes(currentPackage, "jsonValue"))
-	}
-
-	slice, ok := valueType.Underlying().(*types.Slice)
-	if !ok {
-		return false
-	}
-
-	if basic, basicOK := types.Unalias(slice.Elem()).Underlying().(*types.Basic); basicOK {
-		return basic.Kind() == types.Byte
-	}
-
-	pointer, ok := types.Unalias(slice.Elem()).Underlying().(*types.Pointer)
-
-	return ok && sameGuardType(pointer.Elem(), packageObjectTypeFromTypes(currentPackage, "jsonValue"))
 }
 
 func generatedValueRefreshedBeforeUse(value ssa.Value, use ssa.Instruction) bool {
@@ -1133,7 +1123,7 @@ func packageObjectTypeFromTypes(currentPackage *types.Package, name string) type
 
 func generatedRuntimeJSONRoot(value ssa.Value, currentPackage *types.Package) bool {
 	allocation, ok := value.(*ssa.Alloc)
-	if !ok {
+	if !ok || allocation.Parent() == nil || allocation.Parent().Name() != "Build" {
 		return false
 	}
 

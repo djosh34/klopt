@@ -100,6 +100,22 @@ func TestOperationIDFlowGuardAllowsDecodedDocumentSelection(t *testing.T) {
 	require.Empty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
 }
 
+func TestOperationIDFlowGuardRejectsMixedDocumentAndLocalSelectionValue(t *testing.T) {
+	t.Parallel()
+
+	source := `package schematest
+		type Input struct { OperationID string }; type jsonValue struct { text string; object map[string]*jsonValue }
+		func Build(input Input, document *jsonValue, local bool) bool { return selectRequestSchema(document, input.OperationID, local) }
+		func selectRequestSchema(document *jsonValue, operationID string, local bool) bool {
+			identifier := document.object["operationId"]
+			if local { identifier = &jsonValue{text: "fixed"} }
+			return identifier.text == operationID
+		}
+	`
+
+	require.NotEmpty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
+}
+
 func TestOperationIDFlowGuardRejectsLocallyConstructedSelectionValues(t *testing.T) {
 	t.Parallel()
 
@@ -204,6 +220,11 @@ func TestCopiedSemanticGuardRejectsLocalConstructionAndGenericRoleSpoofs(t *test
 			func copied() []answer { rows := make([]answer, 0); rows = append(rows, answer{keyword: "type", valid: true}); return rows }
 			func forwarded() []answer { return copied() }
 			func Build() { _ = forwarded() }`,
+		"renamed primitive cell helper chain": `package schematest
+			type cell struct { x, y uint8 }
+			func copied() []cell { rows := make([]cell, 0); rows = append(rows, cell{x: 1, y: 2}); return rows }
+			func forwarded() []cell { return copied() }
+			func Build() { _ = forwarded() }`,
 		"unicode role spoof": `package schematest
 			type answer struct { keyword string; valid bool }
 			var unicodeGrammar = []answer{{keyword: "type", valid: true}}`,
@@ -217,6 +238,23 @@ func TestCopiedSemanticGuardRejectsLocalConstructionAndGenericRoleSpoofs(t *test
 			t.Parallel()
 			require.NotEmpty(t, copiedAnswerViolations(parseGuardPackage(t, map[string]string{"guard.go": source}), nil))
 		})
+	}
+}
+
+func TestCopiedSemanticGuardRejectsInexactGenericSpecifications(t *testing.T) {
+	t.Parallel()
+
+	sources := []map[string]string{
+		{"wrong.go": `package schematest
+			type runeRange struct { first, last rune }
+			var unicodeGrammar = []runeRange{{first: 'a', last: 'z'}, {first: 0x80, last: 0x10ffff}}`},
+		{"grammar.go": `package schematest
+			type runeRange struct { first, last rune }
+			var unicodeGrammar = []runeRange{{first: 'b', last: 'z'}, {first: 0x80, last: 0x10ffff}}`},
+	}
+
+	for _, source := range sources {
+		require.NotEmpty(t, copiedAnswerViolations(parseGuardPackage(t, source), nil))
 	}
 }
 
@@ -407,7 +445,8 @@ func operationIDDocumentValues(
 		}
 
 		for _, parameter := range function.Params {
-			if parameter.Name() == "document" && sameGuardType(parameter.Type(), types.NewPointer(jsonValueType)) {
+			if parameter.Name() == "document" && sameGuardType(parameter.Type(), types.NewPointer(jsonValueType)) ||
+				parameter.Name() == "root" && operationIDDocumentRootType(parameter.Type(), jsonValueType) {
 				values[parameter] = true
 			}
 		}
@@ -438,6 +477,15 @@ func operationIDDocumentValues(
 	}
 
 	return values
+}
+
+func operationIDDocumentRootType(valueType, jsonValueType types.Type) bool {
+	mapping, ok := types.Unalias(valueType).Underlying().(*types.Map)
+	if !ok || basicTypeKind(mapping.Key()) != types.String {
+		return false
+	}
+
+	return sameGuardType(mapping.Elem(), types.NewPointer(jsonValueType))
 }
 
 func operationIDAuthoredSelectionValue(
@@ -475,24 +523,92 @@ func operationIDLookupProvenance(
 
 	seen[value] = true
 
-	if lookup, ok := value.(*ssa.Lookup); ok {
-		key, constantKey := lookup.Index.(*ssa.Const)
+	switch typed := value.(type) {
+	case *ssa.Lookup:
+		key, constantKey := typed.Index.(*ssa.Const)
 
-		return constantKey && key.Value != nil && constant.StringVal(key.Value) == "operationId" && documentValues[lookup.X]
+		return constantKey && key.Value != nil && constant.StringVal(key.Value) == "operationId" &&
+			operationIDPureDocumentValue(typed.X, documentValues, make(map[ssa.Value]bool))
+	case *ssa.Phi:
+		if len(typed.Edges) == 0 {
+			return false
+		}
+
+		for _, edge := range typed.Edges {
+			if !operationIDLookupProvenance(edge, documentValues, seen) {
+				return false
+			}
+		}
+
+		return true
+	case *ssa.ChangeType:
+		return operationIDLookupProvenance(typed.X, documentValues, seen)
+	case *ssa.Convert:
+		return operationIDLookupProvenance(typed.X, documentValues, seen)
+	case *ssa.MakeInterface:
+		return operationIDLookupProvenance(typed.X, documentValues, seen)
+	case *ssa.UnOp:
+		return operationIDLookupProvenance(typed.X, documentValues, seen)
+	case *ssa.Extract:
+		return operationIDLookupProvenance(typed.Tuple, documentValues, seen)
+	case *ssa.Field:
+		return operationIDLookupProvenance(typed.X, documentValues, seen)
+	case *ssa.FieldAddr:
+		return operationIDLookupProvenance(typed.X, documentValues, seen)
+	default:
+		return false
 	}
+}
 
-	instruction, ok := value.(ssa.Instruction)
-	if !ok {
+func operationIDPureDocumentValue(
+	value ssa.Value,
+	documentValues map[ssa.Value]bool,
+	seen map[ssa.Value]bool,
+) bool {
+	if value == nil || !documentValues[value] {
 		return false
 	}
 
-	for _, operand := range instruction.Operands(nil) {
-		if operand != nil && operationIDLookupProvenance(*operand, documentValues, seen) {
-			return true
-		}
+	if seen[value] {
+		return true
 	}
 
-	return false
+	seen[value] = true
+
+	switch typed := value.(type) {
+	case *ssa.Parameter:
+		return true
+	case *ssa.Lookup:
+		return operationIDPureDocumentValue(typed.X, documentValues, seen)
+	case *ssa.Phi:
+		if len(typed.Edges) == 0 {
+			return false
+		}
+
+		for _, edge := range typed.Edges {
+			if !operationIDPureDocumentValue(edge, documentValues, seen) {
+				return false
+			}
+		}
+
+		return true
+	case *ssa.ChangeType:
+		return operationIDPureDocumentValue(typed.X, documentValues, seen)
+	case *ssa.Convert:
+		return operationIDPureDocumentValue(typed.X, documentValues, seen)
+	case *ssa.MakeInterface:
+		return operationIDPureDocumentValue(typed.X, documentValues, seen)
+	case *ssa.UnOp:
+		return operationIDPureDocumentValue(typed.X, documentValues, seen)
+	case *ssa.Field:
+		return operationIDPureDocumentValue(typed.X, documentValues, seen)
+	case *ssa.FieldAddr:
+		return operationIDPureDocumentValue(typed.X, documentValues, seen)
+	case *ssa.Alloc:
+		return false
+	default:
+		return documentValues[value]
+	}
 }
 
 func operationIDJSONTextField(valueType types.Type, field int, currentPackage *types.Package) bool {
@@ -636,7 +752,7 @@ func packageSemanticDataViolations(guardPackage *sourceGuardPackage) []string {
 
 		role := types.TypeString(object.Type(), ownershipTypeQualifier(guardPackage.pkg))
 		if allowedSemanticData[name] == role && allowedSemanticSource(name, object, guardPackage) ||
-			independentlyAuthoredGenericSpecification(name, object.Type()) {
+			independentlyAuthoredGenericSpecification(name, object, guardPackage) {
 			continue
 		}
 
@@ -710,29 +826,52 @@ func allowedSemanticSource(name string, object *types.Var, guardPackage *sourceG
 	return false
 }
 
-func independentlyAuthoredGenericSpecification(name string, owned types.Type) bool {
-	slice, ok := types.Unalias(owned).Underlying().(*types.Slice)
-	if !ok {
+func independentlyAuthoredGenericSpecification(
+	name string,
+	object *types.Var,
+	guardPackage *sourceGuardPackage,
+) bool {
+	expectedType := map[string]string{
+		"unicodeGrammar":    "[]runeRange",
+		"formatTransitions": "[]transition",
+	}[name]
+	expectedHash := map[string]string{
+		"unicodeGrammar":    "d3c8f466d66703aa7d2dc09acb62b6b3dce3a5d797cccbc82125e35309542cff",
+		"formatTransitions": "ece16af12d8bf3a1f419f1b3484d0931f90df49e44f6dc18511a8dcac99c0be4",
+	}[name]
+
+	if expectedType == "" || types.TypeString(object.Type(), ownershipTypeQualifier(guardPackage.pkg)) != expectedType ||
+		filepath.Base(guardPackage.fset.Position(object.Pos()).Filename) != "grammar.go" {
 		return false
 	}
 
-	structure, ok := types.Unalias(slice.Elem()).Underlying().(*types.Struct)
-	if !ok {
-		return false
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+
+			for _, specification := range general.Specs {
+				valueSpec, ok := specification.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+
+				for index, identifier := range valueSpec.Names {
+					if guardPackage.info.Defs[identifier] != object || index >= len(valueSpec.Values) {
+						continue
+					}
+
+					hash, hashOK := semanticNodeHash(valueSpec.Values[index], guardPackage)
+
+					return hashOK && hash == expectedHash
+				}
+			}
+		}
 	}
 
-	switch name {
-	case "unicodeGrammar":
-		return structure.NumFields() == 2 && structure.Field(0).Name() == "first" &&
-			structure.Field(1).Name() == "last" && basicTypeKind(structure.Field(0).Type()) == types.Rune &&
-			basicTypeKind(structure.Field(1).Type()) == types.Rune
-	case "formatTransitions":
-		return structure.NumFields() == 3 && structure.Field(0).Name() == "state" &&
-			structure.Field(1).Name() == "next" && structure.Field(2).Name() == "class" &&
-			genericNumericSpecification(owned)
-	default:
-		return false
-	}
+	return false
 }
 
 func genericNumericSpecification(owned types.Type) bool {
@@ -949,7 +1088,18 @@ func semanticCollectionType(valueType types.Type) bool {
 		}
 	}
 
-	return false
+	if structure.NumFields() != 2 {
+		return false
+	}
+
+	for index := range structure.NumFields() {
+		basic, ok := types.Unalias(structure.Field(index).Type()).Underlying().(*types.Basic)
+		if !ok || basic.Kind() != types.Uint8 {
+			return false
+		}
+	}
+
+	return true
 }
 
 func allowedLocalSemanticSpecification(function *types.Func, guardPackage *sourceGuardPackage) bool {
