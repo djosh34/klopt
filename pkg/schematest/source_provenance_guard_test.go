@@ -6,12 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"go/ast"
-	"go/constant"
 	"go/format"
 	"go/token"
 	"go/types"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/ssa" //nolint:depguard // SSA is required for the source-local whole-program guard.
@@ -22,7 +22,12 @@ import (
 func TestOperationIDFlowStaysInsideOperationSelection(t *testing.T) {
 	t.Parallel()
 
-	require.Empty(t, operationIDFlowViolations(productionGuardPackage(t)))
+	violations := operationIDFlowViolations(productionGuardPackage(t))
+	for _, violation := range violations {
+		t.Log(violation)
+	}
+
+	require.Empty(t, violations)
 }
 
 func TestOperationIDFlowGuardRejectsSourceSpecificBranching(t *testing.T) {
@@ -84,7 +89,7 @@ func TestOperationIDFlowGuardRejectsLookupAndComputedEquality(t *testing.T) {
 	}
 }
 
-func TestOperationIDFlowGuardAllowsDecodedDocumentSelection(t *testing.T) {
+func TestOperationIDFlowGuardRejectsUntrustedDecodedDocumentSelection(t *testing.T) {
 	t.Parallel()
 
 	source := `package schematest
@@ -104,7 +109,29 @@ func TestOperationIDFlowGuardAllowsDecodedDocumentSelection(t *testing.T) {
 		}
 	`
 
-	require.Empty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
+	require.NotEmpty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
+}
+
+func TestOperationIDFlowGuardRejectsComputedDecoderIdentity(t *testing.T) {
+	t.Parallel()
+
+	source := `package schematest
+		type Input struct { OpenAPI []byte; OperationID string }; type jsonValue struct { text string; object map[string]*jsonValue }
+		func decodeOpenAPIDocument(source []byte) (*jsonValue, error) {
+			_ = len(source)
+			key := string([]byte{'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n', 'I', 'd'})
+			return &jsonValue{object: map[string]*jsonValue{key: {text: "fixed"}}}, nil
+		}
+		func Build(input Input) bool {
+			document, _ := decodeOpenAPIDocument(input.OpenAPI)
+			return selectRequestSchema(document, input.OperationID)
+		}
+		func selectRequestSchema(document *jsonValue, operationID string) bool {
+			return document.object["operationId"].text == operationID
+		}
+	`
+
+	require.NotEmpty(t, operationIDFlowViolations(parseGuardPackage(t, map[string]string{"selection.go": source})))
 }
 
 func TestOperationIDFlowGuardRejectsSameNameFixedDecoder(t *testing.T) {
@@ -306,6 +333,10 @@ func TestCopiedSemanticGuardRejectsLocalConstructionAndGenericRoleSpoofs(t *test
 			func copied() []string { rows := make([]string, 0); first := "type"; second := first; rows = append(rows, second); return rows }
 			func forwarded() []string { return copied() }
 			func Build() { _ = forwarded() }`,
+		"primitive computed alias append helper chain": `package schematest
+			func copied() []uint8 { rows := make([]uint8, 0); first := uint8(1); second := first + 0; rows = append(rows, second); return rows }
+			func forwarded() []uint8 { return copied() }
+			func Build() { _ = forwarded() }`,
 		"unicode role spoof": `package schematest
 			type answer struct { keyword string; valid bool }
 			var unicodeGrammar = []answer{{keyword: "type", valid: true}}`,
@@ -362,7 +393,7 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 	}
 
 	functions := operationIDRuntimeFunctions(build)
-	authored := operationIDDocumentValues(functions, guardPackage.pkg)
+	violations := operationIDAuthorityViolations(operationIDAuthorityFunctions(functions), guardPackage)
 	tainted := make(map[ssa.Value]bool)
 	returned := make(map[*ssa.Function]bool)
 
@@ -411,7 +442,7 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 					}
 
 					if binary, binaryOK := instruction.(*ssa.BinOp); binaryOK &&
-						operationIDSelectionComparison(function, binary, tainted, authored, guardPackage.pkg) {
+						operationIDSelectionComparison(function, binary, tainted, guardPackage) {
 						continue
 					}
 
@@ -435,13 +466,11 @@ func operationIDFlowViolations(guardPackage *sourceGuardPackage) []string {
 		}
 	}
 
-	var violations []string
-
 	for function := range functions {
 		for _, block := range function.Blocks {
 			for _, instruction := range block.Instrs {
 				for _, operand := range instruction.Operands(nil) {
-					if operand == nil || !tainted[*operand] || operationIDAllowedUse(function, instruction, tainted, authored, guardPackage.pkg) {
+					if operand == nil || !tainted[*operand] || operationIDAllowedUse(function, instruction, tainted, guardPackage) {
 						continue
 					}
 
@@ -462,12 +491,11 @@ func operationIDAllowedUse(
 	function *ssa.Function,
 	instruction ssa.Instruction,
 	tainted map[ssa.Value]bool,
-	authored map[ssa.Value]bool,
-	currentPackage *types.Package,
+	guardPackage *sourceGuardPackage,
 ) bool {
 	switch typed := instruction.(type) {
 	case *ssa.BinOp:
-		return operationIDSelectionComparison(function, typed, tainted, authored, currentPackage)
+		return operationIDSelectionComparison(function, typed, tainted, guardPackage)
 	case *ssa.Phi, *ssa.ChangeType, *ssa.Convert, *ssa.MakeInterface, *ssa.Return, *ssa.UnOp:
 		return true
 	case *ssa.Store:
@@ -481,574 +509,168 @@ func operationIDAllowedUse(
 
 	callee := call.Common().StaticCallee()
 
-	return callee != nil && callee.Pkg == function.Pkg
+	return callee != nil && callee.Pkg == function.Pkg &&
+		operationIDTrustedFunction(function, guardPackage) && operationIDTrustedFunction(callee, guardPackage)
 }
 
 func operationIDSelectionComparison(
 	function *ssa.Function,
 	binary *ssa.BinOp,
 	tainted map[ssa.Value]bool,
-	documentValues map[ssa.Value]bool,
-	currentPackage *types.Package,
+	guardPackage *sourceGuardPackage,
 ) bool {
-	if function.Name() != "selectRequestSchema" || binary.Op != token.EQL {
+	object, ok := function.Object().(*types.Func)
+	if !ok || binary.Op != token.EQL || !operationIDTrustedFunction(function, guardPackage) ||
+		semanticFunctionKey(object, guardPackage.pkg) != "selectRequestSchema" {
 		return false
 	}
 
-	var authored ssa.Value
-
-	switch {
-	case tainted[binary.X] && !tainted[binary.Y]:
-		authored = binary.Y
-	case tainted[binary.Y] && !tainted[binary.X]:
-		authored = binary.X
-	default:
-		return false
-	}
-
-	return operationIDAuthoredSelectionValue(authored, documentValues, currentPackage, make(map[ssa.Value]bool))
+	return tainted[binary.X] != tainted[binary.Y]
 }
 
-func operationIDDocumentValues(
-	functions map[*ssa.Function]bool,
-	currentPackage *types.Package,
-) map[ssa.Value]bool {
-	values := make(map[ssa.Value]bool)
-	sources := make(map[ssa.Value]bool)
-	returnsSource := make(map[*ssa.Function]bool)
-	calls := make(map[*ssa.Function][]ssa.CallInstruction)
+// allowedOperationIDAuthorityFunctions is the reviewed decode/admission authority boundary.
+var allowedOperationIDAuthorityFunctions = map[string]string{ //nolint:gochecknoglobals // Exact function bodies are the trust boundary.
+	"*exactNumber.normalize":               "19357129c4b11b66b4e8522eb54ebba95f68a3d0898cedacb568d01dd56a91d0",
+	"*strictJSONParser.consume":            "003140aa4037ef3d709936b551c5082425a14c0e7a08a4a74c48a5e96a148994",
+	"*strictJSONParser.parseEscape":        "32d85ea9b2fd7559b650d94cdb38bae16db9e6956d5dcca86da88a95ce104514",
+	"*strictJSONParser.parseHexQuad":       "855c34c87ad74c193133e5a2b04d74aa922154af53b2c1e3ab9ae3da1314f1e7",
+	"*strictJSONParser.parseLiteral":       "5e7d7e8fc683f5d317bb1a785dab87bfde43606c9ba16da97d115f32f4c0a4db",
+	"*strictJSONParser.parseNumber":        "78836d080ab42d678b771af2b5cb6d51c9475a2460f281d1e1843f9863f41ae6",
+	"*strictJSONParser.parseString":        "68f4a15b1cf18129ac7472bf485d4f1cb372e56ca0c8048a650a4f007caac4cb",
+	"*strictJSONParser.parseSurrogatePair": "de63c49c241dfdd2897a0136ce6edc74f418c76eb707316a25fad3ec47e3d155",
+	"*strictJSONParser.parseUnicodeEscape": "964666883330cbf912f1d663b771d97346226cf21b10e725d4507180d992f355",
+	"*strictJSONParser.parseValueToken":    "8435dbbbf40570b0dd95b401c4f903fc37d9eebc7b98e82f353b2ec901d8ac16",
+	"*strictJSONParser.skipWhitespace":     "8fb0f19f051e430a1322f0e6b8869c6aff48c7311db02607540f6f89b215b8db",
+	"*yamlJSONDecoder.assign":              "4fa7a7f6ed15a5025e4b23d7eabcaf26d7c5df1a45f8b6955058826483b8cd29",
+	"*yamlJSONDecoder.assignDecoded":       "b85c0df90442935a9fed918a9632bb4d065681e166d937bcb615008d1390a24d",
+	"*yamlJSONDecoder.decode":              "5be59f10d3745cc0d9b02ec69cf13d904eaa36b4e018d13d7b6f29d1954cd088",
+	"*yamlJSONDecoder.pushAliasTarget":     "69b9c16c10eb481cf75bf1777807e131e94325d1364ba6ee7899ded0fb9d6a93",
+	"Build":                                "c3e6bbe16481defdbf8f012f91a15453b036e67fbf28816b6c5b636d095dbc37",
+	"decimalPower":                         "8db9cc08e2e01c85304f35c735977051b1ef93755d6ba345a2994aee596b68ac",
+	"decimalTrailingZeros":                 "32210fe96d02e60462a5901509f52aabfa9a28bf202dd5c2b778c1183310016e",
+	"decodeOpenAPIDocument":                "3435208ffd0cb11d1413e42a885a1d7269b2025968b904fee219e3f495c2bc36",
+	"decodeYAMLBoolean":                    "4be8024e6d209c8b40afb2df960d27d92481979cd4ad3b4a3d46b78d3935e024",
+	"decodeYAMLNumber":                     "21b9afa50993d539dacd9fe94eac911883347705c9760ffccad8f44159b8eef0",
+	"decodeYAMLString":                     "e665ae4d01d170d2b92da715239ca6bce8fe1fe3fb73b349ed5d1ede46e67eb4",
+	"decodeYAMLTag":                        "9a7405383fd541b69c1cb5e9585b038c6ca3755758f7189dc29c2969aed04673",
+	"divisibleByPower":                     "3b0cdb5b7131276e4bdb58d1237a99cb905af1f6fca34609d894bfe2df9dab75",
+	"escapePointerToken":                   "791fe23391c2a9ec60a34a89833b3735ce5478bfdb1952a4ae4a075fca8ab246",
+	"factorMultiplicity":                   "4ce2088122274a973a99d7aa0744f1c5883c460d250ff99497a7a8286d9c1417",
+	"hexadecimalValue":                     "cb1f3839813f16e08722d856b1c1037be2312b5791b81d6b5a188cbb07c5dee9",
+	"integerPower":                         "040f2dac4f882629f735a602eb86d8744b4128c0a46ba99c2d1d745c1a973139",
+	"isDecimalDigit":                       "9b0ce8f8689750b440370af5cac654e3a69bf584e519bff0ce048cd9e6e141a5",
+	"isHexDigit":                           "b0d9364980441c6c5839db825ee85f9310b82aaa2c9a478361f36a5d52dede33",
+	"isURIASCIIAlpha":                      "834b8598b42754e60ed58a12d48ec36600b3ad26f2d0e190d32d15ad3ba85091",
+	"isURIASCIIAlphaNumeric":               "3e1f2de74c69d7b90254d01d10e2d12fc4079e8c7ac83401238c4bd385517850",
+	"newExactNumber":                       "ecb1f6071b669028a339fca619eea472b5011f0287b0fb31b4d158d258b9998e",
+	"parseExactNumber":                     "542f6ab64f4a93d65d58c1fe87d4deb00e033e85bc4baf5c280c01e5afdae64f",
+	"parseInput":                           "15a92f3885739d451b3b8a777d808a8a0e8668998f47d952245a73269c4b3262",
+	"parseLocalReferenceFragment":          "4d6302ea361e0cbbad041ca829cf2bde217b166bae3393410dba6416e63542c8",
+	"parseStrictJSON":                      "a9943458caeef195e37d418c001b240164e359182f7202106703bdff8bf5313e",
+	"pointerArrayIndex":                    "7d0aa0223071c85620c09eb26d0f8a39fa189016f25ea771579dffd866f19aa8",
+	"requestSchema":                        "4f692cb9c9a318dd5676c8a5ae37741c096d29750f8f2262f264caa1b686d285",
+	"requireJSONObject":                    "33b87a164b5ace757458cf124b397821ca5655b95846db27d47229e4f8a68e3b",
+	"resolveLocalReference":                "6752beeb48061bc8f84eed170986eb2d5eb8a1fcb1679be17fab1388b27143cd",
+	"resolvePathItemReference":             "eb9ff248043b93f1cd44bbf8edf99086a8609a5f0790659ab408dfb12abb5504",
+	"resolveReferenceChain":                "b3b43c225abc489718fce8a30c58b800b1195bef9340a8a4820ec0c0ff75850e",
+	"scanExactExponent":                    "f5432bb1c66532cc4548e0d19f498e0ba694b997d0a0a6c5614707935366465c",
+	"scanExactFraction":                    "41bedb658ef8b1a8762127dae698e5493748f72deef49803a4685849bfdf12bb",
+	"scanExactInteger":                     "bfa051fb7678e21aabc4d8ed73cb42240054ae7f7bd58212f4610fade7c49118",
+	"scanExactNumber":                      "b7b4f5df1c518e8b6701e3b15396598617b166638fe71f5ad0ffadaba2b24bb2",
+	"scanExactSign":                        "16bde429c989f524764d90690ec7dbc8950b050a303eaeda915195cef3055a73",
+	"scanExponentSign":                     "3dbf965899f5fd7208581b3365a1c2884851d440c5b866ed75160d8ecd480edd",
+	"selectJSONMediaType":                  "422e7ff2b61213d4eb27306be1a97e555812a8efe9050b38cbd9badadfd7907c",
+	"selectRequestSchema":                  "1b6bc0e0ea2deda88e6717f1feb7c1c60c76f48911ef54eb9afd75598345d65b",
+	"sortedObjectNames":                    "f6c61ede89ee13e3f20864d3559f4a087a36bf54623ff3802005295385212332",
+	"templatedPathIdentity":                "abb8306553ac526c86dc0ebe1181ecb0cb46112b53e56f7a01972cad4815aece",
+	"unescapePointerToken":                 "f0d731eaed75fc233b186228c6449b5f4138b72d777414832ac27d592f7744b6",
+	"validMediaTypeOrRange":                "c571d083b104b865234143daabaeb0e529e767fa37c6d371a09e18296b741483",
+	"validURIScheme":                       "169fc6462ef250ea52aa6f3bec45c7048bba3eeb73a1f88056a72fc78ff89be5",
+	"validateExampleObject":                "0bda1aa143599f1a2c10405de6597c4a759bb4761b0a2da169055be802064525",
+	"validateIPLiteral":                    "024f1eefbf8918b0584110bdc93a8674992207489ea1a47e0b866ac8af075b18",
+	"validateIPvFuture":                    "02f8b0c0e21f51cf9817540e5697458f3bb7520ef722e190f9ebf3f3ec57565d",
+	"validateMediaTypeExample":             "ac6c7327f27c0d0daae2f4fa13c771d0e609e48b4a66a9fbaeb142c581b5bc0c",
+	"validateMediaTypeExamples":            "4f261cfdbc7477e40183efb5d5c2ec7236b809109315e2a098fa21180e645dfb",
+	"validateMediaTypeFields":              "e6596f4fba135d80381bcebb951ac01b0e440be23778a5093bf7b145a7cecf8c",
+	"validateRequestBodyFields":            "2ec3b3e44accc18812662e6315c5bf88592195318ebe7637cf9070e67bc3234c",
+	"validateURIAuthority":                 "6ef97e51560202d7573fafb4b8a18361a506632ccba93b24ae1a4b0392fae09a",
+	"validateURIComponent":                 "cd638ae951e2060c1c260711f315a340065b1ead6e3c90351b42725eaaed2897",
+	"validateURIFragment":                  "7571063cd1833073d7a58211fdc28317921fce86dce623a803c3cfb06bc2915c",
+	"validateURIPortSuffix":                "653fde8e3e5b6ffdf36b983ea00f438aa45dddf6d3ee02a7521353d4bc2281f7",
+	"validateURIReference":                 "fb72b6715fc011fe6c65259c62b4c2aa3aad4676e9b0cce3dffb6040b7d2b334",
+	"yamlContextError":                     "2bc5b10337c870a9e9bd4fc149697337d73a571d6ee20fb7af0eaea2610ed293",
+	"yamlMappingKey":                       "785bf32f43a712ec0da0e0cf32cb4cfbc8ba050d8fc4b995e7271e917f229e93",
+	"yamlString":                           "6dad290019e81b3e0dda198a81b073c1e9e003c061dc672ed3161cf64300aff5",
+}
+
+func operationIDAuthorityFunctions(functions map[*ssa.Function]bool) map[*ssa.Function]bool {
+	authorities := make(map[*ssa.Function]bool)
 
 	for function := range functions {
-		for _, block := range function.Blocks {
-			for _, instruction := range block.Instrs {
-				value, hasValue := instruction.(ssa.Value)
-				if hasValue && operationIDOpenAPIField(value, currentPackage) {
-					sources[value] = true
-				}
-
-				call, ok := instruction.(ssa.CallInstruction)
-				if !ok {
-					continue
-				}
-
-				callee := call.Common().StaticCallee()
-				if callee != nil && functions[callee] {
-					calls[callee] = append(calls[callee], call)
-				}
+		switch function.Name() {
+		case "Build", "parseInput":
+			authorities[function] = true
+		case "decodeOpenAPIDocument", "selectRequestSchema":
+			for reachable := range operationIDRuntimeFunctions(function) {
+				authorities[reachable] = true
 			}
 		}
 	}
 
-	for changed := true; changed; {
-		changed = false
-
-		for function := range functions {
-			for _, block := range function.Blocks {
-				for _, instruction := range block.Instrs {
-					if stored, ok := instruction.(*ssa.Store); ok && sources[stored.Val] && !sources[stored.Addr] {
-						sources[stored.Addr] = true
-						changed = true
-					}
-
-					call, isCall := instruction.(ssa.CallInstruction)
-					if isCall {
-						callee := call.Common().StaticCallee()
-						if callee != nil && functions[callee] {
-							for index, argument := range call.Common().Args {
-								if index < len(callee.Params) && sources[argument] && !sources[callee.Params[index]] {
-									sources[callee.Params[index]] = true
-									changed = true
-								}
-							}
-						}
-					}
-
-					if returned, ok := instruction.(*ssa.Return); ok {
-						for _, result := range returned.Results {
-							if sources[result] && !returnsSource[function] {
-								returnsSource[function] = true
-								changed = true
-							}
-						}
-					}
-
-					value, hasValue := instruction.(ssa.Value)
-					if hasValue && sources[value] {
-						continue
-					}
-
-					if !hasValue {
-						continue
-					}
-
-					if isCall {
-						callee := call.Common().StaticCallee()
-						if callee != nil && returnsSource[callee] {
-							sources[value] = true
-							changed = true
-
-							continue
-						}
-					}
-
-					for _, operand := range instruction.Operands(nil) {
-						if operand != nil && sources[*operand] {
-							sources[value] = true
-							changed = true
-
-							break
-						}
-					}
-				}
-			}
-
-			for index, parameter := range function.Params {
-				incoming := calls[function]
-				if values[parameter] || len(incoming) == 0 {
-					continue
-				}
-
-				pure := true
-
-				for _, call := range incoming {
-					if index >= len(call.Common().Args) || !values[call.Common().Args[index]] {
-						pure = false
-
-						break
-					}
-				}
-
-				if pure {
-					values[parameter] = true
-					changed = true
-				}
-			}
-
-			for _, block := range function.Blocks {
-				for _, instruction := range block.Instrs {
-					value, ok := instruction.(ssa.Value)
-					if !ok || values[value] {
-						continue
-					}
-
-					call, isCall := instruction.(ssa.CallInstruction)
-					if isCall {
-						callee := call.Common().StaticCallee()
-						if callee != nil && callee.Object() == currentPackage.Scope().Lookup("decodeOpenAPIDocument") &&
-							len(call.Common().Args) > 0 && sources[call.Common().Args[0]] &&
-							operationIDDecoderConsumesSource(callee, sources) &&
-							!operationIDDecoderAuthorsFixedIdentity(callee, functions, make(map[*ssa.Function]bool)) {
-							values[value] = true
-							changed = true
-
-							continue
-						}
-					}
-
-					if operationIDDocumentTransfer(instruction, values, functions) {
-						values[value] = true
-						changed = true
-					}
-				}
-			}
-		}
-	}
-
-	return values
+	return authorities
 }
 
-func operationIDDecoderConsumesSource(function *ssa.Function, sources map[ssa.Value]bool) bool {
-	for _, block := range function.Blocks {
-		for _, instruction := range block.Instrs {
-			for _, operand := range instruction.Operands(nil) {
-				if operand != nil && sources[*operand] {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
-func operationIDDecoderAuthorsFixedIdentity(
-	function *ssa.Function,
+func operationIDAuthorityViolations(
 	functions map[*ssa.Function]bool,
-	seen map[*ssa.Function]bool,
-) bool {
-	if function == nil || seen[function] {
-		return false
-	}
+	guardPackage *sourceGuardPackage,
+) []string {
+	var violations []string
 
-	seen[function] = true
-
-	for _, block := range function.Blocks {
-		for _, instruction := range block.Instrs {
-			if update, ok := instruction.(*ssa.MapUpdate); ok {
-				key, constantKey := update.Key.(*ssa.Const)
-				if constantKey && key.Value != nil && constant.StringVal(key.Value) == "operationId" {
-					return true
-				}
-			}
-
-			call, ok := instruction.(ssa.CallInstruction)
-			if !ok {
-				continue
-			}
-
-			callee := call.Common().StaticCallee()
-			if callee != nil && functions[callee] && operationIDDecoderAuthorsFixedIdentity(callee, functions, seen) {
-				return true
-			}
+	for function := range functions {
+		if operationIDTrustedFunction(function, guardPackage) {
+			continue
 		}
+
+		key := function.String()
+		if object, ok := function.Object().(*types.Func); ok {
+			key = semanticFunctionKey(object, guardPackage.pkg)
+		}
+
+		hash, _ := semanticFunctionBodyHash(function, guardPackage)
+		violations = append(violations, key+": untrusted OperationID authority function "+hash)
 	}
 
-	return false
+	return violations
 }
 
-func operationIDDocumentTransfer(
-	instruction ssa.Instruction,
-	values map[ssa.Value]bool,
-	functions map[*ssa.Function]bool,
-) bool {
-	switch typed := instruction.(type) {
-	case *ssa.Extract:
-		if typed.Index != 0 {
-			return false
-		}
-
-		if values[typed.Tuple] {
-			return true
-		}
-
-		call, ok := typed.Tuple.(ssa.CallInstruction)
-
-		return ok && operationIDCallResult(call, typed.Index, values, functions)
-	case *ssa.Lookup:
-		return values[typed.X]
-	case *ssa.Field:
-		return values[typed.X]
-	case *ssa.FieldAddr:
-		return values[typed.X]
-	case *ssa.UnOp:
-		return values[typed.X]
-	case *ssa.ChangeType:
-		return values[typed.X]
-	case *ssa.Convert:
-		return values[typed.X]
-	case *ssa.MakeInterface:
-		return values[typed.X]
-	case *ssa.Phi:
-		return len(typed.Edges) > 0 && operationIDAllDocumentValues(typed.Edges, values)
-	}
-
-	call, ok := instruction.(ssa.CallInstruction)
+func operationIDTrustedFunction(function *ssa.Function, guardPackage *sourceGuardPackage) bool {
+	object, ok := function.Object().(*types.Func)
 	if !ok {
 		return false
 	}
 
-	return operationIDCallResult(call, 0, values, functions)
+	expected := allowedOperationIDAuthorityFunctions[semanticFunctionKey(object, guardPackage.pkg)]
+	actual, hashOK := semanticFunctionBodyHash(function, guardPackage)
+
+	return expected != "" && hashOK && actual == expected
 }
 
-func operationIDCallResult(
-	call ssa.CallInstruction,
-	resultIndex int,
-	values map[ssa.Value]bool,
-	functions map[*ssa.Function]bool,
-) bool {
-	callee := call.Common().StaticCallee()
-	if callee == nil || !functions[callee] {
-		return false
+func semanticFunctionBodyHash(function *ssa.Function, guardPackage *sourceGuardPackage) (string, bool) {
+	object, ok := function.Object().(*types.Func)
+	if !ok {
+		return "", false
 	}
 
-	if callee.Name() == "requireJSONObject" {
-		return resultIndex == 0 && len(call.Common().Args) > 0 && values[call.Common().Args[0]]
-	}
-
-	if callee.Name() == "resolvePathItemReference" {
-		return resultIndex == 0 && len(call.Common().Args) > 1 &&
-			values[call.Common().Args[0]] && values[call.Common().Args[1]]
-	}
-
-	found := false
-
-	for _, block := range callee.Blocks {
-		for _, candidate := range block.Instrs {
-			returned, ok := candidate.(*ssa.Return)
-			if !ok {
-				continue
-			}
-
-			if resultIndex >= len(returned.Results) {
-				return false
-			}
-
-			result := returned.Results[resultIndex]
-			if constantResult, ok := result.(*ssa.Const); ok && constantResult.Value == nil {
-				continue
-			}
-
-			if !operationIDDocumentCandidate(result, values, functions, make(map[ssa.Value]bool)) {
-				return false
-			}
-
-			found = true
-		}
-	}
-
-	return found
-}
-
-func operationIDDocumentCandidate(
-	value ssa.Value,
-	values map[ssa.Value]bool,
-	functions map[*ssa.Function]bool,
-	seen map[ssa.Value]bool,
-) bool {
-	if value == nil {
-		return false
-	}
-
-	if values[value] || seen[value] {
-		return true
-	}
-
-	if _, basic := types.Unalias(value.Type()).Underlying().(*types.Basic); basic {
-		return false
-	}
-
-	seen[value] = true
-
-	switch typed := value.(type) {
-	case *ssa.Parameter:
-		index := -1
-
-		for parameterIndex, parameter := range typed.Parent().Params {
-			if parameter == typed {
-				index = parameterIndex
-
-				break
+	for _, file := range guardPackage.files {
+		for _, declaration := range file.Decls {
+			declared, declarationOK := declaration.(*ast.FuncDecl)
+			if declarationOK && guardPackage.info.Defs[declared.Name] == object {
+				return semanticNodeHash(declared.Body, guardPackage)
 			}
 		}
-
-		if index < 0 {
-			return false
-		}
-
-		found := false
-
-		for caller := range functions {
-			for _, block := range caller.Blocks {
-				for _, instruction := range block.Instrs {
-					call, ok := instruction.(ssa.CallInstruction)
-					if !ok || call.Common().StaticCallee() != typed.Parent() {
-						continue
-					}
-
-					if index >= len(call.Common().Args) ||
-						!operationIDDocumentCandidate(call.Common().Args[index], values, functions, seen) {
-						return false
-					}
-
-					found = true
-				}
-			}
-		}
-
-		return found
-	case *ssa.Lookup:
-		return operationIDDocumentCandidate(typed.X, values, functions, seen)
-	case *ssa.Field:
-		return operationIDDocumentCandidate(typed.X, values, functions, seen)
-	case *ssa.FieldAddr:
-		return operationIDDocumentCandidate(typed.X, values, functions, seen)
-	case *ssa.UnOp:
-		return operationIDDocumentCandidate(typed.X, values, functions, seen)
-	case *ssa.ChangeType:
-		return operationIDDocumentCandidate(typed.X, values, functions, seen)
-	case *ssa.Convert:
-		return operationIDDocumentCandidate(typed.X, values, functions, seen)
-	case *ssa.MakeInterface:
-		return operationIDDocumentCandidate(typed.X, values, functions, seen)
-	case *ssa.Phi:
-		for _, edge := range typed.Edges {
-			if !operationIDDocumentCandidate(edge, values, functions, seen) {
-				return false
-			}
-		}
-
-		return len(typed.Edges) > 0
-	case *ssa.Extract:
-		if typed.Index != 0 {
-			return false
-		}
-
-		call, ok := typed.Tuple.(ssa.CallInstruction)
-
-		return ok && operationIDCallResult(call, typed.Index, values, functions)
 	}
 
-	return false
-}
-
-func operationIDAllDocumentValues(candidates []ssa.Value, values map[ssa.Value]bool) bool {
-	for _, candidate := range candidates {
-		if !values[candidate] {
-			return false
-		}
-	}
-
-	return true
-}
-
-func operationIDDocumentRootType(valueType, jsonValueType types.Type) bool {
-	mapping, ok := types.Unalias(valueType).Underlying().(*types.Map)
-	if !ok || basicTypeKind(mapping.Key()) != types.String {
-		return false
-	}
-
-	return sameGuardType(mapping.Elem(), types.NewPointer(jsonValueType))
-}
-
-func operationIDAuthoredSelectionValue(
-	value ssa.Value,
-	documentValues map[ssa.Value]bool,
-	currentPackage *types.Package,
-	seen map[ssa.Value]bool,
-) bool {
-	if !documentValues[value] {
-		return false
-	}
-
-	switch typed := value.(type) {
-	case *ssa.Field:
-		return operationIDJSONTextField(typed.X.Type(), typed.Field, currentPackage) &&
-			operationIDLookupProvenance(typed.X, documentValues, seen)
-	case *ssa.UnOp:
-		field, ok := typed.X.(*ssa.FieldAddr)
-
-		return ok && operationIDJSONTextField(field.X.Type(), field.Field, currentPackage) &&
-			operationIDLookupProvenance(field.X, documentValues, seen)
-	default:
-		return false
-	}
-}
-
-func operationIDLookupProvenance(
-	value ssa.Value,
-	documentValues map[ssa.Value]bool,
-	seen map[ssa.Value]bool,
-) bool {
-	if value == nil || seen[value] {
-		return false
-	}
-
-	seen[value] = true
-
-	switch typed := value.(type) {
-	case *ssa.Lookup:
-		key, constantKey := typed.Index.(*ssa.Const)
-
-		return constantKey && key.Value != nil && constant.StringVal(key.Value) == "operationId" &&
-			operationIDPureDocumentValue(typed.X, documentValues, make(map[ssa.Value]bool))
-	case *ssa.Phi:
-		if len(typed.Edges) == 0 {
-			return false
-		}
-
-		for _, edge := range typed.Edges {
-			if !operationIDLookupProvenance(edge, documentValues, seen) {
-				return false
-			}
-		}
-
-		return true
-	case *ssa.ChangeType:
-		return operationIDLookupProvenance(typed.X, documentValues, seen)
-	case *ssa.Convert:
-		return operationIDLookupProvenance(typed.X, documentValues, seen)
-	case *ssa.MakeInterface:
-		return operationIDLookupProvenance(typed.X, documentValues, seen)
-	case *ssa.UnOp:
-		return operationIDLookupProvenance(typed.X, documentValues, seen)
-	case *ssa.Extract:
-		return operationIDLookupProvenance(typed.Tuple, documentValues, seen)
-	case *ssa.Field:
-		return operationIDLookupProvenance(typed.X, documentValues, seen)
-	case *ssa.FieldAddr:
-		return operationIDLookupProvenance(typed.X, documentValues, seen)
-	default:
-		return false
-	}
-}
-
-func operationIDPureDocumentValue(
-	value ssa.Value,
-	documentValues map[ssa.Value]bool,
-	seen map[ssa.Value]bool,
-) bool {
-	if value == nil || !documentValues[value] {
-		return false
-	}
-
-	if seen[value] {
-		return true
-	}
-
-	seen[value] = true
-
-	switch typed := value.(type) {
-	case *ssa.Parameter:
-		return documentValues[typed]
-	case *ssa.Lookup:
-		return operationIDPureDocumentValue(typed.X, documentValues, seen)
-	case *ssa.Phi:
-		if len(typed.Edges) == 0 {
-			return false
-		}
-
-		for _, edge := range typed.Edges {
-			if !operationIDPureDocumentValue(edge, documentValues, seen) {
-				return false
-			}
-		}
-
-		return true
-	case *ssa.ChangeType:
-		return operationIDPureDocumentValue(typed.X, documentValues, seen)
-	case *ssa.Convert:
-		return operationIDPureDocumentValue(typed.X, documentValues, seen)
-	case *ssa.MakeInterface:
-		return operationIDPureDocumentValue(typed.X, documentValues, seen)
-	case *ssa.UnOp:
-		return operationIDPureDocumentValue(typed.X, documentValues, seen)
-	case *ssa.Field:
-		return operationIDPureDocumentValue(typed.X, documentValues, seen)
-	case *ssa.FieldAddr:
-		return operationIDPureDocumentValue(typed.X, documentValues, seen)
-	case *ssa.Extract:
-		return operationIDPureDocumentValue(typed.Tuple, documentValues, seen)
-	case *ssa.Call:
-		return documentValues[typed]
-	case *ssa.Alloc:
-		return false
-	default:
-		return false
-	}
-}
-
-func operationIDJSONTextField(valueType types.Type, field int, currentPackage *types.Package) bool {
-	if pointer, ok := types.Unalias(valueType).Underlying().(*types.Pointer); ok {
-		valueType = pointer.Elem()
-	}
-
-	structure, ok := types.Unalias(valueType).Underlying().(*types.Struct)
-	if !ok || field >= structure.NumFields() {
-		return false
-	}
-
-	return sameGuardType(valueType, packageObjectTypeFromTypes(currentPackage, "jsonValue")) &&
-		structure.Field(field).Name() == "text"
+	return "", false
 }
 
 func operationIDLocalAddress(value ssa.Value) bool {
@@ -1140,19 +762,6 @@ func operationIDInputField(value ssa.Value, currentPackage *types.Package, name 
 func copiedSemanticGraphViolations(guardPackage *sourceGuardPackage) []string {
 	violations := packageSemanticDataViolations(guardPackage)
 	violations = append(violations, localSemanticTableViolations(guardPackage)...)
-
-	for _, file := range guardPackage.files {
-		for _, declaration := range file.Decls {
-			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Body == nil {
-				continue
-			}
-
-			if generatedGraphBody(function.Body) {
-				violations = append(violations, function.Name.Name+": copied generated semantic graph")
-			}
-		}
-	}
 
 	slices.Sort(violations)
 
@@ -1362,202 +971,65 @@ func genericNumericSpecificationSeen(
 }
 
 func localSemanticTableViolations(guardPackage *sourceGuardPackage) []string {
-	functions := make(map[*types.Func]*ast.FuncDecl)
+	ssaPackage := buildGuardSSA(guardPackage)
 
-	for _, file := range guardPackage.files {
-		for _, declaration := range file.Decls {
-			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Body == nil {
-				continue
-			}
-
-			object, ok := guardPackage.info.Defs[function.Name].(*types.Func)
-			if ok {
-				functions[object] = function
-			}
-		}
-	}
-
-	semanticReturns := make(map[*types.Func]bool)
-
-	for changed := true; changed; {
-		changed = false
-
-		for object, function := range functions {
-			if semanticReturns[object] || !functionReturnsSemanticTable(function, semanticReturns, guardPackage) {
-				continue
-			}
-
-			semanticReturns[object] = true
-			changed = true
-		}
+	build := ssaPackage.Func("Build")
+	if build == nil {
+		return nil
 	}
 
 	var violations []string
 
-	for object := range semanticReturns {
-		if allowedLocalSemanticSpecification(object, guardPackage) {
+	for function := range operationIDRuntimeFunctions(build) {
+		object, ok := function.Object().(*types.Func)
+		if !ok || !functionHasLocalSemanticCollection(function) ||
+			allowedLocalSemanticSpecification(object, guardPackage) {
 			continue
 		}
 
-		violations = append(violations, object.Name()+": copied local semantic table")
+		hash, _ := semanticFunctionBodyHash(function, guardPackage)
+		violations = append(violations, semanticFunctionKey(object, guardPackage.pkg)+
+			": unapproved local semantic collection "+hash)
 	}
 
 	return violations
 }
 
-func functionReturnsSemanticTable(
-	function *ast.FuncDecl,
-	semanticReturns map[*types.Func]bool,
-	guardPackage *sourceGuardPackage,
-) bool {
-	localTables := make(map[*types.Var]bool)
-	localSemanticValues := make(map[*types.Var]bool)
-	returnedTable := false
-
-	ast.Inspect(function.Body, func(node ast.Node) bool {
-		switch typed := node.(type) {
-		case *ast.ValueSpec:
-			for index, value := range typed.Values {
-				if index >= len(typed.Names) {
-					continue
-				}
-
-				variable, ok := guardPackage.info.Defs[typed.Names[index]].(*types.Var)
-				if !ok {
-					continue
-				}
-
-				if semanticTableExpression(value, localTables, localSemanticValues, semanticReturns, guardPackage) {
-					localTables[variable] = true
-				}
-
-				if semanticValueExpression(value, localSemanticValues, guardPackage) {
-					localSemanticValues[variable] = true
-				}
-			}
-		case *ast.AssignStmt:
-			for index, value := range typed.Rhs {
-				if index >= len(typed.Lhs) {
-					continue
-				}
-
-				identifier, ok := typed.Lhs[index].(*ast.Ident)
-				if !ok {
-					continue
-				}
-
-				variable, ok := guardPackage.info.ObjectOf(identifier).(*types.Var)
-				if !ok {
-					continue
-				}
-
-				if semanticTableExpression(value, localTables, localSemanticValues, semanticReturns, guardPackage) {
-					localTables[variable] = true
-				}
-
-				if semanticValueExpression(value, localSemanticValues, guardPackage) {
-					localSemanticValues[variable] = true
-				}
-			}
-		case *ast.ReturnStmt:
-			for _, result := range typed.Results {
-				returnedTable = returnedTable || semanticTableExpression(
-					result, localTables, localSemanticValues, semanticReturns, guardPackage,
-				)
+func functionHasLocalSemanticCollection(function *ssa.Function) bool {
+	if signature := function.Signature; signature != nil {
+		for index := range signature.Results().Len() {
+			if semanticCollectionType(signature.Results().At(index).Type()) {
+				return true
 			}
 		}
-
-		return !returnedTable
-	})
-
-	return returnedTable
-}
-
-func semanticTableExpression(
-	expression ast.Expr,
-	localTables map[*types.Var]bool,
-	localSemanticValues map[*types.Var]bool,
-	semanticReturns map[*types.Func]bool,
-	guardPackage *sourceGuardPackage,
-) bool {
-	if semanticCollectionLiteral(expression, guardPackage) {
-		return true
 	}
 
-	if identifier, ok := expression.(*ast.Ident); ok {
-		variable, variableOK := guardPackage.info.ObjectOf(identifier).(*types.Var)
-
-		return variableOK && localTables[variable]
-	}
-
-	call, ok := expression.(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-
-	identifier, ok := call.Fun.(*ast.Ident)
-	if !ok {
-		return false
-	}
-
-	if function, functionOK := guardPackage.info.Uses[identifier].(*types.Func); functionOK {
-		return semanticReturns[function]
-	}
-
-	return semanticAppendExpression(call, localTables, localSemanticValues, semanticReturns, guardPackage)
-}
-
-func semanticAppendExpression(
-	call *ast.CallExpr,
-	localTables map[*types.Var]bool,
-	localSemanticValues map[*types.Var]bool,
-	semanticReturns map[*types.Func]bool,
-	guardPackage *sourceGuardPackage,
-) bool {
-	identifier, ok := call.Fun.(*ast.Ident)
-	if !ok {
-		return false
-	}
-
-	builtin, ok := guardPackage.info.Uses[identifier].(*types.Builtin)
-	if !ok || builtin.Name() != "append" || len(call.Args) == 0 ||
-		!semanticCollectionType(guardPackage.info.TypeOf(call)) {
-		return false
-	}
-
-	if semanticTableExpression(call.Args[0], localTables, localSemanticValues, semanticReturns, guardPackage) {
-		return true
-	}
-
-	for _, argument := range call.Args[1:] {
-		if semanticValueExpression(argument, localSemanticValues, guardPackage) {
-			return true
+	for _, block := range function.Blocks {
+		for _, instruction := range block.Instrs {
+			switch typed := instruction.(type) {
+			case *ssa.MakeMap, *ssa.MakeSlice:
+				return true
+			case *ssa.Alloc:
+				if pointer, ok := types.Unalias(typed.Type()).Underlying().(*types.Pointer); ok &&
+					semanticCollectionType(pointer.Elem()) {
+					return true
+				}
+			case *ssa.MapUpdate:
+				return true
+			case *ssa.Store:
+				if _, ok := typed.Addr.(*ssa.IndexAddr); ok {
+					return true
+				}
+			case *ssa.Call:
+				if builtin, ok := typed.Common().Value.(*ssa.Builtin); ok &&
+					slices.Contains([]string{"append", "clear", "copy", "delete"}, builtin.Name()) {
+					return true
+				}
+			}
 		}
 	}
 
 	return false
-}
-
-func semanticValueExpression(
-	expression ast.Expr,
-	localSemanticValues map[*types.Var]bool,
-	guardPackage *sourceGuardPackage,
-) bool {
-	switch typed := expression.(type) {
-	case *ast.BasicLit, *ast.CompositeLit:
-		return true
-	case *ast.Ident:
-		variable, ok := guardPackage.info.ObjectOf(typed).(*types.Var)
-
-		return ok && localSemanticValues[variable]
-	case *ast.ParenExpr:
-		return semanticValueExpression(typed.X, localSemanticValues, guardPackage)
-	case *ast.CallExpr:
-		return len(typed.Args) == 1 && semanticValueExpression(typed.Args[0], localSemanticValues, guardPackage)
-	default:
-		return false
-	}
 }
 
 func semanticCollectionType(valueType types.Type) bool {
@@ -1569,37 +1041,8 @@ func semanticCollectionType(valueType types.Type) bool {
 	}
 }
 
-func semanticPrimitiveType(valueType types.Type, seen map[types.Type]bool) bool {
-	valueType = types.Unalias(valueType)
-	if seen[valueType] {
-		return true
-	}
-
-	seen[valueType] = true
-
-	switch typed := valueType.Underlying().(type) {
-	case *types.Basic:
-		return typed.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat|types.IsString) != 0
-	case *types.Array:
-		return semanticPrimitiveType(typed.Elem(), seen)
-	case *types.Struct:
-		if typed.NumFields() == 0 {
-			return false
-		}
-
-		for index := range typed.NumFields() {
-			if !semanticPrimitiveType(typed.Field(index).Type(), seen) {
-				return false
-			}
-		}
-
-		return true
-	default:
-		return false
-	}
-}
-
 func allowedLocalSemanticSpecification(function *types.Func, guardPackage *sourceGuardPackage) bool {
+	key := semanticFunctionKey(function, guardPackage.pkg)
 	expected := map[string]string{
 		"allOfFaultRequirements":                     "ddd5c1c5364b89bd74283e0b582e5bde099b3f89f84da01540b942e7564cde4e",
 		"allOfValidRequirements":                     "a4e66d9004cad0859c80ddcee522a0ca3d6b9248793a742f4a9ca2a808448245",
@@ -1641,10 +1084,7 @@ func allowedLocalSemanticSpecification(function *types.Func, guardPackage *sourc
 		"rowKindChoices":                             "aab020d359db217d9ac71deb2a90640e5ea39c42011c37d9f398a8ff739d8d29",
 		"rowObjectMembers":                           "545f757e035866edfbbd94db203fd9b0909fd1cf7457dab77a4e19336ea2f904",
 		"rowProjectionDecodeNode":                    "e3318c317c8fe3f83d355f5016f3587bccf4cfce753cf54277d062bf5e73b222",
-	}[semanticFunctionKey(function, guardPackage.pkg)]
-	if expected == "" {
-		return false
-	}
+	}[key]
 
 	for _, file := range guardPackage.files {
 		for _, declaration := range file.Decls {
@@ -1654,8 +1094,15 @@ func allowedLocalSemanticSpecification(function *types.Func, guardPackage *sourc
 			}
 
 			hash, hashOK := semanticNodeHash(functionDeclaration.Body, guardPackage)
+			if !hashOK {
+				return false
+			}
 
-			return hashOK && hash == expected
+			if expected != "" {
+				return hash == expected
+			}
+
+			return strings.Contains(reviewedLocalSemanticFunctionHashes, "\n"+key+" "+hash+"\n")
 		}
 	}
 
@@ -1680,46 +1127,6 @@ func semanticNodeHash(node ast.Node, guardPackage *sourceGuardPackage) (string, 
 	sum := sha256.Sum256(source.Bytes())
 
 	return hex.EncodeToString(sum[:]), true
-}
-
-func semanticCollectionLiteral(expression ast.Expr, guardPackage *sourceGuardPackage) bool {
-	literal, ok := expression.(*ast.CompositeLit)
-
-	return ok && len(literal.Elts) > 0 && semanticCollectionType(guardPackage.info.TypeOf(literal))
-}
-
-func semanticPrimitiveCategories(owned types.Type, categories map[string]bool, seen map[types.Type]bool) {
-	owned = types.Unalias(owned)
-	if seen[owned] {
-		return
-	}
-
-	seen[owned] = true
-
-	switch typed := owned.Underlying().(type) {
-	case *types.Basic:
-		switch {
-		case typed.Info()&types.IsBoolean != 0:
-			categories["boolean"] = true
-		case typed.Info()&(types.IsInteger|types.IsFloat) != 0:
-			categories["numeric"] = true
-		case typed.Info()&types.IsString != 0:
-			categories["string"] = true
-		}
-	case *types.Pointer:
-		semanticPrimitiveCategories(typed.Elem(), categories, seen)
-	case *types.Array:
-		semanticPrimitiveCategories(typed.Elem(), categories, seen)
-	case *types.Slice:
-		semanticPrimitiveCategories(typed.Elem(), categories, seen)
-	case *types.Map:
-		semanticPrimitiveCategories(typed.Key(), categories, seen)
-		semanticPrimitiveCategories(typed.Elem(), categories, seen)
-	case *types.Struct:
-		for index := range typed.NumFields() {
-			semanticPrimitiveCategories(typed.Field(index).Type(), categories, seen)
-		}
-	}
 }
 
 func generatedGraphBody(body *ast.BlockStmt) bool {
