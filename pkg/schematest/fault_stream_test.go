@@ -115,7 +115,7 @@ func TestBuildFaultProductContinuesPastUnsuitableRequiredParent(t *testing.T) {
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100_000},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
@@ -140,7 +140,7 @@ func TestScalarFaultAdvancesToParentWithExactWholeContainerClosure(t *testing.T)
 	var generated Case
 
 	err := streamFault(plan, fault, searchState, make(map[string]bool), func(testCase Case) error {
-		generated = testCase
+		generated = retainCase(testCase)
 
 		return nil
 	})
@@ -166,7 +166,7 @@ func TestAdditionalPropertyFaultAdvancesToLaterParent(t *testing.T) {
 	var generated Case
 
 	err := streamFault(plan, fault, searchState, make(map[string]bool), func(testCase Case) error {
-		generated = testCase
+		generated = retainCase(testCase)
 
 		return nil
 	})
@@ -184,7 +184,7 @@ func TestBuildNonCompositionFaultsAreDeterministicAndCutOffAtomically(t *testing
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: maxSteps},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},

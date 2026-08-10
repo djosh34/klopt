@@ -113,7 +113,7 @@ func TestBuildChargesNestedCompositionsBeforeAssignment(t *testing.T) {
 			MaxSteps:    2,
 		},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
@@ -132,7 +132,7 @@ func TestBuildChargesNestedCompositionsBeforeAssignment(t *testing.T) {
 			MaxSteps:    4,
 		},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
@@ -159,7 +159,7 @@ func TestBuildUsesOneCounterAcrossTargets(t *testing.T) {
 			MaxSteps:    6,
 		},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},

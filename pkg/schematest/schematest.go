@@ -17,6 +17,8 @@ type Input struct {
 }
 
 // Case is one complete JSON request body and its expected validity.
+// JSON contains strict JSON and is valid only for the duration of the Build callback.
+// Callers must copy JSON before retaining it after the callback returns.
 type Case struct {
 	JSON  []byte
 	Valid bool
@@ -41,6 +43,9 @@ type Report struct {
 }
 
 // Build streams test cases for one OpenAPI request body.
+// Each Case and its JSON bytes are valid only during the yield invocation; yield must
+// copy Case.JSON to retain it. Build may reuse or mutate its backing storage after
+// yield returns. A non-nil error from yield stops Build immediately and is returned.
 //
 //nolint:cyclop // Admission, planning, streaming, and normal-stop handling are one public seam.
 func Build(input Input, yield func(Case) error) (Report, error) {

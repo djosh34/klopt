@@ -18,7 +18,7 @@ func TestBuildStreamsDeterministicValidPrimitiveRows(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 100_000},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},
@@ -52,7 +52,7 @@ func TestBuildEmitsOracleValidUUIDWitnesses(t *testing.T) {
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1_000},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},

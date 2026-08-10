@@ -518,7 +518,7 @@ func TestBuildSearchesLeadingAssertionsWithoutFallbackCandidates(t *testing.T) {
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
@@ -617,7 +617,7 @@ func TestBuildSearchesPatternsAtActiveLengthBoundaries(t *testing.T) {
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
@@ -816,7 +816,7 @@ func TestBuildUsesOneBasicStringProductForActiveAllOfPatterns(t *testing.T) {
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},

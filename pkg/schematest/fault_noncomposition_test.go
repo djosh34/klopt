@@ -460,7 +460,7 @@ func TestBuildTypeFaultUsesActiveSiblingEnumWitness(t *testing.T) {
 				OpenAPI:     []byte(documentWithJSONSchema(test.schema)),
 				OperationID: "selected", MaxSteps: 1_000_000,
 			}, func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			})
@@ -760,7 +760,7 @@ func TestBuildTypelessNumericFormatFaults(t *testing.T) {
 				OperationID: "selected",
 				MaxSteps:    1_000_000,
 			}, func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			})

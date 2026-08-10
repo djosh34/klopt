@@ -22,7 +22,7 @@ func TestBuildStreamsArrayCountAndExistingIndexTargets(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},
@@ -76,7 +76,7 @@ func TestBuildMatchesAnyOfTargetsAtExistingArrayIndices(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},
@@ -139,7 +139,7 @@ func TestBuildDoesNotCoverNonexistentArrayIndices(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},
@@ -192,7 +192,7 @@ func TestBuildRepairsCanonicalObjectPresenceForSuppliedProperty(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},
@@ -248,7 +248,7 @@ func TestBuildStreamsObjectPresenceAndPropertyTargets(t *testing.T) {
 		report, err := Build(
 			Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 			func(testCase Case) error {
-				cases = append(cases, testCase)
+				cases = append(cases, retainCase(testCase))
 
 				return nil
 			},

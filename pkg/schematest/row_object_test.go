@@ -23,7 +23,7 @@ func TestBuildUsesComposedObjectDefaultAsCompleteCandidate(t *testing.T) {
 	_, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 1000},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
@@ -50,7 +50,7 @@ func TestBuildRepairsMinPropertiesWithoutFalseBranchNames(t *testing.T) {
 	report, err := Build(
 		Input{OpenAPI: document, OperationID: "selected", MaxSteps: 10000},
 		func(testCase Case) error {
-			cases = append(cases, testCase)
+			cases = append(cases, retainCase(testCase))
 
 			return nil
 		},
